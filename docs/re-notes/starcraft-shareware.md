@@ -1206,3 +1206,70 @@ windows and build only against the "hot in EVERY window" list.
 finds 516 `CK_COPY8_SRC` matches across 224 of 1271 PEs, unlike `RLE_RUN`'s 1 of
 287. So the family may still be worth a fold on *some* app's evidence. It is
 just not StarCraft's.)
+
+## Present cap paced on the game step (2026-09-28)
+
+The present cap now paces on `perf.logicalFrame` (`0x004b29f0`), not on
+presents or pumps. This is `--present-at=logical`, the default when an app
+declares a logical frame; `--present-at=pump` or `?present-at=pump` is the A/B
+arm.
+
+How it works: the decoder plants a marker op (handler 476, `$th_logical_frame`)
+at the head of the block entered at that address. The marker counts the step
+per thread. With a cap on, it also calls `$present_pace` and parks with EIP on
+the step.
+
+The count used to come from `--count` / the browser's `set_count`. Those arm
+`$dbg_any`, which turned off block chaining **and the micro-op tier for the
+whole run** whenever the perf HUD (or `--present-frames`) was on. The marker
+has no such cost.
+
+Route: box4, `--no-threads`, the click route from "Driving a real save" above.
+
+```sh
+node test/run.js --app=starcraft_shareware --no-build --no-threads --quiet-api --no-close \
+  --repaint-every=50 --batch-size=100000 --stuck-after=100000000 --max-batches=4800 \
+  --max-seconds=850 --present-frames=1800 [--present-cap=60 [--present-at=pump]] \
+  --input=100:focus-main-window,120:keydown:27,125:keyup:27,670:mousemove:320:240,\
+675:mousedown:320:240,685:mouseup:320:240,990:mousemove:320:240,995:mousedown:320:240,\
+1005:mouseup:320:240,1140:mousemove:545:393,1145:mousedown:545:393,1155:mouseup:545:393,\
+1540:mousemove:198:261,1545:mousedown:198:261,1555:mouseup:198:261,1700:tick-ms:5
+```
+
+`1700:tick-ms:5` matters. On the default 200 ms batch, a pacer sleep ends the
+batch, so any cap reads as at most 5 steps per guest second.
+
+- Gameplay was confirmed by a PNG at batch 4795 (base, SCVs, 250/200, 12/42).
+- The window is batches 1800-4800, which is 15 guest seconds of in-mission play.
+- Each arm ran twice; ranges span the two rounds.
+
+| arm | GAME steps / guest-s | frame ends / guest-s | sleeps in window | wall for 4800 batches |
+|---|---:|---:|---:|---:|
+| uncapped | 21.8-22.0 | 96.9-98.4 | - | 82 s |
+| cap 60, `--present-at=pump` | **17.5-17.8** | 59.9-60.5 | 316-473 | 46-47 s |
+| cap 60, `--present-at=logical` | **21.7-22.3** | 97.8-99.1 | 0 | 82 s |
+| cap 15, pump | 17.8 | 21.1-21.4 | 302-307 | 30-31 s |
+| cap 15, logical | 17.5-17.9 | 24.9-25.1 | 263 (263 at the step) | 31 s |
+
+What the numbers say:
+
+- **Pump pacing at 60 slows the game about 20%.** StarCraft's game step runs
+  on its own clock at about 22 per guest second, and it presents about 4.4
+  times per step (about 98 frame ends/s). Pacing those frame ends at 60, even
+  pump-bounded, drops the game from 22.0 to 17.7 steps/s.
+- **Logical pacing at 60 costs no game speed.** A cap of 60 on the step never
+  binds, so the logical arm matches uncapped in steps/s.
+- **Logical pacing at 60 also saves no CPU here.** Wall time is 82 s, the same
+  as uncapped. The step never exceeds 60/s, and the ~98 presents/s (mostly
+  repeated frames) are no longer throttled. The CPU the pump arm "saves" comes
+  from the game running slower.
+- **At cap 15, both arms hold the step to about 17.7/s, not 15.** The cause is
+  the headless clock, not the pacer. The logical arm requested 16.2 s of sleep
+  inside a 15 s window, so paced sleeps on the batch clock end early. Compare
+  arms with each other, not against the cap.
+- **A bug the cap-15 run found, fixed in 183c181c.** The marker decided
+  whether its own pace had slept by reading `$sleep_yielded`. The host clears
+  that flag only when it next checks the main thread. A stale 1 made the marker
+  run on, and the sleep then landed at the next `$run` halt, inside the step.
+  Before the fix, 145 of 269 step sleeps were at the step; after, 263 of 263.
+  `$present_pump` still uses the same flag test.
