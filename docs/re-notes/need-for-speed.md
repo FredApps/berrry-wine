@@ -203,8 +203,30 @@ D3D still submits about 346 GPU draws/frame versus Glide's 221; its draw
 timer is 21.45 ms/frame, Flip sync 4.66 ms/frame. Fixed-function shader source
 generation/metadata lowering repeats before the GPU program cache lookup
 and accounts for roughly 3.5 ms per measured frame. Static-plan caching and
-ordered draw coalescing are candidates, not implemented optimizations.
+ordered draw coalescing were the next candidates (implemented in the follow-up below).
 Machine load 45–67 and profiling overhead preclude stable FPS claims.
+
+The follow-up caches at most 64 validated fixed-function TL shader plans per
+D3D9 device, refreshing viewport/depth/fog/alpha uniforms per submission.
+Other fixed or mixed shader pipelines retain the full compiler. D3DIM also
+coalesces adjacent draws with identical complete lowered state and immutable
+texture generation, preserving primitive order and owning the vertex bytes.
+Batches are bounded to 64 KiB and flush before texture changes, clears,
+target/backing changes, CPU uploads, fallback and fences. New textures and
+unvalidated states submit immediately; deferred failures are surfaced rather
+than falling back only the last accepted draw. `drawCalls` counts guest draws,
+`draws` counts actual GPU submissions, `mergedDraws` counts eliminated
+submissions, and `submitMs` isolates backend submission time. `drawMs` now
+includes descriptor validation and deferred flush work as well.
+
+For CPU emulation, the same profiles suggest measuring guest-PC hot regions
+and micro-op decline reasons before extending the tier across short leaf calls
+or mixed integer/x87 loops. The Glide worker's x87 island fast path is 9.49%
+of sampled elapsed time; halving that alone saves only about 4.7% of worker
+time. Load/store dispatch and block transitions are additional candidates.
+Do not equate broker/Atomics waits with x86 compute or assume that moving all
+x87 stack slots into locals wins: `docs/x87-realistic-region-bench.md` already
+records the difference between per-op dispatch and profitable longer regions.
 
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),

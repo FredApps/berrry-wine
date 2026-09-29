@@ -15,6 +15,7 @@ const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 if (process.argv.includes('--help')) {
   console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
+  console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
   console.log('Usage: node tools/nfs-renderer-bench.js [--cases=glide,d3d,software,glide-software] [--seconds=30] [--samples=2] [--seed=12345] [--out=build/nfs-renderer-bench]\nRequires the original nfs3_demo fixture and a current build. Runs headful Chrome serially. Saves screenshots, hardware-renderer evidence, frame counters, CPU time, and machine load. Seed instrumentation is specific to this demo.');
   process.exit(0);
 }
@@ -25,6 +26,8 @@ const samples = Number(arg('samples', '2'));
 const seed = Number(arg('seed', '12345')) >>> 0;
 const profileEnabled = process.argv.includes('--profile');
 const readbackCensus = process.argv.includes('--readback-census');
+const noD3DBatching = process.argv.includes('--no-d3d-batching');
+const noFixedCache = process.argv.includes('--no-fixed-cache');
 assert(Number.isFinite(seconds) && seconds > 0, 'seconds must be positive');
 assert(Number.isInteger(samples) && samples >= 0, 'samples must be a nonnegative integer');
 const output = path.resolve(ROOT, arg('out', 'build/nfs-renderer-bench'));
@@ -302,17 +305,30 @@ async function runCase(server, name) {
     allowedRealRoots: [fixtureRoot, fs.realpathSync(path.join(ROOT, 'fonts'))],
     handleRequest(req, res) {
       const pathname = new URL(req.url, 'http://localhost').pathname;
-      if ((profileEnabled || readbackCensus) && pathname === '/lib/d3dim-gpu.js') {
+      if (noFixedCache && pathname === '/lib/d3d9-backend.js') {
+        const source = fs.readFileSync(path.join(ROOT,'lib/d3d9-backend.js'),'utf8');
+        const anchor = 'this.fixedPlans.compile(draw, vp, guestPS)';
+        assert.equal(source.split(anchor).length, 2);
+        res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store'});
+        res.end(source.replace(anchor, 'Fixed.compile(draw, vp, guestPS)'));
+        return true;
+      }
+      if ((profileEnabled || readbackCensus || noD3DBatching) && pathname === '/lib/d3dim-gpu.js') {
         res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
           'Cross-Origin-Resource-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp'});
         let source = fs.readFileSync(path.join(ROOT,'lib/d3dim-gpu.js'),'utf8');
+        if (noD3DBatching) {
+          const anchor = 'this.batchDraws = options.batchDraws !== false;';
+          assert.equal(source.split(anchor).length, 2);
+          source = source.replace(anchor, 'this.batchDraws = false;');
+        }
         if (readbackCensus) {
           const read = 'gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, t.readBuf);';
           assert.equal(source.split(read).length, 2, 'readPixels timing anchor must be unique');
           source = source.replace(read, 'const readStart = now(); ' + read +
             ' this.stats.readPixelsMs = (this.stats.readPixelsMs || 0) + now() - readStart;');
         }
-        res.end(source + d3dCensus + (readbackCensus ? readbackProbe : ''));
+        res.end(source + ((profileEnabled || readbackCensus) ? d3dCensus : '') + (readbackCensus ? readbackProbe : ''));
         return true;
       }
       if (pathname !== '/lib/guest-worker.js') return false;
@@ -324,7 +340,8 @@ async function runCase(server, name) {
   const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
     wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
-    fixtureSha256,
+    fixtureSha256, noD3DBatching, noFixedCache,
+    sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js','lib/d3d9-backend.js','lib/d3d9-fixed.js'].map(file => [file,hash(path.join(ROOT,file))])),
     results: [] };
   try {
     for (const name of cases) {
