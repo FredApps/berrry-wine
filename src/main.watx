@@ -112,6 +112,7 @@
 (include "09c3-wndprocs3-listbox.wat")
 (include "09c3-wndprocs4-combobox.wat")
 (include "09c3-wndprocs5-edit.wat")
+(include "09c3-wndprocs6-animate.wat")
 (include "09c3a-dialog-runtime.wat")
 (include "09c3b-scrollbar.wat")
 (include "09c4-defwndproc.wat")

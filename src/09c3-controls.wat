@@ -1692,6 +1692,10 @@
     (if (i32.eq (local.get $class) (i32.const 33))
       (then (return (call $mdiclient_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 34 = COMCTL32 SysAnimate32 (09c3-wndprocs6-animate.wat).
+    (if (i32.eq (local.get $class) (i32.const 34))
+      (then (return (call $animate_wndproc
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
