@@ -1375,7 +1375,7 @@
 
   ;; 514: GetSystemTimeAsFileTime(lpFileTime) — exact UTC wall-clock FILETIME.
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 2)))
+    (call $wall_clock_to_guest (local.get $arg0) (i32.const 2) (i32.const 8))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
@@ -1386,7 +1386,7 @@
 
   ;; 516: GetSystemTime(lpSystemTime) — host wall clock in UTC.
   (func $handle_GetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 0)))
+    (call $wall_clock_to_guest (local.get $arg0) (i32.const 0) (i32.const 16))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
