@@ -273,6 +273,40 @@ async function main() {
     check('3 park: the re-run does not sleep again', e.get_sleep_yielded() === 0);
   }
 
+  // ---- 3b. a host that has not cleared the sleep flag yet ------------------
+  // $sleep_yielded is read-and-cleared by the host, which may not have done
+  // so before the next step. The marker must still park ON the step: whether
+  // this pace slept is read off the pacer's own counter, not off the flag.
+  {
+    const code = place(env, SHAPE_CALL);
+    reset(e, 60);
+    e.set_block_chain(1);
+    e.set_uop(0);
+    e.set_logical_frame(code.step, 1);
+    const stackTop = env.imageBase + 0xF00000;
+    new DataView(e.memory.buffer).setUint32(env.g2w(stackTop), 0, true);
+    e.set_esp(stackTop); e.set_ecx(40); e.set_esi(0); e.set_eip(code.addr);
+    const p0 = e.get_logical_frame_paced();
+    let parks = 0, offStep = 0, pacedPrev = e.get_present_paced_count() >>> 0;
+    for (let i = 0; i < 400 && (e.get_eip() >>> 0) !== 0; i++) {
+      e.run(0x7FFFFFFF);
+      const paced = e.get_present_paced_count() >>> 0;
+      if (paced !== pacedPrev) {
+        parks++;
+        if ((e.get_eip() >>> 0) !== code.step) offStep++;
+        clock.now += e.get_sleep_timeout() >>> 0;
+        pacedPrev = paced;
+      }
+      e.clear_yield();   // get_sleep_yielded() deliberately never called
+      e.set_handler_set_eip(0);
+    }
+    check('3b stale flag: steps still park', parks > 30, `parks=${parks}`);
+    check('3b stale flag: every park is ON the step', offStep === 0, `offStep=${offStep}`);
+    check('3b stale flag: every sleep is attributed to the step',
+      e.get_logical_frame_paced() - p0 === parks, `paced=${e.get_logical_frame_paced() - p0} parks=${parks}`);
+    e.get_sleep_yielded();
+  }
+
   // ---- 4. pace off falls back to pump pacing --------------------------------
   {
     const code = place(env, SHAPE_CALL);
