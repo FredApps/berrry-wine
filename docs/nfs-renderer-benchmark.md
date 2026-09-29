@@ -237,6 +237,46 @@ and the subsequent framebuffer re-upload. GPU endpoint coverage inherits
 the existing line-list path and can differ by a pixel from software Bresenham.
 Artifacts: `build/nfs3-linestrip-gpu/`.
 
+### Remaining costs after GPU line strips (2026-09-29)
+
+Profiles on `4f5e6330`, with the same WASM as the updated-base run, are in
+`build/nfs3-post-lines-profile/`. Each route ran headful for one 25-second
+sample with `--profile`; no production instrumentation was added. Both have
+zero renderer errors; D3D has zero fallbacks/uploads/texture byte comparisons
+and exactly one Flip synchronization per frame.
+
+On the D3D guest-main worker, 67.9% of sampled elapsed time is in WASM,
+19.6% under `_draw`, 6.3% under `fence`, and 5.2% idle. These are sampled
+thread-time categories, not GPU execution times, and include some work outside
+the timed window while the profilers start/stop. Top WASM functions resolve
+to x87 emulation, uop execution, conditional branches, loads/stores and guest
+address translation (`x87_island_fast`, `uop_fast`, `th_fpu_mem_ro`,
+`th_jcc_ge`, `th_load32_rop`, `th_store32_rop`, `g2w_slow`). The GPU rasterizes
+the scene, but the game's CPU work and original renderer DLL still execute
+through the x86 emulator.
+
+D3D's own elapsed timers average 21.45 ms/frame in draw preparation/submission
+and 4.66 ms/frame in synchronization. It issues 346.19 GPU draws/frame versus
+Glide's 220.83, despite fewer triangles in its sampled scene (1346.32 versus
+1440.82). Glide merges adjacent identical-state draws; D3DIM expands vertices
+and submits each call through the generic D3D9 fixed-function backend.
+
+That generic path calls `Fixed.compile` on each draw, rebuilding shader source
+and metadata before looking up the cached GPU program. This is **source
+generation, not repeated GPU shader compilation**. The profile attributes
+993.6 ms total (3.7% of the sampled worker, roughly 3.5 ms per measured frame)
+to fixed-function compilation/lowering. A safe optimization candidate is to
+cache the validated static shader/declaration plan while updating dynamic
+uniforms separately. Ordered draw coalescing could also reduce submission
+work, but must preserve dependencies on texture/surface writes and fences.
+Most ordinary WebGL state and uniform updates are already cached.
+
+Observed FPS was D3D 11.30 and Glide 16.14, with load 45–67 and profiler
+overhead. This is bottleneck evidence, not a stable speed ranking or a
+controlled before/after comparison. The dominant remaining overall cost is
+CPU emulation; the D3D-specific optimization target is draw processing and
+batching, with the remaining readback a smaller component.
+
 ### Local dropdown testing
 
 The debug dropdown includes `nfs3_glide_demo` and `nfs2se_glide_demo`. The
