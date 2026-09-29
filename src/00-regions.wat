@@ -889,3 +889,6 @@
     (owner "09a7h-video-mciavi.wat:$MCIAVI_TABLE"))
   (region.declare $MCIWND_TABLE (size 0x00000800) (align 0x00000010)
     (owner "09a7i-video-mciwnd.wat:$MCIWND_TABLE"))
+  ;; Glide 2 process-shared board, lock, immutable stream and packet staging.
+  (region.declare $GLIDE_STATE (size 0x00001000) (align 0x00000010)
+    (owner "09a8h-glide.wat:$GLIDE_STATE"))

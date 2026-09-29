@@ -2663,8 +2663,7 @@
       (then (return (i32.const 0))))
     (if (global.get $thread_flush_pending) (then (return (i32.const 0))))
     (if (i32.eqz (local.get $head)) (then (return (i32.const 0))))
-    (if (i32.and (i32.ge_u (local.get $head) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $head) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $head))
       (then (return (i32.const 0))))
     (call $page_probe (local.get $head)))
 

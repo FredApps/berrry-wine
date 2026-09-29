@@ -89,6 +89,8 @@ function makePeWithFirstThunkLookup() {
     'FirstThunk fallback should resolve the normal API ID');
 
   const dllBase = 0x500000;
+  const dllBssWa = RegionMap.GUEST_BASE + (dllBase - 0x400000) + 0x2000;
+  new Uint8Array(memory.buffer, dllBssWa, 0x1000).fill(0xA5);
   const dllThunkIndex = wat.get_num_thunks() >>> 0;
   assert.strictEqual(wat.load_dll(pe.length, dllBase) >>> 0, dllBase + 0x1000,
     'the same stripped image should load through the dynamic DLL path');
@@ -100,6 +102,19 @@ function makePeWithFirstThunkLookup() {
     'DLL FirstThunk lookup entry must be replaced with a host API thunk');
   assert.strictEqual(view.getUint32(RegionMap.BASE.THUNK_BASE + dllThunkIndex * 8 + 4, true), api.id,
     'DLL FirstThunk fallback should resolve the normal API ID');
+  assert.ok(new Uint8Array(memory.buffer, dllBssWa, 0x1000).every(byte => byte === 0),
+    'Watcom DLL BSS must clear the full RawSize extent even with VirtualSize=0');
+
+  // Also cover a BSS extent smaller than the file: the old loader copied
+  // the DOS header into this section instead of leaving it uninitialized.
+  const shortBssPe = Buffer.from(pe);
+  shortBssPe.writeUInt32LE(0x200, 0x80 + 24 + 0xE0 + 40 + 16);
+  new Uint8Array(memory.buffer).set(shortBssPe, wat.get_staging());
+  const secondBase = 0x600000;
+  assert.strictEqual(wat.load_dll(shortBssPe.length, secondBase) >>> 0, secondBase + 0x1000);
+  assert.ok(new Uint8Array(memory.buffer,
+    RegionMap.GUEST_BASE + (secondBase - 0x400000) + 0x2000, 0x200).every(byte => byte === 0),
+    'unbacked DLL sections must not receive bytes from file offset zero');
 
   assert.deepStrictEqual(
     [...new Uint8Array(memory.buffer, RegionMap.GUEST_BASE + 0x2000, 0x1000)],

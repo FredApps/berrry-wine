@@ -231,8 +231,7 @@
               (br $main)))))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
-      (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
-                   (i32.lt_u (global.get $eip) (global.get $thunk_guest_end)))
+      (if (thunk-contains (global.get $eip))
         (then
           (local.set $prev_eip (global.get $eip))
           (local.set $prev_esp (i32.load offset=16 (global.get $reg_base)))
@@ -620,6 +619,20 @@
     (global.set $thunk_guest_end
       (i32.add (global.get $thunk_guest_base)
         (i32.mul (global.get $num_thunks) (i32.const 8)))))
+  ;; Cold membership path: never decode a newly published thunk as x86 just
+  ;; because this worker has not reached its next host synchronization point.
+  ;; Refresh the count too: dispatch aliases and continuation discovery share it.
+  (func $thunk_contains_new (param $target i32) (result i32)
+    (if (i32.ge_u (i32.sub (local.get $target) (global.get $thunk_guest_base))
+          (global.get $THUNK_BASE_SIZE))
+      (then (return (i32.const 0))))
+    (call $update_thunk_end)
+    (if (i32.lt_u (local.get $target) (global.get $thunk_guest_end))
+      (then
+        (call $sync_thread_thunk_globals)
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func (export "sync_thunk_state") (param $thunk_ge i32) (param $num_th i32)
     (global.set $thunk_guest_end (local.get $thunk_ge))
     (global.set $num_thunks (local.get $num_th))
