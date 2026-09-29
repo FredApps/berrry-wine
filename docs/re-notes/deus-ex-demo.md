@@ -91,3 +91,65 @@ tier:
   `[0x10d7d39c]`.
 - `+0x10d2b180` / `+0x10d2b640`, 8-texel palette-lookup span bodies.
 - `+0x10d05dbb`, a `jb` self-loop texel.
+## 2026-09-29: the uop tier ran a freed program (call through NULL in the 3D intro)
+
+**Symptom.** With the uop tier on (the default since 2026-09-28), the 3D logo
+intro died around batch 1163–1174 on a guest call through NULL: EIP 0x10000,
+then an AV. A pinned calendar makes it deterministic. It crashes at batch 1163
+on every run:
+
+```sh
+node test/run.js --app=deus_ex_demo --batch-size=200000 --tick-ms-per-batch=25 \
+  --repaint-every=10 --wall-clock-ms=1790673326000 --uop-census --quiet-api \
+  --no-close --max-batches=1200 --max-seconds=1400
+```
+
+This is a heavy route (about 5 min for 3000 batches), so run it on a bench box,
+not the Mac.
+
+**Cause.** This is not a slot-indexing bug and not a Deus Ex bug. The tier
+entered a program the arena had already freed:
+
+- `$uop_flush` bumps `$uop_gen` and rewinds the bump allocator. It does not
+  retire threaded `uop_enter` ops.
+- `$th_uop_enter` and the map ways checked that a program was still alive by
+  reading only two words at the program's old address: the gen word (+0) must
+  equal `$uop_gen`, and the head word (+4) must equal the EIP.
+- After a rewind, those two words hold whatever the next program writes there.
+  This can be code, a const-pool word, or the never-written alignment padding
+  before the window slots.
+
+The census (instrumented run, box 4) shows the exact coincidence:
+
+- Program H (head `0x1152a39d`) was installed at arena `0x69da530` in gen 2
+  and retired as poor in gen 2.
+- In gen 3, program X (head `0x1169606e`) was placed at `0x69d9820`:
+  - X's code and const pool ran 0xd14 bytes and ended with the word `4`
+    exactly at H's old gen word.
+  - The padding after it still held H's stale head and window-count words.
+  - X's slot 0 overlaid H+16.
+- The flush from gen 3 to gen 4 made that `4` equal the current generation.
+  H's surviving threaded enter op then passed both checks. It ran X's window
+  slots as a program and exited to EIP 0x10000.
+
+**Fix** (`src/07d-uop-engine.wat`). Each arena now keeps a program-starts
+bitmap, one bit per 16-byte granule of code bytes:
+
+- `$uop_install` sets the program's bit.
+- `$uop_flush` clears the whole bitmap.
+- `$uop_live` (used by `$th_uop_enter`, `$uop_way_live`, `$uop_map_get` and the
+  census dump) requires the gen word **and** the bit.
+
+A freed header's bit stays clear until something is installed at that exact
+address, so no leftover arena bytes can make it look live again. Space for the
+bitmap came from shrinking the per-arena code tail to 0x22000.
+
+Regression test: the `stale-enter` case in `test/test-uop-compiler.js`. It
+forges a freed header with a current gen word and a matching head, then
+enters it:
+
+- Without the bitmap check, the stale enter op runs the forged program 8 times.
+- With it, the enter is refused and the threaded loop runs.
+
+**After the fix.** The same pinned run reaches batch 3000 without the crash.
+The capture shows the rotating 3D Deus Ex logo intro rendering in software.

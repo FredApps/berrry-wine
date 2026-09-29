@@ -146,20 +146,31 @@
   ;; by the lowering; everything a running program or the installer needs
   ;; besides its code lives in the top $UOP_TAIL bytes. The defaults are the
   ;; main arena's; $uop_set_arena recomputes them.
-  (global $UOP_TAIL i32 (i32.const 0x00020000))
+  (global $UOP_TAIL i32 (i32.const 0x00022000))
   (global $uop_arena      (mut i32) (region.addr $UOP_ARENA 0))
-  (global $uop_code_bytes (mut i32) (i32.const 0x000E0000))
-  (global $uop_temps_off  (mut i32) (i32.const 0x000E0000)) ;; 4096 x 4 bytes
-  (global $uop_wins_off   (mut i32) (i32.const 0x000E4000)) ;; 1024 x 16 bytes, unused by compiled programs (each owns its slots)
-  (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 2048 sets x 2 ways x {eip, pc}
-  (global $uop_ranges_off (mut i32) (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
+  (global $uop_code_bytes (mut i32) (i32.const 0x000DE000))
+  (global $uop_temps_off  (mut i32) (i32.const 0x000DE000)) ;; 4096 x 4 bytes
+  (global $uop_wins_off   (mut i32) (i32.const 0x000E2000)) ;; 1024 x 16 bytes, unused by compiled programs (each owns its slots)
+  (global $uop_map_off    (mut i32) (i32.const 0x000E6000)) ;; 2048 sets x 2 ways x {eip, pc}
+  (global $uop_ranges_off (mut i32) (i32.const 0x000EE000)) ;; 4096 x {lo, hi, pc}
   (global $UOP_RANGES_MAX i32 (i32.const 4096))
-  ;; The code-write filter, in the last 16KB of the tail (after the ranges'
-  ;; 4096 x 12 bytes): 2048 i64 words, one per hashed guest page, bit L set
-  ;; when some range recorded since the last rebuild covers 64-byte line L of
-  ;; a page hashing to that word. See $uop_code_write.
-  (global $uop_cwmap_off  (mut i32) (i32.const 0x000FC000))
+  ;; The code-write filter, 16KB after the ranges' 4096 x 12 bytes: 2048 i64
+  ;; words, one per hashed guest page, bit L set when some range recorded
+  ;; since the last rebuild covers 64-byte line L of a page hashing to that
+  ;; word. See $uop_code_write.
+  (global $uop_cwmap_off  (mut i32) (i32.const 0x000FA000))
   (global $UOP_CWMAP_BYTES i32 (i32.const 0x4000))
+  ;; The program-start bitmap, in the last 8KB: one bit per 16-byte granule
+  ;; of code, set by $uop_install at a program's header and cleared only by a
+  ;; flush. A header's gen word alone cannot say "a program starts here": an
+  ;; enter op or a map way outlives the flush that freed its program, and the
+  ;; next generation's code words and alignment padding land on the same
+  ;; bytes. Deus Ex entered a retired program's header that way, whose gen
+  ;; word was a later program's last operand (4, in generation 4) followed by
+  ;; the dead header's own head EIP left in that program's padding. See
+  ;; $uop_live.
+  (global $uop_starts_off (mut i32) (i32.const 0x000FE000))
+  (global $UOP_STARTS_BYTES i32 (i32.const 0x2000))
   ;; A range was removed since the filter was last rebuilt, so it may hold
   ;; bits no live range owns (a conservative, not a wrong, answer).
   (global $uop_cw_stale (mut i32) (i32.const 0))
@@ -277,7 +288,7 @@
         (then (call $uop_census_ev (i32.const 7) (i32.load (local.get $s))
                 (i32.const 0) (i32.const 0) (i32.const 0))))
       (if (i32.gt_u (local.get $pc) (i32.const 1))
-        (then (if (i32.eq (i32.load (local.get $pc)) (global.get $uop_gen))
+        (then (if (call $uop_live (local.get $pc))
           (then (call $uop_census_ev (i32.const 6) (i32.load offset=4 (local.get $pc))
                   (i32.load offset=16 (local.get $pc)) (i32.load offset=20 (local.get $pc))
                   (i32.const 0))))))
@@ -1323,7 +1334,8 @@
 
   ;; ===================================================================
   ;; Installation. A program header, 32 bytes, precedes its code:
-  ;;   +0 gen   ($uop_gen at install; a killed program holds 0)
+  ;;   +0 gen   ($uop_gen at install; a killed program holds 0; necessary
+  ;;            for "live" but not sufficient -- see $uop_live)
   ;;   +4 head  (the guest EIP it is entered at)
   ;;   +8 nwin  +12 first window slot address (its own, after its code)
   ;;   +16 entries  +20 blocks spent in it  (stats, and the retire policy)
@@ -1353,12 +1365,40 @@
       (then (return (i32.add (local.get $s) (i32.const 8)))))
     (i32.const 0))
 
+  ;; $pc's place in the program-start bitmap: the byte's address here (0 when
+  ;; $pc is not the start of a 16-byte granule of code) and the bit's mask in
+  ;; $uop_start_bit.
+  (func $uop_start_byte (param $pc i32) (result i32)
+    (local $off i32)
+    (local.set $off (i32.sub (local.get $pc) (global.get $uop_arena)))
+    (if (i32.or (i32.ge_u (local.get $off) (global.get $uop_code_bytes))
+                (i32.ne (i32.and (local.get $off) (i32.const 15)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (i32.add (i32.add (global.get $uop_arena) (global.get $uop_starts_off))
+             (i32.shr_u (local.get $off) (i32.const 7))))
+  (func $uop_start_bit (param $pc i32) (result i32)
+    (i32.shl (i32.const 1)
+      (i32.and (i32.shr_u (i32.sub (local.get $pc) (global.get $uop_arena)) (i32.const 4))
+               (i32.const 7))))
+
+  ;; Is there a program of the current generation at $pc? Its header's gen
+  ;; word says so only if a program was installed at exactly $pc since the
+  ;; last flush; otherwise those bytes may be anybody's code or padding (see
+  ;; $uop_starts_off), so the start bitmap has to agree.
+  (func $uop_live (param $pc i32) (result i32)
+    (local $b i32)
+    (if (i32.ne (i32.load (local.get $pc)) (global.get $uop_gen)) (then (return (i32.const 0))))
+    (local.set $b (call $uop_start_byte (local.get $pc)))
+    (if (i32.eqz (local.get $b)) (then (return (i32.const 0))))
+    (i32.ne (i32.and (i32.load8_u (local.get $b)) (call $uop_start_bit (local.get $pc)))
+            (i32.const 0)))
+
   ;; Does way $w hold a program of the current generation?
   (func $uop_way_live (param $w i32) (result i32)
     (local $pc i32)
     (local.set $pc (i32.load offset=4 (local.get $w)))
     (if (i32.le_u (local.get $pc) (i32.const 1)) (then (return (i32.const 0))))
-    (i32.eq (i32.load (local.get $pc)) (global.get $uop_gen)))
+    (call $uop_live (local.get $pc)))
 
   ;; The way to write $eip's verdict into without evicting a live program:
   ;; its own way, else an empty or stale one, else a marker's; 0 when both
@@ -1388,7 +1428,7 @@
     (local.set $pc (i32.load offset=4 (local.get $s)))
     ;; 0 = nothing here, 1 = retired as poor (see $uop_retire_poor).
     (if (i32.le_u (local.get $pc) (i32.const 1)) (then (return (i32.const 0))))
-    (if (i32.ne (i32.load (local.get $pc)) (global.get $uop_gen)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $uop_live (local.get $pc))) (then (return (i32.const 0))))
     (local.get $pc))
 
   ;; The hot-head hook: $bx_hot_bump calls this instead of the block
@@ -1430,9 +1470,15 @@
   ;; With both ways live, the program entered less often gives up its way.
   ;; It keeps running from the blocks already decoded with its enter op.
   (func $uop_install (param $eip i32) (param $pc i32)
-    (local $s i32)
+    (local $s i32) (local $b i32)
     (i32.store (local.get $pc) (global.get $uop_gen))
     (i32.store offset=4 (local.get $pc) (local.get $eip))
+    ;; A program starts here ($uop_live). $pc is always a placement of this
+    ;; arena's; one that is not has no bit and is simply never entered.
+    (local.set $b (call $uop_start_byte (local.get $pc)))
+    (if (local.get $b)
+      (then (i32.store8 (local.get $b)
+              (i32.or (i32.load8_u (local.get $b)) (call $uop_start_bit (local.get $pc))))))
     (local.set $s (call $uop_map_free_way (local.get $eip)))
     (if (i32.eqz (local.get $s))
       (then
@@ -1654,6 +1700,10 @@
     (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_cwmap_off))
                  (i32.const 0) (global.get $UOP_CWMAP_BYTES))
     (global.set $uop_cw_stale (i32.const 0))
+    ;; Nothing starts anywhere: every enter op and map way still naming this
+    ;; generation's programs now fails $uop_live, whatever lands on the bytes.
+    (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_starts_off))
+                 (i32.const 0) (global.get $UOP_STARTS_BYTES))
     (global.set $uop_alloc (i32.const 0)))
   ;; ... and when the code itself may have changed, the verdicts on it too:
   ;; forget every retired and declined marker ($uop_mark_dead).
@@ -1674,6 +1724,7 @@
     (global.set $uop_map_off (i32.add (global.get $uop_code_bytes) (i32.const 0x8000)))
     (global.set $uop_ranges_off (i32.add (global.get $uop_code_bytes) (i32.const 0x10000)))
     (global.set $uop_cwmap_off (i32.add (global.get $uop_code_bytes) (i32.const 0x1C000)))
+    (global.set $uop_starts_off (i32.add (global.get $uop_code_bytes) (i32.const 0x20000)))
     (call $uop_flush_all))
 
   ;; The enter op, first in the head block's threaded code. Its operand is
@@ -1683,8 +1734,10 @@
   (func $th_uop_enter (param $op i32)
     (local $nx_fn i32) (local $nx_op i32)
     (local $ep i32) (local $b0 i32) (local $b1 i32) (local $n i32) (local $spent i32)
+    ;; $uop_live, not just the gen word: this op outlives the flush that
+    ;; freed its program, and the bytes it names get reused.
     (if (i32.and
-          (i32.and (i32.eq (i32.load (local.get $op)) (global.get $uop_gen))
+          (i32.and (call $uop_live (local.get $op))
                    (i32.eq (i32.load offset=4 (local.get $op)) (global.get $eip)))
           ;; $dbg_tier_guard, not $dbg_chain_guard: the handler histogram
           ;; must see the tier running (13-exports.wat $dbg_recompute).

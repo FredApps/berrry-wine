@@ -822,6 +822,56 @@ function codeWriteCase(inst, a, nextCode) {
   return errs;
 }
 
+// An enter op outlives the flush that freed its program (07d $uop_flush only
+// bumps the generation and rewinds the arena), and so does a map way. The
+// next generation's programs then land on the freed bytes, and the old
+// header's gen word is whatever they put there. Deus Ex (docs/re-notes/
+// deus-ex-demo.md) crashed exactly so: a later program's last operand was 4
+// in generation 4, its alignment padding still held the dead header's head
+// EIP, and the stale enter op ran a "program" made of that program's window
+// slots. Forge that coincidence at a freed header and the enter must refuse
+// it: only a program installed at that address since the flush may run.
+function staleEnterCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const loop = asm([L('l'), [0x88, 0x07], 0x47, 0x49, J(cc.NZ, 'l'), 0xC3]); // mov [edi],al; inc edi; dec ecx; jnz; ret
+  const Ld = nextCode(), Lh = nextCode(), Lx = nextCode();
+  for (const at of [Ld, Lh, Lx]) mem.set(loop, g2w(at));
+  const dv = new DataView(e.memory.buffer);
+  const errs = [];
+  e.set_uop(1);
+  try {
+    // Something before it, so the victim's header is not the arena's first
+    // byte (which the next generation's first program would own outright).
+    const pd = e.uop_compile(Ld);
+    const ph = e.uop_compile(Lh);
+    if (!pd || !ph) return ['store loop declined'];
+    e.uop_install(Ld, pd);
+    e.uop_install(Lh, ph);
+    if (ph <= pd || (ph & 15)) return [`unexpected placement pd=${pd.toString(16)} ph=${ph.toString(16)}`];
+    const en0 = e.uop_stats(4);
+    if (!callAt(inst, a, Lh, { ecx: 64, edi: a.buf, eax: 0x41 })) errs.push('victim did not return');
+    if (e.uop_stats(4) === en0) return ['victim never entered: no enter op to go stale'];
+    e.uop_flush();
+    const x = e.uop_compile(Lx);
+    if (!x) return ['next-generation loop declined'];
+    e.uop_install(Lx, x);
+    // The coincidence: the new gen in the freed header's gen word, the head
+    // EIP still behind it, and its enter count reset so a run shows.
+    dv.setUint32(ph, e.uop_gen() >>> 0, true);
+    dv.setUint32(ph + 4, Lh >>> 0, true);
+    dv.setUint32(ph + 16, 0, true);
+    for (let i = 0; i < 4; i++) {
+      if (!callAt(inst, a, Lh, { ecx: 64, edi: a.buf + 0x100, eax: 0x50 + i })) errs.push('threaded run did not return');
+    }
+    if (dv.getUint32(ph + 16, true)) errs.push(`entered a freed header ${dv.getUint32(ph + 16, true)} times`);
+    if (mem[g2w(a.buf + 0x100 + 63)] !== 0x53) errs.push('store loop wrote the wrong bytes');
+    if (!errs.length) console.log(`stale-enter        ok (freed header at arena+0x${(ph - e.uop_arena()).toString(16)} refused)`);
+  } finally {
+    e.set_uop(0);
+  }
+  return errs;
+}
+
 // A re-guard widens its window to the 64KB-aligned block around the missing
 // page ($uop_reguard_wide, 07d) while the backing stays affine and, for a
 // store window, no page holds code. Two properties: a store sweep that walks
@@ -1113,6 +1163,10 @@ async function main() {
   if (!only || only === 'code-write-gate') {
     const errs = codeWriteCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`code-write-gate    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'stale-enter') {
+    const errs = staleEnterCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`stale-enter        FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'reguard-widen') {
     const errs = reguardWidenCase(inst, a, () => a.code + 0x1000 * slot++);
