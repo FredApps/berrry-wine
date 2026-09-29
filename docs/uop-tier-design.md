@@ -1789,3 +1789,149 @@ repeat is the null band.
 
 The lowering is pure coverage and has no flag. It is on whenever the uop tier
 is on (`--no-uop` still turns off the whole tier).
+
+### 15.3 Host API calls inside uop programs: not worth building yet (2026-09-29)
+
+The proposal was to stop exiting a uop program for some host API calls:
+
+- **Tier 1**, inline as micro-ops: GetLastError/SetLastError,
+  TlsGetValue/TlsSetValue, GetCurrentThreadId/ProcessId/Thread/Process,
+  GetProcessHeap, the Interlocked* family, and uncontended
+  Enter/LeaveCriticalSection.
+- **Tier 2**, call the WAT handler from inside the program ("hostcall"):
+  gl* immediate mode, HeapAlloc/Free/ReAlloc/Size,
+  GetTickCount/timeGetTime/QPC (these carry the clock-spin detector caveat),
+  and native CRT overrides that run no guest code (`2crt`).
+- **Exit**: everything else, meaning anything that runs guest code, yields,
+  blocks or switches threads.
+
+The question is how much execution sits behind those calls. It was measured
+with `tools/call-form-weighted.js --apis`, reusing the §15 and §15.1
+histograms: 11 apps, 3 windows each.
+
+How the tool counts:
+
+- For each API it reports:
+  - its call sites' share of **all** block entries;
+  - how much of that share lies inside a loop the uop tier declined, split by
+    the innermost declined loop's reason;
+  - the number of sites;
+  - the tier.
+- A declined loop is the head's strongly connected component in the edge
+  graph, plus every block its calls reach before returning (callee extents).
+  Without the extents, the CRT's `_getptd` calls in callees were invisible.
+- A loop whose own blocks plus its callees exceed `UC_MAX_LOOP` (400
+  instructions) is tagged `>400`. No call lowering would admit such a loop,
+  so it is excluded from the "inside declined loops" column and from every
+  ceiling.
+- The **ceiling** for tier k counts the threaded entries of declined loops
+  that meet all of these:
+  - they make at least one host call;
+  - every host call they make is tier ≤ k;
+  - they make no guest indirect call.
+- **Strict** counts only loops declined for `call-indirect`. **Loose** also
+  counts scan-limit, head-unsupported and no-backedge loops. Loose is
+  optimistic, because removing the call does not by itself fix those reasons.
+
+Tool and runtime changes:
+
+- `$win32_dispatch` records a (calling block → thunk) edge when
+  `--edge-hist` is on.
+- A new `thunk_word` export and `test/run.js` together write
+  `thunks {addr: api name}` into the histogram JSON. New runs therefore name
+  GetProcAddress and COM targets.
+- The existing histograms predate this change, so only calls through an IAT
+  slot are named. The rest print as `?call [global]`, `?call r` and so on.
+- `--app=ID` takes the PE set from `lib/apps.js`.
+- `--merge` builds the tables below.
+- `--assume-tier='NAME:T'` bounds a ceiling for a call the histogram cannot
+  name.
+
+No new runs were needed, because the bounds below decide the question with
+margin.
+
+**Ranked APIs** (max over all windows):
+
+| API | tier | max share of all block entries | max share inside declined loops of ≤400 insns | where |
+|---|---|---|---|---|
+| `?call [global]` = HL qgl* (glTexCoord2f, glColor4f, glVertex3f, glBegin, glEnd) | 2 (gl) | 1.78% | 0.53% | HL 1.78, UT2004 load 0.53 (msvcr71 `_getptd`'s TlsGetValue via a pointer) |
+| `?call [r+d]` (COM/D3D, callbacks) | exit | 0.68% | 0.04% | Morrowind |
+| GetLastError | 1 | 0.53% | 0.53% | UT2004 load, UT2003 load 0.16 |
+| SetLastError | 1 | 0.53% | 0.53% | UT2004 load, UT2003 load 0.16 |
+| `?call r` | exit | 0.49% | 0.21% | HL, UT2004 load 0.13 |
+| EnterCriticalSection | 1 | 0.20% | 0.01% | IWD, Morrowind 0.18 |
+| LeaveCriticalSection | 1 | 0.20% | 0.01% | IWD, Morrowind 0.18 |
+| TlsGetValue | 1 | 0.16% | 0.16% | UT2003 load |
+| IntersectRect | exit | 0.11% | 0.00% | IWD |
+| GetCurrentThreadId | 1 | 0.09% | 0.00% | Morrowind |
+| `_ftol` | 2crt | 0.07% | 0.00% | Unreal SE |
+
+Nothing else reaches 0.05%. That includes Heap*, the clock reads and every
+other CRT export.
+
+The HL names were resolved statically:
+
+- The hot `hw.dll+0x1000a8b8..0x1000e1ca` sites call through
+  `0x1068a4fc` = glTexCoord2f, `0x10689c24` = glColor4f,
+  `0x1068a39c` = glVertex3f, `0x1068a4a0` = glBegin and
+  `0x10689c64` = glEnd.
+- Each slot is filled at a `push "glXxx"; call [GetProcAddress]; mov [slot],eax`
+  site, e.g. `hw.dll+0x10047b6a`.
+
+**Per-app ceilings** (share of all block entries):
+
+| app (windows) | API calls | tier-1 calls | tier-2 calls | tier-1 ceiling strict / loose | tier-1+2 ceiling strict / loose |
+|---|---|---|---|---|---|
+| SimGolf gameplay (2500..4000) | 0.03% | 0.00% | 0.00% | 0 / 0 | 0 / 0 |
+| WC3 Prologue HUD | 0.56-0.58% | 0.10% | 0.24-0.25% | 0 / 0.39-0.40% | 0.29-0.32% / 0.67-0.71% |
+| Heroes III map | 0.04-0.06% | 0.01-0.02% | 0.02-0.03% | 0 / 0 | 0 / 0 |
+| Unreal SE flyby | 0.14-0.15% | 0.07-0.08% | 0.05-0.08% | 0 / 0 | 0 / 0 |
+| Deus Ex | 0.10-0.12% | 0.09-0.11% | 0.01% | 0 / 0 | 0 / 0 |
+| UT2003 **load** | 0.29-0.52% | 0.25-0.49% | 0.00% | 0-4.71% / 1.07-5.05% | same |
+| UT2004 **load** | 0.48-1.61% | 0.20-1.06% | 0.00% | 0 / 0 (1.11-3.79% loose with the `_getptd` pointer call assumed tier 1) | same |
+| Half-Life gameplay | 0.88-2.28% | 0.00% | 0.00% (unnamed) | 0 / 0 | 0.44-1.10% with every unnamed `call [global]`/`call r` assumed tier 2 |
+| Arcanum | 0.02% | 0.00% | 0.00% | 0 / 0-0.01% | 0 / 0-0.01% |
+| Morrowind (13.0M..13.6M) | 1.14-1.16% | 0.45-0.46% | 0.01-0.03% | 0 / 0 | 0 / 0 |
+| Icewind Dale | 0.70-0.71% | 0.39-0.40% | 0.01% | 0 / 0 | 0 / 0 |
+
+Verdict:
+
+- **Tier 1 is not worth building for gameplay.** In no gameplay window does
+  tier-1 traffic reach 0.5% of entries. Its ceiling is 0.00% strict
+  everywhere, and at most 0.40% loose (WC3).
+- It clears the 2-3% bar only in the UT2003/UT2004 **loading** phase.
+  - There msvcr70/71's `_getptd` runs inside declined per-character loops:
+    `msvcr70+0x7c00137f..0x7c00139f` at 4.71% in UT2003 220..370, and
+    msvcr71 at up to 3.79% loose.
+  - `_getptd` is the trio GetLastError → TlsGetValue → SetLastError. In
+    msvcr71 the TlsGetValue goes through a function pointer.
+- **Tier 2 is not worth building.**
+  - WC3's HUD ceiling is 0.29-0.71%.
+  - Half-Life's gl immediate-mode calls are the largest API traffic measured
+    (1.78%). But even treating every unnamed indirect call there as a
+    hostcall gives a ceiling of 1.10%. Most of its gl calls sit in loops
+    already over 400 instructions (`no-backedge>400` 1.09%).
+  - Heap*, the clock reads and the CRT overrides never reach 0.1%.
+- **What limits these loops is size, not API calls.** The declined loops that
+  do contain API calls are mostly `>400` once their callees are counted.
+  Neither tier would admit them.
+- **If tier 1 is ever built, do the `_getptd` trio first:**
+  - GetLastError, SetLastError and TlsGetValue, as per-thread loads and
+    stores of `$last_error` and the TLS slot array.
+  - Accept TlsGetValue reached through a function pointer that resolves to
+    the thunk (msvcr71). Otherwise the trio does not help UT2004.
+  - This would speed up loading, not gameplay.
+  - Enter/LeaveCriticalSection come next (Morrowind, IWD at 0.18-0.20%), and
+    only once a gameplay window shows them in a sub-400 declined loop. None
+    does today.
+
+Reproduce:
+
+```
+node tools/call-form-weighted.js <windows> --app=ID --log=run.log --apis \
+  --apis-json=X.apis.json --label=NAME
+node tools/call-form-weighted.js --merge *.apis.json
+```
+
+A run with `--edge-hist` from this build also names every
+GetProcAddress/COM target through its thunk, so no `--assume-tier` is needed.
