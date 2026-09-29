@@ -222,6 +222,13 @@ class CodeCache {
     this.arenaResets = 0;
     this.unimplemented = new Map();
     this.jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
+    // A new cache owns the arena from THREAD_BASE again, so nothing may still
+    // point into it: a second session on a VM an earlier one ran (uop-harness
+    // stepTo after runDos) otherwise followed the old jump-table entries and
+    // return stack into words the new cache had overwritten -- a garbage
+    // handler index, "table index is out of bounds" (DINO, ANSWER, ...).
+    this.jtab.fill(0);
+    vm.set('rtop', 0);
     this.codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
     this.codeBits.fill(0);
     this.armWatch();

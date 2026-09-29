@@ -278,6 +278,46 @@ baseline passes keep most of the loop tier's win but not 70–80%: they are
 on this set, which is still dominated by heads that barely enter E1 (21 of
 34 within ±5% of L1).
 
+**Capture ladder (bt6).** In bt5, 27 of the 67 corpus heads "never reached"
+the loop head at a flat 20M-step capture. `uop-speed` now tries a ladder of
+budgets around it (B, B/2, B/4, B/8, 2B, 4B), each from a fresh run, and
+stands at the head from the first budget it recurs after. Only 2 heads
+still miss (B-STEEL, BAZIRRE), and the set grows to 48 programs (node) / 47
+(SM), still with zero bail rows. The bt5 conclusions hold: all x1.302 /
+x1.193 over L1, baseline x1.138 / x1.027, allRP x1.003 / x0.990 of all,
+null band x0.996 / x0.997.
+
+The ladder also exposed a toyvm cache bug, not a tier one. A new
+`CodeCache` restarts its arena but kept the previous session's jump table
+and return stack. Capture opens a second session on a warm VM, which then
+dispatched into overwritten arena words: "table index is out of bounds" on
+DINO, ANSWER, ALCHMSB, CONTAGIO, DENTROCF and ACME-VIC. The fix is in
+`dos-loop.js`: the constructor now clears both. Programs whose window ends
+on SMC or an int after a few thousand steps (ANSWER, DOPE, POLLY) are too
+short to time and should be read as no data.
+
+**What resident is worth to a chained tier (bt7).** Phase 1 would chain
+per-block programs, which is exactly where the promoted model pays a
+reload at every block entry and a flush at every exit. The `baselineBF`
+proxy puts those loads and stores on every fast body block of an
+otherwise-`baselineRF` region: the same µops plus the block-boundary
+traffic.
+
+| | node (48) | SM (47) |
+|---|---|---|
+| null band (all#2/all, geo; p90) | x1.003; 2.1% | x0.998; 2.4% |
+| baselineRF over L1 | x1.138 | x1.024 |
+| baselineBF over L1 | x1.062 | x0.956 |
+| **BF time / RF** (geo) | **x1.071** | **x1.071** |
+| BF time / RF, p90 | x1.324 | x1.263 |
+| BF > 5% slower | 17 of 48 | 15 of 47 |
+
+Per-block reload and flush cost 7% of E1 time on both engines. That is
+three times the null band's p90, and on SM it pushes the baseline below L1.
+It is also a lower bound: `mergeStraight` has already fused straight-line
+runs, so the proxy has fewer boundaries than a per-L1-block tier would.
+**Resident is the register model for phase 1.**
+
 ### Resident guest registers (2026-09-29, measured)
 
 Idea: make guest registers the first vregs, so a block never reloads or writes
