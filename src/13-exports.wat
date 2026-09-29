@@ -2640,6 +2640,12 @@
   (func (export "set_block_chain") (param $flag i32)
     (global.set $block_chain_on (i32.ne (local.get $flag) (i32.const 0))))
   (func (export "get_block_chain") (result i32) (global.get $block_chain_on))
+  ;; Switch table jumps (jmp [disp+r*4]) as $th_jmp_tbl in threaded code and
+  ;; as a guarded table branch in the uop tier. On by default; run.js
+  ;; --no-jump-table / ?no-jump-table turn it off for an A/B.
+  (func (export "set_jump_table") (param $flag i32)
+    (global.set $jump_table_on (i32.ne (local.get $flag) (i32.const 0))))
+  (func (export "get_jump_table") (result i32) (global.get $jump_table_on))
   (func (export "get_chain_hits") (result i64) (global.get $chain_hits))
   ;; Arms the $branch_end_calls / $branch_end_pool counters. Off, the block
   ;; transfer path pays no counter at all, so a reader that did not arm this

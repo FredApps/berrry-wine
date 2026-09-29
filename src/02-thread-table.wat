@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 476 funcref)
+  (table $handlers 477 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -545,4 +545,5 @@
     $th_pop_run               ;; 473: 2-6 POP r32 as one op
     $th_push_run_call         ;; 474: PUSH run + CALL rel32 (ret, target words)
     $th_pop_run_ret           ;; 475: POP run + RET / RET imm16 (imm word)
+    $th_jmp_tbl               ;; 476: jmp [disp+r*4], a switch table jump (06b)
   )

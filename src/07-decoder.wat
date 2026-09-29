@@ -4465,7 +4465,18 @@
     (call $te_raw (local.get $a)))
 
   ;; JMP [mem] (indirect)
+  ;; 1: a switch table jump jmp [disp+r*4] is emitted as 476 ($th_jmp_tbl);
+  ;; 0: as before (355 for eax, else 125). set_jump_table / --no-jump-table.
+  (global $jump_table_on (mut i32) (i32.const 1))
   (func $emit_jmp_ind (local $a i32)
+    (if (i32.and (i32.ne (global.get $jump_table_on) (i32.const 0))
+          (i32.and (i32.eq (global.get $mr_base) (i32.const -1))
+                   (i32.and (i32.ge_s (global.get $mr_index) (i32.const 0))
+                            (i32.eq (global.get $mr_scale) (i32.const 2)))))
+      (then
+        (call $te (i32.const 476) (global.get $mr_index))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (if (call $mr_simple_base)
       (then (call $te (i32.const 141) (i32.const 0))
             (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))

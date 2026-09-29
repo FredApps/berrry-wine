@@ -270,6 +270,10 @@ async function main() {
   // elision tier.
   ARMS.nostk = [...ARMS.uop, '--no-stack-fusion'];
   ARMS.aggr = [...ARMS.uop, '--aggressive-stack'];
+  // nojt / nojtoff: switch table jumps (jmp [disp+r*4]) back on the desk and
+  // unsupported in the tier -- the A/B partner of $th_jmp_tbl + JTBL.
+  ARMS.nojt = [...ARMS.uop, '--no-jump-table'];
+  ARMS.nojtoff = [...ARMS.off, '--no-jump-table'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.

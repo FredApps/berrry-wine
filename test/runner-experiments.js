@@ -163,6 +163,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const NO_STACK_FUSION = hasFlag('no-stack-fusion');
   const NO_RECT_RUN = hasFlag('no-rect-run');
   const NO_CASE_CHAIN = hasFlag('no-case-chain');
+  // --no-jump-table: switch table jumps back on 355/125 and the desk, and
+  // unsupported in the uop tier (the same-build A/B of $th_jmp_tbl + JTBL).
+  const NO_JUMP_TABLE = hasFlag('no-jump-table');
   const NO_RLE_RUN = hasFlag('no-rle-run');
   // The two stream-idiom folds (docs/loop-idiom-superops-design.md §20). Both
   // are on by default and both off switches exist for the same reason the ones
@@ -255,6 +258,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_STACK_FUSION) inheritWasm('set_stack_fusion', 0);
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
     if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
+    if (NO_JUMP_TABLE) inheritWasm('set_jump_table', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
     if (NO_SMK_TREE) inheritWasm('set_smk_tree', 0);
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
@@ -390,6 +394,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
       instance.exports.set_case_chain(0);
+    }
+    if (NO_JUMP_TABLE && instance.exports.set_jump_table) {
+      instance.exports.set_jump_table(0);
     }
     if (NO_RLE_RUN && instance.exports.set_rle_run) {
       instance.exports.set_rle_run(0);

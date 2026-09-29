@@ -396,7 +396,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
+      (block $c68 (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
       (block $c49 (block $c48 (block $c47 (block $c46 (block $c45 (block $c44
       (block $c43 (block $c42 (block $c41 (block $c40 (block $c39 (block $c38
@@ -411,7 +411,7 @@
                   $c26 $c27 $c28 $c29 $c30 $c31 $c32 $c33 $c34 $c35 $c36 $c37
                   $c38 $c39 $c40 $c41 $c42 $c43 $c44 $c45 $c46 $c47 $c48 $c49
                   $c50 $c51 $c52 $c53 $c54 $c55 $c56 $c57 $c58 $c59 $c60 $c61 $c62 $c63
-                  $c64 $c65 $c66 $c67
+                  $c64 $c65 $c66 $c67 $c68
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -859,6 +859,15 @@
         (br $svc))
         ;; 67 SPILL s base disp -- calls $gs32: $uop_run does it
         (br $svc))
+        ;; 68 JTBL i n x -- a switch's table jump (07e $uc_emit_jtbl): an
+        ;; index below n takes the index-th of the n GOTOs that follow, and
+        ;; the arm there checks the entry it loaded; any other index goes to
+        ;; x. A layout jump: no x86 transfer, no block spent.
+        (local.set $v (i32.load (i32.load offset=4 (local.get $pc))))
+        (if (i32.lt_u (local.get $v) (i32.load offset=8 (local.get $pc)))
+          (then (local.set $pc (i32.load offset=20 (i32.add (local.get $pc) (i32.shl (local.get $v) (i32.const 3))))))
+          (else (local.set $pc (i32.load offset=12 (local.get $pc)))))
+        (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))
