@@ -62,3 +62,32 @@ Compatibility work required for this route:
 - **Where the entries go:** 60% of the entries the tier did not take are
   SoftDrv MMX blocks refused as `head-unsupported`. `softdrv+0x10d3ed70`, a
   `movq [edi],mm0` fill loop, alone is 24.6% of all entries.
+
+## MMX qword-fill fold (2026-09-29)
+
+The fill loop is the SoftDrv frame clear:
+`movq [edi],mm0; add edi,8; dec ecx; jnz`. It is at `softdrv+0x10d3ed70`, and
+a 16-bit-path copy sits at `+0x10d3eec0`. Its first entry falls through from
+`shr ecx,1; nop` at `+0x10d3ed6d`. It is now one H419 `0x80000005` super-op
+(docs/loop-idiom-superops-design.md §23; gate `--no-mmx-fill-superops`).
+
+**Box1 run.** Route: `--app=deus_ex_demo --batch-size=200000
+--tick-ms-per-batch=25 --repaint-every=10 --branch-clock
+--wall-clock-ms=1790673326000 --max-batches=800`.
+
+- **Block entries, window 450..800:** down 17-24%, and the fill block leaves
+  the hot list. There were 214,909 fold runs filling 68.7M qwords.
+- **MMX instructions retired:** identical in both arms.
+- **Frames:** md5-identical at 450/560/680/790/end. Batches 450 and 790 are
+  black at this pacing.
+- **User CPU for 800 batches:** off 55.30/55.65 s, on 53.15/53.02 s, so
+  **−4.3%** against a 0.6% null band.
+
+**Next hottest.** All SoftDrv compute, declined `head-unsupported` by the uop
+tier:
+
+- `+0x10d2aea5`, bilinear lightmap fetch: 7.5-11.0% of threaded entries.
+- `+0x10d2b0be` / `+0x10d2b584`, span setup, which loads ESP as a GPR from
+  `[0x10d7d39c]`.
+- `+0x10d2b180` / `+0x10d2b640`, 8-texel palette-lookup span bodies.
+- `+0x10d05dbb`, a `jb` self-loop texel.

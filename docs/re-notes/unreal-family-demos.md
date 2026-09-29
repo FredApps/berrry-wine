@@ -307,3 +307,26 @@ Unreal SE's Nyleve flyby on SoftDrv: under 1% guest indirect. The threaded
 remainder there is SoftDrv MMX (`pxor`/`movq`/`pmulhw`/`psraw`) refused as
 `head-unsupported`. `galaxy+0x105085d2 call [0x1054c260]` calls a runtime-built
 mixer in heap memory (`0xc49394`).
+
+**MMX fill fold (2026-09-29).** Unreal SE's SoftDrv has the same
+`movq [r],mm; add r,8; dec c; jnz` clear loops as Deus Ex, at `0x10931ed0` and
+`0x10931ff0`. The fold (docs/loop-idiom-superops-design.md §23) matches them
+**zero times** in the flyby, batches 900-1800. The flyby never clears the
+frame.
+
+- Box1 runs with `--branch-clock --wall-clock-ms=1790673326000`: user CPU is
+  neutral, off 28.07/28.02 s against on 28.12/28.22 s.
+- Frames are md5-identical at 900/1200/1500/1790/end.
+
+The flyby's MMX share is compute. SoftDrv loads at a runtime base of
+`0x0289b000` (preferred `0x10900000`), so `softdrv+0x10924747` is the block at runtime
+`0x028bf747`. The hot blocks:
+
+- `softdrv+0x10924747` / `+0x1092475a`: palette-lookup texel, 4-5% of threaded
+  entries.
+- `+0x10922f2f`: bilinear lightmap fetch, 3-5%.
+- `+0x1092314e` / `+0x10923614`: span setup, which loads ESP from
+  `[0x109548b4]`.
+- `+0x10923210` / `+0x109236d0`: 8-texel span bodies.
+
+That is a uop-tier MMX coverage problem, not a fold.

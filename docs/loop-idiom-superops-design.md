@@ -1843,3 +1843,112 @@ express the exit edge at all.
 - Whether the exit edge can be preserved correctly by the fold at all: the fold
   must re-check the exit condition per iteration, which `COPY_RUN`'s counted
   form may or may not already express.
+
+## 23. MMX qword fill: the UE1 SoftDrv surface clear (2026-09-29)
+
+**The loop.** The call-form census (docs/uop-tier-design.md §15.1) had one block
+at 24.6% of Deus Ex's block entries in its 3D-logo window: `softdrv+0x10d3ed70`.
+It is the SoftDrv frame clear, a 9-byte counted loop:
+
+```asm
+10d3ed70  0f 7f 07     movq [edi],mm0     ; mm0 = colour duplicated (movd/psllq/por)
+10d3ed73  83 c7 08     add edi,8
+10d3ed76  49           dec ecx
+10d3ed77  75 f7        jnz 0x10d3ed70
+```
+
+The same loop appears at `+0x10d3eec0` (the 16-bit clear) and in Unreal SE's
+SoftDrv at `0x10931ed0`/`0x10931ff0`. `render.dll` has none. SoftDrv's other MMX
+loops are compute: bilinear lightmap texel fetch and palette-lookup texture
+spans. `find-loops` shows them, and none is a fill.
+
+**Recognition.** `$try_emit_mmx_fill64` in `07b-loop-match.wat` is an exact
+byte proof. It runs at every instruction boundary of the `0F` no-prefix decode
+path, next to `$try_emit_mmx_copy64`. It is *not* run on self-loop blocks: the
+first entry to `0x10d3ed70` is a fall-through from `shr ecx,1; nop` at
+`0x10d3ed6d`, so the loop's first iteration is mid-block.
+
+The proof requires:
+
+- `movq [r],mm` with mod=00 and r not ESP/EBP;
+- `add r,8` as `83 C0+r 08`;
+- `dec c` with c ≠ r and c ≠ ESP;
+- `jnz -9`.
+
+It emits H419 (`$LOOP_SUPEROP_COPY`) with operand `0x80000005`: no new handler,
+and the table stays at 498. The fall and back addresses and the packed
+`r | c<<4 | mm<<8` follow it.
+
+**Execution** (`$th_mmx_fill64`):
+
+- **Chunking.** It works one guest page at a time. Whole qwords inside the
+  page are v128-splat stores, after one `$invalidate_code_write` for the chunk.
+- **Slow path.** A qword that straddles a page, or a page that translates to
+  `NULL_SENTINEL`, goes through `$mmx_store64`, one qword per iteration. That
+  path honours `--fault-null=raise`: `$eip_redirected` abandons the fold with
+  the state of the faulting iteration.
+- **A fill that reaches its own code** stops after the iteration that writes
+  the loop's first byte. The rewritten loop is then decoded fresh.
+- **Final state is exact.** It leaves r and c, and flags as `add` then `dec`
+  leave them: DEC keeps the add's CF. `mmx_exec_count` advances by the
+  iteration count.
+- **Counts.** `c == 0` means 2^32 iterations. Each entry is capped at 64K
+  qwords, with the rest continuing on re-entry. Under `--branch-clock` it paces
+  through `$bc_fold_cap` / `$bc_fold_charge`, so a fixed batch lands on the
+  same guest state in both arms.
+
+The gate is `--no-mmx-fill-superops` (runner export `set_loop_mmx_fill_emit`,
+inherited by worker instances). `--loopmatch-stats` prints
+`MMX qword fills <matches> runs <runs> qwords <q> bulk <b>`.
+
+`test/test-mmx-fill64-run.js` covers:
+
+- bytes, GPRs, flags and MMX registers against the unfolded arm;
+- 1500 qwords that start 4 bytes before a page end;
+- another register assignment;
+- one iteration;
+- an unmapped destination;
+- a fill that rewrites a decoded function;
+- a fill that overwrites its own loop;
+- branch-clock budgets 3/10/64;
+- seven near misses.
+
+**Measured, box1 (Ryzen 9950X, x86_64 V8)**, tree d8d40f2d:
+
+- **Microbench.** `bench-loops --shapes=mmx_fill --bytes=16m`: 32.8 ns/iter
+  and 1.00 blocks/iter unfolded, against 0.1 ns/iter (57 GB/s) folded.
+- **Deus Ex demo, batches 450-800 (3D logo).** Route:
+  `--batch-size=200000 --tick-ms-per-batch=25 --branch-clock
+  --wall-clock-ms=1790673326000`.
+  - Block entries (threaded + uop) per third of the window:
+    **105.3M/104.2M/103.1M → 87.3M/85.1M/78.1M (−17.1%, −18.4%, −24.2%)**.
+    Uop entries are unchanged, and the fill block drops out of the hot list.
+  - MMX instructions retired are identical in both arms (3,071,457,648).
+    The fold made 214,909 runs and filled 68.7M qwords, every one on the bulk
+    path.
+  - Frames are md5-identical at batches 450/560/680/790/end in all six runs.
+  - Whole-route user CPU for 800 batches: off 55.30/55.65 s (null band 0.6%),
+    on 53.15/53.02 s (**−4.3%**).
+  - That matches the microbench: 68.7M iterations × 32.8 ns ≈ 2.3 s.
+- **Unreal SE Nyleve flyby, batches 900-1800.** **No matches**, and CPU is
+  neutral: off 28.07/28.02 s, on 28.12/28.22 s. Frames are identical.
+  - The flyby never clears the frame: every pixel is drawn. Unreal's clear
+    loops exist statically but are cold on this route.
+  - The 24-28% "SoftDrv MMX refused" there is the compute family below.
+
+**What is next, and why it is not a fold.** With the clear gone, Deus Ex's
+hottest blocks are SoftDrv compute, as is Unreal's whole MMX share:
+
+| Deus Ex block | Unreal SE twin | share of threaded (DX on / UN off) | what it is |
+|---|---|---|---|
+| `softdrv+0x10d2aea5` | `+0x10922f2f` | 7.5-11.0% / 3.2-4.9% | bilinear lightmap fetch: `punpcklbw`/`psubsw`/`pmulhw`/`paddw` |
+| `softdrv+0x10d2b0be`, `+0x10d2b584` | `+0x1092314e`, `+0x10923614` | 3.7-5.5% each / 1.6-2.5% | span setup: `movq`/`psubsw`, then a `cmp`/`jnb` dispatch on span length |
+| `softdrv+0x10d2b180`, `+0x10d2b640` | `+0x10923210`, `+0x109236d0` | 3.6-5.4% each / 2.2% | 8-texel span body: `paddd`/`psllq`/`punpckhdq`/`psrlq`/`pand`, then `movd ecx,mm` and `mov al,[ebx+ecx]`, then `pmulhw mm0,[edx+eax*8]` |
+| `softdrv+0x10d05dbb` | `+0x10924747` | 2.7% / 4.2-5.1% | the same palette-lookup texel as a `jb` self-loop, storing `movd [edi+esi*4-4],mm0` |
+
+These loops do real per-texel arithmetic. A loop-idiom fold would be a
+one-engine rasterizer written in WAT. The general lever is the uop tier learning
+the MMX forms it declines as `head-unsupported`: 34.9-40.9% of all Deus Ex
+entries with the fill on. That tier needs `pmulhw`, `punpck*`, `psrlq` by
+memory count, `movd` between GPRs and MMX, and a loop that uses ESP as a GPR
+(`mov esp,[0x10d7d39c]` in the span setup).
