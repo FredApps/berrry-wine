@@ -798,6 +798,19 @@ are self time unless marked incl.
    - Cost/risk: medium. The fold's results must stay bit-exact, which
      test-x86-ops' x87 cases check.
    - Evidence: H3 and WC3g cpu-prof, plus Ion sizes.
+   - **Done (2026-09-28, `$x87_island_fast` in 07b):** ST(0), TOP and the two
+     tag bytes in locals, one `br_table` per op, write-back once; unmodelled
+     forms publish and call `$fpu_exec_*`. No fold-time rewrite, so the
+     records and the 07c walkers are unchanged. `--no-x87-island-predecode`
+     is the A/B partner; `test/test-x87-island-predecode.js` fuzzes it
+     bit-for-bit against the old walk and the unfused handlers. Box2, same
+     build, interleaved, frames identical in every pair: **H3 −5.8% user**
+     (68.0/68.7s vs 72.9/72.2s; main 73.1/72.6s; null band <1%), **WC3g
+     −5.9%** (101.1/101.0s vs 107.9/107.0s; band 0.8%). Island incl time:
+     H3 14.0% → 8.5%, WC3g 11.5% → 6.5% (`cpuprof-top.js --incl=x87_island`).
+     Ion: 2248 instructions, one 17-way table, 69 direct calls (29 of them
+     `$fpu_set_exc` on cold paths) against the old per-op call into
+     `$fpu_exec_reg` (1415 insns, 10 indirect calls) / `$fpu_exec_mem`.
 6. **Inline `$read_thread_word`.**
    - What: make it a `defmacro`, as dispatch-next is. It is 12 instructions,
      called from 237 sites, and V8 does not inline it.
