@@ -136,6 +136,17 @@ textured draw; a worker CPU profile confirms `bytesEqual` is hot. Main already
 eliminates those scans, so the old 18.45 versus 7.53 FPS comparison must not
 be presented as a comparison against current main D3D.
 
+Updated-base rerun: merge `ed50bc08` includes main `3344817a` and the texture
+tracking fix. Two 30-second headful samples per route measured Glide 13.98,
+D3D 10.53, original software 3.18 FPS at 640×480 (high load 22–35, provisional).
+D3D textureByteChecks=0 over 633 frames; syncs=2/frame, syncMs=7.91/frame,
+fallbacks=24.55/frame. Artifacts: `build/nfs3-benchmark-updated/`. The earlier
+2.45× ratio is superseded by the updated-base observed 1.33× comparison.
+Fences supply current GPU pixels to CPU primitive fallbacks, DirectDraw pixel
+access and DIB-based Flip presentation; pending/dirty flags coalesce repeated
+CPU operations until another GPU draw. Aggregate counters do not identify the
+specific two triggering calls per frame. See the benchmark report for details.
+
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
 count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB
