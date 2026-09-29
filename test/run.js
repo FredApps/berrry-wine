@@ -565,6 +565,14 @@ const PRESENT_PACE = (() => {
 // wall-clock thread Sleep there leaves the main thread spinning on a live
 // thread and trips the stuck detector (test-blobby-host-probe).
 const REAL_TICK_SLEEPS = REAL_TICKS && PRESENT_CAP > 0;
+// --present-frames[=FROM_BATCH]: is a present cap safe for this app? Counts
+// detected frame ends against pump-bounded frames (and the app's
+// perf.logicalFrame counter when lib/apps.js declares one) from FROM_BATCH to
+// exit, per guest thread, and flags more than one frame end per game frame.
+// See lib/present-frame-audit.js.
+const PRESENT_FRAMES_ARG = getArg('present-frames', null);
+const PRESENT_FRAMES = hasFlag('present-frames') || PRESENT_FRAMES_ARG !== null;
+const PRESENT_FRAMES_FROM = Math.max(0, parseInt(PRESENT_FRAMES_ARG || '0', 10) || 0);
 // --- spin parking --------------------------------------------------------
 // Eight of the games in docs/frame-pacing-census.md busy-wait on the
 // millisecond clock and four more on an empty PeekMessage. Both detectors are
@@ -4164,6 +4172,44 @@ async function main() {
       // is otherwise indistinguishable from an address that never executed.
       console.log(`[count] slot ${i} armed at ${hex(addr)}`);
     }
+  };
+  // --present-frames: snapshot the frame-end counters at FROM_BATCH, report at
+  // exit. The app's perf.logicalFrame counter (lib/apps.js) takes the hit
+  // counter slot after the --count ones.
+  const presentAudit = require('../lib/present-frame-audit');
+  const presentLogical = (() => {
+    const m = APP_ENTRY && APP_ENTRY.perf && APP_ENTRY.perf.logicalFrame;
+    if (!PRESENT_FRAMES || !m || !(Number(m.address) > 0)) return null;
+    if (countAddrs.length >= 16) return null;
+    return { slot: countAddrs.length, address: Number(m.address) >>> 0, label: m.label || 'logical' };
+  })();
+  let presentFramesFrom = null;
+  const presentFramesSnapshot = () => {
+    const insts = [{ name: 'main', exports: instance.exports }];
+    if (threadManager && threadManager.threads) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) insts.push({ name: `T${t.tid}`, exports: t.instance.exports });
+      }
+    }
+    const logical = presentLogical && instance.exports.get_count
+      ? instance.exports.get_count(presentLogical.slot) >>> 0 : null;
+    // The batch clock read directly: a guest-clock read from the host would
+    // count toward the clock-spin detector.
+    return presentAudit.snapshot(insts, batchClock.batchTicks(), logical);
+  };
+  const presentFramesTick = (batch) => {
+    if (batch === 0 && presentLogical && instance.exports.set_count) {
+      instance.exports.set_count(presentLogical.slot, presentLogical.address);
+    }
+    if (batch === PRESENT_FRAMES_FROM) presentFramesFrom = presentFramesSnapshot();
+  };
+  var reportPresentFrames = () => {
+    if (!PRESENT_FRAMES || !instance.exports.get_present_frame_ends) return;
+    const r = presentAudit.audit(presentFramesFrom, presentFramesSnapshot(),
+      { cap: PRESENT_CAP, logicalLabel: presentLogical && presentLogical.label });
+    console.log(`[present-frames] from batch ${presentFramesFrom ? PRESENT_FRAMES_FROM : 0}`
+      + (PRESENT_CAP ? `, cap ${PRESENT_CAP}/s` : ', uncapped'));
+    for (const line of r.lines) console.log(line);
   };
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.on(sig, () => {
@@ -8945,6 +8991,7 @@ async function main() {
     // module-relative slot stays unresolved until its DLL loads, so this cannot
     // be a batch-0-only job.
     if (batch === 0) armCounts();
+    if (PRESENT_FRAMES) presentFramesTick(batch);
     // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
       if (breakThreadFilter !== null && breakThreadFilter !== 0) {
@@ -10068,6 +10115,7 @@ if (VERBOSE) {
       + `${instance.exports.get_present_paced_count()} frames slept `
       + `${instance.exports.get_present_paced_ms()} guest ms`);
   }
+  reportPresentFrames();
   reportMmx();
   reportGuestPageStats();
 

@@ -1718,6 +1718,22 @@
     (global.set $vblank_host_driven (i32.const 0))
     (global.set $vblank_counter (i32.const 0))
     (global.set $vblank_deadline_ms (i32.const 0)))
+  ;; Frame-end census ($present_frame_end / $present_pump in 09a8): detected
+  ;; frame ends, and the message pumps that closed one or more of them. More
+  ;; than one frame end per pump-bounded frame means a per-frame-end cap
+  ;; would sleep several times per game frame (run.js --present-frames).
+  (func (export "get_present_frame_ends") (result i32) (global.get $present_frame_ends))
+  (func (export "get_present_pump_frames") (result i32) (global.get $present_pump_frames))
+  (func (export "get_present_pump_bounded") (result i32) (global.get $present_pump_bounded))
+  ;; Test seams: one frame end, and one pump (returns 1 when it parked the
+  ;; pump on its thunk for the pace's sleep).
+  (func (export "test_present_frame_end") (call $present_frame_end))
+  (func (export "test_present_pump") (result i32) (call $present_pump))
+  (func (export "test_present_frame_reset")
+    (global.set $present_frame_pending (i32.const 0))
+    (global.set $present_pump_bounded (i32.const 0))
+    (global.set $present_frame_ends (i32.const 0))
+    (global.set $present_pump_frames (i32.const 0)))
   ;; Drive WaitForVerticalBlank once and report what it did, the way
   ;; test_cs_enter does for EnterCriticalSection. Bits:
   ;;   1  parked with yield_reason 13

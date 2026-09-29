@@ -132,6 +132,61 @@ message depth. More steps completed the transition, so the sampled thunk
 alone is not evidence of a hung clock or missing assets. Its exact transition
 duration has not been characterized.
 
+## Frame Structure And The Present Cap (2026-09-28)
+
+Fallout has one live DirectDraw surface: slot 1, the 640x480 8bpp primary.
+There is no back buffer and no `Flip`. Each main-loop turn:
+
+- `get_input` `0x00486bd4` calls the pump `0x00487cb8` (`PeekMessageA`, return
+  address `0x00487d82`), then `0x00486c38` (background processing), then the
+  input dequeue `0x00486cf0`. The pump is also called from `0x00487ebe` and
+  `0x00491183`. It also calls `timeGetTime` and DirectInput
+  `GetDeviceState`/`GetDeviceData`.
+- It draws each dirty rect through the blit routine `0x00489668`, which is
+  stored as a function pointer (GNW-style ShowRect). That routine does a
+  NULL-rect `IDirectDrawSurface_Lock` at `0x0048969f`, a `rep movsd` copy,
+  then `Unlock` at `0x00489748`. A walking turn does about five of these.
+
+Every Unlock that closes a whole-surface Lock is a frame end to the present
+limiter (`$present_lock_whole`). So Fallout has **5.2 frame ends per game
+frame**: 665 frame ends/guest-s against 128 pump-bounded frames/guest-s during
+the walk. This is the same shape as StarCraft's multi-present frame.
+
+With a limiter that paces every frame end, `--present-cap=60` slept about
+five periods per game frame. The first-area walk (click at batch 31400,
+1 ms/batch, batch size 10000, centroid of Max Stone per 50-batch PNG) took:
+
+| arm | walk | loop rate |
+|---|---|---|
+| uncapped | 1.55 guest-s | 128 pumped frames/guest-s |
+| cap 60, old limiter (b6123cc4) | **2.62 guest-s** | 1361 sleeps, 20.7 guest-s slept |
+| cap 60, pump-bounded limiter | 1.59 guest-s | 56 pumped frames/guest-s, 325 sleeps |
+
+The fix is in `src/09a8-handlers-directx.wat`. Every frame-end site calls
+`$present_frame_end`, which counts the event. Once a thread has been seen to
+call `PeekMessage`/`GetMessage` after a frame end, that thread is paced once,
+in `$present_pump`, at the next pump. Threads that never pump are still paced
+at each frame end. The sleep parks on the pump's own thunk, re-running the
+same call after the yield (the `$vblank_block` contract).
+
+**Do not use `get_input` as `perf.logicalFrame`.** A `--count` over a
+20000-batch menu run hit both `0x00486bd4` and the pump 165621 times each,
+about 8300 turns/guest-s. The loop spins whether or not it draws, so that
+counter counts idle turns, not frames. Pump-bounded frames (turns that
+closed at least one frame end) are the right signal.
+
+Re-check with:
+
+```sh
+node test/run.js --app=fallout_demo --no-threads --quiet-api --no-close \
+  --batch-size=10000 --tick-ms-per-batch=1 --max-batches=34510 \
+  --stuck-after=10000000 --present-frames=31300 [--present-cap=60] \
+  --input=15000:keydown:78,15100:keyup:78,17100:keydown:84,17200:keyup:84,21200:keydown:13,21300:keyup:13,31350:mousemove:320:240,31400:mousedown:320:240,31500:mouseup:320:240
+```
+
+It prints one `[present-frames]` line and a verdict. An `UNSAFE` verdict would
+mean the cap slept more than once per game frame.
+
 ## Still To Verify
 
 - Conversation and a complete enemy turn/continued combat sequence.

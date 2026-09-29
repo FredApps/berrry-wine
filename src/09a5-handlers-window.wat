@@ -1861,6 +1861,8 @@
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
     (if (call $incoming_send_yield) (then (return)))
+    ;; A capped frame is paced at the pump that closes it (09a8 $present_pump).
+    (if (call $present_pump) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
     (local.set $ret (call $gl32 (local.get $sp)))
     (loop $fetch
@@ -2170,6 +2172,8 @@
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
     (if (call $incoming_send_yield) (then (return)))
+    ;; A capped frame is paced at the pump that closes it (09a8 $present_pump).
+    (if (call $present_pump) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
     (local.set $ret (call $gl32 (local.get $sp)))
     (loop $fetch

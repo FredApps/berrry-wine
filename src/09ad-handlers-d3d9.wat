@@ -1227,7 +1227,7 @@
       (local.set $result (call $host_gpu_gl_call (i32.const 0x30002) (local.get $desc) (i32.const 0))))))
     (if (call $d3d_render_park (local.get $result) (i32.const 24)) (then (return)))
     ;; Past the park, this call completes whichever way it presents.
-    (call $present_pace)
+    (call $present_frame_end)
       (if (local.get $result) (then
         (i32.store offset=0 (global.get $reg_base) (select (i32.const 0) (i32.const 0x8876086C)
           (i32.eq (local.get $result) (i32.const 1)))) (return)))
@@ -2617,7 +2617,7 @@
     (if (i32.and (load.field DxObject flags (local.get $rt)) (i32.const 0x40000000))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086c)) (return)))
     (if (local.get $rt) (then (call $dx_present (local.get $rt))))
-    (call $present_pace)
+    (call $present_frame_end)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $handle_IDirect3DSwapChain9_GetFrontBufferData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

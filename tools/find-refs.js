@@ -109,7 +109,8 @@ const dataRefs = [];
 for (const sect of sections) {
   const isCode = !!(sect.flags & 0x20000000); // IMAGE_SCN_MEM_EXECUTE
   const start = sect.rawOff;
-  const end = sect.rawOff + sect.rawSize;
+  // A last section may claim raw bytes past EOF (Fallout's Watcom .rsrc).
+  const end = Math.min(sect.rawOff + sect.rawSize, buf.length);
 
   for (let pos = start; pos < end - 4; pos++) {
     const va = imageBase + sect.va + (pos - sect.rawOff);
