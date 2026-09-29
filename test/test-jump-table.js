@@ -99,6 +99,16 @@ const CASES = [
       [0x0F, 0xB6, 0x89, ...d32(a.btab)], JMP_TBL_ECX(a.tbl), ...bodies(), ...TAIL],
   },
   {
+    // MSVC's form of the double table (tools/find-jump-tables.js XORMOV2,
+    // the commonest bounded shape in Heroes III): xor eax,eax ;
+    // mov al, byte [ecx+btab] ; jmp [tbl+eax*4].
+    name: 'xormov-table',
+    tables: (a) => ({ tbl: a.tbl, ents: ['c0', 'c1', 'c2', 'c3', 'c4', 'c5'],
+      btab: a.btab, bents: [5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 1, 1, 3, 0] }),
+    code: (a) => [L('l'), [0x0F, 0xB6, 0x0E], 0x46, [0x83, 0xE1, 0x1F], [0x83, 0xF9, 0x0F], J(cc.A, 'def'),
+      [0x33, 0xC0], [0x8A, 0x81, ...d32(a.btab)], [0xFF, 0x24, 0x85, ...d32(a.tbl)], ...bodies(), ...TAIL],
+  },
+  {
     // The loop rewrites its own table: case 3 points entry 0 at case 4 (a
     // target the table already holds), then later case 5 points entry 1 at
     // 'x', a block the table never held. Both tiers must follow the table.

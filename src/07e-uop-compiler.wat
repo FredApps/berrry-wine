@@ -1177,15 +1177,25 @@
             (then (br_if $fail (i32.ne (i32.load offset=20 (local.get $P)) (i32.const 7)))
                   (local.set $ja (i32.const 1))
                   (br $l)))
-          ;; the byte table, between the ja and the jump
-          (if (i32.and (i32.and (i32.eqz (local.get $ja)) (i32.eq (local.get $k) (i32.const 17)))
-                       (i32.and (i32.eq (i32.load offset=32 (local.get $P)) (i32.const 8))
-                                (i32.eqz (i32.load offset=36 (local.get $P)))))
+          ;; the byte table, between the ja and the jump: movzx idx, byte [..]
+          ;; or MSVC's xor idx, idx / mov idx8, byte [..]. (The xor is only
+          ;; what makes the table's bound right; the program checks the index
+          ;; it actually has against n either way.)
+          (if (i32.and (i32.eqz (local.get $ja))
+                       (i32.or
+                         (i32.and (i32.eq (local.get $k) (i32.const 17))
+                                  (i32.and (i32.eq (i32.load offset=32 (local.get $P)) (i32.const 8))
+                                           (i32.eqz (i32.load offset=36 (local.get $P)))))
+                         (i32.and (i32.and (i32.eq (local.get $k) (i32.const 5))
+                                           (i32.eq (i32.load offset=16 (local.get $P)) (i32.const 8)))
+                                  (i32.and (i32.eq (i32.load offset=64 (local.get $P)) (i32.const 2))
+                                           (i32.eq (i32.load offset=80 (local.get $P)) (i32.const 2))))))
             (then
               (if (i32.eq (call $uc_writes (local.get $P)) (i32.shl (i32.const 1) (local.get $idx)))
                 (then
                   (br_if $fail (i32.ge_s (local.get $btab) (i32.const 0)))
-                  (br_if $fail (i32.ne (i32.load offset=16 (local.get $P)) (i32.const 32)))
+                  (br_if $fail (i32.and (i32.eq (local.get $k) (i32.const 17))
+                                        (i32.ne (i32.load offset=16 (local.get $P)) (i32.const 32))))
                   ;; [r' + btab] or [btab + r'*1]
                   (if (i32.and (i32.ge_s (i32.load offset=84 (local.get $P)) (i32.const 0))
                                (i32.lt_s (i32.load offset=88 (local.get $P)) (i32.const 0)))
