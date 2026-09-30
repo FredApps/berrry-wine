@@ -4610,6 +4610,12 @@
       (if (i32.and (i32.ne (local.get $err) (i32.const 0))
                    (i32.ne (i32.load (global.get $UC_CALLT)) (i32.const 0)))
         (then
+          ;; census 17: the calls-followed attempt's own reason, which the
+          ;; nocall retry's verdict replaces (a call-headed head retries into
+          ;; head-unsupported, since its own E8 is then unsupported)
+          (if (global.get $uop_census)
+            (then (call $uop_census_ev (i32.const 17) (local.get $eip) (local.get $err)
+                    (i32.load (global.get $UC_CALLT)) (global.get $uc_is_trace))))
           (global.set $uc_nocall (i32.const 1))
           (global.set $uc_err (i32.const 0))
           (local.set $err (call $uc_form_loop (local.get $eip)))
