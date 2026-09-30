@@ -76,6 +76,10 @@ function ablationConfigs(which = PASSES) {
     ['baseline', base], ['allR', { ...all, resident: true }], ['baselineR', { ...base, resident: true }],
     ['allRF', { ...all, resident: 'full' }], ['baselineRF', { ...base, resident: 'full' }],
     ['allRP', { ...all, resident: 'promote' }], ['baselineRP', { ...base, resident: 'promote' }],
+    // The cheapest builds the arena accepts (it needs promote for resident
+    // registers): promote alone, and promote with the clock pass.
+    ['promoteRP', { ...Object.fromEntries(PASSES.map(p => [p, p === 'promote'])), resident: 'promote' }],
+    ['promoteClockRP', { ...Object.fromEntries(PASSES.map(p => [p, p === 'promote' || p === 'clock'])), resident: 'promote' }],
     // baselineBF: the baseline passes with a reload/flush at every block
     // boundary (finalize, blockflush) -- the register traffic of a chained
     // per-block tier without resident registers; baselineRF is the same tier

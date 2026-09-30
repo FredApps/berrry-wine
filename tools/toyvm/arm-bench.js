@@ -13,6 +13,8 @@
 //   only       the µop-only arm (uop-only.js): loop nests and straight lines
 //   only-line  ...straight lines only, linked
 //   only-bl    only, with straight lines built on the baseline passes
+//   only-min   only, every program built with promote alone (promoteRP)
+//   only-base  only, every program built on the baseline passes (baselineRP)
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -49,6 +51,8 @@ const ARMS = {
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes
   'only-bl': () => ({ uopOnly: { shape: 'loop', linePasses: 'baselineRP' } }),
+  'only-min': () => ({ uopOnly: { shape: 'loop', passes: 'promoteRP', linePasses: 'promoteRP' } }),
+  'only-base': () => ({ uopOnly: { shape: 'loop', passes: 'baselineRP', linePasses: 'baselineRP' } }),
 };
 
 // --child: one run, printed as one JSON line.

@@ -299,6 +299,27 @@ for (const w of [8, 16, 32]) {
       + `(if ${bad(false)} (then ${bailTo(I)}))` + SET(0, `(${LDW[w]} (local.get $l))`));
     def(`stf${w}${form}`, `${kinds}i`, ({ V, I }) => addr(V, I)
       + `(if ${bad(true)} (then ${bailTo(I)}))` + `(${STW[w]} (local.get $l) ${V(0)})`);
+    // ...and the same with a planar VGA access done in place, byte by byte in
+    // uop-ref's order, through L1's own vga_rd8/vga_wr8, instead of handing the
+    // block back: only a 64K wrap (or a store onto code) still bails. Lowered
+    // for the last full access of a block only, since a VGA access is an
+    // effect (latches, the read/write counters) that a later bail would redo.
+    const vgaRd = () => {
+      let e = '(call $vga_rd8 (local.get $l))';
+      for (let k = 1; k < n; k++) e = `(i32.or ${e} (i32.shl (call $vga_rd8 (i32.add (local.get $l) (i32.const ${k}))) (i32.const ${8 * k})))`;
+      return e;
+    };
+    const vgaWr = (V) => Array.from({ length: n }, (_, k) => (k
+      ? `(call $vga_wr8 (i32.add (local.get $l) (i32.const ${k})) (i32.shr_u ${V(0)} (i32.const ${8 * k})))`
+      : `(call $vga_wr8 (local.get $l) ${V(0)})`)).join('');
+    def(`ldfv${w}${form}`, `${kinds}i`, ({ V, I, SET }) => addr(V, I)
+      + (n > 1 ? `(if ${wrap(n)} (then ${bailTo(I)}))` : '')
+      + SET(0, `(if (result i32) ${vga} (then ${vgaRd()}) (else (${LDW[w]} (local.get $l))))`));
+    def(`stfv${w}${form}`, `${kinds}i`, ({ V, I }) => addr(V, I)
+      + (n > 1 ? `(if ${wrap(n)} (then ${bailTo(I)}))` : '')
+      + `(if ${vga} (then ${vgaWr(V)}) (else`
+      + ` (if (i32.ne ${code(n)} (i32.const 0)) (then ${bailTo(I)}))`
+      + ` (${STW[w]} (local.get $l) ${V(0)})))`);
     def(`ldn${w}${form}`, kinds, ({ V, I, SET }) => addr(V, I) + SET(0, `(${LDW[w]} (local.get $l))`));
     def(`stn${w}${form}`, kinds, ({ V, I }) => addr(V, I) + `(${STW[w]} (local.get $l) ${V(0)})`);
   }
@@ -554,7 +575,7 @@ function lowerProgram(p, lo = {}) {
         const am = op.am ? op.am | 0 : -1;
         const first = op.o === 'ld' ? vr(op.d) : vr(op.b);
         const addrArgs = general ? [opt(op.a), vr(op.c), im(op.sc | 0), im(op.i | 0), im(am)] : [opt(op.a), im(op.i | 0), im(am)];
-        const name = `${op.o}${full ? 'f' : guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
+        const name = `${op.o}${full ? (op === lastFull ? 'fv' : 'f') : guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
         return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [bidArg(curBlock)] : []));
       }
       case 'callh':
@@ -777,13 +798,15 @@ function lowerProgram(p, lo = {}) {
 
   const blocks = new Map();
   const why = new Map();
-  let curBlock = -1, effected = false;
+  let curBlock = -1, effected = false, lastFull = null;
   for (const b of p.blocks) {
     if (!b || b.kind === 'dead' || !b.term) continue;
     const out = [];
     const E = (name, ...args) => out.push({ name, args });
     try {
       curBlock = b.id; effected = false;
+      lastFull = null;
+      for (const op of b.ops) if ((op.o === 'ld' || op.o === 'st') && op.chk === 'full') lastFull = op;
       for (const op of b.ops) {
         lowerOp(op, out);
         if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) effected = true;
@@ -1007,11 +1030,15 @@ ${text}
 // The engines' imports: the vm's memory, and L1's port read for PIN (a vm
 // built without it -- a unit harness -- fails the first PIN, never silently).
 const IO_IMPORT = '(import "host" "io_in" (func $io_in (param i32 i32 i32) (result i32)))'
-  + '\n(import "host" "io_out" (func $io_out (param i32 i32 i32 i32) (result i32)))';
+  + '\n(import "host" "io_out" (func $io_out (param i32 i32 i32 i32) (result i32)))'
+  + '\n(import "host" "vga_rd8" (func $vga_rd8 (param i32) (result i32)))'
+  + '\n(import "host" "vga_wr8" (func $vga_wr8 (param i32 i32)))';
 const hostOf = (vm) => ({
   memory: vm.memory,
   io_in: vm.exports.io_in || (() => { throw new Error('uop-wasm: this vm has no io_in'); }),
   io_out: vm.exports.io_out || (() => { throw new Error('uop-wasm: this vm has no io_out'); }),
+  vga_rd8: vm.exports.uop_vga_rd8 || (() => { throw new Error('uop-wasm: this vm has no uop_vga_rd8'); }),
+  vga_wr8: vm.exports.uop_vga_wr8 || (() => { throw new Error('uop-wasm: this vm has no uop_vga_wr8'); }),
 });
 
 const LOCALS = '(local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32)';
