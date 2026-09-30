@@ -776,6 +776,11 @@
   ;; 16 or more ($bx_hot_bump).
   (global $bx_hot_evicts (mut i32) (i32.const 0))
   (global $bx_hot_evicts_warm (mut i32) (i32.const 0))
+  ;; Sticky hot slots (default on; --no-uop-hot-sticky, docs/uop-tier-design.md
+  ;; section 21.5): a foreign EIP decrements the resident's count and takes the
+  ;; slot only once that count is spent, instead of resetting it on sight.
+  (global $bx_hot_sticky (mut i32) (i32.const 1))
+  (global $bx_hot_decays (mut i32) (i32.const 0))
   ;; Blocks one walk may visit. This is the discovery COST bound, and it is
   ;; counted in blocks rather than in uops because a block is what costs a
   ;; $decode_block.
@@ -2403,6 +2408,21 @@
     (local.set $s (call $bx_hot_slot (local.get $eip)))
     (if (i32.ne (i32.load (local.get $s)) (local.get $eip))
       (then
+        ;; Sticky: a foreign entry wears the resident's count down by one and
+        ;; only takes the slot at zero. Resetting on sight let a head entered
+        ;; one time in eighteen keep a 150K-entry head below the threshold for
+        ;; a whole run -- Caesar III's blit tail at exe+0x41de07 shares its
+        ;; slot with exe+0x41f606 and was never compiled (section 21.5). With
+        ;; the decay the hotter of two sharers keeps the slot and reaches the
+        ;; threshold; a squatter that went cold is worn out by at most 255
+        ;; entries of its successor.
+        (if (i32.and (i32.ne (global.get $bx_hot_sticky) (i32.const 0))
+                     (i32.ne (i32.load offset=4 (local.get $s)) (i32.const 0)))
+          (then
+            (global.set $bx_hot_decays (i32.add (global.get $bx_hot_decays) (i32.const 1)))
+            (i32.store offset=4 (local.get $s)
+              (i32.sub (i32.load offset=4 (local.get $s)) (i32.const 1)))
+            (return)))
         ;; The slot is taken over and its count lost: two heads sharing a
         ;; slot reset each other and neither ever reaches the threshold.
         ;; Counted so --uop-census can say how often a warm count is lost.
@@ -2430,6 +2450,10 @@
           (then (call $page_nobump_mark (local.get $eip))))
         (return)))
     (call $bx_walk_try (local.get $eip)))
+
+  (func (export "set_uop_hot_sticky") (param $on i32)
+    (global.set $bx_hot_sticky (local.get $on)))
+  (func (export "uop_hot_decays") (result i32) (global.get $bx_hot_decays))
 
   ;; The per-head failure memo. 256 direct-mapped slots of {head EIP, fails}.
   ;; A head that has declined $bx_walk_memo_max times is never walked again,
