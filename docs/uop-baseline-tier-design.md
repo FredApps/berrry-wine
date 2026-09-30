@@ -1,7 +1,8 @@
 # Baseline µop tier: compile everything fast, optimize what is hot
 
-Status: **design, not built.** It is checked on toyvm first (§6); it ports to the main
-emulator (07d/07e) only if the toyvm gates pass.
+Status: **on toyvm, phase 0 measured and phase 1 steps 1-2 built** (§6: the E1 arena with
+links, and the µop-only arm that runs every instruction through it). Nothing is in the
+main emulator; it ports there (07d/07e) only if the toyvm gates pass.
 
 ## 1. The idea
 
@@ -393,7 +394,7 @@ x3.80 / x4.01 / x3.86. Verdict: `allRP` matches the promoted model on loops,
 and it is a single register model that a baseline tier can share. Tests:
 test-toyvm-uop (2904 differential runs) and test-toyvm-uop-live under `allRP`.
 
-### Phase 1, step 1: the arena and links (2026-09-29, not yet committed)
+### Phase 1, step 1: the arena and links (2026-09-29, 4738fc82)
 
 The mechanism §4 needs now exists (`uop-wasm.js` `E1Arena`, `uop-live.js`
 `chain`, CLI `--uop-chain`):
@@ -443,6 +444,113 @@ there are per-block programs to link to. The next steps are:
 2. An L1 fallback that hands back after the unsupported instruction. Phase 0's
    12% "cut" share (`movs`, `leave`, `out`, far `call`) goes through it on
    every execution.
+
+### Phase 1, step 2: the µop-only arm (2026-09-29, 4738fc82, fe26bbfb, 00306e68)
+
+Both next steps now exist in one place, `tools/toyvm/uop-only.js` (run-dos
+`uopOnly`, CLI `--uop-only`, arm-bench arm `only`). It is the far end of
+this design: **every** instruction the guest runs goes through a µop program
+on E1. It is a fourth arm beside `l1`, `uop` (L1 + the loop tier) and `jit`,
+not a replacement for any of them. L1 is still the oracle: same guest, same
+dispatch clock, same frame.
+
+- **At a handback** the session asks for the site at (code key, mask, ip).
+  A new site is built from the current bytes: the loop nest through the ip,
+  else the straight line from it (capped at 32 instructions). The program
+  goes into the arena and its head is registered, so every static exit to
+  that ip is linked.
+- **An unbuilt target** is built inline, inside the drive loop. It is not
+  handed back to the session (see the bugs below for why).
+- **A fallback** covers any instruction the µop set lacks. L1 runs exactly
+  that one instruction (`compile.js` `oneInsn`, the block TF single-stepping
+  runs), then the loop carries on. The one exception is an L1 spin block
+  (below).
+- **SMC**: a program's bytes carry code bits for as long as it lives, so a
+  store into them breaks the slice exactly as a store into L1's code does.
+
+**Results** (100M dispatches, 12 demos, load ~11 so the times are rough;
+checksums exact):
+
+| arm | CPU vs l1, geomean | p10 | p50 | p90 |
+|---|---|---|---|---|
+| uop | x1.40 | x1.12 | x1.39 | x1.62 |
+| jit | x1.40 | x1.09 | x1.27 | x1.99 |
+| only | x5.63 | x3.63 | x6.37 | x8.34 |
+
+11 of 12 programs are exact in every arm. The µop share is 86-100% per
+program. Most of the `only` gap is build time, not execution: BRW spent 148s
+building in a 110s run, ACCIDENT 13.7s of 17.4s. The engine is fast enough
+once built; building everything is what costs.
+
+**Bugs it found while becoming exact:**
+
+1. A handback for an unbuilt site re-cut the slice. Each handback
+   re-derives the Sound Blaster block-end cut, so an extra one with budget
+   left moves every later IRQ date (BRW). Fix: build inline.
+2. The continue rule could run past an `endSlice` cut made by a port write.
+   Fix: the drive loop checks `machine.sliceCut`.
+3. A program over an L1 spin loop left the loop after as many iterations as
+   the port took to change. L1 charges the rest of the slice in whole
+   iterations, so the handback landed on a different dispatch (BRW's SB poll,
+   3 dispatches early). Fix: where L1 compiles a spin op (lone self-branch,
+   3DAh poll, general port poll), the site is that one L1 block with every
+   other head a handback. This is the spin answer for this arm: exact and at
+   L1 speed. A µop spin terminator would buy nothing here, so none was built.
+4. A region that fails with too many vregs (> 2047) paid a ~1s failed build
+   on every SMC rebuild. Fix: `lineCap` remembers the line length that worked
+   (BRW 30M builds: 34.6s to 17.6s).
+5. `resident: true` computes wrong values in this arm. ACCIDENT exits to DOS
+   at 1.2M dispatches, on E1 and on the reference alike, so the program is
+   wrong, not its lowering. The arm now refuses anything but `'promote'`.
+   `baselineRP` (baseline passes, promote) is exact and is arm `only-bl`.
+
+**BRW still disagrees, and it is a retiming, not a wrong computation.** L1
+marks code bits over everything `compileProgram` compiled, i.e. the whole
+reachable program including code never executed. The µop arm marks only what
+its sites cover. BRW's self-patching extender (110:18f..1b1) stores into
+bytes L1 has compiled and this arm has not, so L1 breaks the slice there and
+charges a dispatch the µop arm does not. The same computation lands one
+dispatch apart, and IRQ dates follow.
+
+**Where build time goes** (`OPT.build(reg, { timing })`, BRW 15M, 788
+builds):
+
+| pass | share |
+|---|---|
+| constprop | 34% |
+| forwardFlags | 16% |
+| sinkDeoptDefs | 14% |
+| mergeStraight | 10% |
+| forwardMemory | 6% |
+
+No pass is superlinear. A 12-instruction line replays in 18-30ms. The
+150-500ms outliers were GC and box load, and a replay of the same build
+spiked to 193ms once. It is a fixed per-program price paid for every site,
+and most of BRW's builds are **distinct sites, not rebuilds**:
+- A byte-exact program cache hits 81 of 786. Its key is the site, shape,
+  machine snapshot and segment bases, checked against every byte discover or
+  the optimizer read.
+- The baseline passes on lines (`only-bl`) do not change that picture.
+
+So the lever for this arm is building less, not optimizing faster: tier
+cold lines, or share programs across sites.
+
+**Fallback coverage** (00306e68): RCL/RCR (register destination), CLC/STC/CMC
+and LEAVE are now µops, exact to L1's handlers. A new differential shape
+(`rotcarry`) covers every width and count form. The flag helpers go through
+`callh`, which can now *read* a flag: the carry is materialized ahead of it,
+and E1 treats a CF-reading helper as an effect. At 30M, CMA_SHRT's
+clc/stc (1.8M per 100M before), DTM2's leave and rcl, CYCLE's rcl/rcr (620K)
+and B-STEEL's rcr are gone, and all four stay exact.
+
+What is left, and why it was not done yet:
+- **Far `call`/`ret` (9a/ca/cb, DTM2 and ACCIDENT's largest).** The target
+  is another code key. Lowering it only to exit and hand back saves one
+  fallback entry and no more. The win needs cross-key links.
+- **PUSHF/POPF.** POPF opens an interrupt window, so L1 ends its block there.
+  PUSHF needs a full-word flag consumer in the forwarding pass.
+- **REP MOVS/STOS.** The count is large, but each fallback is a whole L1
+  string loop, so the entry cost is already amortized.
 
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
