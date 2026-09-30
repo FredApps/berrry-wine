@@ -475,8 +475,9 @@
 
   ;; Is [blo, bhi) one affine run starting at wasm $wlo, and -- for a written
   ;; window -- free of code pages? Within a 64KB-aligned block the code-page
-  ;; bitmap's slot hash (04-cache $code_page_slot: (ga>>12 ^ ga>>28) & 0xFFFF)
-  ;; only permutes the low four slot bits, so the block's sixteen pages are
+  ;; bitmap's slot hash (04-cache $code_page_slot: (ga>>12 ^ ga>>28 ^
+  ;; (ga>>30)<<15) & 0xFFFF) only permutes the low four slot bits and flips a
+  ;; per-block constant bit 15, so the block's sixteen pages are
   ;; exactly one aligned 16-bit group: one load answers "any code here". A
   ;; span narrower than 64KB tests its whole enclosing group, which can only
   ;; refuse more, never less.

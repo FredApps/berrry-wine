@@ -1965,11 +1965,12 @@
   (global $op_index_n (mut i32) (i32.const 0))
   (global $op_index_poison (mut i32) (i32.const 0))
   ;; 65536 bits (8KB), one per slot; a guest page's slot is
-  ;; ((ga >> 12) ^ (ga >> 28)) & 0xFFFF ($code_page_slot, 04-cache). That is
-  ;; the page number itself below 0x10000000 -- one bit per page, exact, as
-  ;; before -- and above it a fold of the top four address bits into the low
-  ;; ones, so every page of the 4GB space has a bit and pages alias only
-  ;; across 256MB segments. A set bit means "a block may have been decoded
+  ;; ((ga >> 12) ^ (ga >> 28) ^ ((ga >> 30) << 15)) & 0xFFFF ($code_page_slot,
+  ;; 04-cache). That is the page number itself below 0x10000000 -- one bit
+  ;; per page, exact, as before -- and above it a fold of the top four
+  ;; address bits into the low ones (bit 30 also into bit 15, which keeps the
+  ;; DIB arena off the exe's .text: see 04-cache), so every page of the 4GB
+  ;; space has a bit and pages alias only across 256MB segments. A set bit means "a block may have been decoded
   ;; from a page with this slot"; the per-thread page index then answers
   ;; exactly, so aliasing costs a wasted slow path, never a missed write.
   ;; This replaced "bitmap below 0x10000000, sparse min..max SPAN above": on
