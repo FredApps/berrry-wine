@@ -493,6 +493,51 @@ CASES.push(
            L('l'), 0x92, [0x89, 0x45, 0x00], [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
            0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
   },
+  {
+    // the same alternating slot with the megamorphic rule at 4 fails: the
+    // site is marked, the program failing there is killed on its way out,
+    // and the head recompiles leaving the call to threaded code (section 23)
+    name: 'icall-mega', regs: { ecx: N }, icall: true, icgMega: 4, hotOnly: true, head: 'l', dynamicEntry: true,
+    want: { icFail: '>0', megaSites: '>0', megaKills: '>0', megaRef: '>0' },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A, 0x50, [0x89, 0xE5],
+           L('l'), 0x92, [0x89, 0x45, 0x00], [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
+  {
+    // and with the rule off: every guard is kept, however often it fails
+    name: 'icall-poly', regs: { ecx: N }, icall: true, icgMega: 0, hotOnly: true, head: 'l', dynamicEntry: true,
+    want: { icFail: '>0', megaSites: 0, megaKills: 0, megaRef: 0 },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A, 0x50, [0x89, 0xE5],
+           L('l'), 0x92, [0x89, 0x45, 0x00], [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
+  {
+    // the slot is rewritten once, from inside the loop, halfway through: the
+    // guard the program was compiled with passes for the first half and
+    // fails on every trip after, each failure running the call threaded to
+    // the new callee (no side effect of the call happens before the guard)
+    name: 'icall-rewrite', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', dynamicEntry: true,
+    want: { icPass: '>0', icFail: '>0' },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A, 0x50, [0x89, 0xE5],
+           L('l'), [0x81, 0xF9, ...d32(N >> 1)], J(cc.NZ, 'k'), [0x89, 0x55, 0x00], L('k'),
+           [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
+  {
+    // a C++ virtual call, `mov edx,[obj] / call [edx]`, over two objects of
+    // two classes: the object (and so its vptr) swaps every 128 trips, so
+    // the guarded target is right in long runs and wrong in others, and the
+    // guard reads the vtable slot through the vptr each time
+    name: 'icall-vptr-swap', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', dynamicEntry: true,
+    want: { icPass: '>0', icFail: '>0' },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A,
+           0x52, [0x89, 0xE2], 0x50, [0x89, 0xE0],          // vt2 = {&c2}, vt1 = {&c1}
+           0x52, [0x89, 0xE2], 0x50, [0x89, 0xE0],          // obj2 = {&vt2}, obj1 = {&vt1}
+           0x52, 0x50, [0x89, 0xE5],                         // [ebp] = &obj1, [ebp+4] = &obj2
+           L('l'), [0x89, 0xC8], [0xC1, 0xE8, 0x07], [0x83, 0xE0, 0x04], [0x8B, 0x44, 0x05, 0x00],
+           [0x8B, 0x10], [0xFF, 0x12], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           [0x83, 0xC4, 0x18], [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
 );
 // --uop-iat: call [abs], the import-table form
 CASES.push(
@@ -884,11 +929,18 @@ function runCase(inst, c, a, codeAddr, mode) {
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
   const feats = ['muldiv', 'icall', 'iat'].filter((f) => c[f]);
   for (const f of feats) e['set_uop_' + f](mode === 'off' ? 0 : 1);
-  const unfeat = () => { for (const f of feats) e['set_uop_' + f](0); };
+  // c.icgMega: the megamorphic-site threshold for this case (07d
+  // $uop_icg_mega), put back to the default after
+  if (c.icgMega !== undefined) e.set_uop_icg_mega(c.icgMega);
+  const unfeat = () => {
+    for (const f of feats) e['set_uop_' + f](0);
+    if (c.icgMega !== undefined) e.set_uop_icg_mega(32);
+  };
   const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
   // uop_stats counters, then (negative) uop_cstat ones: sites kept, FF /2 refused
   // (100+: uop_bulk_stats -- COPY/FILL slow arms and deopts)
   const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30,
+                megaSites: 21, megaKills: 22, megaRef: -31,
                 bulkSlow: 100, bulkDeopt: 101, mcopyRuns: 200, mcopySlow: 300, mcopyDeopt: 301 };
   const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : i >= 300 ? e.uop_mcopy_stats(i - 300)
     : i >= 200 ? e.uop_mcopy_cstat(i - 200) : i >= 100 ? e.uop_bulk_stats(i - 100) : e.uop_stats(i));
@@ -1538,6 +1590,38 @@ function codeWriteCase(inst, a, nextCode) {
   return errs;
 }
 
+// The hot-table age (07c $bx_hot_age, section 22): every N bumps each sticky
+// count is halved. With N=1 a head's count is halved before every bump and
+// never nears the 256 threshold, however many times the loop runs; with the
+// decay off the same loop installs. uop_stats 2 = installs.
+function hotAgeCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const loop = asm([L('l'), [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3]);
+  const errs = [];
+  e.set_uop(1);
+  e.set_uop_trace_heads(0);
+  try {
+    const run = (age) => {
+      const at = nextCode();
+      mem.set(loop, g2w(at));
+      e.set_uop_hot_age(age);
+      const i0 = e.uop_stats(2), h0 = e.uop_hot_halvings();
+      if (!callAt(inst, a, at, { ecx: 4096, esi: a.buf })) errs.push(`age ${age}: loop did not return`);
+      return { installs: e.uop_stats(2) - i0, halvings: e.uop_hot_halvings() - h0 };
+    };
+    const fast = run(1), off = run(0);
+    if (fast.installs !== 0) errs.push(`age 1 still installed (${fast.installs})`);
+    if (fast.halvings < 1000) errs.push(`age 1 halved only ${fast.halvings} times`);
+    if (off.installs < 1) errs.push('age 0 never installed');
+    if (off.halvings !== 0) errs.push(`age 0 halved (${off.halvings})`);
+    if (!errs.length) console.log(`hot-age            ok (age1 halvings=${fast.halvings} installs=0; age0 installs=${off.installs})`);
+  } finally {
+    e.set_uop_hot_age(0x8000);
+    e.set_uop(0);
+  }
+  return errs;
+}
+
 // An enter op outlives the flush that freed its program (07d $uop_flush only
 // bumps the generation and rewinds the arena), and so does a map way. The
 // next generation's programs then land on the freed bytes, and the old
@@ -1897,6 +1981,10 @@ async function main() {
   if (!only || only === 'code-write-gate') {
     const errs = codeWriteCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`code-write-gate    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'hot-age') {
+    const errs = hotAgeCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`hot-age            FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'stale-enter') {
     const errs = staleEnterCase(inst, a, () => a.code + 0x1000 * slot++);

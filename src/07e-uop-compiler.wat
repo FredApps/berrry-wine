@@ -192,6 +192,8 @@
   (global $uc_n_icall  (mut i32) (i32.const 0))
   (global $uc_n_iat    (mut i32) (i32.const 0))
   (global $uc_n_icrej  (mut i32) (i32.const 0))
+  ;; FF /2 decodes refused as megamorphic (uop_cstat 31)
+  (global $uc_n_icmega (mut i32) (i32.const 0))
   (global $uc_fwd_kind (mut i32) (i32.const 0))
   (global $uc_fwd_a    (mut i32) (i32.const 0))
 
@@ -714,6 +716,12 @@
           (then
             (memory.copy (i32.add (local.get $R) (i32.const 104)) (local.get $O0) (i32.const 24))
             (local.set $n (call $uc_icall_class (local.get $O0)))
+            ;; a site whose guard kept failing stays with the threaded code
+            ;; (07d $uop_icg_count, docs/uop-tier-design.md section 23)
+            (if (local.get $n)
+              (then (if (call $uop_icg_is_mega (local.get $addr))
+                (then (global.set $uc_n_icmega (i32.add (global.get $uc_n_icmega) (i32.const 1)))
+                      (local.set $n (i32.const 0))))))
             (if (local.get $n)
               (then
                 (local.set $w (call $uc_icall_target (local.get $O0)))
@@ -4829,6 +4837,7 @@
     (if (i32.eq (local.get $which) (i32.const 28)) (then (return (global.get $uc_n_icall))))
     (if (i32.eq (local.get $which) (i32.const 29)) (then (return (global.get $uc_n_iat))))
     (if (i32.eq (local.get $which) (i32.const 30)) (then (return (global.get $uc_n_icrej))))
+    (if (i32.eq (local.get $which) (i32.const 31)) (then (return (global.get $uc_n_icmega))))
     (i32.const 0))
   ;; Trace heads (on by default; --no-uop-trace-heads / ?no-uop-trace-heads):
   ;; a hot head with no back edge is

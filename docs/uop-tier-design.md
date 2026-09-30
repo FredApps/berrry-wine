@@ -2681,4 +2681,231 @@ poor-work at 1073741824, no mcopy, no hot sticky.
   - `--no-uop-trace-cut`;
   - `--no-uop-mcopy`;
   - `--no-uop-hot-sticky`.
-- **Left open:** the compile churn from sticky slots (21.5).
+- **Left open:** the compile churn from sticky slots (21.5). Closed in
+  section 22.
+
+## 22. Hot-table aging: sticky slots with a time decay (2026-09-30, `--uop-hot-age=N`)
+
+### 22.1 Problem
+
+- Sticky slots (21.5) made the hot-head gate a *count*, not a *rate*.
+  - A count only falls when a foreign head lands on the slot.
+  - So a head entered a few hundred times across a whole run reaches the
+    256 threshold eventually and installs.
+- These lukewarm heads are what the churn in 21.5 was. Most are later
+  retired as poor or killed by a code write:
+  - StarCraft installs went from 833 to 5972;
+  - Diablo from 2809 to 10805;
+  - flushes about doubled everywhere.
+- The old reset-on-sight gate did forget, but it also evicted Caesar's
+  bottom-half tail between visits, which is why 21.5 exists.
+
+### 22.2 Change (07c `$bx_hot_bump`)
+
+- Every N hot-table bumps, `$bx_hot_halve` halves all 512 slot counts.
+  - The clock is bumps, not wall time or batches, so it is deterministic
+    under both guest clocks.
+  - A head must now see about 128 entries per N bumps to install. That
+    makes the gate a rate again, while a foreign head still only wears a
+    count down (sticky) instead of evicting it.
+- Only acts when sticky slots are on. `--no-uop-hot-sticky` is still exactly
+  the pre-21.5 gate.
+- Flags and counters:
+  - `--uop-hot-age=N` / `set_uop_hot_age(n)`; 0 is the 21.5 behaviour.
+  - `uop_hot_halvings()` counts halvings, printed on the `uop hot:` line.
+  - Inherited by worker instances (`lib/worker-imports.js`).
+- **Default: N = 32768 (0x8000).**
+- Unit test `UOP_CASE=hot-age` in `test/test-uop-compiler.js`:
+  - age 1 halves on every bump, so a 1000-trip loop never installs
+    (4096 halvings, 0 installs);
+  - age 0 installs it.
+
+### 22.3 Counter sweep (one rep per age, branch clock, fixed work)
+
+Cells are installs / kills / flushes / enters.
+
+| game | nosticky (pre-21.5) | noage (21.5, old main) | 8K | 16K | 32K | 64K |
+|---|---|---|---|---|---|---|
+| sc | 1273/383/5/5.25M | 5972/2473/24/8.42M | 1699/1052/5/5.12M | 2123/1367/6/5.79M | 3107/1914/10/7.28M | 3691/2274/12/7.92M |
+| h3 | 1041/99/5/61.9M | 1874/113/10/62.2M | 555/54/2/60.9M | 748/72/3/61.7M | 1196/96/6/62.0M | 1205/98/6/62.1M |
+| diablo | 4252/2911/16/218.9M | 10805/7763/34/219.9M | 4805/4373/13 | 3177/2709/10/217.9M | 6660/6078/17/218.3M | 5059/4352/16 |
+| c3 | 900/33/5/8.78M | 1524/38/9/8.94M | 266/18/1/7.93M | 294/21/1/8.17M | 320/23/1/8.24M | 601/36/3/8.72M |
+
+- **4K is too aggressive.** h3's enters fell from 62M to 7.4M, and user CPU
+  rose by 15%.
+- **Diablo's installs are not gate churn.** They are dominated by code-write
+  kills of Smacker's generated heap code: `0xc375ec` alone is recompiled
+  1442-1753 times in every arm. Poor kills are 95 (noage), 49 (16K) and
+  52 (32K).
+- **Caesar's blit keeps compiling at 8K, 16K and 32K.** The `--uop-census`
+  shows every head in 21.9 entered and live:
+  - `41ceb0`, `41cf0f`, `41d1b6`, `41d4ca`, `41d7a0`, `41d7db`, `41dab9`,
+    `41daf3`, `41ddcd`, `41de07`, `41e007`;
+  - each with ~7K-247K entries, the same as the noage arm.
+- Frames are md5-identical to the noage arm in every game at every age.
+
+### 22.4 Timing (user CPU, fixed work, `--branch-clock`, fast-near-9tb-1, jobs 4)
+
+**ab1: 16K vs noage, 3 interleaved reps**
+
+| game | noage reps | mean (null band) | 16K reps | mean | delta |
+|---|---|---|---|---|---|
+| c3 | 9.15 9.31 9.02 | 9.16 (3.2%) | 9.30 9.28 9.33 | 9.30 | +1.5% |
+| sc | 30.11 30.03 30.21 | 30.12 (0.6%) | 27.98 27.78 27.84 | 27.87 | **-7.5%** |
+| h3 | 102.3 103.5 102.7 | 102.8 (1.1%) | 100.8 100.2 101.0 | 100.66 | -2.1% |
+| diablo | 184.1 184.2 169.4 | 179.3 (8.3%) | 186.1 183.6 173.4 | 181.0 | +1.0% |
+
+- Diablo's gameplay phase (batches 2900-4100) was consistently about 10%
+  slower at 16K: 7.0 / 7.0 / 6.1 against 6.4 / 6.4 / 5.4.
+- That prompted a run weighted toward gameplay.
+
+**ab2: gameplay extended (`--extend=sc:3000,diablo:3000,h3:2000`), 3 reps**
+
+| game | noage (band) | 16K | 32K | extended phase noage / 16K / 32K |
+|---|---|---|---|---|
+| sc | 45.39 (0.7%) | 44.05 (-2.9%) | **42.55 (-6.3%)** | ~2.0 / 2.2-2.3 (+10%) / 2.0 (flat) |
+| diablo | 320.3 (5.5%) | 322.5 (+0.7%) | 317.2 (-1.0%) | 17.9 / 19.07 (+6.5%) / 18.77 (+4.8%) |
+| h3 | 133.6 (6%) | 128.6 (-3.7%) | 131.6 (-1.5%) | flat (rep drift) |
+
+**ab3c3: c3 at 32K, 4 reps.** noage 8.16 against 32K 8.17, neutral. Frames
+identical.
+
+### 22.5 Verdict
+
+- **Default on at 32768.**
+  - StarCraft: -6.3% on the extended route, -7.5% on the short one, with no
+    penalty in its gameplay phase.
+  - Heroes III: -1.5% to -2.1%.
+  - Caesar III: neutral, with every blit head still compiled.
+  - Diablo: -1.0% overall, inside its 5.5% band.
+  - Installs, kills and flushes fall about halfway back toward the pre-21.5
+    counts.
+- 16K saves more churn, but it costs StarCraft's and Diablo's gameplay
+  phases 6-10%. At that age a gameplay loop's heads get halved out of the
+  table between their visits. 32K keeps StarCraft's gameplay flat.
+- **Caveat.** Diablo's gameplay phase alone is +4.8% at 32K (17.9 against
+  18.77). That is near its 5.5% band and within the whole run's -1.0%.
+  - It is the one reading that leans the wrong way.
+  - `--uop-hot-age=0` restores the 21.5 gate for any A/B that needs it.
+
+## 23. FF /2 inline cache: measured, megamorphic sites retired, still off (2026-09-30)
+
+### 23.1 What is there
+
+The inline cache itself predates this section and is behind `--uop-icall`.
+
+- **Compile time (07e).** `$uc_icall_class` / `$uc_icall_target` lower
+  `call reg`, `call [reg]` and `call [base+idx*s+disp]` (never through ESP)
+  as a kind-23 call to the target the slot holds at compile time.
+- **Run time (07d).** The call is guarded by engine op 71, ICG (`v t cls eip x`).
+  - The guard reads the slot again and compares it with the recorded target.
+  - On a mismatch it leaves to `x`, *before the push*, with the entry
+    flags. The threaded code then runs the call to whatever the slot holds
+    now, so no side effect of the call precedes the check.
+- **Plumbing.**
+  - `set_uop_icall(0|1)` / `--uop-icall`, an app policy `uopIcall: true`,
+    and a `lib/worker-imports.js` entry.
+  - uop-game-ab arm `icall`.
+  - Counters `uop_stats` 17/18 (pass/fail) and `uop_cstat` 28 (sites kept),
+    plus the top-4 failing sites.
+
+### 23.2 Unit tests (`test/test-uop-compiler.js`)
+
+Every case is checked against threaded execution under both the block and
+the branch clock: registers, flags, memory hash and every batch stop.
+
+| case | what it covers |
+|---|---|
+| `icall-vtable`, `icall-reg`, `iat-call` | the hit path |
+| `icall-mismatch` | the slot alternates between two callees every trip: miss, then deopt |
+| `icall-rewrite` (new) | the loop rewrites the slot once, halfway through; the guard passes, then fails on every later trip |
+| `icall-vptr-swap` (new) | `mov edx,[obj] / call [edx]` over two objects whose vptrs name two vtables; the object swaps every 128 trips |
+| `icall-mega` (new) | the megamorphic rule at 4 fails: the site is marked, the failing program killed, and the head recompiled without the cache |
+| `icall-poly` (new) | the same loop with the rule off: every guard is kept |
+
+### 23.3 First A/B, and what it showed (ab4, 3 reps, hot age 32768)
+
+| game | uop user | icall user | delta | counters uop -> icall |
+|---|---|---|---|---|
+| Rodent | 3.71 3.75 3.75 | 3.82 3.85 3.91 | +3.0% (band 1.1%) | installs 142->235, kills 38->140 (poor 131), enters 265K->300K; pass 199, fail 0; call-indirect declines 24->24 |
+| c3 | 9.10 9.15 9.17 | 9.24 9.27 9.05 | +0.3% | pass 26; call-indirect 2->2 |
+| sc | 27.89 28.07 27.64 | 28.83 28.98 28.71 | +3.4% | installs 3107->3288; pass 622874, fail 59314 over 51 sites; call-indirect 45->37 |
+| h3 | 101.0 100.9 90.3 | 103.5 104.0 92.6 | +2.5% (consistent per rep) | pass 3457, **fail 298545**; enters 62.0M->50.3M; blocks 647M->585M; call-indirect 43->39 |
+
+- Frames are identical in every arm.
+- Blobby is not a fixed-work benchmark. Its thread tid=1 runs a bimodal
+  352M or 603M blocks, and off-vs-off frames differ, so only its counters
+  are usable: pass 600532, fail 5, 7 sites, call-indirect 9->7.
+- **Heroes III's fails are one polymorphic site.** `0x58cd32` failed
+  250,981 times and `0x4d1e23` 46,601 times. There is no
+  re-specialization, so a program compiled around such a site leaves at the
+  call on every trip.
+
+### 23.4 Megamorphic sites (07d `$uop_icg_count`, `--uop-icg-mega=N`, default 32)
+
+- **Counting.** Every ICG fail counts against its call EIP in a 256-entry
+  direct-mapped table `{eip, fails}`.
+  - It lives in the windows area's free `0x3400..0x3C00`, just past the cut
+    table.
+  - `$uop_flush_all` clears it along with the other verdicts.
+- **Kill.** A fail at a site past the threshold sets a flag.
+  `$th_uop_enter` sees it when the program returns and kills the program.
+  - It is a kill, not a poor retirement, so the head may compile again. The
+    program's enters are zeroed so neither poor test marks the head.
+- **Refusal.** `$uc_decode` refuses a marked site's FF /2 (`uop_cstat` 31).
+  The call goes back to the threaded code, exactly as without `--uop-icall`.
+- **Exactness.** The rule changes only which programs exist, never what one
+  does.
+  - A stale or aliased table entry can only cost an inline cache.
+  - The `uop_run` export clears the flag, since a direct test run has no
+    enter op to act on it.
+- **Plumbing.**
+  - `set_uop_icg_mega(n)`, 0 to turn the rule off, inherited by workers.
+  - uop-game-ab arm `icallpoly` = icall with `--uop-icg-mega=0`, which is
+    exactly ab4's icall.
+  - Counters `uop_stats` 21 (sites marked) and 22 (programs killed).
+- No new engine op or compiler kind: ICG's slow path and the enter op carry
+  it.
+
+### 23.5 Second A/B (ab5: uop / icall / icallpoly, 3 interleaved reps each, hot age 32768)
+
+| game | uop (band) | icall (rule on) | icallpoly (rule off) | icall counters |
+|---|---|---|---|---|
+| Rodent | 3.67 3.69 3.69 = 3.68 (0.5%) | 3.70 3.81 3.78 = 3.76 (+2.2%) | 3.73 3.74 3.89 = 3.79 (+2.8%) | no fails, rule idle; installs 142->235, poor 38->131 |
+| c3 | 8.94 8.99 9.09 = 9.01 (1.7%) | 9.02 9.00 8.91 = 8.98 (-0.3%) | 8.97 9.10 8.97 = 9.01 (0%) | 8 sites, 26 passes |
+| sc | 27.82 28.02 27.77 = 27.87 (0.9%) | 28.60 28.34 28.35 = 28.43 (+2.0%) | 28.47 28.37 28.50 = 28.45 (+2.1%) | **fail 59314 -> 100**; 3 sites marked, 4 kills, 35 refusals; installs 3288 -> 3119 (uop 3107) |
+| h3 | 100.56 101.96 100.19 = 100.90 (1.8%) | 103.2 103.58 99.32 = 102.03 (+1.1%) | 104.83 104.23 89.62 | **fail 298545 -> 160**; 5 sites marked; **enters 62.0M -> 50.3M either way** |
+
+- Frames are identical in every arm and rep.
+- Declines of `call-indirect`, uop -> icall: Rodent 24 -> 24, c3 2 -> 2,
+  sc 45 -> 39, h3 43 -> 41, Blobby 7 -> 6.
+- Blobby, counters only (one rep per arm): pass 102-172K, fail 4, 5 sites.
+- h3's third rep dropped for both icall arms but not for uop. Read h3
+  pairwise by rep: icall is +2.6%, +1.6%, -0.9%.
+
+### 23.6 Verdict
+
+- **`--uop-icall` stays default-off.** With or without the megamorphic rule
+  it is +2% on Rodent and StarCraft, at best neutral on Caesar III, and
+  slightly worse on Heroes III.
+  - Those deltas are outside the uop arm's band on Rodent and StarCraft.
+- **The megamorphic rule works, but the fails were not the cost.**
+  - It removes 99.8% of guard fails (sc 59K -> 100, h3 299K -> 160), and
+    StarCraft's user CPU does not move.
+- **The cost is what the cache does to program shape.**
+  - Traces that now run through a call lengthen and multiply. Rodent
+    installs 142 -> 235, and 131 of them are retired as poor.
+  - Heroes III loses 19% of its enters (62.0M -> 50.3M, blocks 647M -> 585M).
+    The likely mechanism, not yet confirmed by a per-site census: heads
+    whose code is now covered inside a caller's trace stop being entered as
+    programs of their own, and that trace leaves at its first exit instead
+    of looping.
+  - The `call-indirect` declines barely fall (2-6 per game), because most
+    FF /2 sites that decline sit on paths the cache does not make hot.
+- The rule is kept, default 32, active only under `--uop-icall`, because an
+  inline cache without it is strictly worse on polymorphic code.
+- **What would pay next** is not a better guard, but:
+  - not letting a trace absorb a callee that is itself a hot head;
+  - or keeping the callee's own loop program and calling into it.
+
+  Either is a trace-formation change, not an inline-cache one.
