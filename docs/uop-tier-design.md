@@ -2896,74 +2896,225 @@ the branch clock: registers, flags, memory hash and every batch stop.
   - Traces that now run through a call lengthen and multiply. Rodent
     installs 142 -> 235, and 131 of them are retired as poor.
   - Heroes III loses 19% of its enters (62.0M -> 50.3M, blocks 647M -> 585M).
-    The likely mechanism, not yet confirmed by a per-site census: heads
-    whose code is now covered inside a caller's trace stop being entered as
-    programs of their own, and that trace leaves at its first exit instead
-    of looping.
+    The first guess was that callee heads stop being entered because a
+    caller's trace now covers them. §23.7's per-head census refutes that.
+    The loss is the nocall retry declining or truncating call-headed heads
+    once the icall edge makes their calls-followed region too big.
   - The `call-indirect` declines barely fall (2-6 per game), because most
     FF /2 sites that decline sit on paths the cache does not make hot.
 - The rule is kept, default 32, active only under `--uop-icall`, because an
   inline cache without it is strictly worse on polymorphic code.
-- **What would pay next** is not a better guard, but:
-  - not letting a trace absorb a callee that is itself a hot head;
-  - or keeping the callee's own loop program and calling into it.
+- **What would pay next** is not a better guard but a fix to the
+  calls-followed fallback in `$uc_lower_head` (§23.7, option C). This
+  section first proposed ending the trace at a hot callee instead; §23.7
+  prices that at about 0.
 
-  Either is a trace-formation change, not an inline-cache one.
+### 23.7 Per-head census: the swallowing hypothesis is refuted (2026-09-30)
 
-### 23.7 Per-head census for the swallowing hypothesis (instrumented, not yet measured)
+§23.6 guessed that callee heads stop being entered because a caller's trace,
+grown through an icall, now covers their code. A per-head census of both arms
+says no. Almost none of the loss is swallowing. It comes from the **nocall
+fallback in `$uc_lower_head`**: once the icall edge makes a calls-followed
+region too big, the retry without calls declines or truncates heads that
+used to compile.
 
-§23.6's mechanism is a hypothesis: callee heads stop being entered because
-their code now runs inside a caller's trace that grew through an icall. The
-census that tests it per head is in place; the runs are not (the bench boxes
-were unreachable from the session that added it, and app routes do not run
-on the laptop).
+**Setup.** `fast-near-9tb-1`, one build (branch commit 1a729ae4 on 01e15d73).
+Arms `uop` and `icall` (`--uop-icall`), same fixed work, `--branch-clock`,
+`--uop-census`. The census counters match §23.5's totals exactly, and they
+are identical across reruns. So the census does not perturb the run.
+`--handler-hist` does perturb Rodent (see below).
 
-**Records added to `--uop-census`** (07d header comment has the layout). All
-are behind `$uop_census`; the only cost with it off is one global test per
-program entry.
+#### The instrumentation
 
-- **Lifetimes.** Kinds 10 (live at a flush), 11 (live at exit, from the
-  program-start bitmap, so a program whose map way was taken over still
-  counts) and 12 (killed at a megamorphic ICG). With kinds 2 and 3 they give
-  every program's final enters, blocks and work. So a head's enters sum over
-  all its programs, not just the one alive at exit. Before this, a program
-  lost to a flush or a mega kill left no count.
-- **Exits.** Kind 13 follows each of those. It carries a Misra-Gries
-  dominant exit EIP with its net count, and the number of exits that landed
-  on a trace cut (`$uop_cut_probe`). These live in header +36/+40/+44, which
-  were unused.
-- **Shape.** Kinds 14, 15 and 16 are emitted at install:
-  - 14: every call a program kept (E8, icall or IAT) with its target;
+All records are behind `$uop_census`. The 07d header comment has the layout.
+With the census off, the only cost is one global test per program entry.
+
+- **Lifetimes.** Kinds 10 (live at a flush), 11 (live at exit) and 12
+  (killed at a megamorphic ICG). With kinds 2 and 3 they give every
+  program's final enters, blocks and work. A head's counts therefore sum
+  over all its programs, including ones lost to a flush or a kill.
+- **Exits.** Kind 13 carries a Misra-Gries dominant exit and the number of
+  exits that landed on a trace cut.
+- **Shape at install.** Kinds 14, 15 and 16:
+  - 14: every call a program kept, with its target;
   - 15: the program's instructions as runs of consecutive addresses;
   - 16: every cut landing.
+- **Kind 17** (head, first reason, calls followed, is-trace). It is emitted
+  in `$uc_lower_head` just before the `$uc_nocall` retry. This record is what
+  exposed the mechanism.
 
-**`tools/uop-census-diff.js A.log B.log`** joins two arms by head EIP.
+**`tools/uop-census-diff.js A.log B.log [--thread=N] [--json=F]`** joins the
+two arms by head EIP and ranks heads by lost and gained enters and blocks.
 
-- It ranks heads by lost and gained enters and blocks.
-- It marks a head **swallowed** when all three hold:
-  - its EIP is an instruction inside another head's arm-B program;
-  - that program keeps an icall or IAT site;
-  - the other head's arm-A programs did not cover that EIP.
-- It splits the enter and block change into classes:
-  - (a) swallowed;
-  - (b) killed poor in B;
-  - (c) mega-killed;
-  - (d) lost install;
-  - (e) inside another program with no icall site;
-  - (f) new in B;
-  - (g) same program set.
-- It prices option A (end the trace at a guarded call to a hot head) as the
-  swallowed heads' and their callers' A-arm counts.
+- It marks a head *swallowed* when its EIP sits inside another head's arm-B
+  program, that program keeps an icall or IAT site, and the other head's
+  arm-A programs did not cover that EIP.
+- It splits the change into classes:
+  - **0**: the head installed in A; in B it was declined head-unsupported
+    after a failed calls-followed attempt;
+  - **a**: swallowed;
+  - **b**: killed poor;
+  - **c**: mega-killed;
+  - **d**: lost install;
+  - **e**: inside another program with no icall site;
+  - **f**: new in B;
+  - **g**: same program set.
 
-`UOP_CENSUS=1 BENCH_TRACE_LOOP=1 node test/test-uop-compiler.js` prints the
-records for the unit cases, and all cases still pass with the census on.
-
-**To run** (bench box, same build, fixed work):
+Runbook:
 
 ```
 node tools/uop-game-ab.js --games=h3,rodent --arms=uop,icall --jobs=2 --out=OUT --extra='--uop-census'
 node tools/uop-census-diff.js OUT/h3-uop.log OUT/h3-icall.log --top=20 --json=OUT/h3-diff.json
-node tools/uop-census-diff.js OUT/rodent-uop.log OUT/rodent-icall.log --top=20
 ```
 
-The census arms are for counts only; §23.5's timings stay the CPU numbers.
+#### Heroes III, main thread
+
+| | uop | icall | delta |
+|---|---:|---:|---:|
+| enters | 61,991,195 | 50,278,513 | **-11.71M** |
+| blocks in programs | 647.19M | 584.99M | **-62.19M** |
+| installs | 1196 | 1050 | -146 |
+| poor kills | 96 | 105 | +9 |
+| mega kills | 0 | 5 | +5 |
+| programs keeping an icall site | 0 | 20 | |
+
+Thread 1 is unaffected: enters -0.2M, blocks +0.04M.
+
+Top heads by enters lost, and the heads that took their place:
+
+| head | enters uop -> icall | blocks uop -> icall | uop program | icall result | what happened |
+|---|---:|---:|---|---|---|
+| 0x4522f9 | 11.20M -> 0 | 44.79M -> 0 | trace/160 | declined, reason 3 after 1 | `call 0x58c380` head; nocall retry makes the head unsupported |
+| 0x590061 | 3.76M -> 0 | 3.76M -> 0 | trace/17 | declined, reason 3 after 1 | `call 0x4d1df0` head; same |
+| 0x59009b | 3.76M -> 0 | 15.05M -> 0 | trace/160 | trace/10, killed poor | retried after reason 8; nocall trace stops at its first call |
+| 0x4c5d9b | 0.74M -> 0 | 2.98M -> 0 | trace/160 | declined, reason 3 after 1 | call head |
+| 0x451e32 | 0.05M -> 0 | 0.37M -> 0 | trace/160 | not installed | |
+| 0x4d4c79 | 3.72M -> 3.72M | 48.33M -> 14.87M | trace/160 | trace/74 | retry reason 1; the rest moved to 0x4d4e1c |
+| 0x5977e1 | ~0 | 53.49M -> 34.63M | loop/198 | loop/198 | blocks moved to twin head 0x5977dc (+19.5M) |
+| *gained:* 0x4d1df0 | 0.01M -> 3.78M | 0 -> 0 | trace/16 | trace/16, mega-killed once | the displaced callee of 0x590061, cutting at its icall 0x4d1e23 on every entry |
+| *gained:* 0x4d4e1c | 0 -> 3.72M | 0 -> 37.17M | none | trace/160 | new head from the 0x4d4c79 split |
+| *gained:* 0x58ccf0 | 0 -> 0.25M | 0 -> 0.50M | trace/31 | trace/31 | |
+
+The full top-20 lists (lost and gained, by enters and by blocks) are printed
+by the runbook above.
+
+By class:
+
+| class | enters net | blocks net |
+|---|---:|---:|
+| 0: call head, calls-followed failed, retry declined (4 heads) | **-15.71M** | **-51.54M** |
+| a: "swallowed" | +0.25M | -14.52M, almost all 0x59009b |
+| d: lost install | -0.08M | -1.89M |
+| f: new in B | +3.73M | +37.50M, 0x4d4e1c |
+| g: same program set | +0.06M | -31.38M, including 0x4d4c79 at -33.5M |
+
+Calls-followed failures retried, by first reason:
+
+| arm | 1 scan-limit | 4 no-backedge | 5 | 8 unreached-block |
+|---|---:|---:|---:|---:|
+| uop | 386 | 13 | 3 | 69 |
+| icall | 352 | 14 | 3 | 76 |
+
+The retry is common in both arms. What changes is *which* heads land in it:
+the hot ones whose calls-followed region now runs through an icall. Class a
+is a tool label, not a mechanism. 0x59009b sits inside 0x590066's arm-B
+trace, but it lost its own program to a reason-8 retry that produced a poor
+10-instruction trace. Heads that genuinely lost enters to a covering caller
+total about 3.7K enters: 0x5998dd (3,420 enters, 6.9K blocks) and 0x4d4e63
+(256).
+
+**Mechanism.** `--uop-icall` turns FF /2 into a guarded kind-23 call. Regions
+that follow calls then grow through targets they used to stop at, and more
+hot heads hit scan-limit (1) or unreached-block (8). `$uc_lower_head` then
+retries with `$uc_nocall=1`, which marks every kind-23 instruction
+unsupported. That retry does three things:
+
+1. It declines, as head-unsupported (reason 3), any head whose own
+   instruction is the call: 0x4522f9, 0x590061, 0x4c5d9b.
+2. It truncates other heads at their first call: 0x59009b becomes a poor
+   trace/10, and 0x4d4c79 splits.
+3. It pre-empts §16's span-halving retry, which only runs while the error
+   is 1.
+
+#### Rodent
+
+| | uop | icall | delta |
+|---|---:|---:|---:|
+| enters | 265,075 | 300,362 | +35,287 |
+| blocks in programs | 2.44M | 2.23M | -0.21M (-8.7%) |
+| installs | 142 | 235 | +93 |
+| poor kills | 38 | 131 | +93 |
+| programs keeping an icall site | 0 | 14 | all tiny, mostly poor |
+| compiled instructions / uops | 6006 / 28615 | 10744 / 53969 | about 1.8x |
+
+- Nothing in Rodent is hot. The top-20 lists are all under 0.01M enters per
+  head.
+- Swallowing and option A are worth 0 here.
+- The extra poor kills: 89 of 95 are not retry-related, and 54 of those are
+  heads that are new in the icall arm. They sum to -156K blocks. Most are
+  programs that exit at or below their head on the first ret-type exit.
+- Retries by first reason: uop 1:9, 4:4, 8:6; icall 1:25, 4:7, 8:17.
+- The execution shift is 0.2M blocks, which is too small to cost +2%. The
+  cost is consistent with compile-side work: nearly twice the compiled
+  volume, 103 more compile attempts, and 93 more installs that are then
+  killed. That is not measured.
+
+#### Connection to CPU (H3, `--handler-hist --handler-hist-thread=0`)
+
+| | uop | icall | delta |
+|---|---:|---:|---:|
+| threaded ops | 1,186.03M | 1,456.69M | +270.7M (+22.8%) |
+| threaded block entries | 464.07M | 533.98M | +69.9M (+15.1%) |
+| blocks inside programs | 647.2M | 585.6M | -61.6M |
+| H470 `uop_enter` dispatches | 116.6M | 135.4M | +18.8M |
+| H39 `call_rel` | 48.1M | 67.5M | +19.4M |
+| H45 `block_end` | 40.1M | 59.2M | +19.1M |
+| H42 `ret_imm` | 25.3M | 36.5M | +11.2M |
+
+- The hist runs installed 876 and 907 programs, against the census's 1196
+  and 1050. Their enters and blocks still agree with the census within 0.5%.
+- Threaded plus program blocks is roughly conserved (+0.75%): the work
+  the tier stopped covering is run by the threaded interpreter instead, at
+  about 3.9 extra threaded ops per moved block.
+- The blocks that gained threaded entries are exactly the lost programs'
+  bodies:
+  - 0x58c380, 0x58c395, 0x58c3e5 and 0x58c3eb, +11.9M each (the callee of
+    0x4522f9);
+  - 0x4522fe, +11.15M;
+  - 0x5900ab, 0x5900b2 and 0x5900e5, +3.7M each;
+  - 0x4d1df0 and 0x58ccf0, +3.7M.
+- `uop_enter` dispatches *rise* while program enters fall. The failed-install
+  heads keep probing the tier from threaded code.
+- The census run's own single-run, loaded-box timing had icall at +1.9%
+  gameplay and +3.0% for the whole run. That agrees in sign with §23.5 and is
+  not a measurement.
+
+On Rodent `--handler-hist` changes tier behaviour: both arms install 86
+programs, and the icall effect disappears. The Rodent hist pair is therefore
+unusable, and Rodent's CPU claim rests on the census alone.
+
+#### Verdict and what to change
+
+- **Swallowing is not the mechanism.**
+  - The measured cost of callee heads covered by an icall caller's trace is
+    about 3.7K enters on H3 and 0 on Rodent.
+  - H3's -11.7M enters and -62M blocks are the nocall-retry fallout above.
+  - Rodent's +2% is compile churn from 93 extra short-lived installs.
+- **Option A** (end a trace at a guarded call whose target is already a hot
+  head) prices at **about 0 on both games**.
+  - It targets the covering, which costs nothing measurable.
+  - It could help only indirectly, by shrinking the regions that hit
+    scan-limit. That is a blunt form of option C and is not measured.
+- **Option C** is the lever; it is not implemented. When a calls-followed
+  attempt fails, `$uc_lower_head` should:
+  - retry first with only the icall sites as the edge (keep E8 calls
+    followed), and/or halve the span, before falling back to nocall;
+  - never let the nocall retry decline a head whose own instruction is
+    the call.
+
+  The upper bound is the icall arm back at the uop arm's program coverage on
+  H3: about +11.7M enters and +62M program blocks, and 62-70M fewer threaded
+  block entries. That removes the +22.8% threaded ops seen above. Whether the
+  inline cache then turns positive is a separate question; §23.5's A/B would
+  have to be rerun.
+- `--uop-icall` stays default-off.
