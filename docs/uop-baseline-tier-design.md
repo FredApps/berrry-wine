@@ -883,6 +883,57 @@ memory operations, of which 2 are the work. The levers, in order:
 3. **The interrupt check.** Ion inserts it at the loop head. A loop that exits
    through `$budget` does not need it per µop, but wasm has no way to say so.
 
+### Phase 1, step 10: the $pc spill is Ion's, and it comes from the host calls
+
+**Cause.** Rebuilding `$run` from a subset of arms (the first N in EOPS
+order) shows where the spill starts:
+- Up to 92 arms, Ion keeps `$pc` and `$steps` in registers. `getr16` is 8
+  instructions, `step` 5, and nothing touches the stack.
+- From 94 arms on, every arm stores `$pc` and the head reloads it.
+
+No single arm added to the first 90 triggers it. Arms 92-93 are `ldfv8a` and
+`stfv8a`, the first two arms that call a host import (`$vga_rd8`/`$vga_wr8`).
+One call site is fine. From two on, Ion stops splitting the loop-carried
+ranges around the calls and gives them stack slots everywhere. E1 has 175
+call sites in 79 arms.
+
+**Fix: `callSafe` (uop-wasm.js).** In the loop engine, every host call is
+wrapped so the loop-carried locals are stored to CALLSAFE before it and
+reloaded after it: `$pc $steps $F` plus the machine params and the slot
+registers. None of them is live across a call any more.
+
+Ion, full 785-arm engine:
+- The head keeps `$pc` in `w19` and no longer reloads it.
+- getr/putr go from 13 instructions and 8 memory ops to 10 and 4.
+- link goes from 12 memory ops to 5, and step from 5 to 1.
+- The call arms grow, because they pay the saves: `ldfv8a` goes from 52 to
+  111 instructions.
+
+**V8 is different.** `tools/wasm-native.js --engine=v8` reads TurboFan's code
+out of d8's `--perf-prof` jitdump. TurboFan keeps `$pc` in `w0` in BOTH
+builds, and the hot naive arms are already tight without the change:
+`getr16` is 8 instructions with 4 memory ops, `step` 6, no stack use.
+callSafe still reduces V8's stack use elsewhere: arms touching `sp` go from
+440 to 81, and stack ops from 3,019 to 1,597, mostly in cold shift and move
+arms.
+
+**Timing.** Nothing on this box resolves it.
+- **Node:** arm-bench in one run gives only-naive x4.84 with callSafe against
+  x4.67 on the old engine (`only-naive@spill`), and uop x2.29 against x2.15
+  (slice time x0.92 against x1.02). The two only-naive numbers are within
+  noise of each other, as the V8 code predicts.
+- **SpiderMonkey** (`shell-bench --mode=only --arms=sm,sm@spill`) ran at load
+  20-63. Per-program ratios spread from x0.58 to x2.33, which says nothing.
+- **`--counters`** (instructions retired and cycles per process, via
+  `/usr/bin/time -l`) did not settle it either. The per-dispatch slope
+  between 2M and 12M spread from x0.87 to x1.40, because the counts include
+  Ion's off-thread compiles and GC helper threads.
+
+callSafe stays on by default: it is correct everywhere (test-toyvm-uop,
+-uop-only and -uop-live all pass), and structurally it removes memory ops on
+both engines. `TOYVM_CALLSAFE=0` and the `@spill` arms keep the old engine
+for the A/B on a quiet box.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

@@ -5,6 +5,12 @@
 //
 //   node tools/toyvm/shell-bench.js --from=sweep.json [--arms=node,v8,sm,v8-liftoff,sm-baseline]
 //   node tools/toyvm/shell-bench.js --exe=/tmp/demos/1995-c-cma_brw/BRW.EXE --dispatches=20m
+//   node tools/toyvm/shell-bench.js --exe=A,B --mode=only --arms=sm,sm@spill --counters
+//
+// --mode=interp|jit|uop|only picks what runs inside the engine; ENGINE@spill
+// is that engine on the E1 µop engine without uop-wasm.js callSafe; and
+// --counters (macOS) adds each process's instructions retired and cycles,
+// which a loaded box cannot move.
 //
 // WHY. engine-bench.js already races node's V8, d8, SpiderMonkey and JSC -- but
 // on one hot block replayed from a snapshot, because the whole-program runner
@@ -73,8 +79,11 @@ const ARMS = {
     flags: ['--useOMGJIT=false'] },
 };
 
+// `ENGINE@spill` (sm@spill) is that engine on the E1 µop engine without
+// uop-wasm.js callSafe: the A/B for it. Only --mode=uop and --mode=only build E1.
+const engineOf = (id) => id.replace(/@spill$/, '');
 function binOf(id) {
-  const a = ARMS[id];
+  const a = ARMS[engineOf(id)];
   if (!a) throw new Error(`unknown arm ${id} (known: ${Object.keys(ARMS).join(',')})`);
   return a.bin.find((b) => b === process.execPath || fs.existsSync(b)) || null;
 }
@@ -86,7 +95,7 @@ function binOf(id) {
 // installs region-jit's compiled region into the same whole-program run, with
 // sweep-dos.js's own settings (profile a quarter of the budget, starting a
 // quarter in), so the jit arm is the corpus sweep's `--region-jit` run.
-function runnerSource(exe, budget, mode) {
+function runnerSource(exe, budget, mode, spill) {
   const jit = mode === 'jit'
     ? `, regionJit: { sampleAfter: ${Math.floor(budget / 4)}, profileFor: ${Math.floor(budget / 4)}, gateAt: 0, log: function () {} }`
     // `--mode=uop`: the µop tier (uop-live.js), first profile window a tenth
@@ -98,11 +107,15 @@ function runnerSource(exe, budget, mode) {
     : mode === 'uop'
       ? `, uop: { sampleAfter: ${Math.floor(budget / 10)}, profileFor: 1000000`
         + `${arg('uop-opts') ? `, ...${arg('uop-opts')}` : ''} }`
-      : '';
+      // `--mode=only`: the µop-only arm (uop-only.js), every program built on
+      // --only-passes= (default naiveR, arm-bench's only-naive).
+      : mode === 'only'
+        ? `, uopOnly: { shape: 'loop', passes: '${arg('only-passes', 'naiveR')}', linePasses: '${arg('only-passes', 'naiveR')}' }`
+        : '';
   const dir = path.dirname(exe);
   const files = fs.readdirSync(dir).filter((f) => fs.statSync(path.join(dir, f)).isFile());
   return `'use strict';
-var T0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+${spill ? "globalThis.TOYVM_CALLSAFE = '0';\n" : ''}var T0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 var nowMs = function () { return typeof performance !== 'undefined' ? performance.now() : Date.now(); };
 globalThis.self = globalThis;
 var nodeFs = (typeof require === 'function') ? require('fs') : null;
@@ -136,7 +149,8 @@ runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget
     uopInitSecs: r.uopInitSecs, uopBuildSecs: r.uopBuildSecs,
     dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0,
     jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null,
-    uop: r.uop ? { outcome: r.uop.outcome, windows: r.uop.windows, samples: r.uop.samples, bestShare: r.uop.bestShare,
+    only: r.uop && r.uop.fallbacks ? { share: r.uop.uopShare, builds: r.uop.builds, buildSecs: r.uop.buildSecs } : null,
+    uop: r.uop && !r.uop.fallbacks ? { outcome: r.uop.outcome, windows: r.uop.windows, samples: r.uop.samples, bestShare: r.uop.bestShare,
       installs: r.uop.installs, entries: r.uop.entries, steps: r.uop.steps, bails: r.uop.bails,
       rebuilds: r.uop.rebuilds, gaveUp: r.uop.gaveUp, demoted: r.uop.demoted.length,
       declined: r.uop.declined, demotedWhy: r.uop.demoted, refusedHeads: r.uop.refusedHeads,
@@ -145,11 +159,22 @@ runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget
 `;
 }
 
+// `--counters` (macOS): run each engine process under `/usr/bin/time -l` and
+// read the kernel's per-process `instructions retired` and `cycles elapsed`.
+// Wall time on this box measures the other agents; these two do not. Retired
+// instructions do not depend on load at all. Cycles are close, but still move
+// with cache sharing and with which core type the process lands on. Both cover
+// the WHOLE process (bundle, VM build, the µop engine's compile), so compare
+// arms at one budget, or subtract two budgets for the per-dispatch slope.
+const COUNTERS = flag('counters');
+if (COUNTERS && process.platform !== 'darwin') throw new Error('--counters reads /usr/bin/time -l, macOS only');
 function runArm(id, script, timeoutS) {
   return new Promise((resolve) => {
     const bin = binOf(id);
-    const args = [...ARMS[id].flags, script];
-    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = [...ARMS[engineOf(id)].flags, script];
+    const p = COUNTERS
+      ? spawn('/usr/bin/time', ['-l', bin, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });
@@ -157,7 +182,8 @@ function runArm(id, script, timeoutS) {
     p.on('close', (code, sig) => {
       clearTimeout(kill);
       const m = /^SHELLBENCH (.*)$/m.exec(out);
-      if (m) return resolve({ ok: true, ...JSON.parse(m[1]) });
+      const ctr = (k) => { const c = new RegExp(`(\\d+)\\s+${k}`).exec(err); return c ? Number(c[1]) : undefined; };
+      if (m) return resolve({ ok: true, ...JSON.parse(m[1]), insns: ctr('instructions retired'), cycles: ctr('cycles elapsed') });
       const e = /^SHELLBENCH-ERR (.*)$/m.exec(out);
       resolve({ ok: false, reason: sig === 'SIGKILL' ? 'timeout'
         : e ? `error: ${e[1]}` : `exit ${code}: ${(err || out).trim().split('\n').slice(-2).join(' | ')}` });
@@ -188,7 +214,7 @@ async function main() {
   const timeoutS = Number(arg('timeout', 300));
   const outFile = arg('out', null);
   const mode = arg('mode', 'interp');
-  if (!['interp', 'jit', 'uop'].includes(mode)) throw new Error(`--mode= is interp, jit or uop, not ${mode}`);
+  if (!['interp', 'jit', 'uop', 'only'].includes(mode)) throw new Error(`--mode= is interp, jit, uop or only, not ${mode}`);
 
   // The programs: a sweep's own rows and budget (so the frames it recorded are
   // a check on every arm), or an explicit list.
@@ -213,11 +239,13 @@ async function main() {
   for (let pi = 0; pi < progs.length; pi++) {
     const p = progs[pi];
     const script = path.join(work, `run-${pi}.js`);
-    fs.writeFileSync(script, runnerSource(p.exe, budget, mode));
+    fs.writeFileSync(script, runnerSource(p.exe, budget, mode, false));
+    const spillScript = path.join(work, `run-${pi}-spill.js`);
+    if (arms.some((a) => a.endsWith('@spill'))) fs.writeFileSync(spillScript, runnerSource(p.exe, budget, mode, true));
     const row = { exe: p.exe, name: path.basename(p.exe), load: os.loadavg()[0], arms: {} };
     for (let i = 0; i < arms.length; i++) {
       const a = arms[(i + pi) % arms.length];
-      row.arms[a] = await runArm(a, script, timeoutS);
+      row.arms[a] = await runArm(a, a.endsWith('@spill') ? spillScript : script, timeoutS);
     }
     // Agreement: every arm that finished against the first that did, and
     // against the sweep's record when there is one.
@@ -235,6 +263,7 @@ async function main() {
       const r = row.arms[a];
       if (!r.ok) return `${a} FAIL(${r.reason.slice(0, 40)})`;
       return `${a} ${(r.guestSecs * 1e9 / r.dispatched).toFixed(1)}ns/d build ${buildS(r).toFixed(2)}s`
+        + (r.insns ? ` ${(r.insns / 1e9).toFixed(2)}G insns ${(r.cycles / 1e9).toFixed(2)}G cyc` : '')
         + (r.uopInitSecs ? ` uop init ${(1000 * r.uopInitSecs).toFixed(0)}ms opt ${(1000 * r.uopBuildSecs).toFixed(0)}ms` : '');
     };
     console.log(`[${pi + 1}/${progs.length}] ${row.name.padEnd(14)} ${arms.map(cell).join('  ')}`
@@ -272,6 +301,15 @@ async function main() {
           + `, opt total ${clean.reduce((s, r) => s + (r.arms[a].uopBuildSecs || 0), 0).toFixed(2)}s`
           + ` (max ${(1000 * Math.max(...clean.map((r) => r.arms[a].uopBuildSecs || 0))).toFixed(0)}ms)`
         : ''));
+  }
+  // The load-immune numbers, when --counters read them.
+  for (const a of arms) {
+    if (!clean.length || !clean.every((r) => r.arms[a].insns && r.arms[base].insns)) break;
+    const ri = clean.map((r) => r.arms[a].insns / r.arms[base].insns);
+    const rc = clean.map((r) => r.arms[a].cycles / r.arms[base].cycles);
+    const mm = (xs) => `x${Math.min(...xs).toFixed(3)}..x${Math.max(...xs).toFixed(3)}`;
+    console.log(`  ${a.padEnd(12)} process vs ${base}: instructions geomean x${geomean(ri).toFixed(3)} (${mm(ri)})`
+      + `  cycles geomean x${geomean(rc).toFixed(3)} (${mm(rc)})`);
   }
   for (const r of rows) {
     if (r.failed.length) console.log(`  FAIL ${r.name}: ${r.failed.map((a) => `${a}: ${r.arms[a].reason}`).join('; ')}`);

@@ -54,7 +54,8 @@ const VBASE = (VFILE + 4 * MAXV + 15) & ~15; // everyone else's
 const OUT = VBASE + 4 * MAXV;                // steps, flags, ip / block id
 const KMAX = 16;
 const SLOTHOME = OUT + 16;                   // per local slot: the vreg address it stands for
-const CODE = SLOTHOME + 4 * KMAX;
+const CALLSAVE = SLOTHOME + 4 * KMAX;         // loop-carried locals across a host call (callSafe)
+const CODE = CALLSAVE + 4 * (8 + KMAX);
 const CODE_END = CODE + 0x40000;             // the one-program page (makeEnter, e1Enter)
 // The live arena (E1Arena): many resident programs at once. LASTP is the id
 // of the program a chained run is in, written by `link` as it takes a chain.
@@ -933,6 +934,39 @@ const loadSlots = (K) => slotRange(K)
 const flushSlots = (K) => slotRange(K)
   .map(j => `(i32.store (i32.load (i32.const ${SLOTHOME + 4 * j})) (local.get $r${j}))`).join(' ');
 
+// A loop engine's host calls, with every loop-carried local stored before the
+// call and reloaded after it, so none of them is live across a call. The
+// loop's locals are live around the whole loop, and a host call clobbers
+// every register. Measured with SpiderMonkey Ion on arm64: once $run has two
+// call sites (E1 has 175, in 79 VGA and port arms), the allocator stops
+// splitting those ranges around the calls and keeps $pc and the machine
+// params on the stack in EVERY arm. That is a $pc store and reload per µop,
+// plus a param reload in each arm. A reload costs the call arms, which are
+// already paying for a call.
+// TOYVM_CALLSAFE=0 (or, in an engine shell, globalThis.TOYVM_CALLSAFE = '0')
+// builds the old engine, for an A/B: arm-bench's and shell-bench's `@spill`.
+const CALL_SAFE = globalThis.TOYVM_CALLSAFE !== '0'
+  && (typeof process === 'undefined' || !process.env || process.env.TOYVM_CALLSAFE !== '0');
+const CARRIED = ['pc', 'steps', 'F', ...MACHINE];
+function callSafe(body, K) {
+  if (!CALL_SAFE) return body;
+  const vars = CARRIED.concat(slotRange(K).map((j) => `r${j}`));
+  const save = vars.map((v, i) => `(i32.store (i32.const ${CALLSAVE + 4 * i}) (local.get $${v}))`).join(' ');
+  const load = vars.map((v, i) => `(local.set $${v} (i32.load (i32.const ${CALLSAVE + 4 * i})))`).join(' ');
+  let out = '', i = 0;
+  for (let at; (at = body.indexOf('(call $', i)) >= 0;) {
+    let d = 0, e = at;
+    for (; e < body.length; e++) { if (body[e] === '(') d++; else if (body[e] === ')' && --d === 0) break; }
+    const call = body.slice(at, e + 1);
+    const fn = /^\(call \$(\w+)/.exec(call)[1];
+    out += body.slice(i, at) + (fn === 'vga_wr8'
+      ? `(block ${save} ${call} ${load})`
+      : `(block (result i32) ${save} (local.set $cr ${call}) ${load} (local.get $cr))`);
+    i = e + 1;
+  }
+  return out + body.slice(i);
+}
+
 // One variant's body, for a loop engine (`mode` 'loop') or a threaded one.
 function variantBody(key, K, mode) {
   const [name, pat] = key.split(':');
@@ -956,6 +990,7 @@ function variantBody(key, K, mode) {
   let body = e.body(A);
   if (!isTerm(name)) body += ` ${next(`(i32.add (local.get $pc) (i32.const ${len}))`)}`;
   if (K) body = body.split('(return (i32.const').join(`${flushSlots(K)} (return (i32.const`);
+  if (mode === 'loop') body = callSafe(body, K);
   if (mode !== 'loop') {
     for (const g of MACHINE) {
       body = body.split(`(local.get $${g})`).join(`(global.get $${g})`).split(`(local.set $${g} `).join(`(global.set $${g} `);
@@ -974,7 +1009,7 @@ function loopWat(keys, K) {
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 ${IO_IMPORT}
-(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32) ${slotLocals}
+(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32) (local $cr i32) ${slotLocals}
 ${loadSlots(K)}
 ${text}
 )

@@ -23,6 +23,9 @@
 //   only-tK    tier-up: built on promoteLiveRP, rebuilt on allRP once its loop
 //              headers have counted K (only-t64, only-t1k, ...)
 //
+// Any arm name + `@spill` (only-naive@spill) runs it on the E1 engine as it
+// was before uop-wasm.js callSafe: the A/B for that change.
+//
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
 //
@@ -67,7 +70,10 @@ const ARMS = {
   'only-naive': () => ({ uopOnly: { shape: 'loop', passes: 'naiveR', linePasses: 'naiveR' } }),
 };
 
+// `ARM@spill` runs ARM on the E1 engine without uop-wasm.js callSafe
+// (TOYVM_CALLSAFE=0): Ion keeps $pc and the machine params on the stack.
 const armOf = (a) => {
+  if (a.endsWith('@spill')) return armOf(a.slice(0, -6));
   const t = /^only-t(\d+[km]?)$/i.exec(a);
   const nv = /^only-n(\d+[km]?)$/i.exec(a);
   if (nv) {
@@ -102,8 +108,9 @@ async function child(spec) {
 
 function runOne(exe, budget, arm, timeoutS) {
   return new Promise((resolve) => {
+    const env = arm.endsWith('@spill') ? { ...process.env, TOYVM_CALLSAFE: '0' } : process.env;
     const p = spawn(process.execPath, [__filename, `--child=${JSON.stringify({ exe, budget, arm })}`],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
+      { stdio: ['ignore', 'pipe', 'pipe'], env });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });

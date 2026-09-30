@@ -7,6 +7,7 @@
 //   node tools/wasm-native.js --func='$th_rle_run'
 //   node tools/wasm-native.js --index=914 --limit=80
 //   node tools/wasm-native.js --top=20            # biggest functions, named
+//   node tools/wasm-native.js --engine=v8 --func='$next'   # V8 TurboFan instead
 //
 // WHY THIS EXISTS: every performance argument in this project ends at the same
 // wall -- "the JIT probably does X". A handler that looks tight in WAT can come
@@ -25,6 +26,11 @@
 // handler really performs, whether a bounds check survived, whether the loop
 // body stayed in registers, how big the function is. Read it for that, and do
 // not quote a cycle count from it as "what Chrome does".
+//
+// `--engine=v8` reads V8 TurboFan's code instead -- what node and Chrome
+// run -- out of the jitdump d8 writes under --perf-prof (extractV8 below).
+// The two compilers can disagree completely: a register-allocation outcome
+// seen in Ion says nothing about TurboFan until this confirms it.
 //
 // The disassembly is for the HOST architecture (this box is arm64; a run on an
 // Intel box disassembles x86-64), because the compiler runs here.
@@ -127,6 +133,51 @@ print('JSON' + JSON.stringify(segs.map(s =>
   }
 }
 
+// V8 TurboFan (`--engine=v8`). d8's disassembler is compiled out as well, but
+// `--perf-prof` still writes a Linux-perf jitdump (jit-PID.dump in the cwd)
+// that carries every code object's BYTES, named `JS:wasm-function[N]-N-turbofan`.
+// --no-liftoff with --no-wasm-lazy-compilation makes `new WebAssembly.Module`
+// compile every function with TurboFan up front, so no instance and no imports
+// are needed. The functions are copied into outBin back to back, and the same
+// [index, begin, end] segment table as extract() comes back.
+// jitdump: a header whose third u32 is its size, then records of {u32 id,
+// u32 size, u64 timestamp}; a JIT_CODE_LOAD (id 0) continues {u32 pid, u32 tid,
+// u64 vma, u64 code_addr, u64 code_size, u64 code_index, name NUL, code}.
+function extractV8(d8Path, wasmPath, outBin) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wasm-native-v8-'));
+  try {
+    const script = path.join(dir, 'compile.js');
+    fs.writeFileSync(script, `new WebAssembly.Module(readbuffer(${JSON.stringify(wasmPath)}));\n`);
+    execFileSync(d8Path, ['--perf-prof', '--no-liftoff', '--no-wasm-lazy-compilation', script],
+      { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const dump = fs.readdirSync(dir).find(f => /^jit-\d+\.dump$/.test(f));
+    if (!dump) { console.error('d8 wrote no jitdump (--perf-prof)'); process.exit(1); }
+    const b = fs.readFileSync(path.join(dir, dump));
+    const parts = [], segs = [];
+    let at = b.readUInt32LE(8), out = 0;
+    while (at + 16 <= b.length) {
+      const id = b.readUInt32LE(at), size = b.readUInt32LE(at + 4);
+      if (size < 16) break;
+      if (id === 0) {
+        const codeSize = Number(b.readBigUInt64LE(at + 16 + 8 + 16));
+        const nameAt = at + 16 + 40;
+        const nul = b.indexOf(0, nameAt);
+        const m = /^JS:wasm-function\[(\d+)\]/.exec(b.toString('latin1', nameAt, nul));
+        if (m) {
+          parts.push(b.subarray(nul + 1, nul + 1 + codeSize));
+          segs.push([Number(m[1]), out, out + codeSize]);
+          out += codeSize;
+        }
+      }
+      at += size;
+    }
+    fs.writeFileSync(outBin, Buffer.concat(parts));
+    return segs;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function disassemble(objdump, bin, begin, end) {
   // GNU objdump's raw-binary mode. Apple's llvm-objdump has no -b binary, which
   // is why this looks for gobjdump specifically.
@@ -142,21 +193,26 @@ function disassemble(objdump, bin, begin, end) {
 
 function main() {
   const wasmPath = path.resolve(arg('wasm', DEFAULT_WASM));
-  const tier = arg('tier', 'ion');
+  const engine = arg('engine', 'sm');
+  if (!['sm', 'v8'].includes(engine)) { console.error(`--engine= is sm or v8, not ${engine}`); process.exit(1); }
+  const tier = engine === 'v8' ? 'turbofan' : arg('tier', 'ion');
   const limit = parseInt(arg('limit', '120'), 10);
   const top = arg('top', null);
   const keep = arg('out', null);
 
-  const sm = findTool('SM', [
-    path.join(os.homedir(), '.jsvu', 'bin', 'sm'),
-    '/usr/local/bin/sm', '/opt/homebrew/bin/sm',
-  ], 'Install it with:  npx jsvu@latest --engines=spidermonkey');
+  const shell = engine === 'v8'
+    ? findTool('D8', [path.join(os.homedir(), '.jsvu', 'bin', 'v8'), '/usr/local/bin/d8', '/opt/homebrew/bin/d8'],
+      'Install it with:  npx jsvu@latest --engines=v8')
+    : findTool('SM', [
+      path.join(os.homedir(), '.jsvu', 'bin', 'sm'),
+      '/usr/local/bin/sm', '/opt/homebrew/bin/sm',
+    ], 'Install it with:  npx jsvu@latest --engines=spidermonkey');
 
   const watPath = path.resolve(arg('wat', COMBINED));
   const names = nameTable(watPath);
   const bin = keep ? path.resolve(keep) : path.join(os.tmpdir(), `wasm-native-${process.pid}.bin`);
 
-  const segs = extract(sm, wasmPath, tier, bin);
+  const segs = engine === 'v8' ? extractV8(shell, wasmPath, bin) : extract(shell, wasmPath, tier, bin);
   const total = segs.reduce((a, s) => a + (s[2] - s[1]), 0);
   console.log(`${path.relative(ROOT, wasmPath)}: ${segs.length} functions, ` +
     `${(total / 1024).toFixed(0)}KB of ${tier} code for ` +
@@ -241,6 +297,6 @@ function main() {
 // Importable, so a second tool can disassemble MANY functions from ONE
 // SpiderMonkey run instead of paying its ~4s startup per name. Used by
 // tools/indirect-census.js.
-module.exports = { findTool, nameTable, extract, disassemble, DEFAULT_WASM, COMBINED };
+module.exports = { findTool, nameTable, extract, extractV8, disassemble, DEFAULT_WASM, COMBINED };
 
 if (require.main === module) main();
