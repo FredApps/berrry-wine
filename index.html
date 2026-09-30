@@ -1686,6 +1686,7 @@ Resource-aware Win98 emulator
       <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico">&#128187;</span>Source on GitHub</a>
       <div class="sep"></div>
       <a class="item" href="#" id="start-record-item" onclick="toggleRecordingFromStart(event)" title="Record screen + audio to video"><span class="ico" id="start-record-ico">&#9679;</span><span id="start-record-label">Record Screen</span></a>
+      <a class="item" href="#" id="start-agent-item" onclick="connectAgentFromStart(event)" title="Let an AI agent see and play this session"><span class="ico">&#129302;</span>Connect Agent...</a>
       <div class="sep"></div>
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
       <div class="sep"></div>
@@ -1750,6 +1751,16 @@ Resource-aware Win98 emulator
       }
       closeStartMenu();
       if (typeof toggleRecording === 'function') toggleRecording();
+    }
+    // docs/design-agent-connect.md. The dialog module loads on first use.
+    function connectAgentFromStart(e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeStartMenu();
+      import('./lib/agent-connect-ui.js').then(m => m.open())
+        .catch(err => console.warn('[agent-connect]', err));
     }
     function openShutdownFromStart(e) {
       if (e) {

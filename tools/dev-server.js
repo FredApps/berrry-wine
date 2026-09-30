@@ -34,6 +34,9 @@
 //   DELETE /api/data/:key            remove it
 //   GET    /api/public-data/users/:key   who has published under this key
 //   GET    /api/public-data/:userId/:key read someone else's published record
+//   POST   /api/nomcp/register/{challenge,solve}, /api/nomcp/auth/sign-in
+//                                     agent bots (see handleNomcp); their
+//                                     Bearer brry_rw_ token works on /api/data
 //
 // A published record is world-readable, exactly as on the real backend. That
 // is a property to design around rather than fight: room invitations carry a
@@ -90,6 +93,13 @@ class Store {
     this.byId = new Map();
     this.nextId = 1;
     this.writes = 0;
+    // The nomcp agent-registration stand-in (docs/design-agent-connect.md):
+    // challenge id -> { nonce, expires }, ed25519 pubkey hex -> user key, and
+    // brry_rw_ session token -> user key. A bot is an ordinary user here whose
+    // key into `users` is "bot:<pubkey>" instead of a browser cookie.
+    this.challenges = new Map();
+    this.bots = new Map();
+    this.apiKeys = new Map();
   }
 
   user(cookie) {
@@ -351,9 +361,116 @@ function serveStatic(req, res, urlPath, agentInject) {
 
 const MAX_RECORD_BYTES = 256 * 1024;
 
+// Berrry's nomcp self-serve agent registration (berrry-server src/nomcp.js),
+// in memory, so the skill's bridge can register, sign in and write its sealed
+// answer against this server with no Berrry account and no network. Same
+// routes, bodies and signature strings; the one deliberate difference is the
+// captcha, whose answer here is always "dev".
+//
+//   POST /api/nomcp/register/challenge  -> { challenge_id, nonce, puzzle }
+//   POST /api/nomcp/register/solve      { challenge_id, answer, public_key, signature, username }
+//                                       signature = ed25519 over "register:{nonce}", hex
+//   POST /api/nomcp/auth/sign-in        { public_key, signature, timestamp }
+//                                       signature = ed25519 over "login:{timestamp}", hex
+//
+// The brry_rw_ token either returns is then accepted as a Bearer token on
+// /api/data -- the change berrry itself needs (design section 4, change 1).
+function ed25519Verify(publicKeyHex, message, signatureHex) {
+  try {
+    const key = crypto.createPublicKey({
+      key: Buffer.from('302a300506032b6570032100' + publicKeyHex, 'hex'), format: 'der', type: 'spki',
+    });
+    return crypto.verify(null, Buffer.from(message), key, Buffer.from(signatureHex, 'hex'));
+  } catch (_) {
+    return false;
+  }
+}
+
+function issueBotToken(store, pub) {
+  const token = 'brry_rw_' + crypto.randomBytes(16).toString('hex');
+  store.apiKeys.set(token, { userKey: `bot:${pub}`, expires: Date.now() + 24 * 3600e3 });
+  return { token, expires_at: new Date(Date.now() + 24 * 3600e3).toISOString() };
+}
+
+async function handleNomcp(req, res, seg, store) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+  const route = seg.slice(2).join('/');
+  let body = {};
+  try { body = JSON.parse((await readBody(req, 16 * 1024)) || '{}'); } catch (_) {
+    return sendJson(res, 400, { error: 'validation_error', message: 'body must be JSON' });
+  }
+  if (route === 'register/challenge') {
+    const id = crypto.randomBytes(8).toString('hex');
+    const nonce = crypto.randomBytes(16).toString('hex');
+    store.challenges.set(id, { nonce, expires: Date.now() + 600e3 });
+    return sendJson(res, 200, {
+      challenge_id: id, nonce,
+      puzzle: { type: 'dev', prompt: 'Local dev-server stand-in for the Berrry captcha: answer "dev".' },
+      expires_at: new Date(Date.now() + 600e3).toISOString(),
+    });
+  }
+  if (route === 'register/solve') {
+    const { challenge_id, answer, public_key, signature, username } = body;
+    const challenge = store.challenges.get(challenge_id);
+    if (!challenge || challenge.expires < Date.now()) {
+      return sendJson(res, 400, { error: 'invalid_challenge', message: 'Challenge not found, already solved, or expired' });
+    }
+    if (String(answer).trim().toLowerCase() !== 'dev') {
+      return sendJson(res, 400, { error: 'wrong_answer', message: 'Incorrect answer. Request a new challenge and try again.' });
+    }
+    const pub = String(public_key || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(pub)) {
+      return sendJson(res, 400, { error: 'validation_error', message: 'public_key must be 64 hex characters (Ed25519 public key)' });
+    }
+    if (!/^[a-z][a-z0-9_]{0,26}bot$/i.test(String(username || ''))) {
+      return sendJson(res, 400, { error: 'validation_error', message: 'Invalid username. Must be 4-30 chars, start with letter, end with "bot".' });
+    }
+    if (!ed25519Verify(pub, `register:${challenge.nonce}`, String(signature || ''))) {
+      return sendJson(res, 401, { error: 'invalid_signature', message: 'Ed25519 signature verification failed. Sign the string "register:{nonce}" with your private key.' });
+    }
+    if (store.bots.has(pub)) {
+      return sendJson(res, 409, { error: 'already_registered', message: 'This public key is already registered. Use POST /auth/sign-in to get a session token.' });
+    }
+    const name = String(username).toLowerCase();
+    for (const u of store.users.values()) {
+      if (u.name === name) return sendJson(res, 409, { error: 'conflict', message: `Username "${name}" is already taken` });
+    }
+    store.challenges.delete(challenge_id);
+    store.bots.set(pub, `bot:${pub}`);
+    store.user(`bot:${pub}`).name = name;
+    return sendJson(res, 201, Object.assign({ status: 'registered', public_key: pub, username: name },
+      issueBotToken(store, pub)));
+  }
+  if (route === 'auth/sign-in') {
+    const pub = String(body.public_key || '').toLowerCase();
+    const ts = parseInt(body.timestamp, 10);
+    if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 300e3) {
+      return sendJson(res, 401, { error: 'invalid_timestamp', message: 'Timestamp must be within 5 minutes of server time. Use Date.now() (milliseconds).' });
+    }
+    if (!ed25519Verify(pub, `login:${body.timestamp}`, String(body.signature || ''))) {
+      return sendJson(res, 401, { error: 'invalid_signature', message: 'Signature verification failed. Sign the string "login:{timestamp}" with your Ed25519 private key.' });
+    }
+    if (!store.bots.has(pub)) {
+      return sendJson(res, 404, { error: 'not_registered', message: 'No agent registered with this public key. Use POST /register/solve to register first.' });
+    }
+    return sendJson(res, 200, Object.assign({ status: 'signed_in', public_key: pub,
+      username: store.user(`bot:${pub}`).name }, issueBotToken(store, pub)));
+  }
+  return sendJson(res, 404, { error: 'no such route' });
+}
+
 async function handleApi(req, res, url, store, opts) {
   const seg = url.pathname.split('/').filter(Boolean);   // ['api', ...]
-  const userId = identify(req, res);
+  if (seg[1] === 'nomcp') return handleNomcp(req, res, seg, store);
+  // A bot's Bearer brry_rw_ token names its user; no cookie is set or read.
+  const auth = String(req.headers.authorization || '');
+  let botKey = null;
+  if (auth.startsWith('Bearer brry_')) {
+    const rec = store.apiKeys.get(auth.slice(7));
+    if (!rec || rec.expires < Date.now()) return sendJson(res, 401, { error: 'Invalid or expired token' });
+    botKey = rec.userKey;
+  }
+  const userId = botKey || identify(req, res);
 
   // --require-login: a stand-in for Berrry's sign-in. The login page is one
   // button, and signing in sets a cookie and returns to `return` (a path on
@@ -382,7 +499,7 @@ async function handleApi(req, res, url, store, opts) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(html);
   }
-  const signedIn = !(opts && opts.requireLogin)
+  const signedIn = !!botKey || !(opts && opts.requireLogin)
     || parseCookies(req.headers.cookie)[LOGIN_COOKIE] === '1';
   // POST /api/auth/logout -- as Berrry: 401 when nobody is signed in, and
   // signing out drops the session cookie.

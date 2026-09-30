@@ -18,10 +18,13 @@ const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
 
 // Text file extensions (served as-is)
-const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md', '.webmanifest', '.ini', '.xml']);
+const TEXT_EXTS = new Set(['.html', '.js', '.mjs', '.json', '.wat', '.css', '.md', '.webmanifest', '.ini', '.xml']);
 // lib/ also ships .txt: apps mount notes from there (the Quake II demo's
 // source note). Not the root, where .txt is the agents' message board.
-const SUBDIR_TEXT_EXTS = { lib: new Set([...TEXT_EXTS, '.txt']), src: TEXT_EXTS };
+// skills/ is what an AI agent reads to connect to a session
+// (docs/design-agent-connect.md): SKILL.md, its bundled bridge
+// scripts/wine-agent.mjs and the SHA256SUMS.txt that verifies it.
+const SUBDIR_TEXT_EXTS = { lib: new Set([...TEXT_EXTS, '.txt']), src: TEXT_EXTS, skills: new Set([...TEXT_EXTS, '.txt']) };
 function shipsAsSiteText(rel) {
   const exts = SUBDIR_TEXT_EXTS[rel.split('/')[0]];
   return !!exts && exts.has(path.extname(rel));
@@ -176,7 +179,7 @@ function collectTextFiles() {
         files.push({ name: entry, content: fs.readFileSync(full, 'utf-8') });
     }
   }
-  // Subdirectories with text content (lib/, src/)
+  // Subdirectories with text content (lib/, src/, skills/)
   for (const subdir of Object.keys(SUBDIR_TEXT_EXTS)) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
