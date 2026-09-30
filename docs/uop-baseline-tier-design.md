@@ -648,6 +648,42 @@ now `spin`, 40.9M of its 100M steps: its retrace wait runs in L1, and L1
 folds it cheaply. The remaining fallbacks are `pushf`/`popf`, `cli`/`sti`,
 and `movs`/`stos` with `rep`.
 
+### Phase 1, step 5: planar VGA predicted at build time (2026-09-29)
+
+Before this step, any fast-half access that hit planar VGA deoptimized. Its
+whole loop then ran in the slow half, whose `ldf`/`stf` bail to the reference
+interpreter. DREAM ran 65% of its hot blocks that way.
+
+`makeFast` now predicts planar accesses:
+
+- **The prediction.** An access is marked `op.vga` when VGA planar mode is on
+  at build time and the access's own `gets` segment has a base in the planar
+  window. The test is the engine's own: `((base & 0xFFF0000) | 1) === key`.
+- **How a marked access lowers.** It becomes `ldv`/`stv`, which does the VGA
+  access in place through L1's `vga_rd8`/`vga_wr8`. Only a 64K wrap, or a
+  store onto code, still deoptimizes.
+- **When it lowers that way.** Only when no later op of the same instruction
+  can deopt; otherwise the slow half would repeat the VGA effect.
+- **The passes treat it as an effect.** A marked load is not pure,
+  forwarding skips marked accesses, and a marked store clears what forwarding
+  had available.
+- **It is only a prediction.** An unmarked access that turns out to be VGA
+  still deopts, and a marked access that turns out not to be VGA runs as a
+  plain access.
+
+Result: DREAM's slow half went from 65% of its hot blocks to 0. All 12
+programs are still exact at 10M (only x11.9, only-min x6.4, only-t1k x8.3, at
+load 20-30).
+
+**A bug the new test found (VGAPLANAR, `test-toyvm-uop-only.js`).** The bug
+was older than prediction. Both entry loops (`enterOver` and
+`E1Arena.enter`) read the VGA key once, when they were entered. Consider a
+program that enables planar mode with an `out` and then bails to the
+reference interpreter. When wasm resumed, it got the key from before the
+`out`. It then treated A000:xxxx as plain memory: a read-modify-write lost
+every VGA effect after its first iteration. The key is now read on every
+entry into wasm.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

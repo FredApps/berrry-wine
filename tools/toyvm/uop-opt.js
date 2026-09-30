@@ -144,7 +144,9 @@ const PURE = new Set(['movi', 'mov', 'add', 'sub', 'and', 'or', 'xor', 'mul', 'm
   'addi', 'subi', 'andi', 'ori', 'xori', 'shli', 'shri', 'sari', 'sx8', 'sx16', 'merge16',
   'merge8l', 'merge8h', 'ext8h', 'cc', 'getr', 'gets', 'getm', 'getf', 'getfw', 'flagof',
   'addi16', 'addi8', 'shift']);
-const isPure = (op) => PURE.has(op.o) || (op.o === 'ld' && op.chk !== 'full');
+// A load predicted to hit planar VGA (op.vga, makeFast) is an effect: it
+// moves the latches and the read counter, so it is never dropped or moved.
+const isPure = (op) => PURE.has(op.o) || (op.o === 'ld' && op.chk !== 'full' && !op.vga);
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -202,6 +204,7 @@ class Build {
       this.fastOf.set(k, f.id);
     }
     this.deoptStub = new Map();
+    const vgaSeg = this.vgaPredictor();
     for (const [k, sid] of this.slowOf) {
       const s = p.blocks[sid];
       const f = p.blocks[this.fastOf.get(k)];
@@ -211,7 +214,11 @@ class Build {
           : ['putr', 'puts', 'putsel'].includes(c.o) ? ['a'] : ['d', 'a', 'b', 'c', 's', 'r', 'cin', 'nz'];
         for (const fld of fields) if (typeof c[fld] === 'number') c[fld] = t(c[fld]);
         c.node = k;
-        if (c.o === 'ld' || c.o === 'st') { c.chk = 'guard'; c.dx = this.deopt(k); }
+        if (c.o === 'ld' || c.o === 'st') {
+          c.chk = 'guard';
+          c.dx = this.deopt(k);
+          if (vgaSeg && vgaSeg(s.ops, op)) c.vga = true;
+        }
         // A divide the fast half cannot do leaves the way a memory guard does:
         // the slow block redoes the instruction, and its own DCHK exits to L1.
         if (c.o === 'dchk') c.dx = this.deopt(k);
@@ -221,6 +228,27 @@ class Build {
       f.term = this.fastTerm(clone(s.term), t);
     }
     // Slow back edges re-enter the fast half at a header, set up later.
+  }
+  // Which accesses will hit planar VGA? Those through a segment whose base
+  // is in the planar window right now, while planar mode is on (the key the
+  // engine's VGA test compares with). A guarded access there would deopt
+  // every time and run its whole loop in the slow half; marked, it does the
+  // access in place instead (uop-wasm.js ldv/stv), and the passes leave it
+  // where it is. Only a prediction: an unmarked access that turns out to be
+  // VGA still deopts, and a marked one that is not is a plain access.
+  vgaPredictor() {
+    if (!this.vm) return null;
+    const dv = new DataView(this.vm.mem.buffer);
+    const vk = dv.getInt32(isa.VGA_CTL_KEY, true);
+    if (!vk) return null;
+    const hit = [];
+    for (let s = 0; s < 6; s++) hit.push((((dv.getInt32(isa.REGFILE_SEGB + 4 * s, true) & 0xFFF0000) | 1) === vk));
+    if (!hit.some(Boolean)) return null;
+    // The base vreg is the instruction's own GETS (Lowerer.ea / push / pop).
+    return (ops, op) => {
+      const g = ops.find((x) => x.o === 'gets' && x.d === op.s);
+      return !!g && hit[g.s];
+    };
   }
   // Fast terminator from a slow one: body targets become fast blocks, GO stubs
   // become fast exit stubs (which write the state back first).
@@ -1879,6 +1907,13 @@ function forwardMemory(B) {
     let avail = [];
     for (let i = 0; i < b.ops.length; i++) {
       const op = b.ops[i];
+      // A VGA access is not memory: nothing is remembered from it, and a
+      // store to it forgets everything (nothing proves it apart).
+      if ((op.o === 'ld' || op.o === 'st') && op.vga) {
+        if (op.o === 'st') avail = [];
+        def(op);
+        continue;
+      }
       const A = (op.o === 'ld' || op.o === 'st') ? addr(op) : null;
       if (op.o === 'ld' && want(op) && A) {
         const hit = avail.find(e => e.w === op.w && same(e, A));

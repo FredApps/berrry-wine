@@ -323,6 +323,18 @@ for (const w of [8, 16, 32]) {
       + `(if ${vga} (then ${vgaWr(V)}) (else`
       + ` (if (i32.ne ${code(n)} (i32.const 0)) (then ${bailTo(I)}))`
       + ` (${STW[w]} (local.get $l) ${V(0)})))`);
+    // The fast half's form of the same, for an access predicted to be VGA
+    // (op.vga): a wrap or a store onto code deopts like the guard does, and
+    // VGA is done in place. Only where no later op of the same instruction
+    // can deopt, or the slow half would do the VGA access again.
+    def(`ldv${w}${form}`, `${kinds}t`, ({ V, I, SET, GOTO }) => addr(V, I)
+      + (n > 1 ? `(if ${wrap(n)} (then ${GOTO(dxk)}))` : '')
+      + SET(0, `(if (result i32) ${vga} (then ${vgaRd()}) (else (${LDW[w]} (local.get $l))))`));
+    def(`stv${w}${form}`, `${kinds}t`, ({ V, I, GOTO }) => addr(V, I)
+      + (n > 1 ? `(if ${wrap(n)} (then ${GOTO(dxk)}))` : '')
+      + `(if ${vga} (then ${vgaWr(V)}) (else`
+      + ` (if (i32.ne ${code(n)} (i32.const 0)) (then ${GOTO(dxk)}))`
+      + ` (${STW[w]} (local.get $l) ${V(0)})))`);
     def(`ldn${w}${form}`, kinds, ({ V, I, SET }) => addr(V, I) + SET(0, `(${LDW[w]} (local.get $l))`));
     def(`stn${w}${form}`, kinds, ({ V, I }) => addr(V, I) + `(${STW[w]} (local.get $l) ${V(0)})`);
   }
@@ -578,7 +590,7 @@ function lowerProgram(p, lo = {}) {
         const am = op.am ? op.am | 0 : -1;
         const first = op.o === 'ld' ? vr(op.d) : vr(op.b);
         const addrArgs = general ? [opt(op.a), vr(op.c), im(op.sc | 0), im(op.i | 0), im(am)] : [opt(op.a), im(op.i | 0), im(am)];
-        const name = `${op.o}${full ? (op === lastFull ? 'fv' : 'f') : guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
+        const name = `${op.o}${full ? (op === lastFull ? 'fv' : 'f') : guard ? (vgaOk.has(op) ? 'v' : '') : 'n'}${op.w}${general ? 'g' : 'a'}`;
         return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [bidArg(curBlock)] : []));
       }
       case 'callh':
@@ -801,7 +813,7 @@ function lowerProgram(p, lo = {}) {
 
   const blocks = new Map();
   const why = new Map();
-  let curBlock = -1, effected = false, lastFull = null;
+  let curBlock = -1, effected = false, lastFull = null, vgaOk = new Set();
   for (const b of p.blocks) {
     if (!b || b.kind === 'dead' || !b.term) continue;
     const out = [];
@@ -811,6 +823,15 @@ function lowerProgram(p, lo = {}) {
       lastFull = null;
       if (lo.count && b.header) out.push({ name: 'cnt', args: [im(lo.count)] });
       for (const op of b.ops) if ((op.o === 'ld' || op.o === 'st') && op.chk === 'full') lastFull = op;
+      // A predicted-VGA access in place: only with nothing after it in its
+      // own instruction that can still deopt (and so run it again).
+      vgaOk = new Set();
+      const seen = new Set();
+      for (let i = b.ops.length - 1; i >= 0; i--) {
+        const op = b.ops[i];
+        if (op.vga && op.chk === 'guard' && !seen.has(op.node)) vgaOk.add(op);
+        if (op.dx !== undefined && op.dx >= 0) seen.add(op.node);
+      }
       for (const op of b.ops) {
         lowerOp(op, out);
         if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) effected = true;
@@ -1172,12 +1193,15 @@ function enterOver(vm, p, low, { run, target, install }, stats) {
     ex.set_steps(left);
     let steps = left | 0;
     let F = ex.get_flags() >>> 0;
-    const lm = ex.mget_linmask() | 0, vk = dv.getInt32(isa.VGA_CTL_KEY, true);
+    const lm = ex.mget_linmask() | 0;
     const spm = ex.mget_spm() | 0, shm = ex.mget_shmask() | 0;
     let bid = low.entry;
     for (;;) {
       if (native.has(bid)) {
-        const code = run(target(bid), steps, F, lm, vk, spm, shm, ex.get_smc() | 0);
+        // The key is read at every entry, not once: a port write in the part
+        // of the run just done (by E1 or by a bail's reference run) can have
+        // turned planar mode on, and a stale key makes VGA plain memory.
+        const code = run(target(bid), steps, F, lm, dv.getInt32(isa.VGA_CTL_KEY, true), spm, shm, ex.get_smc() | 0);
         steps = outv[0]; F = outv[1] >>> 0;
         if (code === 0) {
           ex.set_steps(steps);
@@ -1365,13 +1389,14 @@ class E1Arena {
     ex.set_steps(left);
     let steps = left | 0;
     let F = ex.get_flags() >>> 0;
-    const lm = ex.mget_linmask() | 0, vk = this.dv.getInt32(isa.VGA_CTL_KEY, true);
+    const lm = ex.mget_linmask() | 0, dv = this.dv;
     const spm = ex.mget_spm() | 0, shm = ex.mget_shmask() | 0;
     let cur = rec, pc = rec.entry, handle = rec.base + rec.low.entry;
     for (;;) {
       if (pc) {
         w[LASTP >> 2] = cur.id;
-        const code = this.run(pc, steps, F, lm, vk, spm, shm, ex.get_smc() | 0);
+        // The VGA key is read at every entry (see enterOver).
+        const code = this.run(pc, steps, F, lm, dv.getInt32(isa.VGA_CTL_KEY, true), spm, shm, ex.get_smc() | 0);
         steps = outv[0]; F = outv[1] >>> 0;
         const lastId = w[LASTP >> 2];
         if (lastId !== cur.id) { this.chains++; cur = this.progs[lastId]; }

@@ -197,6 +197,32 @@ function farCallProgram() {
   return Buffer.from(b);
 }
 
+// Planar VGA through ES=A000 (uop-opt.js vgaPredictor, uop-wasm.js ldv/stv):
+// mode 13h with chain-4 off, then a loop with a store, a load and a
+// read-modify-write in the planar window, so the fast half does VGA in place
+// where it may (a store; a load alone) and deopts where the access is not
+// its instruction's last (the RMW's load). The latches and the planes are
+// what the frame shows.
+function vgaPlanarProgram() {
+  return Buffer.from([
+    0xB8, 0x13, 0x00, 0xCD, 0x10,       // mov ax,13h / int 10h
+    0xBA, 0xC4, 0x03,                   // mov dx,3C4h
+    0xB8, 0x04, 0x06, 0xEF,             // mov ax,0604h / out dx,ax   (memory mode: chain-4 off)
+    0xB8, 0x02, 0x0F, 0xEF,             // mov ax,0F02h / out dx,ax   (map mask: all planes)
+    0xB8, 0x00, 0xA0, 0x8E, 0xC0,       // mov ax,0A000h / mov es,ax
+    0xB9, 0xD0, 0x07,                   // mov cx,2000
+    0x31, 0xFF, 0x31, 0xDB,             // xor di,di / xor bx,bx
+    0x88, 0xC8,                         // l: mov al,cl
+    0x26, 0x88, 0x05,                   //    mov es:[di],al
+    0x26, 0x02, 0x45, 0x01,             //    add al,es:[di+1]
+    0x26, 0x00, 0x45, 0x02,             //    add es:[di+2],al
+    0x00, 0xC3,                         //    add bl,al
+    0x47,                               //    inc di
+    0xE2, 0xEE,                         //    loop l
+    0xCD, 0x20,                         // int 20h
+  ]);
+}
+
 async function run(com, uopOnly, budget = 60e6) {
   const r = await runDos({ exe: com, budget, slice: 5e4, log: () => {}, uopOnly });
   const regs = r.vm.getAll();
@@ -254,6 +280,7 @@ async function main() {
     await same('TWOSTORE', twoStoreProgram(), shape);
     const fc = await same('FARCALL', farCallProgram(), shape);
     assert.ok(fc.fbEntries <= 3, `FARCALL (${shape.label || shape}): ${fc.fbEntries} fallbacks -- far call/retf should be µops`);
+    await same('VGAPLANAR', vgaPlanarProgram(), shape);
     assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape.label || shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
     tierUps += rt.tierUps || 0;
   }
