@@ -420,6 +420,71 @@ function dshift(reps = 40) {
 // it, so those reads check that nothing else was written. On E1 this is the
 // native variable-count shift (uop-wasm.js shv_*), not a reference-interpreter
 // bail.
+// Through the carry and the carry alone: RCL/RCR at every width by 1, by an
+// immediate (past the width, past 31) and by CL, each from a data-dependent
+// CF that a CMC sometimes turns over; CLC/STC feeding ADC/SBB; and LEAVE at
+// both operand sizes over a frame whose slots are written.
+function rotcarry(reps = 4) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.w(0x66, 0xBD, 0x3B, 0x9A, 0x1C, 0x87); // mov ebp,871C9A3Bh
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xBF, 0x00, 0x01);       // mov di,100h
+  a.label('top');
+  a.w(0x66, 0xAD);             // lodsd
+  a.w(0x66, 0x31, 0xE8);       // xor eax,ebp
+  a.w(0x88, 0xC1);             // mov cl,al
+  a.w(0x32, 0xCC);             // xor cl,ah
+  a.w(0x80, 0xE1, 0x3F);       // and cl,3Fh
+  let v = 0;
+  for (const k of [2, 3]) {                   // rcl rcr
+    for (const w of [8, 16, 32]) {
+      for (const form of ['1', 'imm', 'cl']) {
+        a.w(0x66, 0x89, 0xC3);                // mov ebx,eax
+        a.w(0x3C, 0x80 + v * 7);              // cmp al,80h+.. (CF = al below it)
+        if (v % 3 === 1) a.w(0xF5);           // cmc
+        const m = 0xC0 | (k << 3) | 3;        // bl / bx / ebx
+        const p66 = w === 32 ? [0x66] : [];
+        if (form === '1') a.w(...p66, w === 8 ? 0xD0 : 0xD1, m);
+        else if (form === 'imm') a.w(...p66, w === 8 ? 0xC0 : 0xC1, m, [0, 9, 17, 33][v & 3]);
+        else a.w(...p66, w === 8 ? 0xD2 : 0xD3, m);
+        a.w(0x0F, 0x92, 0xC2);                // setc dl
+        a.w(0x0F, 0x90, 0xC6);                // seto dh
+        a.w(0x66, 0x01, 0xD5);                // add ebp,edx
+        a.w(0x66, 0x31, 0xDD);                // xor ebp,ebx
+        a.w(0x66, 0xD1, 0xC5);                // rol ebp,1
+        v++;
+      }
+    }
+  }
+  a.w(0xF8);                   // clc
+  a.w(0x66, 0x83, 0xD5, 0x00); // adc ebp,0
+  a.w(0xF9);                   // stc
+  a.w(0x11, 0xF5);             // adc bp,si
+  a.w(0xF5);                   // cmc
+  a.w(0x19, 0xC3);             // sbb bx,ax
+  a.w(0x66, 0x31, 0xDD);       // xor ebp,ebx
+  a.w(0x55);                   // push bp
+  a.w(0x89, 0xE5);             // mov bp,sp
+  a.w(0x50);                   // push ax
+  a.w(0x53);                   // push bx
+  a.w(0x89, 0x5E, 0xFE);       // mov [bp-2],bx
+  a.w(0xC9);                   // leave
+  a.w(0x66, 0x55);             // push ebp
+  a.w(0x66, 0x89, 0xE5);       // mov ebp,esp
+  a.w(0x66, 0x53);             // push ebx
+  a.w(0x66, 0xC9);             // leave (32-bit)
+  a.w(0x4F);                   // dec di
+  a.w(0x0F, 0x85); a.rel16('top');   // jnz top
+  a.w(0x66, 0x01, 0x2E, 0x04, 0x23); // add [2304h],ebp
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x0F, 0x85); a.rel16('outer'); // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
 function shifts(reps = 4) {
   const a = asm();
   prologue(a, 0x400);
@@ -612,7 +677,7 @@ async function main() {
   let checked = 0;
   for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry],
     ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift], ['segfwd', segfwd],
-    ['shifts', shifts], ['memshifts', memShifts], ['wraps', wraps]]) {
+    ['shifts', shifts], ['rotcarry', rotcarry], ['memshifts', memShifts], ['wraps', wraps]]) {
     if (only && only !== name) continue;
     const made = make();
     // A case may name further heads inside the same loop: a header whose
@@ -654,6 +719,6 @@ async function main() {
   console.log(`ok test-toyvm-uop: ${checked} differential runs agree`);
 }
 
-module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, segfwd, shifts, memShifts, wraps, capture, l1Arm, uopArm };
+module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, segfwd, shifts, rotcarry, memShifts, wraps, capture, l1Arm, uopArm };
 
 if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exit(1); });

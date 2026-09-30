@@ -93,6 +93,11 @@ function shiftHelper(fl, kind, w, v, n, shmask) {
   v >>>= 0;
   const orig = v;
   let cf = fl.cf();
+  // CLC/STC/CMC (uop-ir.js 'flagop'), exactly as L1's handlers (emit.js
+  // setF): CLC's mask is 16 bits wide and drops the word's upper half.
+  if (kind === 'clc') { fl.put((fl.word() & 0xFFFE) >>> 0); return 0; }
+  if (kind === 'stc') { fl.put((fl.word() | 1) >>> 0); return 0; }
+  if (kind === 'cmc') { fl.put((fl.word() ^ 1) >>> 0); return 0; }
   n &= shmask;
   if (n === 0) return v | 0;
   for (; n > 0; n--) {
@@ -102,13 +107,17 @@ function shiftHelper(fl, kind, w, v, n, shmask) {
       case 'shl': cf = (v >>> msb) & 1; v = ((v << 1) & mask) >>> 0; break;
       case 'shr': cf = v & 1; v = v >>> 1; break;
       case 'sar': cf = v & 1; v = (((v << (32 - w)) >> (32 - w)) >> 1) & mask; v >>>= 0; break;
+      case 'rcl': { const t = (v >>> msb) & 1; v = (((v << 1) & mask) | cf) >>> 0; cf = t; break; }
+      case 'rcr': { const t = v & 1; v = ((v >>> 1) | (cf << msb)) >>> 0; cf = t; break; }
       default: throw new Error(`shift ${kind}`);
     }
   }
-  const rotate = kind === 'rol' || kind === 'ror';
+  const rotate = kind === 'rol' || kind === 'ror' || kind === 'rcl' || kind === 'rcr';
   const of = {
     rol: cf ^ ((v >>> msb) & 1),
     ror: ((v >>> msb) & 1) ^ ((v >>> (msb - 1)) & 1),
+    rcl: cf ^ ((v >>> msb) & 1),
+    rcr: ((v >>> msb) & 1) ^ ((v >>> (msb - 1)) & 1),
     shl: cf ^ ((v >>> msb) & 1),
     shr: (orig >>> msb) & 1,
     sar: 0,

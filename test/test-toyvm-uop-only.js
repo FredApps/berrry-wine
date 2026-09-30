@@ -17,7 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { runDos } = require('../tools/toyvm/run-dos');
 const isa = require('../tools/toyvm/isa');
-const { segloads, dshift, shifts, memShifts, wraps } = require('./test-toyvm-uop');
+const { segloads, dshift, shifts, rotcarry, memShifts, wraps } = require('./test-toyvm-uop');
 const { patchProgram, sideExitProgram, flagsProgram, muldivProgram } = require('./test-toyvm-uop-live');
 
 // Port reads as µops (uop-ir.js PIN): 20 frames of the retrace wait every demo
@@ -190,6 +190,7 @@ async function main() {
     await same('SEGLOADS', segloads(255).com, shape);
     await same('DSHIFT', dshift(255).com, shape);
     await same('SHIFTS', shifts(40).com, shape);
+    await same('ROTCARRY', rotcarry(40).com, shape);
     await same('MEMSHIFTS', memShifts(60).com, shape);
     await same('WRAPS', wraps(250).com, shape);
     const rt = await same('RETRACE', retraceProgram(), shape);

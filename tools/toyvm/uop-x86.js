@@ -216,6 +216,10 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32, benign = null) {
     return done({ kind: 'xchg', w: opsize, dst: R(0, opsize), src: R(op & 7, opsize) });
   }
   if (op === 0x98) return done({ kind: 'cbw', w: opsize });
+  // CLC/STC/CMC: CF alone, as L1's handlers (the rest of the word kept).
+  if (op === 0xF8 || op === 0xF9 || op === 0xF5) return done({ kind: 'flagop', f: op === 0xF8 ? 'clc' : op === 0xF9 ? 'stc' : 'cmc' });
+  // LEAVE: ESP := EBP (BP zero-extended for a 16-bit one), then pop EBP.
+  if (op === 0xC9) return done({ kind: 'leave', w: opsize });
   if (op === 0x99) return done({ kind: 'cwd', w: opsize });
   if (op >= 0xA0 && op <= 0xA3) {
     const w = (op & 1) ? opsize : 8;
@@ -246,7 +250,11 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32, benign = null) {
     else if (op === 0xD0 || op === 0xD1) count = I(1, 8);
     else count = R(1, 8);   // CL
     const sh = SHIFTS[m.reg];
-    if (sh === 'sal' || sh === 'rcl' || sh === 'rcr') return bad(`shift ${sh}`);
+    if (sh === 'sal') return bad(`shift ${sh}`);
+    // Through the carry, into a register only: RCL/RCR read the CF they
+    // write, so running one again is not running it once, and a memory
+    // form's store comes after its flags (a deopt there re-runs it in L1).
+    if ((sh === 'rcl' || sh === 'rcr') && m.rm.t !== 'r') return bad(`shift ${sh} mem`);
     return done({ kind: 'shift', sh, w, dst: m.rm, count });
   }
   if (op === 0xC6 || op === 0xC7) {

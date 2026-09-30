@@ -159,11 +159,14 @@ function flagEffect(d, shmask = 0x1F) {
     // DIV/IDIV leave the flags as they were in L1 (x86 calls them undefined).
     case 'shift': {
       // A count of zero writes nothing, so only a nonzero constant count is a
-      // certain write.
+      // certain write. Through the carry, CF is read first whatever the count.
       const n = d.count.t === 'i' ? (d.count.v & shmask) : 0;
-      if (n) W.push('c', 'o', ...(d.sh === 'rol' || d.sh === 'ror' ? [] : ['p', 'z', 's']));
+      const carry = d.sh === 'rcl' || d.sh === 'rcr';
+      if (carry) R.push('c');
+      if (n) W.push('c', 'o', ...(d.sh === 'rol' || d.sh === 'ror' || carry ? [] : ['p', 'z', 's']));
       break;
     }
+    case 'flagop': if (d.f === 'cmc') R.push('c'); W.push('c'); break;
     case 'dshift': W.push('c', 'o', 'p', 'z', 's'); break;
     case 'jcc': case 'setcc': R.push(...CC_READS[d.cc]); break;
     case 'unsupported': R.push(...ALL6); break;
@@ -693,6 +696,22 @@ class Lowerer {
         const v = L.getcc(d.cc);
         const e = d.dst.t === 'm' ? L.ea(d.dst) : null;
         L.write(d.dst, v, e);
+        break;
+      }
+      // CLC/STC/CMC as a flag helper (callh): the flag passes publish the
+      // live flags into L1's word ahead of it and read them back after, as
+      // for a shift by a run-time count. `d` and the operands are unused.
+      case 'flagop': {
+        const z = L.movi(0);
+        L.op({ o: 'callh', d: L.t(), a: z, b: z, fn: d.f, sh: d.f, w: 0, nconst: null });
+        break;
+      }
+      case 'leave': {
+        const w = d.w;
+        const bp = L.getReg(5, w);
+        const v = L.load(w, { s: L.seg(2), off: bp });
+        L.putReg(4, 32, L.bin('and', L.imm('addi', bp, w / 8), L.getm('spm')));
+        L.putReg(5, w, v);
         break;
       }
       case 'shift': {

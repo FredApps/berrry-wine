@@ -907,10 +907,15 @@ function recDefs(op) {
 }
 // Flags a shift certainly writes (a count that is a nonzero constant).
 function callhDefs(op, shmask) {
+  if (op.sh === 'clc' || op.sh === 'stc' || op.sh === 'cmc') return ['c'];
   const n = op.nconst === null || op.nconst === undefined ? 0 : (op.nconst & shmask);
   if (!n) return [];
-  return op.sh === 'rol' || op.sh === 'ror' ? ['c', 'o'] : ['c', 'o', 'p', 'z', 's'];
+  return op.sh === 'rol' || op.sh === 'ror' || op.sh === 'rcl' || op.sh === 'rcr' ? ['c', 'o'] : ['c', 'o', 'p', 'z', 's'];
 }
+// ...and the flags it reads first: the carry the rotate goes through, the
+// carry CMC turns over. They must be in L1's word before it runs.
+const CALLH_READS_C = new Set(['rcl', 'rcr', 'cmc']);
+function callhReads(op) { return CALLH_READS_C.has(op.sh) ? ['c'] : []; }
 
 // Which flags each flush point needs, by where it goes.
 function flushFlags(B, op) {
@@ -932,7 +937,10 @@ function flagLiveness(B) {
       after.set(op, new Set(live));
       if (op.o === 'rec') for (const f of recDefs(op)) live.delete(f);
       else if (op.o === 'getcc') for (const f of CC_READS[op.cc]) live.add(f);
-      else if (op.o === 'callh') for (const f of callhDefs(op, B.shmask)) live.delete(f);
+      else if (op.o === 'callh') {
+        for (const f of callhDefs(op, B.shmask)) live.delete(f);
+        for (const f of callhReads(op)) live.add(f);
+      }
       else if (op.o === 'flush') for (const f of flushFlags(B, op)) live.add(f);
       else if (op.o === 'reload') live.clear();
     }
@@ -997,6 +1005,8 @@ function forwardFlags(B) {
       for (let i = 0; i < b.ops.length; i++) {
         const op = b.ops[i];
         if (op.o !== 'callh' || op.nconst === null || op.nconst === undefined) continue;
+        // Through the carry has no inline SHIFT record: it stays a helper.
+        if (op.sh === 'rcl' || op.sh === 'rcr') continue;
         const n = op.nconst & B.shmask;
         if (!n) continue;
         // The record reads the shift's INPUT and goes in after the rest of the
@@ -1080,7 +1090,7 @@ function forwardFlags(B) {
     if (op.o === 'callh') {
       const live = liveAfter.get(op) || new Set(ALL6);
       const defs = callhDefs(op, B.shmask);
-      return [...live].filter(f => !defs.includes(f));
+      return [...new Set([...[...live].filter(f => !defs.includes(f)), ...callhReads(op)])];
     }
     return null;
   };

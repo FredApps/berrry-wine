@@ -214,6 +214,37 @@ for (const sh of ['shl', 'shr', 'sar', 'rol', 'ror']) {
       + SET(0, Y));
   }
 }
+// RCL/RCR: through the carry, a bit at a time as L1's $sh_rcl<w> loops (the
+// masked count is not reduced mod w+1). CF comes in from the word, and CF and
+// OF go out; OF off the result, as L1 writes it for every count.
+for (const sh of ['rcl', 'rcr']) {
+  for (const w of [8, 16, 32]) {
+    const m = w === 32 ? -1 : (1 << w) - 1;
+    const c = (k) => `(i32.const ${k})`;
+    const X = '(local.get $x)', Y = '(local.get $y)', Z = '(local.get $z)';
+    const bitOf = (v, k) => `(i32.and (i32.shr_u ${v} ${c(k)}) ${c(1)})`;
+    const one = sh === 'rcl'
+      ? `(local.set $y ${bitOf(X, w - 1)}) (local.set $x (i32.or (i32.and (i32.shl ${X} ${c(1)}) ${c(m)}) ${Z}))`
+      : `(local.set $y (i32.and ${X} ${c(1)})) (local.set $x (i32.or (i32.shr_u ${X} ${c(1)}) (i32.shl ${Z} ${c(w - 1)})))`;
+    const of = sh === 'rcl' ? `(i32.xor ${Z} ${bitOf(Y, w - 1)})` : `(i32.xor ${bitOf(Y, w - 1)} ${bitOf(Y, w - 2)})`;
+    const clear = (1 << FBIT.c) | (1 << FBIT.o);
+    def(`shv_${sh}${w}`, 'vvv', ({ V, SET }) => `(local.set $x (i32.and ${V(1)} ${c(m)}))`
+      + `(local.set $l (i32.and ${V(2)} (local.get $shm)))`
+      + `(if (i32.eqz (local.get $l)) (then (local.set $y ${V(1)})) (else`
+      + ` (local.set $z (i32.and (local.get $F) ${c(1 << FBIT.c)}))`
+      + ` (loop $rc ${one} (local.set $z (local.get $y))`
+      + `  (local.set $l (i32.sub (local.get $l) ${c(1)})) (br_if $rc (local.get $l)))`
+      + ` (local.set $y ${X})`
+      + ` (local.set $F (i32.or (i32.and (local.get $F) ${c(~clear)})`
+      + ` (i32.or ${Z} (i32.shl ${of} ${c(FBIT.o)}))))))`
+      + SET(0, Y));
+  }
+}
+// CLC/STC/CMC (uop-ir.js 'flagop') as L1's handlers: CLC's mask is 16 bits
+// wide, STC's OR and CMC's XOR leave the upper half alone.
+def('shv_clc', 'vvv', ({ SET }) => `(local.set $F (i32.and (local.get $F) (i32.const 0xFFFE)))` + SET(0, '(i32.const 0)'));
+def('shv_stc', 'vvv', ({ SET }) => `(local.set $F (i32.or (local.get $F) (i32.const 1)))` + SET(0, '(i32.const 0)'));
+def('shv_cmc', 'vvv', ({ SET }) => `(local.set $F (i32.xor (local.get $F) (i32.const 1)))` + SET(0, '(i32.const 0)'));
 
 // Registers and segment bases: operand 1 is the byte address.
 def('getr32', 'vi', ({ I, SET }) => SET(0, `(i32.load ${I(1)})`));
@@ -413,6 +444,9 @@ const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|link|bail)/.test(name)
 // touches is set from its operands alone (shv_*, a count of 0 touches none),
 // so running it twice from the same operands leaves the flags it left once.
 // That is what lets `shl [mem],cl` store after its flags are out.
+// ...unless it reads the carry it writes (RCL/RCR/CMC): run twice, it is not
+// run once, so it is an effect like any other.
+const CF_READERS = new Set(['rcl', 'rcr', 'cmc']);
 const EFFECT = new Set(['st', 'putr', 'puts', 'putsel', 'rec', 'wrec', 'wflags', 'step',
   'fvset', 'check', 'dchk', 'guard', 'pin', 'pout']);
 
@@ -524,8 +558,11 @@ function lowerProgram(p, lo = {}) {
         return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [bidArg(curBlock)] : []));
       }
       case 'callh':
-        if (!op.sh || !EOP.has(`shv_${op.sh}${op.w}`)) throw new Unsupported(`callh ${op.fn}`);
-        return E(`shv_${op.sh}${op.w}`, vr(op.d), vr(op.a), vr(op.b));
+      {
+        const nm = op.w ? `shv_${op.sh}${op.w}` : `shv_${op.sh}`;
+        if (!op.sh || !EOP.has(nm)) throw new Unsupported(`callh ${op.fn}`);
+        return E(nm, vr(op.d), vr(op.a), vr(op.b));
+      }
       case 'flagof': return lowerFlagof(op, E);
       case 'rec': case 'wrec': return lowerRec(op, E);
       case 'getf': return E('getf', vr(op.d), im(FBIT[op.f]));
@@ -749,7 +786,7 @@ function lowerProgram(p, lo = {}) {
       curBlock = b.id; effected = false;
       for (const op of b.ops) {
         lowerOp(op, out);
-        if (EFFECT.has(op.o)) effected = true;
+        if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) effected = true;
       }
       lowerTerm(b.term, E);
       blocks.set(b.id, { native: true, ops: out });
