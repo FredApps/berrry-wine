@@ -484,8 +484,8 @@ const pack = (x, y) => ((x & 0xffff) | (y << 16)) >>> 0;
     0x83, 0x7e, 0x0c, 0x0f, 0x75, paintBody([]).length, ...paintBody([])]));
   const eraseDoomed = e.test_window(0xb00);
   e.test_damage(eraseDoomed, 1);
-  assert.deepStrictEqual(runUpdate(eraseDoomed, 0x30), [0x0f, 0x14],
-    'destruction from the BeginPaint erase callback returns through both nested frames');
+  assert.deepStrictEqual(runUpdate(eraseDoomed, 0x30), [0x0f, 0x14, 0x02, 0x82],
+    'destruction from the BeginPaint erase callback sends WM_DESTROY/WM_NCDESTROY and returns through both nested frames');
   assert.strictEqual(e.test_alive(eraseDoomed), 0);
   assert.strictEqual(e.test_erase_pending(eraseDoomed), 0, 'declined erase cannot rearm a destroyed window');
   const runShow = (target, cmd, caller, includeActivation = false) => {
@@ -671,7 +671,7 @@ const pack = (x, y) => ((x & 0xffff) | (y << 16)) >>> 0;
 
   const showDoomed = e.test_window(0xb00);
   e.test_visible(showDoomed, 0);
-  assert.deepStrictEqual(runShow(showDoomed, 1, 0x90), [0x14]);
+  assert.deepStrictEqual(runShow(showDoomed, 1, 0x90), [0x14, 0x02, 0x82]);
   assert.strictEqual(e.test_alive(showDoomed), 0);
   assert.strictEqual(e.test_erase_pending(showDoomed), 0, 'ShowWindow cannot rearm a destroyed HWND');
 

@@ -513,13 +513,19 @@
         (then (call $wnd_destroy_recursive (local.get $other))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    ;; Notify the app/control proc before removing the record.
-    (drop (call $wnd_send_message (local.get $hwnd)
-      (i32.const 0x0002)  ;; WM_DESTROY
-      (i32.const 0) (i32.const 0)))
-    (drop (call $wnd_send_message (local.get $hwnd)
-      (i32.const 0x0082)  ;; WM_NCDESTROY
-      (i32.const 0) (i32.const 0)))
+    ;; Notify the app/control proc before removing the record -- unless it is
+    ;; a 16-bit procedure Win16 DestroyWindow has already sent both messages
+    ;; to through far calls ($win16_DestroyWindow); from here they could only
+    ;; be posted, and the post dies with the window.
+    (if (i32.eqz (i32.and (i32.ne (global.get $win16_destroy_notified) (i32.const 0))
+                          (call $win16_is_far_proc (call $wnd_table_get (local.get $hwnd)))))
+      (then
+        (drop (call $wnd_send_message (local.get $hwnd)
+          (i32.const 0x0002)  ;; WM_DESTROY
+          (i32.const 0) (i32.const 0)))
+        (drop (call $wnd_send_message (local.get $hwnd)
+          (i32.const 0x0082)  ;; WM_NCDESTROY
+          (i32.const 0) (i32.const 0)))))
     (call $timer_kill_hwnd (local.get $hwnd))
     ;; A destroyed window cannot keep the focus or the capture. USER drops both
     ;; as the HWND dies; we used to clear focus only in $handle_DestroyWindow,

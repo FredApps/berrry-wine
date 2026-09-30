@@ -11370,23 +11370,199 @@
 
   ;; USER.53 DestroyWindow(hWnd).
   ;;
+  ;; Every 16-bit procedure in the tree is sent WM_DESTROY and WM_NCDESTROY
+  ;; *before* anything is torn down, children first, each through a far call
+  ;; that returns to $WIN16_CONT_DESTROY. The 32-bit teardown cannot do that
+  ;; itself: $wnd_send_message can only post to a 16-bit procedure, and the
+  ;; post was purged with the window a moment later, so the procedure never saw
+  ;; its WM_DESTROY at all. Civ2's MSControlClass buttons free their bitmaps
+  ;; there; every dialog closed leaked ~21 GDI objects, and a few dozen dialogs
+  ;; in the 512-entry GDI table was full and Unit Information came up with no
+  ;; buttons.
+  ;;
   ;; Destroying a window never quits a Win16 task: its WM_DESTROY handler posts
   ;; the quit itself (flag 2, below). The 32-bit handler guesses a quit (flag 1)
   ;; when the window is $main_hwnd, and a task whose real main window is still
   ;; hidden has had a throwaway top-level promoted to that -- Civ2's Get_Info
   ;; (Authorware) shows and destroys a probe window at startup and got WM_QUIT.
+  ;;
+  ;; The walk's state is a frame on the task's stack, under the far calls:
+  ;;   +0 root  +4 cur  +8 cur's parent  +12 cur's slot  +16 stage  +20 guard
+  ;; cur's parent and slot are captured when it is chosen, so the walk can
+  ;; still advance if a handler destroyed cur. Stage 0 sends WM_DESTROY, 1
+  ;; sends WM_NCDESTROY, 2 moves to the next window in post-order.
+  (global $WIN16_CONT_DESTROY i32 (i32.const 0xFF88))
+  (global $WIN16_DESTROY_FRAME i32 (i32.const 24))
+  ;; Set while the 32-bit teardown runs after a walk: every 16-bit procedure in
+  ;; the tree has had both messages, so $wnd_destroy_recursive must not post
+  ;; them again.
+  (global $win16_destroy_notified (mut i32) (i32.const 0))
+  ;; The window each walk in flight is notifying, so a handler that calls
+  ;; DestroyWindow on its own window (or on one below it, already notified)
+  ;; does not start the same messages over. Slots, not a stack: two tasks can
+  ;; each be inside a walk and finish in either order. -1 = claimed, no window.
+  (global $win16_destroy_cur0 (mut i32) (i32.const 0))
+  (global $win16_destroy_cur1 (mut i32) (i32.const 0))
+  (global $win16_destroy_cur2 (mut i32) (i32.const 0))
+  (global $win16_destroy_cur3 (mut i32) (i32.const 0))
+
+  (func $win16_destroy_slot_get (param $s i32) (result i32)
+    (if (i32.eqz (local.get $s)) (then (return (global.get $win16_destroy_cur0))))
+    (if (i32.eq (local.get $s) (i32.const 1)) (then (return (global.get $win16_destroy_cur1))))
+    (if (i32.eq (local.get $s) (i32.const 2)) (then (return (global.get $win16_destroy_cur2))))
+    (if (i32.eq (local.get $s) (i32.const 3)) (then (return (global.get $win16_destroy_cur3))))
+    (i32.const 0))
+
+  (func $win16_destroy_slot_set (param $s i32) (param $v i32)
+    (if (i32.eqz (local.get $s)) (then (global.set $win16_destroy_cur0 (local.get $v))))
+    (if (i32.eq (local.get $s) (i32.const 1)) (then (global.set $win16_destroy_cur1 (local.get $v))))
+    (if (i32.eq (local.get $s) (i32.const 2)) (then (global.set $win16_destroy_cur2 (local.get $v))))
+    (if (i32.eq (local.get $s) (i32.const 3)) (then (global.set $win16_destroy_cur3 (local.get $v)))))
+
+  ;; A free slot, now claimed, or -1 when four walks are already nested (this
+  ;; one then runs unguarded).
+  (func $win16_destroy_slot_claim (result i32)
+    (local $s i32)
+    (block $none (loop $scan
+      (br_if $none (i32.ge_u (local.get $s) (i32.const 4)))
+      (if (i32.eqz (call $win16_destroy_slot_get (local.get $s)))
+        (then
+          (call $win16_destroy_slot_set (local.get $s) (i32.const -1))
+          (return (local.get $s))))
+      (local.set $s (i32.add (local.get $s) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Is $hwnd, or an ancestor of it, the window some walk is notifying? Then
+  ;; $hwnd has had its messages already, or is having them now.
+  (func $win16_destroy_in_walk (param $hwnd i32) (result i32)
+    (local $h i32) (local $s i32) (local $guard i32)
+    (local.set $h (local.get $hwnd))
+    (block $done (loop $up
+      (br_if $done (i32.eqz (local.get $h)))
+      (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (local.set $s (i32.const 0))
+      (block $slots (loop $each
+        (br_if $slots (i32.ge_u (local.get $s) (i32.const 4)))
+        (if (i32.eq (call $win16_destroy_slot_get (local.get $s)) (local.get $h))
+          (then (return (i32.const 1))))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $each)))
+      (local.set $h (call $wnd_get_parent (local.get $h)))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $up)))
+    (i32.const 0))
+
+  ;; The first child of $parent in a table slot after $after (-1: any), or 0.
+  ;; Table order is the order $wnd_destroy_recursive visits siblings in.
+  (func $win16_child_after (param $parent i32) (param $after i32) (result i32)
+    (local $i i32) (local $ptr i32) (local $h i32)
+    (local.set $i (i32.add (local.get $after) (i32.const 1)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
+      (local.set $h (i32.atomic.load (local.get $ptr)))
+      (if (i32.and (i32.ne (local.get $h) (i32.const 0))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $parent)))
+        (then (return (local.get $h))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; The first window of $h's subtree in post-order: its deepest first child.
+  (func $win16_first_leaf (param $h i32) (result i32)
+    (local $c i32) (local $guard i32)
+    (block $done (loop $down
+      (local.set $c (call $win16_child_after (local.get $h) (i32.const -1)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (local.set $h (local.get $c))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $down)))
+    (local.get $h))
+
+  (func $win16_destroy_select (param $sp i32) (param $h i32)
+    (local $slot i32)
+    (call $gs32 (i32.add (local.get $sp) (i32.const 4)) (local.get $h))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 8)) (call $wnd_get_parent (local.get $h)))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 12)) (call $wnd_table_find (local.get $h)))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 16)) (i32.const 0))
+    (local.set $slot (call $gl32 (i32.add (local.get $sp) (i32.const 20))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then (call $win16_destroy_slot_set (local.get $slot) (local.get $h)))))
+
   (func $win16_DestroyWindow
-    (local $hwnd i32) (local $quit i32)
+    (local $hwnd i32) (local $sp i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (local.set $quit (global.get $quit_flag))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_DestroyWindow (local.get $hwnd)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (if (i32.eq (global.get $quit_flag) (i32.const 1))
-      (then (global.set $quit_flag (local.get $quit))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-    (call $win16_api_return (i32.const 2)))
+    (call $win16_cont_push (call $win16_take_return (i32.const 2)) (i32.const 1))
+    (if (i32.or (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+                (call $win16_destroy_in_walk (local.get $hwnd)))
+      (then (call $win16_destroy_finish (local.get $hwnd)) (return)))
+    (local.set $sp (i32.sub (i32.load offset=16 (global.get $reg_base)) (global.get $WIN16_DESTROY_FRAME)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (call $gs32 (local.get $sp) (local.get $hwnd))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 20)) (call $win16_destroy_slot_claim))
+    (call $win16_destroy_select (local.get $sp) (call $win16_first_leaf (local.get $hwnd)))
+    (call $win16_destroy_continue))
+
+  (func $win16_destroy_continue
+    (local $sp i32) (local $root i32) (local $cur i32) (local $stage i32)
+    (local $proc i32) (local $parent i32) (local $next i32) (local $slot i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $root (call $gl32 (local.get $sp)))
+    (block $done (loop $step
+      (br_if $done (i32.lt_s (call $wnd_table_find (local.get $root)) (i32.const 0)))
+      (local.set $cur (call $gl32 (i32.add (local.get $sp) (i32.const 4))))
+      (local.set $stage (call $gl32 (i32.add (local.get $sp) (i32.const 16))))
+      (if (i32.lt_u (local.get $stage) (i32.const 2))
+        (then
+          (call $gs32 (i32.add (local.get $sp) (i32.const 16))
+            (i32.add (local.get $stage) (i32.const 1)))
+          (if (i32.ge_s (call $wnd_table_find (local.get $cur)) (i32.const 0))
+            (then
+              (local.set $proc (call $wnd_table_get (local.get $cur)))
+              (if (call $win16_is_far_proc (local.get $proc))
+                (then
+                  (call $win16_enter_wndproc (local.get $proc) (call $win16_h16 (local.get $cur))
+                    (select (i32.const 0x0082) (i32.const 0x0002) (local.get $stage))
+                    (i32.const 0) (i32.const 0)
+                    (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_DESTROY))
+                  (return)))))
+          (br $step)))
+      (br_if $done (i32.eq (local.get $cur) (local.get $root)))
+      (local.set $parent (call $gl32 (i32.add (local.get $sp) (i32.const 8))))
+      ;; A parent a handler already destroyed has taken its subtree with it.
+      (br_if $done (i32.lt_s (call $wnd_table_find (local.get $parent)) (i32.const 0)))
+      (local.set $next (call $win16_child_after (local.get $parent)
+        (call $gl32 (i32.add (local.get $sp) (i32.const 12)))))
+      (call $win16_destroy_select (local.get $sp)
+        (if (result i32) (local.get $next)
+          (then (call $win16_first_leaf (local.get $next)))
+          (else (local.get $parent))))
+      (br $step)))
+    (local.set $slot (call $gl32 (i32.add (local.get $sp) (i32.const 20))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then (call $win16_destroy_slot_set (local.get $slot) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (local.get $sp) (global.get $WIN16_DESTROY_FRAME)))
+    (call $win16_destroy_finish (local.get $root)))
+
+  ;; The teardown itself, with DestroyWindow's continuation record on top of
+  ;; the stack. A window a handler already destroyed needs none.
+  (func $win16_destroy_finish (param $hwnd i32)
+    (local $quit i32)
+    (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then
+        (local.set $quit (global.get $quit_flag))
+        (global.set $win16_destroy_notified (i32.const 1))
+        (call $win16_call32_begin (i32.const 1))
+        (call $handle_DestroyWindow (local.get $hwnd)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $win16_destroy_notified (i32.const 0))
+        (if (i32.eq (global.get $quit_flag) (i32.const 1))
+          (then (global.set $quit_flag (local.get $quit))))))
+    (call $win16_cont_resume))
 
   ;; USER.102 AdjustWindowRect(lpRect, dwStyle, bMenu) and USER.454
   ;; AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle). The rectangle is
@@ -16345,6 +16521,8 @@
       (then (call $win16_windowpos_continue) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_UPDATE))
       (then (call $win16_update_window_continue) (return)))
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_DESTROY))
+      (then (call $win16_destroy_continue) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_SHOW))
       (then (call $win16_show_continue) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_ACTIVATE))
