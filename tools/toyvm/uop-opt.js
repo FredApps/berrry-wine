@@ -148,7 +148,16 @@ const PURE = new Set(['movi', 'mov', 'add', 'sub', 'and', 'or', 'xor', 'mul', 'm
 // moves the latches and the read counter, so it is never dropped or moved.
 const isPure = (op) => PURE.has(op.o) || (op.o === 'ld' && op.chk !== 'full' && !op.vga);
 
-const clone = (o) => JSON.parse(JSON.stringify(o));
+// A deep copy of plain op data, the way a JSON round trip copies it (keys
+// holding undefined are left out) at a fraction of its cost: makeFast copies
+// every op of the region, and the round trip was a tenth of a cheap build.
+const clone = (o) => {
+  if (o === null || typeof o !== 'object') return o;
+  if (Array.isArray(o)) return o.map((x) => (x === undefined ? null : clone(x)));
+  const r = {};
+  for (const k in o) { const v = o[k]; if (v !== undefined) r[k] = clone(v); }
+  return r;
+};
 
 // ---------------------------------------------------------------------------
 // Building the two halves.
@@ -345,21 +354,31 @@ class Build {
   // unchecked, uncharged br to C and B is C's only predecessor.
   mergeStraight() {
     const p = this.p;
-    let changed = true;
-    while (changed) {
-      changed = false;
-      this.cfg();
-      for (const b of this.fastBlocks()) {
-        if (b.kind !== 'body' || !b.term || b.term.o !== 'br' || b.term.tx >= 0 || b.term.st) continue;
+    // One walk, each block absorbing its whole chain, the edges kept up to
+    // date as it goes: the result cfg() would reach from scratch. Recomputing
+    // the CFG after every single merge made this quadratic, and it was 40%
+    // of a promote-only build.
+    this.cfg();
+    for (const b of this.fastBlocks()) {
+      for (;;) {
+        if (b.kind !== 'body' || !b.term || b.term.o !== 'br' || b.term.tx >= 0 || b.term.st) break;
         const c = p.blocks[b.term.t];
-        if (!c.fast || c.kind !== 'body' || c === b || c.preds.length !== 1 || c.header) continue;
-        if (c.id === this.fastHead) continue;
+        if (!c.fast || c.kind !== 'body' || c === b || c.preds.length !== 1 || c.header) break;
+        if (c.id === this.fastHead) break;
         b.ops.push(...c.ops);
         b.nodes.push(...c.nodes);
         b.term = c.term;
         c.kind = 'dead'; c.ops = []; c.term = null;
-        changed = true;
-        break;
+        const succs = new Set(b.succs);
+        succs.delete(c.id);
+        for (const s of c.succs) {
+          const sp = p.blocks[s].preds;
+          const i = sp.indexOf(c.id);
+          if (i >= 0) sp.splice(i, 1);
+          if (!succs.has(s)) { succs.add(s); sp.push(b.id); }
+        }
+        b.succs = [...succs];
+        c.preds = []; c.succs = [];
       }
     }
     this.cfg();
