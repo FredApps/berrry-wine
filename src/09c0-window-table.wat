@@ -469,6 +469,10 @@
           ;; after hwnd=0 therefore closes both sides of that race.
           (call $shared_post_queue_purge_hwnd (local.get $hwnd))
           (call $wnd_legacy_dc_release (local.get $hwnd))
+          ;; A Win16 task's narrow handles for this window (and its DCs) die
+          ;; with it; HWNDs are never reissued, so a kept slot is a leak.
+          (call $win16_h16_forget_window (local.get $hwnd)
+            (i32.load (call $wnd_own_dc_addr_for_slot (local.get $i))))
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))

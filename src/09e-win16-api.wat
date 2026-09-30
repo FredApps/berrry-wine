@@ -275,6 +275,63 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
+  ;; A window is gone: drop every narrow handle that named it. That is the
+  ;; HWND itself, its two internal DCs (hwnd+0x40000 client, hwnd+0xC0000
+  ;; whole window — a WM_CTLCOLOR/WM_ERASEBKGND/WM_DRAWITEM wParam or field
+  ;; narrows these) and a CS_OWNDC private DC. HWNDs are never reissued on the
+  ;; 32-bit side, so without this every window a Win16 task ever created kept
+  ;; its slot forever: Civilization II fills the 4096-entry map with dead
+  ;; advisor, city and dialog windows over a long campaign and $win16_h16
+  ;; traps. A 16-bit handle the guest still holds reads back as 0 (a dead
+  ;; handle) until the slot is reused, as a freed handle does on real Win16.
+  ;; Called from $wnd_table_remove after the window is unpublished, so nothing
+  ;; can narrow it again; a no-op outside a Win16 task, whose arena page this
+  ;; table lives in.
+  (func $win16_h16_forget_window (param $hwnd i32) (param $own_dc i32)
+    (local $t i32) (local $i i32) (local $h i32) (local $p i32)
+    (local $client i32) (local $whole i32)
+    (if (i32.eqz (global.get $is_win16)) (then (return)))
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (if (i32.le_s (local.get $own_dc) (i32.const 0)) (then (local.set $own_dc (i32.const 0))))
+    ;; The same ranges $wnd_legacy_dc_release uses: past them the number is
+    ;; another window's DC of the other kind, which must be left alone.
+    (if (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x00010000))
+                 (i32.lt_u (local.get $hwnd) (i32.const 0x00090000)))
+      (then (local.set $client (i32.add (local.get $hwnd) (i32.const 0x00040000)))))
+    (if (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x00010000))
+                 (i32.lt_u (local.get $hwnd) (i32.const 0x00110000)))
+      (then (local.set $whole (i32.add (local.get $hwnd) (i32.const 0x000C0000)))))
+    (local.set $t (call $win16_handle_table))
+    (local.set $i (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $i) (call $win16_handle_next_get)))
+      (local.set $p (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
+      (local.set $h (i32.load (local.get $p)))
+      (if (i32.and (i32.ne (local.get $h) (i32.const 0))
+            (i32.or
+              (i32.or (i32.eq (local.get $h) (local.get $hwnd))
+                      (i32.eq (local.get $h) (local.get $own_dc)))
+              (i32.or (i32.eq (local.get $h) (local.get $client))
+                      (i32.eq (local.get $h) (local.get $whole)))))
+        (then (i32.store (local.get $p) (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  ;; Occupancy of the 32->16 handle map: live slots, for tests and a ctl eval
+  ;; watching a long session for a leak.
+  (func (export "win16_handle_map_used") (result i32)
+    (local $t i32) (local $i i32) (local $n i32)
+    (if (i32.eqz (global.get $is_win16)) (then (return (i32.const 0))))
+    (local.set $t (call $win16_handle_table))
+    (local.set $i (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $i) (call $win16_handle_next_get)))
+      (if (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
   ;; ---- Calling the 32-bit handler for the same API ----
   ;;
   ;; Most of Win16 is Win32 with narrower arguments. GetDeviceCaps answers the
