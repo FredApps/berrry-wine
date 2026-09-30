@@ -6781,6 +6781,63 @@
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
+  ;; USER builds a child's visible region inside its parent's, so a WS_CHILD
+  ;; ancestor that carries WS_CLIPSIBLINGS loses its higher-z visible siblings
+  ;; for every descendant too (Wine's get_visible_region walks the same chain).
+  ;; $dc_exclude_siblings_for_clip only handles the window's own level; without
+  ;; this, Civilization II's city window (a CLIPSIBLINGS MDI-style child raised
+  ;; above the City Status advisor) was painted over by the advisor's Close
+  ;; bar and scrollbar, whose own siblings are only each other.
+  ;; $dc_ox/$dc_oy is the DC origin relative to $hwnd's window origin.
+  (func $dc_exclude_ancestor_siblings_for_clip
+        (param $hdc i32) (param $hwnd i32) (param $dc_ox i32) (param $dc_oy i32)
+    (local $cur i32) (local $parent i32) (local $x i32) (local $y i32)
+    (local $slot i32) (local $sib i32) (local $wh i32) (local $sx i32) (local $sy i32)
+    (local $sw i32) (local $sh i32) (local $depth i32)
+    (local.set $cur (local.get $hwnd))
+    (block $done (loop $ancestors
+      (br_if $done (i32.eqz (i32.and
+        (call $wnd_get_style (local.get $cur)) (i32.const 0x40000000)))) ;; WS_CHILD
+      (local.set $parent (call $wnd_get_parent (local.get $cur)))
+      (br_if $done (i32.eqz (local.get $parent)))
+      (br_if $done (i32.ge_u (local.get $depth) (global.get $MAX_WINDOWS)))
+      ;; $x/$y: $hwnd's window origin in $parent's client coordinates.
+      (local.set $x (i32.add (local.get $x) (call $ctrl_get_x_s (local.get $cur))))
+      (local.set $y (i32.add (local.get $y) (call $ctrl_get_y_s (local.get $cur))))
+      (if (i32.and
+            (i32.ne (local.get $cur) (local.get $hwnd))
+            (i32.ne (i32.and (call $wnd_get_style (local.get $cur))
+              (i32.const 0x04000000)) (i32.const 0))) ;; WS_CLIPSIBLINGS
+        (then
+          (local.set $slot (i32.const 0))
+          (block $scan_done (loop $scan
+            (br_if $scan_done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+            (local.set $sib (call $wnd_slot_hwnd (local.get $slot)))
+            (if (call $wnd_z_is_above_sibling (local.get $cur) (local.get $sib))
+              (then
+                (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
+                (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+                (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
+                (local.set $sx (i32.sub (i32.sub (call $ctrl_get_x_s (local.get $sib))
+                  (local.get $x)) (local.get $dc_ox)))
+                (local.set $sy (i32.sub (i32.sub (call $ctrl_get_y_s (local.get $sib))
+                  (local.get $y)) (local.get $dc_oy)))
+                (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
+                             (i32.gt_s (local.get $sh) (i32.const 0)))
+                  (then
+                    (drop (call $gdi_dc_system_clip_rect (local.get $hdc)
+                      (local.get $sx) (local.get $sy)
+                      (i32.add (local.get $sx) (local.get $sw))
+                      (i32.add (local.get $sy) (local.get $sh))
+                      (i32.const 4))))))) ;; RGN_DIFF
+            (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+            (br $scan)))))
+      (local.set $x (i32.add (local.get $x) (call $client_rect_get_l (local.get $parent))))
+      (local.set $y (i32.add (local.get $y) (call $client_rect_get_t (local.get $parent))))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
+      (local.set $cur (local.get $parent))
+      (br $ancestors))))
+
   ;; One slot of the SetSysColors override table: [0] whether a guest has ever
   ;; written this index, [4] the COLORREF it wrote. An index outside the table
   ;; returns 0, and every caller treats that as "no override" -- Windows takes
@@ -7030,7 +7087,10 @@
       (then
         (call $dc_exclude_children_for_clip
           (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))))
-    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_ancestor_siblings_for_clip (local.get $hdc) (local.get $hwnd)
+      (call $client_rect_get_l (local.get $hwnd))
+      (call $client_rect_get_t (local.get $hwnd))))
 
   (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)
     (call $dc_apply_client_clip_unlocked (local.get $hdc) (local.get $hwnd))
@@ -7060,7 +7120,10 @@
     (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x02000000)) ;; WS_CLIPCHILDREN
       (then (call $dc_exclude_visible_children_for_erase
         (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))))
-    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_ancestor_siblings_for_clip (local.get $hdc) (local.get $hwnd)
+      (call $client_rect_get_l (local.get $hwnd))
+      (call $client_rect_get_t (local.get $hwnd))))
 
   (func $dc_apply_window_clip_unlocked (param $hdc i32) (param $hwnd i32)
     (local $style i32) (local $wh i32)
@@ -7087,7 +7150,9 @@
       (local.get $hdc) (local.get $hwnd)
       (call $client_rect_get_l (local.get $hwnd))
       (call $client_rect_get_t (local.get $hwnd)))
-    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_ancestor_siblings_for_clip (local.get $hdc) (local.get $hwnd)
+      (i32.const 0) (i32.const 0)))
 
   (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)
     (call $dc_apply_window_clip_unlocked (local.get $hdc) (local.get $hwnd))
