@@ -979,6 +979,37 @@ higher load, so it is not a clean A/B. The cpu number includes the builds
   masked narrow arithmetic.
 - `getm_spm` + `and`: the stack-pointer mask.
 
+### Phase 1, step 12: step fused into its predecessor
+
+`X_s` is X followed by `$steps -= i`, for X in putr8/16/32, getcc*, the
+fused flag writers, wflags and stfv*. `fuseSteps` rewrites `X, step` into
+`X_s` in every lowered block. Not pout/pin, which read `$steps`. A bail inside
+X skips the step either way. `TOYVM_STEPFUSE=0`, or an arm-bench
+`ARM@nofuse` arm, turns it off.
+
+- **Census** (same 4 programs, 3M each): 46.9M -> **40.1M µops (-14.5%)**,
+  about 3.8 µops per x86 instruction. `step` fell from 15.7% to 1.4%.
+  Cumulatively, the naive tier is down 33% from step 10's 59.5M.
+- **Time: inside the noise.**
+  - 10M, load ~3: only-naive x4.96 against x5.11 for @nofuse (cpu), slice
+    x4.23 against x4.29.
+  - 30M, with a second only-naive copy as the null band: x3.56, x3.55 @nofuse
+    and x3.39 for the copy.
+  - At 10M, build time is most of the slice (29-475ms per program against
+    ~100-200ms of execution). So the cpu number is bounded by build, and a 15%
+    cut in executed µops is not visible above a ±5% band.
+
+**BRW.EXE disagrees at 30M in every uop-only arm.** It is older than steps
+11-12 (the step-10 engine does it too), and `uop` and `jit` agree with l1.
+- With `only: []`, where no µop program runs at all, it still diverges. So
+  the cause is uop-only's fallback/drive path, not a program or its lowering.
+- Dense slice logs (`--slice=1 --slice-log-regs`) agree in state up to
+  1,379,094. There the guest leaves protected mode for real mode and goes
+  back (cs 8 -> 20 -> 110 -> 20), and uop-only reaches 20:21e three
+  dispatches earlier than L1.
+- That billing gap moves the first IRQ (7,440,737 vs 7,440,734). The timer
+  IRQ then lands at a different ip, and the frames part at ~26.6M.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

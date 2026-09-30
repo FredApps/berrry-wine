@@ -24,7 +24,9 @@
 //              headers have counted K (only-t64, only-t1k, ...)
 //
 // Any arm name + `@spill` (only-naive@spill) runs it on the E1 engine as it
-// was before uop-wasm.js callSafe: the A/B for that change.
+// was before uop-wasm.js callSafe: the A/B for that change. `@nofuse` runs it
+// without the fused `X_s` step µops (TOYVM_STEPFUSE=0). They stack:
+// only-naive@spill@nofuse.
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -72,8 +74,10 @@ const ARMS = {
 
 // `ARM@spill` runs ARM on the E1 engine without uop-wasm.js callSafe
 // (TOYVM_CALLSAFE=0): Ion keeps $pc and the machine params on the stack.
+// `ARM@nofuse` runs it without step fusion (TOYVM_STEPFUSE=0).
+const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE' };
 const armOf = (a) => {
-  if (a.endsWith('@spill')) return armOf(a.slice(0, -6));
+  for (const k of Object.keys(KNOBS)) if (a.endsWith(k)) return armOf(a.slice(0, -k.length));
   const t = /^only-t(\d+[km]?)$/i.exec(a);
   const nv = /^only-n(\d+[km]?)$/i.exec(a);
   if (nv) {
@@ -108,7 +112,8 @@ async function child(spec) {
 
 function runOne(exe, budget, arm, timeoutS) {
   return new Promise((resolve) => {
-    const env = arm.endsWith('@spill') ? { ...process.env, TOYVM_CALLSAFE: '0' } : process.env;
+    const env = { ...process.env };
+    for (const [k, v] of Object.entries(KNOBS)) if (arm.split('@').includes(k.slice(1))) env[v] = '0';
     const p = spawn(process.execPath, [__filename, `--child=${JSON.stringify({ exe, budget, arm })}`],
       { stdio: ['ignore', 'pipe', 'pipe'], env });
     let out = '', err = '';

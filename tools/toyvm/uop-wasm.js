@@ -511,6 +511,19 @@ const dwStore = (e, at, x) => (!e.full ? `(${DWST[e.dw]} ${at} ${x})`
   : `(local.set $y ${x}) (local.set $z ${at})`
     + ` (i32.store (local.get $z) (i32.or (i32.and (i32.load (local.get $z)) (i32.const ${DWKEEP[e.dw]})) ${dwPut(e.dw, '(local.get $y)')}))`);
 
+// A `step` fused into the op before it: `X_s` is X, then $steps less its last
+// operand. The naive lowering ends every x86 instruction with a step, and
+// 58% of them follow a putr (op-pair census, TOYVM_E1HIST=1), the rest mostly
+// a flag write or a getcc. An X that leaves early (a bail) skips the step
+// exactly as X then step would. Not pout/pin: they read $steps.
+const STEP_FUSE = globalThis.TOYVM_STEPFUSE !== '0'
+  && (typeof process === 'undefined' || !process.env || process.env.TOYVM_STEPFUSE !== '0');
+for (const e of [...EOPS]) {
+  if (!/^(putr(8|16|32)|getcc\d+|wf(addn|subn|add32|sub32|logic)|wflags|stfv\d+\w*)$/.test(e.name)) continue;
+  const n = e.ops.length;
+  EOPS.push({ ...e, name: `${e.name}_s`, ops: `${e.ops}i`,
+    body: (A) => `${e.body(A)} (local.set $steps (i32.sub (local.get $steps) ${A.I(n)}))` });
+}
 const EOP = new Map(EOPS.map((e, i) => [e.name, { ...e, id: i }]));
 const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|link|bail)/.test(name);
 // Ops whose effect outlives the vreg they define: after one of these, a block
@@ -885,7 +898,7 @@ function lowerProgram(p, lo = {}) {
         if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) effected = true;
       }
       lowerTerm(b.term, E);
-      blocks.set(b.id, { native: true, ops: out });
+      blocks.set(b.id, { native: true, ops: STEP_FUSE ? fuseSteps(out) : out });
     } catch (e) {
       if (!(e instanceof Unsupported)) throw e;
       why.set(e.message, (why.get(e.message) || 0) + 1);
@@ -894,6 +907,18 @@ function lowerProgram(p, lo = {}) {
   }
   return { blocks: lo.fallthrough ? fallThrough(blocks, p.entry) : blocks,
     nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
+}
+
+// X, step -> X_s wherever X has a fused form (STEP_FUSE above).
+function fuseSteps(ops) {
+  const out = [];
+  for (const o of ops) {
+    const prev = out[out.length - 1];
+    if (o.name === 'step' && prev && EOP.has(`${prev.name}_s`)) {
+      out[out.length - 1] = { name: `${prev.name}_s`, args: [...prev.args, o.args[0]] };
+    } else out.push(o);
+  }
+  return out;
 }
 
 // Lay blocks out so each `jmp` target follows its block wherever it can, and
