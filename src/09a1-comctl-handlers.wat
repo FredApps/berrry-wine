@@ -1063,12 +1063,31 @@
         (i32.add (local.get $block) (i32.sub (local.get $p) (i32.const 2))))))
       (br $key)))
     (local.set $p (i32.and (i32.add (local.get $p) (i32.const 3)) (i32.const -4)))
+    ;; A text value may start exactly at the node end (empty value), but
+    ;; its declared length is not trusted past it: see $version_value_bytes.
+    (if (i32.gt_u (local.get $p) (local.get $end))
+      (then (return (i32.const 0))))
     (local.set $bytes (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 2)))))
     (if (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1))
-      (then (local.set $bytes (i32.shl (local.get $bytes) (i32.const 1)))))
+      (then (return (local.get $p))))
     (if (i32.gt_u (i32.add (local.get $p) (local.get $bytes)) (local.get $end))
       (then (return (i32.const 0))))
     (local.get $p))
+
+  ;; Byte size of a node's value. wValueLength counts UTF-16 units for a text
+  ;; node (wType 1) — except that VB5/VB6's resource compiler writes it in
+  ;; BYTES (JigSawedME: ProductName "JigSawedME" has wValueLength 0x16 = 22).
+  ;; Windows bounds the value by the node, not by that field, so doubling a
+  ;; byte count past wLength must not reject the node: clamp it to the node end.
+  (func $version_value_bytes (param $block i32) (param $node i32) (param $value i32) (result i32)
+    (local $end i32) (local $bytes i32)
+    (local.set $end (i32.add (local.get $node) (call $gl16 (i32.add (local.get $block) (local.get $node)))))
+    (local.set $bytes (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 2)))))
+    (if (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1))
+      (then (local.set $bytes (i32.shl (local.get $bytes) (i32.const 1)))))
+    (if (i32.gt_u (i32.add (local.get $value) (local.get $bytes)) (local.get $end))
+      (then (local.set $bytes (i32.sub (local.get $end) (local.get $value)))))
+    (local.get $bytes))
 
   (func $version_find_node (param $block i32) (param $path i32) (param $wide i32) (result i32)
     (local $node i32) (local $limit i32) (local $value i32) (local $child i32)
@@ -1093,9 +1112,7 @@
         (br $segment)))
       (if (i32.eqz (local.get $chars)) (then (return (i32.const 0))))
       (local.set $end (i32.add (local.get $node) (call $gl16 (i32.add (local.get $block) (local.get $node)))))
-      (local.set $bytes (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 2)))))
-      (if (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1))
-        (then (local.set $bytes (i32.shl (local.get $bytes) (i32.const 1)))))
+      (local.set $bytes (call $version_value_bytes (local.get $block) (local.get $node) (local.get $value)))
       (local.set $child (i32.and (i32.add (i32.add (local.get $value) (local.get $bytes)) (i32.const 3)) (i32.const -4)))
       (block $found (loop $siblings
         (local.set $value (call $version_value_offset (local.get $block) (local.get $child) (local.get $end)))
@@ -1132,16 +1149,33 @@
   (func $version_query (param $block i32) (param $path i32)
       (param $out i32) (param $length i32) (param $wide i32) (result i32)
     (local $node i32) (local $value i32) (local $count i32) (local $i i32)
+    (local $off i32) (local $text i32) (local $avail i32)
     (if (local.get $length) (then (call $gs32 (local.get $length) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $block)) (i32.eqz (local.get $path)))
       (then (return (i32.const 0))))
     (local.set $node (call $version_find_node (local.get $block) (local.get $path) (local.get $wide)))
     (if (i32.eqz (local.get $node)) (then (return (i32.const 0))))
     (local.set $count (call $gl16 (i32.add (local.get $node) (i32.const 2))))
-    (local.set $value (i32.add (local.get $block) (call $version_value_offset
-      (local.get $block) (i32.sub (local.get $node) (local.get $block)) (call $gl16 (local.get $block)))))
-    (if (i32.and (i32.eqz (local.get $wide))
-          (i32.eq (call $gl16 (i32.add (local.get $node) (i32.const 4))) (i32.const 1)))
+    (local.set $off (call $version_value_offset
+      (local.get $block) (i32.sub (local.get $node) (local.get $block)) (call $gl16 (local.get $block))))
+    (local.set $value (i32.add (local.get $block) (local.get $off)))
+    (local.set $text (i32.eq (call $gl16 (i32.add (local.get $node) (i32.const 4))) (i32.const 1)))
+    (if (local.get $text)
+      (then
+        ;; Report characters through the terminating NUL, bounded by the node:
+        ;; the declared count may be a VB-written byte count (see above).
+        (local.set $avail (i32.shr_u (call $version_value_bytes (local.get $block)
+          (i32.sub (local.get $node) (local.get $block)) (local.get $off)) (i32.const 1)))
+        (if (i32.gt_u (local.get $count) (local.get $avail))
+          (then (local.set $count (local.get $avail))))
+        (block $nul_found (loop $nul
+          (br_if $nul_found (i32.ge_u (local.get $i) (local.get $count)))
+          (if (i32.eqz (call $gl16 (i32.add (local.get $value) (i32.shl (local.get $i) (i32.const 1)))))
+            (then (local.set $count (i32.add (local.get $i) (i32.const 1))) (br $nul_found)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $nul)))
+        (local.set $i (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $wide)) (local.get $text))
       (then
         ;; wLength bounds the whole resource to 65535 bytes; a string can
         ;; contain at most 32767 UTF-16 code units. Reserve one bounded area.
