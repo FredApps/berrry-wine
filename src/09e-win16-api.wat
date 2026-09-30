@@ -16057,7 +16057,32 @@
     (i32.store offset=0 (global.get $reg_base) (select (i32.const 1) (i32.const 0) (local.get $to_ansi)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; KEYBOARD.4 ToAscii(wVirtKey, wScanCode, lpKeyState, lpChar, wFlags) ->
+  ;; int, the same translation as the Win32 entry point over far pointers.
+  ;; Civilization II's Civilopedia (PEDIA\GET_INFO.EXE, Authorware) stays
+  ;; resident after EXIT and translates every keystroke through it, so typing
+  ;; a save name in Civ2 killed that task, and the next advance that opened
+  ;; the Civilopedia found its record file half written.
+  (func $win16_ToAscii
+    (local $vk i32) (local $scan i32) (local $state i32) (local $out i32) (local $flags i32)
+    (local.set $flags (call $win16_arg16 (i32.const 0)))
+    (local.set $out (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $state (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (local.set $scan (call $win16_arg16 (i32.const 5)))
+    (local.set $vk (call $win16_arg16 (i32.const 6)))
+    (call $win16_call32_begin (i32.const 5))
+    (call $handle_ToAscii (local.get $vk) (local.get $scan) (local.get $state)
+      (local.get $out) (local.get $flags) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 14)))
+
   (func $win16_keyboard (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 4))
+      (then (call $win16_ToAscii) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_oem_convert (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 6))
