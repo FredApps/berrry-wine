@@ -496,6 +496,31 @@
         (i32.shl
           (i32.load8_u (local.get $end_wa))
           (i32.const 24)))))
+  ;; Native x87 loads retain the single contiguous direct-window lookup. Only
+  ;; other mappings need page-edge validation (and a lazy DIB access barrier).
+  (func $gl32_native (param $ga i32) (result i32)
+    (local $wa i32)
+    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (if (i32.le_u (local.get $wa) (i32.sub (region.end $DIRECT_WINDOW) (i32.const 4)))
+      (then (return (i32.load (local.get $wa)))))
+    (call $gl32 (local.get $ga)))
+
+  (func $gl64 (param $ga i32) (result i64)
+    (local $wa i32) (local $end_wa i32)
+    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (if (i32.le_u (local.get $wa) (i32.sub (region.end $DIRECT_WINDOW) (i32.const 8)))
+      (then (return (i64.load (local.get $wa)))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    (if (i32.le_u (i32.and (local.get $ga) (i32.const 4095)) (i32.const 4088))
+      (then (return (i64.load (local.get $wa)))))
+    ;; Translate the last byte BEFORE loading either half. A pending GPU
+    ;; surface can start on the second page even when the first is outside it.
+    (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 7))))
+    (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 7)))
+      (then (return (i64.load (local.get $wa)))))
+    (i64.or (i64.extend_i32_u (call $gl32 (local.get $ga)))
+      (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $ga) (i32.const 4)))) (i64.const 32))))
+
   (func $gl16 (param $ga i32) (result i32)
     (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
     (local.set $wa (g2w-fast (local.get $ga)))

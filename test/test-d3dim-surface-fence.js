@@ -43,6 +43,27 @@ async function main() {
       calls.push(args); return executor ? executor.call(...args) : reply;
     } },
     extraWat: `
+      (func (export "test_lazy_float") (param $wa i32) (param $pipeline i32) (result i32)
+        (if (local.get $pipeline) (then
+          (return (i32.reinterpret_f32 (f32.demote_f64
+            (call $x87_pipeline_load (call $w2g (local.get $wa)) (i32.const 0)))))))
+        (call $fpu_exec_mem (i32.const 1) (i32.const 0) (call $w2g (local.get $wa)))
+        (i32.reinterpret_f32 (f32.demote_f64 (call $fpu_pop))))
+      (func (export "test_lazy_wide") (param $wa i32) (param $pipeline i32) (result i64)
+        (if (local.get $pipeline) (then
+          (return (i64.reinterpret_f64 (call $x87_pipeline_load (call $w2g (local.get $wa)) (i32.const 1))))))
+        (call $fpu_exec_mem (i32.const 5) (i32.const 0) (call $w2g (local.get $wa)))
+        (i64.reinterpret_f64 (call $fpu_pop)))
+      (func (export "test_lazy_replace") (param $this i32) (param $dib i32) (param $pitch i32)
+        (local $ga i32) (local $wa i32)
+        (local.set $ga (call $heap_alloc (i32.const 108)))
+        (local.set $wa (call $g2w (local.get $ga)))
+        (memory.fill (local.get $wa) (i32.const 0) (i32.const 108))
+        (i32.store offset=4 (local.get $wa) (i32.const 0x808))
+        (i32.store offset=16 (local.get $wa) (local.get $pitch))
+        (i32.store offset=36 (local.get $wa) (call $w2g (local.get $dib)))
+        (call $handle_IDirectDrawSurface3_SetSurfaceDesc (local.get $this) (local.get $ga)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
       (func (export "test_lazy_surface") (param $this i32) (result i32)
         (local $entry i32) (local $dib i32)
         (local.set $entry (call $dx_from_this (local.get $this)))
@@ -178,6 +199,29 @@ async function main() {
   ex.test_global_fence();
   assert.equal(calls.length, 1, 'global barrier flushes deferred target');
   assert.equal(ex.test_lazy_unlock(lazy), 0, 'global barrier disarms stale range');
+  for (const pipeline of [0, 1]) {
+    calls.length = 0; lazyTarget.dirty = true;
+    new Uint8Array(wasmMemory.buffer, lazyDib - 2, 6).fill(0);
+    ex.test_lazy_arm(lazy, 1);
+    assert.equal(ex.test_lazy_float(lazyDib - 2, pipeline) >>> 0, 0xf8000000,
+      'baseline and folded float32 reads synchronize across the surface start');
+    assert.equal(calls.length, 1);
+    calls.length = 0; lazyTarget.dirty = true;
+    new Uint8Array(wasmMemory.buffer, lazyDib - 4, 8).fill(0);
+    ex.test_lazy_arm(lazy, 1);
+    assert.equal(ex.test_lazy_wide(lazyDib - 4, pipeline), 0x07e0f80000000000n,
+      'baseline and folded wide reads synchronize before crossing an aligned surface start');
+    assert.equal(calls.length, 1);
+  }
+  calls.length = 0; lazyTarget.dirty = true; pixels.fill(0);
+  ex.test_lazy_arm(lazy, 1); ex.test_lazy_unlock(lazy);
+  ex.test_lazy_replace(lazy, lazyDib + 4096, 8);
+  assert.deepStrictEqual(calls, [[OPCODES.FENCE, lazyDib, 4]],
+    'replacement fences the original backing and pitch before changing either');
+  pixels.fill(0x34); ex.test_global_fence();
+  assert.deepStrictEqual(Array.from(pixels), [0x34, 0x34, 0x34, 0x34],
+    'later fence cannot overwrite the detached allocation after reuse');
+  ex.test_lazy_replace(lazy, lazyDib, 4);
   calls.length = 0; lazyTarget.dirty = true; lazyTarget.dib = lazyDib + 1;
   ex.test_lazy_offset(lazy, 1);
   ex.test_lazy_arm(lazy, 1);

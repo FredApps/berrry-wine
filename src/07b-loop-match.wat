@@ -811,8 +811,8 @@
 
   (func $x87_pipeline_load (param $addr i32) (param $wide i32) (result f64)
     (if (result f64) (local.get $wide)
-      (then (f64.load (call $g2w (local.get $addr))))
-      (else (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))))
+      (then (f64.reinterpret_i64 (call $gl64 (local.get $addr))))
+      (else (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $addr)))))))
 
   ;; 449: a bounded straight-line expression pipeline. Mode 0 is the original
   ;; four-op/two-arithmetic form; modes 1/2/3 are memory-arithmetic, copy, and
@@ -1238,18 +1238,18 @@
     (local.set $y (f64.convert_i32_s (call $gl32 (local.get $a1))))
     (call $fpu_push (local.get $y))
     (call $fpu_push (local.get $y))
-    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a3)))))
+    (local.set $c (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $a3)))))
     (local.set $t0 (f64.mul (local.get $y) (local.get $c)))
     (local.set $sum (f64.add (local.get $y) (local.get $x)))
     (call $fpu_set (i32.const 0) (local.get $x))
     (call $fpu_set (i32.const 1) (local.get $sum))
     (call $fpu_set (i32.const 2) (local.get $t0))
-    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a6)))))
+    (local.set $c (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $a6)))))
     (local.set $t1 (f64.mul (local.get $x) (local.get $c)))
     (call $fpu_set (i32.const 0) (local.get $sum))
     (call $fpu_set (i32.const 1) (local.get $t1))
     (call $fpu_set (i32.const 2) (local.get $t0))
-    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a8)))))
+    (local.set $c (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $a8)))))
     (local.set $t2 (f64.mul (local.get $sum) (local.get $c)))
     (call $fpu_set (i32.const 0) (local.get $t2))
     (global.set $x87_affine_prepare_runs
@@ -1282,14 +1282,14 @@
       (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
     (call $fpu_set (i32.const 0) (local.get $r1))
     (call $fpu_set (i32.const 1) (local.get $r0))
-    (local.set $bias (f64.promote_f32 (f32.load (call $g2w (local.get $a2)))))
+    (local.set $bias (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $a2)))))
     (local.set $r1 (f64.add (local.get $r1) (local.get $bias)))
     (call $fpu_set (i32.const 0) (local.get $r1))
     ;; Compiled FXCH ST(1): swap symbolic names, then expose the exact state at
     ;; the following memory boundary without invoking the generic FXCH helper.
     (call $fpu_set (i32.const 0) (local.get $r0))
     (call $fpu_set (i32.const 1) (local.get $r1))
-    (local.set $bias (f64.promote_f32 (f32.load (call $g2w (local.get $a4)))))
+    (local.set $bias (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $a4)))))
     (local.set $r0 (f64.add (local.get $r0) (local.get $bias)))
     (call $fpu_set (i32.const 0) (local.get $r0))
     (global.set $x87_affine_finish_runs
@@ -1610,12 +1610,12 @@
                   $k8 $k9 $k10 $k11 $k12 $k13 $k14 $k15 $generic
                   (local.get $g)))
         ;; k0: D8 mem, float32 operand
-        (local.set $v (f64.promote_f32 (f32.load (g2w-fast (local.get $addr)))))
+        (local.set $v (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $addr)))))
         (br $arith))
         ;; k1: D9 mem -- FLD/FST/FSTP m32, FLDCW, FNSTCW
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.promote_f32 (f32.load (g2w-fast (local.get $addr)))))
+            (x87i-push (f64.promote_f32 (f32.reinterpret_i32 (call $gl32_native (local.get $addr)))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 3))
           (then
@@ -1629,13 +1629,13 @@
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 5))
           (then
-            (global.set $fpu_cw (i32.load16_u (g2w-fast (local.get $addr))))
+            (global.set $fpu_cw (call $gl16 (local.get $addr)))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 7))
           (then (call $gs16 (local.get $addr) (global.get $fpu_cw)) (br $next_op)))
         (br $generic))
         ;; k2: DA mem, int32 operand
-        (local.set $v (f64.convert_i32_s (i32.load (g2w-fast (local.get $addr)))))
+        (local.set $v (f64.convert_i32_s (call $gl32_native (local.get $addr))))
         (br $arith))
         ;; k3: DB mem -- FILD/FIST/FISTP m32 (m80 forms are generic)
         (if (i32.eqz (local.get $r))
@@ -1652,12 +1652,12 @@
             (br $next_op)))
         (br $generic))
         ;; k4: DC mem, float64 operand
-        (local.set $v (f64.load (g2w-fast (local.get $addr))))
+        (local.set $v (f64.reinterpret_i64 (call $gl64 (local.get $addr))))
         (br $arith))
         ;; k5: DD mem -- FLD/FST/FSTP m64, FNSTSW m16
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.load (g2w-fast (local.get $addr))))
+            (x87i-push (f64.reinterpret_i64 (call $gl64 (local.get $addr))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 3))
           (then
@@ -1675,16 +1675,16 @@
             (br $next_op)))
         (br $generic))
         ;; k6: DE mem, int16 operand
-        (local.set $v (f64.convert_i32_s (i32.load16_s (g2w-fast (local.get $addr)))))
+        (local.set $v (f64.convert_i32_s (i32.extend16_s (call $gl16 (local.get $addr)))))
         (br $arith))
         ;; k7: DF mem -- FILD/FIST/FISTP m16, FILD/FISTP m64 (BCD is generic)
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.convert_i32_s (i32.load16_s (g2w-fast (local.get $addr)))))
+            (x87i-push (f64.convert_i32_s (i32.extend16_s (call $gl16 (local.get $addr)))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 5))
           (then
-            (local.set $r0 (i64.load (g2w-fast (local.get $addr))))
+            (local.set $r0 (call $gl64 (local.get $addr)))
             (x87i-push (f64.convert_i64_s (local.get $r0)))
             ;; $fpu_raw_set 0
             (i64.store offset=64 (x87i-slot (local.get $top)) (local.get $r0))

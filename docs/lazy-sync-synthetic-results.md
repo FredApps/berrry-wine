@@ -118,3 +118,48 @@ resource churn and Safari/end-to-end game validation remain follow-up layers
 from the broader plan. No proposed runtime safeguard is silently implemented
 by the benchmark: current failures stay visible until the candidate fixes
 the relevant path.
+
+## Wide-read and backing-replacement fixes
+
+The runtime now uses page-aware native x87 reads (including folded pipeline
+and island paths). Ordinary direct-window 32/64-bit reads retain a single
+range check plus load. Other mappings validate page crossings before reading;
+discontiguous sparse pages are gathered correctly. m80/environment/BCD reads
+no longer retain a linear pointer across unproved guest pages.
+
+SetSurfaceDesc fences the old backing/extent before changing its pointer or
+pitch. This applies after an untouched Unlock too: the old allocation can
+then be reused without a delayed GPU readback corrupting it.
+
+Validation:
+
+- Surface-fence regression: 32/64-bit baseline and folded reads crossing an
+  aligned pending surface start; old-backing/pitch ordering and reuse.
+- Sparse-width regression: every crossing offset for 32/64/80-bit x87 loads,
+  including folded 64-bit reads, with non-contiguous physical backing.
+- x87 island differential: 400 sequences / 6,609 operations, fast == generic
+  == unfused. Pipeline differential: 31 cases pass.
+- Hardware `--require-correct`: all 24 arms pass for `x87-overlap`,
+  `backing-replace` and `final-release`.
+
+Matched WASMs were compiled from one source snapshot, differing only in the
+four owned runtime files. Box8 artifact order was before/after/after/before;
+each artifact ran eager/lazy/lazy/eager, 1,024 units per arm after 64 warmup
+units. Same pinned host scripts and Intel hardware GPU; load 0.00 to 0.53.
+Median work-unit means, milliseconds:
+
+| Workload | Before eager | After eager | Before lazy | After lazy |
+|---|---:|---:|---:|---:|
+| Untouched Locks + HUD | 1.8899 | 1.8797 | 0.6374 | 0.6473 |
+| Heap x87 loop | 0.2051 | 0.2019 | 0.2055 | 0.2018 |
+| DIB sequential x87 + readback | 0.8849 | 0.9112 | 0.9039 | 0.9188 |
+
+The DIB stress workload contains 65,537 loads plus one readback per unit;
+the wide-access checks are not free there. Ordinary heap loads show no
+slowdown in this sample. Untouched-Lock counts remain exactly 3 eager versus
+1 lazy. Do not generalize the small timing shifts into a game FPS claim.
+Results: `build/lazy-sync-fix/results/fix-{strict,1-before,2-after,3-after,4-before}/results.json`;
+matched artifacts: `build/lazy-sync-fix/{before,after}.wasm`.
+
+Lazy sync remains opt-in. These fixes do not resolve shared-thread ownership,
+retained GDI access, or the benchmark's guest-thread lifetime coverage.

@@ -8,6 +8,15 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_gl64") (param $guest i32) (result i64)
+    (call $gl64 (local.get $guest)))
+  (func (export "test_x87_read") (param $guest i32) (param $group i32) (param $op i32) (result f64)
+    (global.set $fpu_top (i32.const 0))
+    (global.set $fpu_tag (i32.const 255))
+    (call $fpu_exec_mem (local.get $group) (local.get $op) (local.get $guest))
+    (call $fpu_pop))
+  (func (export "test_pipeline_read") (param $guest i32) (result f64)
+    (call $x87_pipeline_load (local.get $guest) (i32.const 1)))
   (func (export "test_x87_store")
       (param $guest i32) (param $group i32) (param $op i32) (param $value f64)
     (local $i i32)
@@ -94,6 +103,24 @@ async function main() {
 
   const read8 = address => e.guest_read8(address) & 0xff;
   const write8 = (address, value) => e.guest_write8(address, value);
+  for (let offset = 1; offset < 4; offset++) {
+    const address = page2 - offset, bits = Buffer.alloc(4); bits.writeFloatLE(1.25);
+    for (let i = 0; i < 4; i++) write8(address + i, bits[i]);
+    assert.equal(e.test_x87_read(address, 1, 0), 1.25, 'FLD m32 crosses sparse pages');
+  }
+  for (let offset = 1; offset < 8; offset++) {
+    const address = page2 - offset;
+    const bits = Buffer.alloc(8); bits.writeDoubleLE(1.25);
+    for (let i = 0; i < 8; i++) write8(address + i, bits[i]);
+    assert.equal(e.test_gl64(address), 0x3ff4000000000000n, 'qword crosses discontiguous sparse pages');
+    assert.equal(e.test_x87_read(address, 5, 0), 1.25, 'FLD m64 crosses sparse pages');
+    assert.equal(e.test_pipeline_read(address), 1.25, 'folded pipeline load crosses sparse pages');
+  }
+  for (let offset = 1; offset < 10; offset++) {
+    const address = page2 - offset;
+    e.test_x87_store(address, 3, 7, 1.25);
+    assert.equal(e.test_x87_read(address, 3, 5), 1.25, 'FLD m80 gathers both mapped pages');
+  }
   write8(page1 + 0x345, 0x7b);
   assert.strictEqual(read8(page1 + 0x345), 0x7b,
     'byte reads must retain sparse backing semantics');

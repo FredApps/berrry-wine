@@ -4,6 +4,12 @@
 disabled by default. **Do not enable it globally yet.** This audit adds a
 diagnostic reproducer; it does not change runtime behavior.
 
+Follow-up: wide/x87 reads and SetSurfaceDesc backing replacement now have
+runtime fixes and focused regressions. See the matched before/after results
+in [lazy-sync-synthetic-results.md](lazy-sync-synthetic-results.md). The
+cross-instance and retained-GDI findings remain open; default stays off.
+The findings below describe the original audited revision.
+
 Run `node tools/audit-d3dim-lazy-sync.js`. It compiles the canonical source,
 uses real WAT access paths, and substitutes a deterministic GPU readback
 (two RGB565 pixels, red/green). It reports observed hazards rather than

@@ -6046,6 +6046,11 @@
         (local.set $desc (call $g2w (local.get $arg1)))
         (local.set $flags (i32.load offset=4 (local.get $desc)))
         ;; DDSD_PITCH
+        ;; Drain using the OLD backing and extent before either field changes.
+        ;; An untouched lazy Unlock may have left GPU-owned pixels pending;
+        ;; the caller may immediately reuse the detached backing allocation.
+        (if (i32.and (local.get $flags) (i32.const 0x00000808))
+          (then (call $d3dim_surface_fence (local.get $entry))))
         (if (i32.and (local.get $flags) (i32.const 0x00000008))
           (then (store.field.memarg DxObject pitch (local.get $entry) (i32.load offset=16 (local.get $desc)))))
         ;; DDSD_LPSURFACE. A null pointer remains null rather than becoming
