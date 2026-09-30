@@ -1281,9 +1281,13 @@
   ;; The logical-frame address is treated the same way even before it has been
   ;; compiled: it must stay a block entry so its marker runs (09a8
   ;; $th_logical_frame). 0 when off, and no instruction is at address 0.
+  ;; So is a uop trace's cut-exit landing (07d $uop_cut_probe, section 21.6):
+  ;; the program leaves there and the threaded path resumes, so a block that
+  ;; ran on over it would be retired by the landing's own publish.
   (func $fuse_stop (param $p i32) (result i32)
-    (i32.or (call $page_probe (local.get $p))
-            (i32.eq (local.get $p) (global.get $logical_frame_addr))))
+    (i32.or (i32.or (call $page_probe (local.get $p))
+                    (i32.eq (local.get $p) (global.get $logical_frame_addr)))
+            (call $uop_cut_probe (local.get $p))))
   ;; Helper: absolute address (no base, no index)?
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
