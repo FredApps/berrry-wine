@@ -16,6 +16,7 @@ const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 if (process.argv.includes('--help')) {
   console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
+  console.log('Glide diagnostics: --glide-lfb-metrics enables the opt-in WAT LFB reason counters (5 reasons x 7 fields), recorded in every snapshot.');
   console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
   console.log('Emulation diagnostics: --guest-profile saves guest-main handler/block histograms and startup-to-window uop census logs. Adds overhead; histogram counts are dispatches, not CPU time.');
   console.log('Remote A/B: --wasm=FILE selects an artifact; --source-commit=REV records archive provenance; --swiftshader explicitly permits software WebGL; --no-sandbox is for an isolated Chrome test box.');
@@ -29,6 +30,7 @@ const samples = Number(arg('samples', '2'));
 const seed = Number(arg('seed', '12345')) >>> 0;
 const profileEnabled = process.argv.includes('--profile');
 const readbackCensus = process.argv.includes('--readback-census');
+const glideLfbMetrics = process.argv.includes('--glide-lfb-metrics');
 const noD3DBatching = process.argv.includes('--no-d3d-batching');
 const noFixedCache = process.argv.includes('--no-fixed-cache');
 const guestProfile = process.argv.includes('--guest-profile');
@@ -152,7 +154,7 @@ ${needle}
       ${guestProfile ? 'if ((msg.slot || 0) === 0) (result.exports || result.instance.exports).set_uop_census(1);' : ''}`);
 
 async function observe(page) {
-  return page.evaluate(() => {
+  return page.evaluate(metricsEnabled => {
     const wine = runningApps.find(app => app.name === 'nfs3_demo')?.wine;
     const ex = wine?.instance?.exports;
     const glide = wine?.hostCtx?.glideBridge?.device;
@@ -164,10 +166,24 @@ async function observe(page) {
     const win = wins[wins.length - 1];
     const surface = win?._dxFrameLayer?.canvas || win?._backCanvas;
     const read = addr => ex?.guest_read32 ? ex.guest_read32(addr) >>> 0 : null;
+    let glideLfb = null;
+    if (metricsEnabled) {
+      if (!ex?.glide_lfb_metrics_enable || !ex?.glide_lfb_metrics_get)
+        throw new Error('--glide-lfb-metrics requires a build with the WAT metric exports');
+      if (!window.__nfsGlideLfbMetricsEnabled) {
+        ex.glide_lfb_metrics_enable(1); window.__nfsGlideLfbMetricsEnabled = true;
+      }
+      glideLfb = {
+        reasons: ['readLock', 'writeLock', 'readRegion', 'glide2WriteRegion', 'glide3WriteRegion'],
+        fields: ['attempts', 'requestedPixels', 'stagedPixels', 'fullSizeRequests', 'lastWidth', 'lastHeight', 'lastGuestReturn'],
+        rows: Array.from({ length: 5 }, (_, reason) => Array.from({ length: 7 }, (_, field) => ex.glide_lfb_metrics_get(reason, field)))
+      };
+    }
     return { at: performance.now(), running: !!wine?.running,
       backend: wine?.threadManager?.backend, hidden: document.hidden,
       flips: window.__nfsBenchFlips, presents: window.__nfsBenchPresents, swaps: glide?.stats.swaps,
-      glide: glide?.stats, d3d: draw,
+      glide: glide?.stats, d3d: draw, glideLfb,
+      glideEndpoint: wine?.hostCtx?.glideBridge?.endpoint?.options || null,
       glRenderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : glide?.glRenderer || draw?.glRenderer || wine?.hostCtx?.sharedD3DIM?.glRenderer || null,
       renderWorker: wine?._renderWorkerManager ? {
         endpoints: [...wine._renderWorkerManager.ports.values()].map(port => port.options),
@@ -179,7 +195,12 @@ async function observe(page) {
       display: ex ? { width: ex.get_display_mode_w?.(), height: ex.get_display_mode_h?.() } : null,
       perf: window.WinePerf?.snapshot(),
     };
-  });
+  }, glideLfbMetrics);
+}
+
+function assertGlideBackend(state, expected) {
+  assert(state.glideEndpoint?.api === 'glide' && state.glideEndpoint.backend === expected,
+    `requested Glide ${expected}, actual endpoint ${JSON.stringify(state.glideEndpoint)}`);
 }
 
 async function runCase(server, name) {
@@ -189,7 +210,7 @@ async function runCase(server, name) {
   fs.writeFileSync(path.join(dir, 'console.log'), '');
   let browser, page;
   const errors = [], dlls = new Set();
-  const report = { name, config, samples: [], loadAtLaunch: os.loadavg() };
+  const report = { name, config, glideLfbMetrics, samples: [], loadAtLaunch: os.loadavg() };
   try {
     browser = await puppeteer.launch({ executablePath: chrome, headless: false,
       protocolTimeout: 600000, args: ['--no-first-run', '--no-default-browser-check',
@@ -212,7 +233,7 @@ async function runCase(server, name) {
       if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) errors.push(line);
     });
     page.on('pageerror', error => errors.push(String(error)));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&glide-renderer=${config.glide}${config.gpu ? '&d3dim-gpu' : ''}`,
+    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&d3d-renderer=${config.driver === 'softtri' ? 'software' : config.glide}`,
       { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     await page.evaluate(async config => {
@@ -255,6 +276,7 @@ async function runCase(server, name) {
       await sleep(1000);
     }
     report.ready = await observe(page);
+    if (config.driver === 'voodoo') assertGlideBackend(report.ready, config.glide);
     assert(report.seedHook, 'deterministic seed hook must execute');
     if (seed === 12345) assert.deepStrictEqual(report.ready.scene, {mode:3, ai:0, weather:1, night:0});
     assert([...dlls].some(line => line.includes(config.dll)), 'requested original renderer must load');
@@ -315,6 +337,9 @@ async function runCase(server, name) {
         fs.writeFileSync(path.join(dir,`sample-${i+1}-hist.json`),JSON.stringify({...hist,mods,guestBefore},null,2));
       }
       const after = await observe(page), cpuAfter = await cpu(), loadAfter = os.loadavg();
+      if (config.driver === 'voodoo') {
+        assertGlideBackend(before, config.glide); assertGlideBackend(after, config.glide);
+      }
       for (const target of profilers) {
         const { profile } = await target.client.send('Profiler.stop');
         fs.writeFileSync(path.join(dir, 'sample-' + (i+1) + '-' + target.label + '.cpuprofile'), JSON.stringify(profile));

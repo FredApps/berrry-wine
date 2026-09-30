@@ -22,6 +22,9 @@ if (process.argv.includes('--help')) {
   --trace-api=LoadLibraryA,GetProcAddress (diagnostics only, not timing)
   --capture-frame [--capture-min-blue=N] (up to 30 frames/60 seconds; blue pixels below y=200)
   --glide-source=path/to/glide-backend.js (diagnostic page override only)
+  --glide-lfb-metrics (opt-in WAT LFB reasons, 5 x 7 counter snapshot; diagnostic timing)
+  --swiftshader (explicit software WebGL; results are not hardware-GPU performance)
+  --no-sandbox (isolated Chrome test box only)
   --menu-click=130,310 --menu-wait=35 --race-wait=25 --out=build/nfs2-renderer-bench
 
 Prepare the original public SE 3Dfx demo (no full-game assets required):
@@ -40,6 +43,8 @@ const samples = Number(arg('samples', '2'));
 // Default measurement leaves the car stationary; --accelerate opts into driving.
 const accelerate = process.argv.includes('--accelerate');
 const captureFrame = process.argv.includes('--capture-frame');
+const glideLfbMetrics = process.argv.includes('--glide-lfb-metrics');
+const softwareGpu = process.argv.includes('--swiftshader');
 const captureMinBlue = Number(arg('capture-min-blue', '0'));
 const glideSource = arg('glide-source', '');
 const glideOverride = glideSource ? fs.readFileSync(path.resolve(ROOT, glideSource), 'utf8') : null;
@@ -247,7 +252,7 @@ function installFrameCapture() {
 }
 
 async function observe(page) {
-  return page.evaluate(() => {
+  return page.evaluate(metricsEnabled => {
     const wine = runningApps.find(app => app.name === window.__nfs2App)?.wine;
     const ex = wine?.instance?.exports;
     const glide = wine?.hostCtx?.glideBridge?.device;
@@ -258,11 +263,25 @@ async function observe(page) {
     const wins = Object.values(renderer?.windows || {}).filter(w => w.visible && !w.isChild);
     const win = wins[wins.length - 1];
     const surface = win?._dxFrameLayer?.canvas || win?._backCanvas;
+    let glideLfb = null;
+    if (metricsEnabled) {
+      if (!ex?.glide_lfb_metrics_enable || !ex?.glide_lfb_metrics_get)
+        throw new Error('--glide-lfb-metrics requires a build with the WAT metric exports');
+      if (!window.__nfsGlideLfbMetricsEnabled) {
+        ex.glide_lfb_metrics_enable(1); window.__nfsGlideLfbMetricsEnabled = true;
+      }
+      glideLfb = {
+        reasons: ['readLock', 'writeLock', 'readRegion', 'glide2WriteRegion', 'glide3WriteRegion'],
+        fields: ['attempts', 'requestedPixels', 'stagedPixels', 'fullSizeRequests', 'lastWidth', 'lastHeight', 'lastGuestReturn'],
+        rows: Array.from({ length: 5 }, (_, reason) => Array.from({ length: 7 }, (_, field) => ex.glide_lfb_metrics_get(reason, field)))
+      };
+    }
     return { at: performance.now(), running: !!wine?.running,
       backend: wine?.threadManager?.backend, hidden: document.hidden,
       flips: window.__nfsBenchFlips, primaryPresents: window.__nfsBenchPrimaryPresents, swaps: glide?.stats.swaps,
-      glide: glide?.stats, d3d: draw,
-      glRenderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : null,
+      glide: glide?.stats, d3d: draw, glideLfb,
+      glideEndpoint: wine?.hostCtx?.glideBridge?.endpoint?.options || null,
+      glRenderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : glide?.glRenderer || null,
       surface: surface ? { width: surface.width, height: surface.height } : null,
       display: ex ? { width: ex.get_display_mode_w?.(), height: ex.get_display_mode_h?.() } : null,
       seGlobals: window.__nfs2App === 'nfs2se_demo' && ex ? Object.fromEntries(
@@ -270,7 +289,12 @@ async function observe(page) {
           .map(address => ['0x' + address.toString(16), ex.guest_read32(address) >>> 0])) : null,
       perf: window.WinePerf?.snapshot(),
     };
-  });
+  }, glideLfbMetrics);
+}
+
+function assertGlideBackend(state, expected) {
+  assert(state.glideEndpoint?.api === 'glide' && state.glideEndpoint.backend === expected,
+    `requested Glide ${expected}, actual endpoint ${JSON.stringify(state.glideEndpoint)}`);
 }
 
 async function runCase(server, name) {
@@ -280,11 +304,13 @@ async function runCase(server, name) {
   fs.writeFileSync(path.join(dir, 'console.log'), '');
   let browser, page;
   const errors = [], dlls = new Set();
-  const report = { name, config, samples: [], loadAtLaunch: os.loadavg() };
+  const report = { name, config, softwareGpu, samples: [], loadAtLaunch: os.loadavg() };
   try {
     browser = await puppeteer.launch({ executablePath: chrome, headless: false,
       protocolTimeout: 600000, args: ['--no-first-run', '--no-default-browser-check',
-        '--window-size=900,700', '--autoplay-policy=no-user-gesture-required'] });
+        '--window-size=900,700', '--autoplay-policy=no-user-gesture-required',
+        ...(process.argv.includes('--no-sandbox') ? ['--no-sandbox'] : []),
+        ...(softwareGpu ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [])] });
     report.browser = await browser.version();
     report.launchArgs = browser.process().spawnargs;
     const system = await browser.target().createCDPSession();
@@ -300,7 +326,7 @@ async function runCase(server, name) {
       if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) errors.push(line);
     });
     page.on('pageerror', error => errors.push(String(error)));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&glide-renderer=${config.glide}`,
+    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&d3d-renderer=${config.accelerated ? config.glide : 'software'}`,
       { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     if (captureFrame) {
@@ -356,6 +382,8 @@ async function runCase(server, name) {
     await waitFrames(config.accelerated ? 20 : 3);
     if (!config.accelerated) await sleep(menuWait * 1000);
     report.menu = await observe(page);
+    report.glideLfbMetrics = glideLfbMetrics;
+    if (config.accelerated) assertGlideBackend(report.menu, config.glide);
     await page.screenshot({ path: path.join(dir, 'menu.png') });
     console.log(name, 'checkpoint', path.join(dir, 'menu.png'));
     if (stage === 'menu') { report.checkpoint = 'menu'; return report; }
@@ -390,10 +418,12 @@ async function runCase(server, name) {
     assert.equal(report.ready.backend, 'worker');
     assert(report.ready.running && !report.ready.hidden, 'visible live guest required');
     if (config.accelerated) {
+      assertGlideBackend(report.ready, config.glide);
       assert.equal(report.ready.seGlobals['0x4d4fc8'], 1, 'original game must select Glide');
       assert(report.ready.glide?.triangles > 0, 'race geometry required');
       if (config.glide === 'webgl') assert(report.ready.glRenderer &&
-        !/swiftshader|llvmpipe|software/i.test(report.ready.glRenderer), 'hardware WebGL required');
+        (softwareGpu || !/swiftshader|llvmpipe|software|unknown/i.test(report.ready.glRenderer)),
+        'hardware WebGL required unless --swiftshader is explicit');
     }
     await page.screenshot({ path: path.join(dir, 'ready.png') });
     console.log(name, 'race checkpoint', path.join(dir, 'ready.png'));
@@ -445,6 +475,9 @@ async function runCase(server, name) {
       const loadBefore = os.loadavg(), cpuBefore = await cpu(), before = await observe(page);
       await sleep(seconds * 1000);
       const after = await observe(page), cpuAfter = await cpu(), loadAfter = os.loadavg();
+      if (config.accelerated) {
+        assertGlideBackend(before, config.glide); assertGlideBackend(after, config.glide);
+      }
       assert(before.running && after.running && !before.hidden && !after.hidden, 'visible live game required');
       if (errors.length) throw new Error(errors[0]);
       assert.equal(after.glide?.errors || after.d3d?.errors || 0, 0);
