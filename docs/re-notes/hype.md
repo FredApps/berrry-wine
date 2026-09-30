@@ -143,7 +143,7 @@ allowing normal `DefWindowProc` processing to produce `WM_SIZE`. The subsequent
 `build/hype-full-world-webgl.log` snapshot still had 388×268 child clients.
 The candidate and its callback fixture were removed: it did not improve the
 layout and its internal synchronous dispatcher bypassed window-owner thread
-routing. The viewport issue remains unresolved.
+routing. A subsequent owner-thread fix is described below.
 
 The matched `hype-capture3-webgl` / `hype-no-notify-webgl` captures also exclude
 notification as a necessary cause of the observed bad geometry. Both capture
@@ -218,6 +218,79 @@ corridor, still restricted to 388×268 pixels. It was opened in Preview.
 The other 15 drawable captures retain the exact earlier menu hash. LFB
 read/write counts stop at 238 and remain unchanged through the later capture
 interval, so repeated LFB uploads do not explain that return to the menu
-image. Actual presentation callbacks, buffer contents and the guest's later
-draw sequence still need comparison. Neither stable gameplay nor visible
-input-driven movement is accepted yet.
+image. Later actual-presentation captures below identify the alternating
+guest swaps; this was not dropped delivery by the shared render worker.
+
+### Owner-thread resize and movement
+
+Glide fullscreen open now posts `WM_MOVE` and `WM_SIZE` through the existing
+owner-routed USER queue, matching DirectDraw's mode-change path. It does not
+call the window procedure on the rendering thread or while holding the Glide
+lock. The focused ABI regression opens from one instance with a window owned
+by another, verifies the ordered payloads and absence of inline callbacks,
+and checks that a failed open posts nothing.
+
+On the trusted fallback server, `build/hype-post-size-webgl/` captures a
+636×476 child viewport inside the 640×480 drawable, replacing the earlier
+388×268 viewport. Actual presentation frames in `build/hype-swap-callers/`
+show normal ArrowUp movement and ArrowRight turning; `world-present-661.png`
+and `world-present-1047.png` were compared visually and opened in Preview.
+Default CPU settings in `build/hype-default-callers/` also produce four
+captured world frames with 403–406 triangles and no nonfinite fields.
+The earlier single-frame optimized/interpreter comparison sampled opposite
+halves of the UI/world alternation and does not establish a CPU bug.
+The remaining empty UI swap still prevents stable visible presentation.
+
+### Alternating world and UI swaps
+
+The eight adjacent swaps in `build/hype-swap-callers/frame-capture.json`
+all originate from thread 1, return to `0x4671d4`, and use interval 1.
+World frames have higher caller `0x43f631`; empty frames have caller
+`0x42252b`. Device `0x03f012d8` has field `+0x38 == 0`, and both globals
+`0x77728c` and `0x5da054` are zero throughout this sample.
+
+Static disassembly explains the pair: frame-finish callback `0x43f610`
+(installed at `0x5b2290`, paired with render callback `0x43f180` at
+`0x5b228c`) finalizes descriptor `0x71cd04`, swaps surface ID
+`short[0x71cd02]`, then directly calls `0x422260` at `0x43f678` before
+releasing semaphore `[0x71cd6c]`. That second function acquires surface
+`short[0x71cd70]` into descriptor `0x71cd74`, visits UI objects from
+`[0x7136e0]` through links at `+0xd8` using `0x41f300`, finalizes the
+descriptor, and unconditionally calls the same swap wrapper. These are
+nested guest paths, not two independently scheduled windows or threads.
+
+Wrapper `0x467180` decodes its second argument as device index `/16` and
+surface index `%16`, clears the surface's acquired flag at `+0x64`, and
+calls Glide swap when `[0x77728c] == 0`. Acquisition `0x467070` sets that
+global from whether device field `+0x38` is nonzero. No renderer suppression
+is justified by this evidence. The next diagnostic should record both
+surface IDs, their 100-byte descriptors, the surface records at ESI,
+UI-list head `0x7136e0`, mode byte `0x71c620`, and flag `0x5d9680`; the
+unresolved question is why this device/surface configuration requests a
+second flip without intervening color drawing.
+
+Device field `+0x38` is not populated by a Glide capability query. Constructor
+`0x466810` allocates a 0x10c-byte device and copies the caller's first
+0x6c configuration bytes into it at `0x466b9e–0x466ba5`. The normal MFC
+creation path at `0x499450` explicitly sets configuration `+0x38` to zero
+at `0x49949e`, then calls this constructor at `0x49950d`. An alternate
+path at `0x499320` sets it to one, but its entry checks `0x477a70`, whose
+original implementation is exactly `xor eax,eax; ret`; consequently that
+alternate path is disabled in this executable. The constructor can also
+clear a nonzero value if an existing device already has it set. The observed
+zero therefore matches the original executable's selection, and changing
+Glide query results or forcing this field would not be a supported fix.
+
+The pinned Glide 3 SDK's `gglide.c` implementation of `grBufferSwap`
+unconditionally cycles current/front/back indices modulo the configured
+buffer count, queues the swap command, and selects the new drawing buffer.
+It has no exception for an empty frame. Its fast clear also respects the
+RGB write mask, so a depth-only clear correctly preserves the older menu
+color. These rules agree with the observed alternating buffer contents.
+One concrete difference remains: our `handle_grBufferSwap` does not pass
+the guest's swap interval to the host; it flips and publishes immediately.
+The SDK encodes interval 1 as a retrace-synchronized swap and bounds pending
+swaps. Browser compositing may therefore repeatedly sample the second UI
+presentation when our two swaps happen close together. Correct pacing
+would preserve both requested flips; it is not evidence that the retained
+menu pixels should be discarded or that pacing alone fixes gameplay.

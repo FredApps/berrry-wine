@@ -134,7 +134,27 @@ const dxState = regions.BASE.DX_PROCESS_STATE;
 const savedDisplay = Buffer.alloc(32);
 [800, 600, 32, 1, 0, 0, 0, 0].forEach((v, i) => savedDisplay.writeUInt32LE(v, i * 4));
 new Uint8Array(memory.buffer, dxState, 32).set(savedDisplay);
+// Open on a different thread from the HWND owner. An inline callback would
+// write this sentinel; the owner must instead receive an ordered message pair.
+const wndproc = 0x414800, callbackSentinel = 0x414900, queuedMessage = 0x414920;
+const callback = Buffer.from([0xc7, 0x05, 0, 0, 0, 0, 1, 0, 0, 0, 0xc2, 16, 0]);
+callback.writeUInt32LE(callbackSentinel, 2); // mov dword [sentinel], 1; ret 16
+new Uint8Array(memory.buffer, wa(wndproc), callback.length).set(callback);
+a.guest_write32(callbackSentinel, 0);
+b.test_wnd_table_set(1, wndproc);
+assert.notStrictEqual(a.get_current_thread_id(), b.get_current_thread_id());
 assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1);
+assert.strictEqual(a.guest_read32(callbackSentinel), 0, 'open does not execute the owner wndproc inline');
+assert.strictEqual(a.post_queue_depth(), 0, 'opening thread does not receive another thread\'s layout messages');
+assert.strictEqual(a.test_shared_post_read(queuedMessage, 1), 0);
+assert.strictEqual(b.post_queue_depth(), 2, 'owner receives exactly WM_MOVE and WM_SIZE');
+for (const expected of [[1, 3, 0, 0], [1, 5, 0, (480 << 16) | 640]]) {
+  assert.deepStrictEqual(Array.from({length: 4}, (_, i) => b.post_queue_peek(0, i)), expected);
+  assert.strictEqual(b.test_shared_post_read(queuedMessage, 1), 1, 'owner can dequeue the message');
+  assert.deepStrictEqual(Array.from({length: 4}, (_, i) => b.guest_read32(queuedMessage + 4 * i)), expected);
+}
+assert.strictEqual(b.post_queue_depth(), 0);
+b.test_wnd_table_set(1, 0);
 assert.strictEqual(b.get_display_fullscreen(), 1, 'fullscreen state is process-shared');
 assert.strictEqual(b.get_dx_exclusive_hwnd(), 1, 'zero HWND resolves foreground owner');
 assert.deepStrictEqual(moves.at(-1), [1, 0, 0, 640, 480]);
@@ -235,7 +255,9 @@ assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE + 16, true), 0, 'shut
 assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE + 40, true), 0, 'shutdown releases LFB');
 call('_grGlideInit@0');
 rejectOpen = true;
+assert.strictEqual(a.post_queue_depth() + b.post_queue_depth(), 0);
 assert.strictEqual(call('_grSstWinOpen@28', [1, 7, 0, 0, 0, 2, 1]), 0);
+assert.strictEqual(a.post_queue_depth() + b.post_queue_depth(), 0, 'failed host open posts no layout messages');
 assert.deepStrictEqual(Buffer.from(new Uint8Array(memory.buffer, dxState, 32)), savedDisplay,
   'failed open leaves display state untouched');
 assert.strictEqual(moves.length, closedMoveCount);

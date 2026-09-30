@@ -13,7 +13,7 @@ Paths below are relative to `test/binaries/candidates/`.
 | --- | --- | --- | ---: | --- |
 | 1 | `diablo-2-demo-installer/installed-extracted/diablo ii.exe` | Same directory, `d2glide.dll` | 36 | Existing `diablo2_demo` app mounts installed data and renderer; override renderer selection only in the test launch. |
 | 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Two TMUs, clip coordinates, original EAX dependency, complete DirectMusic vtable and unused texture-attribute lowering corrected. Browser gameplay validation remains pending. |
-| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Main-EXE export lookup fixes startup; DirectInput attached-device reporting enables normal menu input. Remote WebGL reaches the level, but viewport size and subsequent movement remain under investigation. |
+| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Startup, keyboard input and fullscreen child layout corrected. World movement is visible; an alternating empty UI swap still restores the old menu. |
 
 The counts come from actual import descriptors/thunks, re-read with
 `node tools/pe-imports.js <consumer> --dll=glide3x.dll`. They are not counts
@@ -47,8 +47,10 @@ Hype's break was caused by `GetProcAddress` failing to resolve an existing
 callback exported by the main executable. The fix resolves that export;
 `DebugBreak` itself remains unchanged. The remote software rerun reaches
 the visible menu without the previous crash. Correct attached-device flags
-then allow normal Enter input to load the level on WebGL. The scene currently
-fills only part of the drawable and movement is not yet verified. See
+then allow normal Enter input to load the level on WebGL. Owner-thread resize
+notifications restore the full child viewport, and actual world frames show
+movement and turning. An extra empty UI swap still alternates with those
+world frames. See
 [Hype's diagnosis and reproduction commands](re-notes/hype.md).
 
 After the two-TMU changes, the remote Diablo II browser regression again

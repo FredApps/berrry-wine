@@ -220,7 +220,16 @@
     (if (local.get $hwnd) (then
       (call $host_move_window (local.get $hwnd) (i32.const 0) (i32.const 0)
         (local.get $w) (local.get $h) (i32.const 0))
-      (call $client_rect_set (local.get $hwnd) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+      (call $client_rect_set (local.get $hwnd) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h))
+      ;; Like DirectDraw SetDisplayMode, let the HWND's owning thread lay out
+      ;; its children after the mode switch. Never call its wndproc inline:
+      ;; Glide may be opened by a different thread while holding its lock.
+      (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0003)
+        (i32.const 0) (i32.const 0)))
+      (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0005)
+        (i32.const 0)
+        (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
+          (i32.shl (local.get $h) (i32.const 16))))))))
 
   (func $glide_display_restore
     (local $hwnd i32) (local $rect i32)
