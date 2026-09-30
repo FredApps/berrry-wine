@@ -273,6 +273,20 @@ function genTerminators() {
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
+// THE COMPILER'S OWN CUT, not the guest's: compile.js ends straight-line code
+// here when it runs into bytes it has learned are volatile, or out of words.
+// Same argument as jmp_syn: `end` is a dispatch and $next charges it a step, so
+// the guest's clock depended on what the host had LEARNED -- BRW.EXE's 110:18f
+// cost one step more once 110:1b1 was marked volatile, every uop-only arm
+// (which never cuts there) ran one step behind from then on, and 26M steps
+// later the frame differed with no instruction computed wrong. So the cut hands
+// back exactly like `end` and gives the step back.
+  h('end_cut', 1, `
+  ${ops(1)}
+  (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+  (global.set $gip (local.get $t0))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.end})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
 }
 
 // --- ALU + MOV families, generated -----------------------------------------

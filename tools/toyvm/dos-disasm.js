@@ -6,6 +6,7 @@
 //
 //   node tools/toyvm/dos-disasm.js <file.exe> 110:00da [count=24]
 //   node tools/toyvm/dos-disasm.js <file.exe> 110:00da --to=110:0120
+//   node tools/toyvm/dos-disasm.js <file.exe> 0:26dc --bits=32   # pmode code, linear
 //
 // Every other disassembler here assumes a 32-bit PE (`disasm_fn.js` goes
 // through `readPE`) or a 16-bit NE (`ne-dump.js`), and neither can open an MZ.
@@ -64,6 +65,11 @@ function main() {
   const rest = args.filter(a => a !== file && !a.startsWith('--'));
   const to = args.find(a => a.startsWith('--to='));
   const image = args.find(a => a.startsWith('--image='));
+  // `--bits=32`: a 32-bit code segment (a protected-mode extender's), where
+  // the operand and address size defaults flip. SEG:OFF is still read as
+  // seg*16+off, so give a protected-mode address as its linear one
+  // (`0:26dc`, or `26d:c`).
+  const bits = Number((args.find(a => a.startsWith('--bits=')) || '--bits=16').slice(7));
   if (!(file || image) || !rest.length) {
     console.log('usage: node tools/toyvm/dos-disasm.js <file.exe> SEG:OFF [count] [--to=SEG:OFF]');
     process.exit(2);
@@ -109,7 +115,7 @@ function main() {
 
   console.log(`${path.basename(file)}  entry ${entry.cs.toString(16)}:`
     + `${entry.ip.toString(16)}  load seg ${LOAD_SEG.toString(16)}`);
-  const lines = disasmAt(mem, start, start, count, null, { bits: 16 });
+  const lines = disasmAt(mem, start, start, count, null, { bits });
   const limit = to ? (((parseAddr(to.slice(5)).seg ?? seg) << 4)
     + parseAddr(to.slice(5)).off) : Infinity;
   for (const line of lines) {

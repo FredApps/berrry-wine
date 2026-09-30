@@ -109,7 +109,7 @@ function l1Block(mem32, w) {
     const h = HANDLERS[mem32[w]];
     if (!h) break;
     ops++;
-    insns += h.name === 'jmp_syn' ? 0 : /_j[a-z]+(_t)?$/.test(h.name) ? 2 : 1;
+    insns += h.name === 'jmp_syn' || h.name === 'end_cut' ? 0 : /_j[a-z]+(_t)?$/.test(h.name) ? 2 : 1;
     w += 1 + h.args;
     if (/^(end|jmp|jcc|call|ret|int)/.test(h.name) || /_j[a-z]+(_t)?$/.test(h.name)) break;
   }

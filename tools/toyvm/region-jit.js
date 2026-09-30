@@ -1761,7 +1761,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
     inner_parts = inner_parts.replace(/\(global\.set \$steps \(i32\.add \(global\.get \$steps\) \(i32\.const 1\)\)\)/g,
       (m) => `${bump(chargeAddr, -1)} ${m}`);
     inner_parts = inner_parts.replace(/^;; ([a-z0-9_]+)$/gm,
-      (m, nm) => `${m}\n${bump(weightAddr, nm === 'jmp_syn' ? 0 : /_j[a-z]+(_t)?(_spin)?$/.test(nm) ? 2 : 1)}`);
+      (m, nm) => `${m}\n${bump(weightAddr, nm === 'jmp_syn' || nm === 'end_cut' ? 0 : /_j[a-z]+(_t)?(_spin)?$/.test(nm) ? 2 : 1)}`);
   }
   const body = flag('trap') ? '(unreachable)'
     : `${entry}\n${t3.pro}\n(block $out (loop $again\n${inner_parts}\n))\n${t3.epi}\n${leave}`;

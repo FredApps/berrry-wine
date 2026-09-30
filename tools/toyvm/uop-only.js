@@ -47,8 +47,9 @@ const { STUB_SEG, STUB_BYTE } = require('./dos');
 const EXIT_END = EXIT_WHY.end;
 // The ways a fallback may end and still be a CLEAN handback (drive): straight
 // on, or a near or far transfer the session would only look the target of up.
-// Not `int` (a vector to service), `iret`/`popf` (an interrupt window opening)
-// or anything stranger.
+// Not `int` (a vector to service), `popf` or an `iret` that opens an
+// interrupt window (an iret that only missed its lookup is clean: drive), or
+// anything stranger.
 const FB_ON = new Set([EXIT_WHY.end, EXIT_WHY.edge, EXIT_WHY.indirect, EXIT_WHY.ret]);
 
 class UopOnly {
@@ -195,7 +196,7 @@ class UopOnly {
     let cs = vm.get('cs'), csb = ex.get_csb();
     let cr0 = ex.get_cr0(), v86 = ex.get_vm86(), d32 = ex.get_d32();
     let lm = ex.get_linmask();
-    const TF = 1 << 8;
+    const TF = 1 << 8, IF = 1 << 9;
     st.calls++;
     this.scratch = null;
     // A program's port read (PIN) reads 3DAh through L1's own $vga_status at
@@ -218,12 +219,27 @@ class UopOnly {
       // is the middle of an L1 block, so an exhausted budget goes on to the
       // next site the way L1 would, and the session's IRQ lands where L1's
       // does. Handing back here moved BRW.EXE's IRQs and its frame.
-      if (left <= 0 && !(this.stay && !s.rec && !s.refused && !ex.get_smc() && vm.raw('exitwhy') === EXIT_END
-        && !(machine && machine.sliceCut >= 0))) {
+      // A program that stopped only because its straight line ran out (the
+      // next instruction is a fallback: `exitl`/`linkl`) is the same middle of
+      // an L1 block. Handing back there rendered the SB a block early: BRW's
+      // `pushad; xor; xor; cli; in al,2` read the DMA position one render
+      // later than L1 at 24.26M, and 2M dispatches on the frame differed.
+      const mid = s.rec ? this.A.lineExit : (!s.refused && vm.raw('exitwhy') === EXIT_END);
+      if (left <= 0 && !(this.stay && mid && !ex.get_smc() && !(machine && machine.sliceCut >= 0))) {
         st.why.budget++; return left;
       }
       if (!this.stay) { st.why.budget++; return left; }
-      if (s.rec ? ex.get_smc() : (s.refused || ex.get_smc() || !FB_ON.has(ex.get_exitwhy()))) {
+      // An IRET hands back for one of two reasons (emit.js iret/iret32): an
+      // interrupt window it owes the host (TF, or an IRQ held for IF), or a
+      // return address its cache lookup missed -- which is every one here,
+      // since this arm compiles nothing L1 can find. L1 finds the handler's
+      // caller compiled and stays in wasm, so only the owed kind is a
+      // handback. Taking the other re-cut BRW.EXE's slice inside its SB
+      // handler at 7.44M, rendered the DMA transfer 42 dispatches early, and
+      // its `in al,2` read the position 3 bytes off at 24.26M.
+      const why = ex.get_exitwhy();
+      const iretMiss = !s.rec && why === EXIT_WHY.iret && !(vm.raw('irqwant') && (ex.get_flags() & IF));
+      if (s.rec ? ex.get_smc() : (s.refused || ex.get_smc() || !(FB_ON.has(why) || iretMiss))) {
         st.why[s.rec ? 'smc' : 'fbExit']++;
         if (!s.rec) { const k = `${s.why}>${vm.raw('exitwhy')}`; st.fbExitWhy.set(k, (st.fbExitWhy.get(k) || 0) + 1); }
         return left;

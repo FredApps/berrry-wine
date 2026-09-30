@@ -505,7 +505,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // the trace's first act would be to jump to itself.
     let justOpened = -1;
     for (;;) {
-      if (words.length > maxWords) { words.push(H.end, cur); break; }
+      if (words.length > maxWords) { words.push(H.end_cut, cur); break; }
       wordIp.set(words.length, cur);
 
       // Reaching the head of a block we already emitted: jump to it rather than
@@ -521,7 +521,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // and hand back, so the host compiles the far side the way it wants it.
       // Checked before the wasm decoder is offered the run, because wasm skips
       // the head test for the first instruction it is given.
-      if (cutLine(cur)) { words.push(H.end, cur); volatileCuts.push({ head: curHead, at: cur }); break; }
+      if (cutLine(cur)) { words.push(H.end_cut, cur); volatileCuts.push({ head: curHead, at: cur }); break; }
 
       // Hand the rest of the block to wasm. It stops at the first opcode it does
       // not implement, so the worst case is that it decodes nothing and this

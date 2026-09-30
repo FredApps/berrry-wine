@@ -60,6 +60,9 @@ const CODE_END = CODE + 0x40000;             // the one-program page (makeEnter,
 // The live arena (E1Arena): many resident programs at once. LASTP is the id
 // of the program a chained run is in, written by `link` as it takes a chain.
 const LASTP = CODE_END;
+// 1 when the run ended at a straight-line exit (`exitl`/`linkl`): the middle
+// of an L1 block, where L1 tests no budget.
+const LINEX = LASTP + 4;
 const ARENA = CODE_END + 16;
 const ARENA_END = TOP;
 
@@ -463,21 +466,30 @@ for (const cc of CCS) {
     + `(if ${due} (then ${GOTO(8)}))${GOTO(6)}`);
 }
 // exit: adj, ip vreg (zero slot when static), static ip
-def('exit', 'ivi', ({ V, I }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
-  + `(i32.store (i32.const ${OUT + 8}) (i32.add ${V(1)} ${I(2)}))`
-  + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
-  + '(return (i32.const 0))');
+for (const [nm, line] of [['exit', 0], ['exitl', 1]]) {
+  def(nm, 'ivi', ({ V, I }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
+    + `(i32.store (i32.const ${OUT + 8}) (i32.add ${V(1)} ${I(2)}))`
+    + `(i32.store (i32.const ${LINEX}) (i32.const ${line}))`
+    + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
+    + '(return (i32.const 0))');
+}
 // link: an exit to a static ip that another program in the arena may start
 // at. adj, ip, target (patched: 0 = none, else that program's entry address),
 // the target's program id. Taken like L1's GO through the jump table -- only
 // when the budget is not spent and no code was written -- and otherwise it
 // is exactly `exit` at that ip.
-def('link', 'iiii', ({ I, GOTO }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
-  + `(if (i32.and (i32.ne ${I(2)} (i32.const 0)) (i32.eqz ${due}))`
-  + ` (then (i32.store (i32.const ${LASTP}) ${I(3)}) ${GOTO(2)}))`
-  + `(i32.store (i32.const ${OUT + 8}) ${I(1)})`
-  + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
-  + '(return (i32.const 0))');
+// linkl is the straight-line form: no transfer, so no budget test -- only a
+// store into code stops it, as it stops L1's straight line (`CONT`).
+for (const [nm, line] of [['link', 0], ['linkl', 1]]) {
+  const stop = line ? '(i32.ne (local.get $smc) (i32.const 0))' : due;
+  def(nm, 'iiii', ({ I, GOTO }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
+    + `(if (i32.and (i32.ne ${I(2)} (i32.const 0)) (i32.eqz ${stop}))`
+    + ` (then (i32.store (i32.const ${LASTP}) ${I(3)}) ${GOTO(2)}))`
+    + `(i32.store (i32.const ${OUT + 8}) ${I(1)})`
+    + `(i32.store (i32.const ${LINEX}) (i32.const ${line}))`
+    + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
+    + '(return (i32.const 0))');
+}
 // bail: block id; the reference interpreter runs it
 def('bail', 'i', ({ I }) => `(i32.store (i32.const ${OUT + 8}) ${I(0)})`
   + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
@@ -865,8 +877,9 @@ function lowerProgram(p, lo = {}) {
     }
     if (t.o === 'exit') {
       // A static exit in an arena program can chain to the program at its ip.
-      if (lo.link && !(t.ipv !== undefined && t.ipv >= 0)) return E('link', im(t.adj | 0), im(t.ip), { i: 0, link: t.ip, cb: t.cb }, im(0));
-      return E('exit', im(t.adj | 0), t.ipv !== undefined && t.ipv >= 0 ? vr(t.ipv) : K(0),
+      const line = t.why === 'line' ? 'l' : '';
+      if (lo.link && !(t.ipv !== undefined && t.ipv >= 0)) return E(`link${line}`, im(t.adj | 0), im(t.ip), { i: 0, link: t.ip, cb: t.cb }, im(0));
+      return E(`exit${line}`, im(t.adj | 0), t.ipv !== undefined && t.ipv >= 0 ? vr(t.ipv) : K(0),
         im(t.ipv !== undefined && t.ipv >= 0 ? 0 : t.ip));
     }
     throw new Unsupported(`term ${t.o}`);
@@ -1551,6 +1564,7 @@ class E1Arena {
   enter(rec, left) {
     const vm = this.vm, ex = vm.exports, w = this.w, outv = this.outv;
     ex.set_steps(left);
+    this.lineExit = false;
     let steps = left | 0;
     let F = ex.get_flags() >>> 0;
     const lm = ex.mget_linmask() | 0, dv = this.dv;
@@ -1569,6 +1583,7 @@ class E1Arena {
           ex.set_flags(F);
           ex.set_gip(outv[2] >>> 0);
           this.last = cur;
+          this.lineExit = w[LINEX >> 2] === 1;
           if (this.noteExits) this.noteExit(cur, outv[2] >>> 0, steps);
           return steps;
         }
@@ -1581,7 +1596,7 @@ class E1Arena {
       const vfile = new Int32Array(vm.memory.buffer, VFILE, cur.low.nvTotal);
       for (const [x, v] of cur.low.consts) vfile[v] = x;
       const r = runRef(vm, cur.p, { start: bid, v: vfile, steps, flags: F, stopAt: cur.native });
-      if (r.exit === 'go') { this.last = cur; if (this.noteExits) this.noteExit(cur, r.ip, r.steps); return r.steps; }
+      if (r.exit === 'go') { this.last = cur; this.lineExit = r.why === 'line'; if (this.noteExits) this.noteExit(cur, r.ip, r.steps); return r.steps; }
       pc = cur.addr.get(r.bid); steps = r.steps; F = r.flags >>> 0;
     }
   }

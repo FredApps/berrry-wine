@@ -319,9 +319,12 @@ function lower(region, opts = {}) {
         b.term = { o: 'br', t: to.t, tx: to.chk };
         continue;
       }
+      // Out of the body it is still no transfer: the line stops only because
+      // the next instruction is not in it, and L1 runs straight on into it
+      // without a test. `line` says so to the engine and the driver.
       b.term = e && body.has(e.k)
         ? { o: 'br', t: nb.get(e.k).id, tx: -1 }
-        : { o: 'br', t: goStub(d.next, 'edge'), tx: -1 };
+        : { o: 'br', t: goStub(d.next, 'line'), tx: -1 };
       continue;
     }
     // A far transfer leaves under the other segment's code base: the exit

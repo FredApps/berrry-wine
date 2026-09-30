@@ -1010,6 +1010,47 @@ X skips the step either way. `TOYVM_STEPFUSE=0`, or an arm-bench
 - That billing gap moves the first IRQ (7,440,737 vs 7,440,734). The timer
   IRQ then lands at a different ip, and the frames part at ~26.6M.
 
+### Phase 1, step 13: BRW.EXE fixed, three clock leaks (2026-09-30)
+
+There were three causes, and all three were handbacks or dispatches that
+depend on how the code is cut rather than on the guest.
+
+1. **L1 billed its own volatile cut.**
+   - compile.js ends a straight line with `end` where it runs into bytes the
+     host has learned are volatile, or where it runs out of words.
+   - `end` is a dispatch, so it cost a step. So 110:18f..1b1 cost 6 once
+     110:1b1 was volatile, against 5 before, and 5 in uop-only.
+   - `end_cut` is `end` that gives the step back. It is the same argument as
+     `jmp_syn`. This is an L1 clock change, and all 28 toyvm tests still pass.
+2. **A µop line exit handed back mid-block.**
+   - A naive program whose straight line stops at a fallback instruction
+     (`cli` here) is in the middle of an L1 block. L1 tests no budget there.
+   - Its exit is now `why: 'line'`, lowered to `exitl`/`linkl`. `linkl`
+     chains without the budget test and stops only on smc.
+   - The driver carries on past a spent budget, as it already did for a
+     fallback's `end`.
+3. **An `iret` fallback always handed back.**
+   - L1's `iret` hands back only when it owes the host something: TF, or an
+     IRQ held for IF. Otherwise it resolves the return through its block
+     cache.
+   - uop-only compiles nothing L1 can find, so the lookup always missed.
+   - That extra handback in BRW's SB handler at 7.44M re-cut the slice. The
+     SB transfer's first render landed 42 dispatches early (7,440,757
+     against 7,440,799). 17M dispatches later, `in al,2` (the DMA position)
+     read `f1` where L1 read `f4`.
+   - The drive loop now stays on an `iret` exit unless the window is owed.
+
+How it was found:
+- Slice logs with registers compared at equal dispatch counts, with slice=1
+  only across the window, by a hook on `DosSession.step`. The slice-log ip is
+  the block head, so two arms' ips differ even when their states agree.
+- A dump of every audio render (`audioAt`, DMA address and count), diffed
+  between the two arms.
+- Port traces with exact stamps.
+
+Result: arm-bench, 12 programs at 30M, l1 against only-naive: **12 of 12
+clean**. Geomean x3.44 cpu and x2.97 slice, at load ~3.8.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost
