@@ -376,6 +376,44 @@ def('wflags', 'ivvvvvv', ({ V, I }) => `(local.set $F (i32.or (i32.and (local.ge
   + ` (i32.or (i32.shl (i32.and ${V(3)} (i32.const 1)) (i32.const 4)) (i32.shl (i32.and ${V(4)} (i32.const 1)) (i32.const 6))))`
   + ` (i32.or (i32.shl (i32.and ${V(5)} (i32.const 1)) (i32.const 7)) (i32.shl (i32.and ${V(6)} (i32.const 1)) (i32.const 11)))))))`);
 
+// A whole flag record in one µop: what lowerRec otherwise spends six flagof
+// µops and a wflags on (seven dispatches for every live flag-setting
+// instruction the naive tier runs). Each computes exactly the flags, from
+// exactly the operands, that the unfused sequence does (lowerFlagof), and
+// writes all six bits of $F.
+{
+  const bit = (x, n) => `(i32.and (i32.shr_u ${x} ${n}) (i32.const 1))`;
+  const par = (x) => `(i32.eqz (i32.and (i32.popcnt (i32.and ${x} (i32.const 255))) (i32.const 1)))`;
+  const six = (c, p, a, z, s, o) => '(local.set $F (i32.or (i32.and (local.get $F) (i32.const '
+    + `${~((1 << FBIT.c) | (1 << FBIT.p) | (1 << FBIT.a) | (1 << FBIT.z) | (1 << FBIT.s) | (1 << FBIT.o))}))`
+    + ` (i32.or (i32.or (i32.or ${c} (i32.shl ${p} (i32.const ${FBIT.p})))`
+    + ` (i32.or (i32.shl ${a} (i32.const ${FBIT.a})) (i32.shl ${z} (i32.const ${FBIT.z}))))`
+    + ` (i32.or (i32.shl ${s} (i32.const ${FBIT.s})) (i32.shl ${o} (i32.const ${FBIT.o}))))))`;
+  const X = '(local.get $x)', Y = '(local.get $y)', Z = '(local.get $z)';
+  const af = `${bit(`(i32.xor (i32.xor ${X} ${Y}) ${Z})`, '(i32.const 4)')}`;
+  // 8/16-bit add and sub over A, B and the unmasked sum S: operands w, 32-w, w-1.
+  for (const sub of [false, true]) {
+    def(sub ? 'wfsubn' : 'wfaddn', 'vvviii', ({ V, I }) =>
+      `(local.set $x ${V(0)}) (local.set $y ${V(1)}) (local.set $z ${V(2)})`
+      + six(bit(Z, I(3)), par(Z), af, `(i32.eqz (i32.shl ${Z} ${I(4)}))`, bit(Z, I(5)),
+        bit(sub ? `(i32.and (i32.xor ${X} ${Y}) (i32.xor ${X} ${Z}))`
+          : `(i32.and (i32.xor ${X} ${Z}) (i32.xor ${Y} ${Z}))`, I(5))));
+  }
+  // 32-bit add and sub over A, B, the result R and the carry in.
+  for (const sub of [false, true]) {
+    def(sub ? 'wfsub32' : 'wfadd32', 'vvvv', ({ V }) =>
+      `(local.set $x ${V(0)}) (local.set $y ${V(1)}) (local.set $z ${V(2)})`
+      + six(sub ? `(select (i32.le_u ${X} ${Y}) (i32.lt_u ${X} ${Y}) ${V(3)})`
+        : `(select (i32.le_u ${Z} ${X}) (i32.lt_u ${Z} ${X}) ${V(3)})`,
+      par(Z), af, `(i32.eqz ${Z})`, bit(Z, '(i32.const 31)'),
+      bit(sub ? `(i32.and (i32.xor ${X} ${Y}) (i32.xor ${X} ${Z}))`
+        : `(i32.and (i32.xor ${X} ${Z}) (i32.xor ${Y} ${Z}))`, '(i32.const 31)')));
+  }
+  // A logic op over its (masked) result R: operand w-1. CF, AF, OF clear.
+  def('wflogic', 'vi', ({ V, I }) => `(local.set $z ${V(0)})`
+    + six('(i32.const 0)', par(Z), '(i32.const 0)', `(i32.eqz ${Z})`, bit(Z, I(1)), '(i32.const 0)'));
+}
+
 // A port read (uop-ir.js 'in'): L1's io_in at L1's clock -- operand 2 is the
 // width, operand 3 the distance from this engine's $steps to L1's.
 def('pin', 'vvii', ({ V, I, SET }) => SET(0,
@@ -651,6 +689,15 @@ function lowerProgram(p, lo = {}) {
     else if (incdec && op.o === 'rec') set = ['p', 'a', 'z', 's', 'o'];
     else set = SIX;
     if (!set.length) return undefined;
+    // The six-flag records with a fused µop, over the operands lowerFlagof reads.
+    if (set === SIX && !incdec) {
+      const w = ['add32', 'sub32'].includes(k) ? 32 : op.w;
+      if ((k === 'add' || k === 'sub') && w < 32) {
+        return E(k === 'sub' ? 'wfsubn' : 'wfaddn', opt(op.a), opt(op.b), opt(op.s), im(w), im(32 - w), im(w - 1));
+      }
+      if (k === 'add32' || k === 'sub32') return E(`wf${k}`, opt(op.a), opt(op.b), opt(op.r), opt(op.cin));
+      if (k === 'logic') return E('wflogic', opt(op.r), im(w - 1));
+    }
     const args = [];
     let m = 0;
     SIX.forEach((f, j) => {
@@ -845,7 +892,39 @@ function lowerProgram(p, lo = {}) {
       blocks.set(b.id, { native: false, why: e.message, ops: [{ name: 'bail', args: [bidArg(b.id)] }] });
     }
   }
-  return { blocks, nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
+  return { blocks: lo.fallthrough ? fallThrough(blocks, p.entry) : blocks,
+    nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
+}
+
+// Lay blocks out so each `jmp` target follows its block wherever it can, and
+// drop that `jmp`: in a loop engine (E1, the arena, E3's threaded tail
+// calls) a block with no terminator runs on into the next block's words.
+// The naive lowering is one block per x86 instruction, joined by `jmp`, so
+// this removes most of its jmps (10.7% of the µops only-naive ran). Not for
+// straightWat, which compiles each block separately and needs every
+// terminator. Greedy and linear: follow jmp chains from the entry, park
+// every other target on a stack, then place whatever is left in its old
+// order.
+function fallThrough(blocks, entry) {
+  const order = [], placed = new Set(), st = [entry], rest = [...blocks.keys()];
+  let ri = 0;
+  while (order.length < blocks.size) {
+    let id = st.length ? st.pop() : rest[ri++];
+    while (id !== undefined && blocks.has(id) && !placed.has(id)) {
+      placed.add(id);
+      order.push(id);
+      const ops = blocks.get(id).ops, last = ops[ops.length - 1];
+      for (const a of last.args) if (a.t !== undefined) st.push(a.t);
+      id = last.name === 'jmp' ? last.args[0].t : undefined;
+    }
+  }
+  const out = new Map();
+  order.forEach((id, k) => {
+    const b = blocks.get(id), last = b.ops[b.ops.length - 1];
+    if (last.name === 'jmp' && last.args[0].t === order[k + 1]) b.ops.pop();
+    out.set(id, b);
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,6 +1081,7 @@ function variantBody(key, K, mode) {
 function loopWat(keys, K) {
   const cases = keys.map(k => variantBody(k, K, 'loop'));
   let text = '(loop $L\n' + keys.map((_, i) => `(block $c${keys.length - 1 - i}`).join('') + '\n';
+  if (E1_HIST) text += '(call $hist (i32.load (local.get $pc)))\n';
   text += `(br_table ${keys.map((_, i) => `$c${i}`).join(' ')} (i32.load (local.get $pc)))`;
   for (let i = 0; i < keys.length; i++) text += `)\n;; ${keys[i]}\n${cases[i]}`;
   text += '\n)\n(unreachable)';
@@ -1009,6 +1089,7 @@ function loopWat(keys, K) {
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 ${IO_IMPORT}
+${E1_HIST ? '(import "host" "hist" (func $hist (param i32)))' : ''}
 (func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32) (local $cr i32) ${slotLocals}
 ${loadSlots(K)}
 ${text}
@@ -1093,7 +1174,30 @@ const IO_IMPORT = '(import "host" "io_in" (func $io_in (param i32 i32 i32) (resu
   + '\n(import "host" "io_out" (func $io_out (param i32 i32 i32 i32) (result i32)))'
   + '\n(import "host" "vga_rd8" (func $vga_rd8 (param i32) (result i32)))'
   + '\n(import "host" "vga_wr8" (func $vga_wr8 (param i32 i32)))';
+// TOYVM_E1HIST=1: a DYNAMIC µop census. Every loop engine calls `hist` with
+// the op it is about to dispatch, and e1Hist() returns how often each op and
+// each op->op pair ran: the fusion candidates, weighted by execution rather
+// than by how often a pattern appears in programs. The call per µop makes the
+// engine slow and changes its register allocation, so a counting run is never
+// a timing run. Off, the engine's WAT does not change.
+const E1_HIST = typeof process !== 'undefined' && !!process.env && process.env.TOYVM_E1HIST === '1';
+const HIST_N = 1024;
+const hist = { ops: new Float64Array(HIST_N), pairs: new Float64Array(HIST_N * HIST_N), prev: 0 };
+function histNote(op) {
+  hist.ops[op]++;
+  hist.pairs[hist.prev * HIST_N + op]++;
+  hist.prev = op;
+}
+// The census so far, with op ids named as E1's base variants.
+function e1Hist() {
+  const name = (i) => (EOPS[i] ? EOPS[i].name : `#${i}`);
+  const ops = [], pairs = [];
+  for (let i = 0; i < HIST_N; i++) if (hist.ops[i]) ops.push([name(i), hist.ops[i]]);
+  for (let i = 0; i < HIST_N * HIST_N; i++) if (hist.pairs[i]) pairs.push([`${name(Math.floor(i / HIST_N))} ${name(i % HIST_N)}`, hist.pairs[i]]);
+  return { ops: ops.sort((a, b) => b[1] - a[1]), pairs: pairs.sort((a, b) => b[1] - a[1]) };
+}
 const hostOf = (vm) => ({
+  ...(E1_HIST ? { hist: histNote } : {}),
   memory: vm.memory,
   io_in: vm.exports.io_in || (() => { throw new Error('uop-wasm: this vm has no io_in'); }),
   io_out: vm.exports.io_out || (() => { throw new Error('uop-wasm: this vm has no io_out'); }),
@@ -1197,7 +1301,7 @@ async function e1Runner(vm) {
   return (await WebAssembly.instantiate(mod, { host: hostOf(vm) })).exports.run;
 }
 function e1Enter(vm, p, run, stats = null) {
-  const low = lowerProgram(p);
+  const low = lowerProgram(p, { fallthrough: true });
   const { words, addr } = encodeE1(low);
   const install = () => {
     new Int32Array(vm.memory.buffer, CODE, words.length).set(words);
@@ -1313,7 +1417,7 @@ class E1Arena {
   // bump (rec.cnt), for a tier-up to read.
   add(p, key, stats = null, { count = false } = {}) {
     const start = this.at + (count ? 16 : 0);
-    const low = lowerProgram(p, { link: true, count: count ? this.at : 0 });
+    const low = lowerProgram(p, { link: true, count: count ? this.at : 0, fallthrough: true });
     if (!low.resident) throw new Error('uop-wasm: an arena program is resident');
     if (low.nvTotal > MAXV - 1) throw new Error(`uop-wasm: ${low.nvTotal} vregs > ${MAXV - 1}`);
     const constOf = new Map([...low.consts].map(([x, v]) => [v, x]));
@@ -1459,4 +1563,4 @@ class E1Arena {
 }
 
 
-module.exports = { EFFECT, CF_READERS, EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE, E1Arena };
+module.exports = { e1Hist, EFFECT, CF_READERS, EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE, E1Arena };

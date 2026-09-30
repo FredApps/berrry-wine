@@ -934,6 +934,51 @@ callSafe stays on by default: it is correct everywhere (test-toyvm-uop,
 both engines. `TOYVM_CALLSAFE=0` and the `@spill` arms keep the old engine
 for the A/B on a quiet box.
 
+### Phase 1, step 11: fewer naive µops (fall-through layout, fused flags)
+
+**Census.** `TOYVM_E1HIST=1` makes the loop engine call a `host.hist` import
+before every dispatch. `e1Hist()` returns the op and op-pair counts. It is
+off by default and costs nothing then. Run over DTM2, DHADREN, B-STEEL and
+CMA_SHRT at 3M dispatches each with naiveR, the naive program executed
+**59.5M µops**, about 5.7 per x86 instruction:
+- `step` plus the `jmp` joining every one-instruction block: 23%.
+- Eager flag chains, 6 `flagof` µops plus `wflags`: about 13%.
+
+**Fall-through layout** (`fallThrough` in uop-wasm.js). Blocks are re-laid
+greedily along jmp chains from the entry. A trailing `jmp` to the next block
+is dropped. Arena and single programs use it; `straightWat` does not.
+The census fell to 53.2M (-10.6%).
+
+**Fused flag µops.** A full six-flag `rec` from add/sub/add32/sub32/logic is
+one µop instead of seven:
+- `wfaddn`/`wfsubn` for 8 and 16 bit;
+- `wfadd32`/`wfsub32`, which take the carry-in;
+- `wflogic`.
+Each computes C P A Z S O from A, B and the result, and merges them into `$F`
+under the six-flag mask. inc/dec and partial sets keep the old chain.
+The census fell to **46.9M (-21% from the start)**, about 4.5 µops per x86
+instruction.
+
+**Checks.** test-toyvm-uop (all 28 configs agree), -uop-only and -uop-live
+pass. arm-bench (12 programs, 10M dispatches, load ~8, every program exact):
+
+| arm | cpu vs l1 | slice time vs l1 |
+|---|---|---|
+| only-naive, this step | x4.62 | x3.78 |
+| only-naive, step 10 (load 20-60) | x4.61-4.84 | x5.1-5.9 |
+
+The slice-time drop matches the µop cut, but the earlier runs were at a far
+higher load, so it is not a clean A/B. The cpu number includes the builds
+(up to 0.4s per program) and the L1 fallback, which this step does not touch.
+
+**Where the naive µops go now:**
+- `step` 15.7%. 58% of steps follow a `putr`, so a putr+step fusion is the
+  next lever.
+- `getr16`/`getr32`/`putr16`/`putr32`: 28%.
+- `andi` 8.2%, mostly the width mask after a 16-bit `addi` or `add`, so
+  masked narrow arithmetic.
+- `getm_spm` + `and`: the stack-pointer mask.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost
