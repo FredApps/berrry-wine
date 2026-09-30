@@ -1267,11 +1267,14 @@
   ;; 0x07FFDEFC  260B    DX_VTBL_REGISTRY (64 pointers + count, ends at VSOCK_TABLE)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
-  ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
-  ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
-  ;;   Slot WIN16_SEG_MAX (guest 0x01FF0000) is past the last usable selector,
-  ;;   so no far pointer can name it; it holds the Win16 handle table.
-  ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
+  ;;   For an NE task image_base is 0, so guest 0x00100000 up to GUEST_BASE's
+  ;;   end is the Win16 selector arena (WIN16_ARENA): one 64KB slot per
+  ;;   selector index. Slot WIN16_SEG_MAX (guest 0x03BF0000) is past the last
+  ;;   usable selector, so no far pointer can name it; it holds the Win16
+  ;;   handle table.
+  ;; 0x03C12000  1MB     Former low main stack slot; the region allocator
+  ;;                     places small tables here, so nothing guest-owned may
+  ;;                     be addressed into it
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
   ;; 0x04A00000   6MB    WIN16_APP_DLL_STAGING (one reusable app-module image)
@@ -3653,11 +3656,19 @@
   ;; empty message box. Civilization II keeps more than 300 global blocks live
   ;; after loading roughly 180 executable/DLL segments, so the former 510-slot
   ;; arena likewise failed with linear memory left. Slot MAX remains the hidden
-  ;; handle/resource page; at guest 0x03CF0000 it ends immediately below
-  ;; GUEST_HEAP_BASE after g2w translation.
+  ;; handle/resource page; at guest 0x03BF0000 it ends exactly where
+  ;; GUEST_BASE does after g2w translation.
+  ;;
+  ;; It must not reach further. The 1MB between GUEST_BASE's end and
+  ;; GUEST_HEAP_BASE looks free, but the region allocator places the window
+  ;; tables there (CLIENT_RECT, OWNER_TABLE, ...). At 959 the top fifteen
+  ;; selectors aliased them: Civilization II's 600KB City View DIB section
+  ;; landed on selector 944 and painted over every window's owner and client
+  ;; rect, after which its popups sorted behind the main window and every
+  ;; click was delivered to the wrong one. test/test-win16-arena-bounds.js.
   (global $WIN16_SEG_TABLE i32 (region.addr $WIN16_SEG_TABLE 0))
   (global $WIN16_SEG_TABLE_SIZE i32 (region.size $WIN16_SEG_TABLE))
-  (global $WIN16_SEG_MAX   i32 (i32.const 959))
+  (global $WIN16_SEG_MAX   i32 (i32.const 943))
   ;; Selector indices at and above WIN16_SUB_FIRST own no arena slot of their
   ;; own: they name small global blocks packed into shared pool slots (see
   ;; $win16_global_alloc). The table holds 8192 entries — every index a 16-bit
