@@ -4,6 +4,7 @@
 const assert = require('assert');
 const path = require('path');
 const puppeteer = require('puppeteer');
+const twoTMUFixture = require('./glide-two-tmu-fixture');
 (async () => {
   const args = ['--no-first-run', '--no-default-browser-check'];
   if (process.argv.includes('--no-sandbox')) args.push('--no-sandbox');
@@ -17,6 +18,7 @@ const puppeteer = require('puppeteer');
     const page = await browser.newPage();
     for (const file of ['surface.js', 'renderer.js', 'gpu-backend.js', 'glide-backend.js', 'glide-host.js'])
       await page.addScriptTag({ path: path.join(__dirname, '../lib', file) });
+    await page.addScriptTag({ path: path.join(__dirname, "glide-two-tmu-fixture.js") });
     const results = await page.evaluate(() => {
       const results = [];
       for (const version of [1, 2]) {
@@ -111,7 +113,12 @@ const puppeteer = require('puppeteer');
           const untouchedGammaTail = displayPixel();
           device.submit(14,new Uint8Array(new Float32Array([1,1,1]).buffer));
           const gammaIdentity = displayPixel();
-          results.push({version,clamped,occluded,published,unusedZ,zFog,rgbGamma,gammaTable,
+          const originalFinish=gl.finish;
+          let completionCalls=0;
+          gl.finish=function(){completionCalls++;return originalFinish.call(gl);};
+          const twoTMU=glideTwoTMU(device,()=>{backend.readPixels(4,27,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);return Array.from(pixels);},32);
+          gl.finish=originalFinish;
+          results.push({completionCalls,twoTMU,version,clamped,occluded,published,unusedZ,zFog,rgbGamma,gammaTable,
             rawGamma,lfbGamma,untouchedGammaTail,gammaIdentity,error:gl.getError()});
         } finally { device.destroy();backend.destroy(); }
       }
@@ -130,6 +137,9 @@ const puppeteer = require('puppeteer');
       assert.strictEqual(result.lfbGamma,0x4208,`WebGL${result.version} DAC preserves raw RGB565 LFB`);
       assert.deepStrictEqual(result.untouchedGammaTail,[226,200,157,255],`WebGL${result.version} partial upload preserves DAC tail`);
       assert.deepStrictEqual(result.gammaIdentity,[200,200,200,255],`WebGL${result.version} RGB correction replaces custom DAC`);
+      assert.deepStrictEqual(result.twoTMU, twoTMUFixture.expected,
+        `WebGL${result.version} independent TMUs, liveness and chroma`);
+      assert.strictEqual(result.completionCalls,1, 'completion packet executes actual GPU finish');
       assert.strictEqual(result.error,0);
     }
     const composed = await page.evaluate(async () => {

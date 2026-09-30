@@ -1,6 +1,6 @@
   ;; Glide 2 ABI: original 3dfx glide2x/cvg/glide/src/glide.h at
   ;; sezero/glide 2f226f0f9225ce8ee83e6a4a7042981e719d19ee.
-  ;; One virtual Voodoo Graphics board, one TMU with 4 MiB texture memory.
+  ;; One virtual board: Glide2 exposes one TMU; Glide3 exposes two, each 4 MiB.
   ;; Shared block: +0/+4 recursive lock; +8 initialized; +12 open;
   ;; +16 stream pointer, +20 used; +24 width,+28 height; +32 callback;
   ;; +36 triangle count; +40 LFB guest pointer; +44 stream guest pointer;
@@ -67,7 +67,8 @@
     (call $guest_span_release (local.get $src) (local.get $n)))
 
   (func $glide_tmu (param $tmu i32)
-    (if (local.get $tmu) (then (call $glide_fail))))
+    (if (i32.gt_u (local.get $tmu)
+      (i32.eq (call $glide_api_version) (i32.const 3))) (then (call $glide_fail))))
 
   ;; Original 3dfx sst1/gsplash.c (same pinned revision) defines SNAP_BIAS
   ;; as 3<<18 and passes projected coordinates PLUS this bias directly to
@@ -123,6 +124,13 @@
 
   (func $glide_triangle (param $a i32) (param $b i32) (param $c i32)
     (local $p i32)
+    (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
+      (local.set $p (i32.add (call $glide3_ext) (i32.const 4800)))
+      (call $glide3_vertex (local.get $p) (local.get $a))
+      (call $glide3_vertex (i32.add (local.get $p) (i32.const 60)) (local.get $b))
+      (call $glide3_vertex (i32.add (local.get $p) (i32.const 120)) (local.get $c))
+      (call $glide3_emit (i32.const 5) (local.get $p) (i32.add (local.get $p) (i32.const 60)) (i32.add (local.get $p) (i32.const 120)))
+      (return)))
     (local.set $p (call $glide_record (i32.const 5) (i32.const 436)))
     (memory.copy (local.get $p) (call $glide_state) (i32.const 256))
     (call $glide_copy_vertex (i32.add (local.get $p) (i32.const 256)) (local.get $a))
@@ -135,6 +143,13 @@
   ;; backend's native coverage rules, rather than pretending to be triangles.
   (func $glide_small_primitive (param $op i32) (param $a i32) (param $b i32)
     (local $p i32)
+    (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
+      (local.set $p (i32.add (call $glide3_ext) (i32.const 4800)))
+      (call $glide3_vertex (local.get $p) (local.get $a))
+      (if (i32.eq (local.get $op) (i32.const 11)) (then
+        (call $glide3_vertex (i32.add (local.get $p) (i32.const 60)) (local.get $b))))
+      (call $glide3_emit (local.get $op) (local.get $p) (i32.add (local.get $p) (i32.const 60)) (i32.const 0))
+      (return)))
     (local.set $p (call $glide_record (local.get $op)
       (if (result i32) (i32.eq (local.get $op) (i32.const 11))
         (then (i32.const 376)) (else (i32.const 316)))))
@@ -450,6 +465,8 @@
     (i32.store offset=12 (global.get $GLIDE_STATE) (local.get $r))(i32.store offset=24 (global.get $GLIDE_STATE) (local.get $w))(i32.store offset=28 (global.get $GLIDE_STATE) (local.get $h))
     (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
       (i32.store offset=216 (call $glide_state) (i32.const 2))
+      (memory.fill (call $glide3_tmu1) (i32.const 0) (i32.const 80))
+      (i32.store offset=20 (call $glide3_tmu1) (i32.const 3))
       (i32.store offset=16 (call $glide3_ext) (local.get $w))
       (i32.store offset=20 (call $glide3_ext) (local.get $h))))
     (if (local.get $r) (then (call $glide_display_take (local.get $hwnd) (local.get $w) (local.get $h))))
@@ -677,8 +694,8 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=152 (call $glide_state) (local.get $arg1))
-    (i32.store offset=156 (call $glide_state) (local.get $arg2))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 152) (local.get $arg1))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 156) (local.get $arg2))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
@@ -688,8 +705,8 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=160 (call $glide_state) (local.get $arg1))
-    (i32.store offset=164 (call $glide_state) (local.get $arg2))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 160) (local.get $arg1))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 164) (local.get $arg2))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
@@ -699,7 +716,7 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=172 (call $glide_state) (local.get $arg1))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 172) (local.get $arg1))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -724,12 +741,12 @@
     (if (i32.eq (local.get $arg1) (i32.const 9)) (then (local.set $function (i32.const 7)) (local.set $factor (i32.const 5))))
     (local.set $invert (i32.eq (local.get $arg1) (i32.const 10)))
     (call $lock_acquire (global.get $GLIDE_STATE))
-    (i32.store offset=184 (call $glide_state) (local.get $function))
-    (i32.store offset=188 (call $glide_state) (local.get $factor))
-    (i32.store offset=192 (call $glide_state) (local.get $function))
-    (i32.store offset=196 (call $glide_state) (local.get $factor))
-    (i32.store offset=200 (call $glide_state) (local.get $invert))
-    (i32.store offset=204 (call $glide_state) (local.get $invert))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 184) (local.get $function))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 188) (local.get $factor))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 192) (local.get $function))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 196) (local.get $factor))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 200) (local.get $invert))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 204) (local.get $invert))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -764,12 +781,12 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=184 (call $glide_state) (local.get $arg1))
-    (i32.store offset=188 (call $glide_state) (local.get $arg2))
-    (i32.store offset=192 (call $glide_state) (local.get $arg3))
-    (i32.store offset=196 (call $glide_state) (local.get $arg4))
-    (i32.store offset=200 (call $glide_state) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
-    (i32.store offset=204 (call $glide_state) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 184) (local.get $arg1))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 188) (local.get $arg2))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 192) (local.get $arg3))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 196) (local.get $arg4))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 200) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 204) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
@@ -779,7 +796,7 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=168 (call $glide_state) (local.get $arg1))(i32.store offset=240 (call $glide_state) (local.get $arg2))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 168) (local.get $arg1))(call $glide_tmu_store (local.get $arg0) (i32.const 240) (local.get $arg2))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
@@ -798,7 +815,10 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_tmu (local.get $arg0))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 4194303))
+     ;; Largest valid aligned texture start, not the last byte of RAM.
+    ;; Glide2 CVG ditex.c returns total_mem-8; keep the advertised 8-byte
+    ;; alignment shared by the canonical G2/G3 texture allocation ABI.
+    (i32.store offset=0 (global.get $reg_base) (i32.const 4194296))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
@@ -831,11 +851,11 @@
     (local.set $q (call $glide_scratch))
     (local.set $n (call $glide_tex_bytes (i32.load offset=0 (local.get $q)) (i32.load offset=4 (local.get $q)) (i32.load offset=8 (local.get $q)) (i32.load offset=12 (local.get $q)) (local.get $arg2)))
     (if (i32.or (i32.ne (i32.and (local.get $arg1) (i32.const 7)) (i32.const 0)) (i64.gt_u (i64.add (i64.extend_i32_u (local.get $arg1)) (i64.extend_i32_u (local.get $n))) (i64.const 4194304))) (then (call $glide_fail)))
-    (i32.store offset=128 (call $glide_state) (local.get $arg1))(i32.store offset=148 (call $glide_state) (local.get $arg2))
-    (i32.store offset=132 (call $glide_state) (i32.load offset=0 (local.get $q)))
-    (i32.store offset=136 (call $glide_state) (i32.load offset=4 (local.get $q)))
-    (i32.store offset=140 (call $glide_state) (i32.load offset=8 (local.get $q)))
-    (i32.store offset=144 (call $glide_state) (i32.load offset=12 (local.get $q)))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 128) (local.get $arg1))(call $glide_tmu_store (local.get $arg0) (i32.const 148) (local.get $arg2))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 132) (i32.load offset=0 (local.get $q)))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 136) (i32.load offset=4 (local.get $q)))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 140) (i32.load offset=8 (local.get $q)))
+    (call $glide_tmu_store (local.get $arg0) (i32.const 144) (i32.load offset=12 (local.get $q)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
@@ -849,7 +869,12 @@
     (local.set $q (call $glide_scratch))
     (local.set $n (call $glide_tex_bytes (i32.load offset=0 (local.get $q)) (i32.load offset=4 (local.get $q)) (i32.load offset=8 (local.get $q)) (i32.load offset=12 (local.get $q)) (local.get $arg2)))
     (if (i32.or (i32.ne (i32.and (local.get $arg1) (i32.const 7)) (i32.const 0)) (i64.gt_u (i64.add (i64.extend_i32_u (local.get $arg1)) (i64.extend_i32_u (local.get $n))) (i64.const 4194304))) (then (call $glide_fail)))
-    (local.set $p (call $glide_record (i32.const 6) (i32.add (local.get $n) (i32.const 28))))
+    (if (i32.eq (call $glide_api_version) (i32.const 3))
+      (then
+        (local.set $p (call $glide_record (i32.const 18) (i32.add (local.get $n) (i32.const 32))))
+        (i32.store (local.get $p) (local.get $arg0))
+        (local.set $p (i32.add (local.get $p) (i32.const 4))))
+      (else (local.set $p (call $glide_record (i32.const 6) (i32.add (local.get $n) (i32.const 28))))))
     (i32.store offset=0 (local.get $p) (local.get $arg1))
     (i32.store offset=4 (local.get $p) (i32.load offset=0 (local.get $q)))
     (i32.store offset=8 (local.get $p) (i32.load offset=4 (local.get $q)))
@@ -1061,10 +1086,12 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; Glide3 h3/glide3/src/glide.h, distrip.c and diget.c, same pinned revision.
-  ;; Heap extension (4096 bytes): coordinate/color mode0/4, viewport8..20,
+  ;; Heap extension (8192 bytes): coordinate/color mode0/4, viewport8..20,
   ;; depth range24/28, twelve {offset,enabled} layout entries32..127,
   ;; retained palette128..1151, strings1152..1407, array vertices1536..1715,
-  ;; continuation count1720/topology1724. Never grow the packed static region.
+  ;; continuation count1720/topology1724, metrics2048..2334, TMU1state2368..2447,
+  ;; clip polygons2560..4479, projected triangle4480..4659, direct raw vertices
+  ;; 4800..4979. Never grow the packed static region.
   (func $glide_api_version (export "glide_api_version") (result i32)
     (i32.load offset=112 (global.get $GLIDE_STATE)))
 
@@ -1072,9 +1099,9 @@
     (local $p i32)
     (local.set $p (i32.load offset=116 (global.get $GLIDE_STATE)))
     (if (i32.eqz (local.get $p)) (then
-      (local.set $p (call $gl_alloc_affine (i32.const 4096)))
+      (local.set $p (call $gl_alloc_affine (i32.const 8192)))
       (if (i32.eqz (local.get $p)) (then (call $glide_fail)))
-      (memory.fill (call $g2w (local.get $p)) (i32.const 0) (i32.const 4096))
+      (memory.fill (call $g2w (local.get $p)) (i32.const 0) (i32.const 8192))
       (f32.store offset=28 (call $g2w (local.get $p)) (f32.const 1))
       (i32.atomic.store offset=116 (global.get $GLIDE_STATE) (local.get $p))))
     (call $g2w (local.get $p)))
@@ -1114,15 +1141,77 @@
         (i32.add (i32.load (local.get $p)) (local.get $component))))))
       (else (local.get $default))))
 
+  ;; Match the framebuffer combine expressions: selectors/factors only
+  ;; consume textures when the selected function actually uses them.
+  (func $glide3_fbi_texture (param $p i32) (result i32)
+    (local $fn i32) (local $factor i32) (local $other i32)
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.le_u (local.get $fn) (i32.const 2)) (then (return (i32.const 0))))
+    (local.set $factor (i32.load offset=4 (local.get $p)))
+    (if (i32.eqz (local.get $factor)) (then (return (i32.const 0))))
+    (local.set $other (i32.eq (i32.load offset=12 (local.get $p)) (i32.const 1)))
+    (if (i32.and (i32.le_u (local.get $fn) (i32.const 8)) (local.get $other))
+      (then (return (i32.const 1))))
+    (if (i32.or
+      (i32.le_u (i32.sub (local.get $factor) (i32.const 4)) (i32.const 1))
+      (i32.le_u (i32.sub (local.get $factor) (i32.const 12)) (i32.const 1)))
+      (then (return (i32.const 1))))
+    (i32.and (local.get $other) (i32.or
+      (i32.eq (local.get $factor) (i32.const 2)) (i32.eq (local.get $factor) (i32.const 10)))))
+
+  (func $glide3_tmu_local (param $p i32) (result i32)
+    (local $fn i32) (local $factor i32)
+    (local.set $fn (i32.load (local.get $p)))
+    (local.set $factor (i32.load offset=4 (local.get $p)))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 1))
+      (i32.or (i32.eq (local.get $fn) (i32.const 2)) (i32.ge_u (local.get $fn) (i32.const 4))))
+      (then (return (i32.const 1))))
+    (i32.and (i32.eq (local.get $fn) (i32.const 3))
+      (i32.or (i32.eq (i32.and (local.get $factor) (i32.const -9)) (i32.const 1))
+        (i32.eq (i32.and (local.get $factor) (i32.const -9)) (i32.const 3)))))
+
+  (func $glide3_tmu_other (param $p i32) (result i32)
+    (local $fn i32) (local $factor i32)
+    (local.set $fn (i32.load (local.get $p)))
+    (local.set $factor (i32.load offset=4 (local.get $p)))
+    (if (i32.and (i32.le_u (i32.sub (local.get $fn) (i32.const 3)) (i32.const 5))
+      (i32.ne (local.get $factor) (i32.const 0))) (then (return (i32.const 1))))
+    (i32.and (i32.or (i32.eq (local.get $fn) (i32.const 9)) (i32.eq (local.get $fn) (i32.const 16)))
+      (i32.eq (i32.and (local.get $factor) (i32.const -9)) (i32.const 2))))
+
+  (func $glide3_texture_mask (result i32)
+    (local $p i32) (local $mask i32)
+    (local.set $p (call $glide_state))
+    ;; Chroma compares RGB OTHER before the combine function, so a LOCAL
+    ;; framebuffer result can still require texture samples for rejection.
+    (if (i32.eqz (i32.or
+      (i32.or (call $glide3_fbi_texture (local.get $p))
+        (call $glide3_fbi_texture (i32.add (local.get $p) (i32.const 20))))
+      (i32.and (i32.ne (i32.load offset=80 (local.get $p)) (i32.const 0))
+        (i32.eq (i32.load offset=12 (local.get $p)) (i32.const 1)))))
+      (then (return (i32.const 0))))
+    (if (i32.or (call $glide3_tmu_local (i32.add (local.get $p) (i32.const 184)))
+      (call $glide3_tmu_local (i32.add (local.get $p) (i32.const 192))))
+      (then (local.set $mask (i32.const 1))))
+    (if (i32.or (call $glide3_tmu_other (i32.add (local.get $p) (i32.const 184)))
+      (call $glide3_tmu_other (i32.add (local.get $p) (i32.const 192)))) (then
+      (local.set $p (call $glide3_tmu1))
+      (if (i32.or (call $glide3_tmu_local (i32.add (local.get $p) (i32.const 48)))
+        (call $glide3_tmu_local (i32.add (local.get $p) (i32.const 56))))
+        (then (local.set $mask (i32.or (local.get $mask) (i32.const 2)))))))
+    (local.get $mask))
+
   (func $glide3_vertex (param $dst i32) (param $guest i32)
-    (local $e i32) (local $c i32) (local $q f32)
+    (local $e i32) (local $c i32) (local $i i32) (local $mask i32) (local $q f32) (local $default f32)
     (local.set $e (call $glide3_ext))
     (call $glide_check_guest (local.get $guest) (i32.const 8))
     (if (i32.eqz (i32.load offset=36 (local.get $e))) (then (call $glide_fail)))
-    ;; Clip-coordinate transforms need homogeneous clipping, not just division
-    ;; of each endpoint. They remain explicitly unsupported, not misrendered.
-    (if (i32.load (local.get $e)) (then (call $glide_fail)))
     (memory.fill (local.get $dst) (i32.const 0) (i32.const 60))
+    (local.set $default (if (result f32) (i32.load (local.get $e))
+      (then (f32.const 1)) (else (f32.const 255))))
+    (if (i32.load (local.get $e)) (then
+      (f32.store offset=8 (local.get $dst)
+        (call $glide3_field (local.get $guest) (i32.const 2) (i32.const 0) (f32.const 1)))))
     (i32.store (local.get $dst) (call $gl32 (local.get $guest)))
     (i32.store offset=4 (local.get $dst) (call $gl32 (i32.add (local.get $guest) (i32.const 4))))
     (f32.store offset=24 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 1) (i32.const 0) (f32.const 0)))
@@ -1137,31 +1226,64 @@
         (f32.store offset=20 (local.get $dst) (f32.convert_i32_u (i32.and (local.get $c) (i32.const 255))))
         (f32.store offset=28 (local.get $dst) (f32.convert_i32_u (i32.shr_u (local.get $c) (i32.const 24)))))
       (else
-        (f32.store offset=12 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 0) (f32.const 255)))
-        (f32.store offset=16 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 4) (f32.const 255)))
-        (f32.store offset=20 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 8) (f32.const 255)))
-        (f32.store offset=28 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 5) (i32.const 0) (f32.const 255)))))
+        (f32.store offset=12 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 0) (local.get $default)))
+        (f32.store offset=16 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 4) (local.get $default)))
+        (f32.store offset=20 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 6) (i32.const 8) (local.get $default)))
+        (f32.store offset=28 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 5) (i32.const 0) (local.get $default)))))
+    ;; Clip-space float colors are normalized; packed ARGB remains bytes.
+    (if (i32.and (i32.ne (i32.load (local.get $e)) (i32.const 0))
+      (i32.eqz (i32.load offset=4 (local.get $e)))) (then
+      (f32.store offset=12 (local.get $dst) (f32.mul (f32.load offset=12 (local.get $dst)) (f32.const 255)))
+      (f32.store offset=16 (local.get $dst) (f32.mul (f32.load offset=16 (local.get $dst)) (f32.const 255)))
+      (f32.store offset=20 (local.get $dst) (f32.mul (f32.load offset=20 (local.get $dst)) (f32.const 255)))
+      (f32.store offset=28 (local.get $dst) (f32.mul (f32.load offset=28 (local.get $dst)) (f32.const 255)))))
+    ;; In clip coordinates, absent Qn means 1 before reciprocal-W scaling;
+    ;; in window coordinates it inherits FBI Q, as the SDK setup list does.
+    (local.set $default (if (result f32) (i32.load (local.get $e))
+      (then (f32.const 1)) (else (local.get $q))))
+    ;; Enabled layouts describe storage, not parameter liveness. The SDK
+    ;; omits inactive texture parameters from its setup list; games leave
+    ;; those stack fields uninitialized during untextured overlays.
+    (local.set $mask (if (result i32) (i32.load (local.get $e))
+      (then (call $glide3_texture_mask)) (else (i32.const 3))))
+    (f32.store offset=44 (local.get $dst) (f32.const 1))
+    (f32.store offset=56 (local.get $dst) (f32.const 1))
+    (if (i32.and (local.get $mask) (i32.const 1)) (then
     (f32.store offset=36 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 8) (i32.const 0) (f32.const 0)))
     (f32.store offset=40 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 8) (i32.const 4) (f32.const 0)))
-    (f32.store offset=44 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 10) (i32.const 0) (local.get $q)))
+    (f32.store offset=44 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 10) (i32.const 0) (local.get $default)))
+))
+    (if (i32.and (local.get $mask) (i32.const 2)) (then
     (f32.store offset=48 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 9) (i32.const 0) (f32.const 0)))
     (f32.store offset=52 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 9) (i32.const 4) (f32.const 0)))
-    (f32.store offset=56 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 11) (i32.const 0) (local.get $q))))
+    (f32.store offset=56 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 11) (i32.const 0) (local.get $default)))
+))
 
-  (func $glide3_emit (param $op i32) (param $a i32) (param $b i32) (param $c i32)
-    (local $p i32) (local $n i32)
+    (if (i32.load (local.get $e)) (then
+      (loop $finite
+        (if (i32.eqz (f32.le (f32.abs (f32.load (i32.add (local.get $dst) (local.get $i))))
+          (f32.const 0x1.fffffep127))) (then (call $glide_fail)))
+        (local.set $i (i32.add (local.get $i) (i32.const 4)))
+        (br_if $finite (i32.lt_u (local.get $i) (i32.const 60)))))))
+
+  (func $glide3_emit_projected (param $op i32) (param $a i32) (param $b i32) (param $c i32)
+    (local $p i32) (local $n i32) (local $wire_op i32)
     (local.set $n (i32.const 60))
     (if (i32.eq (local.get $op) (i32.const 11)) (then (local.set $n (i32.const 120))))
     (if (i32.eq (local.get $op) (i32.const 5)) (then
       (local.set $n (i32.const 180))
       (i32.store offset=36 (global.get $GLIDE_STATE) (i32.add (i32.load offset=36 (global.get $GLIDE_STATE)) (i32.const 1)))))
-    (local.set $p (call $glide_record (local.get $op) (i32.add (i32.const 256) (local.get $n))))
+    (local.set $wire_op (i32.const 15))
+    (if (i32.eq (local.get $op) (i32.const 11)) (then (local.set $wire_op (i32.const 16))))
+    (if (i32.eq (local.get $op) (i32.const 12)) (then (local.set $wire_op (i32.const 17))))
+    (local.set $p (call $glide_record (local.get $wire_op) (i32.add (i32.const 336) (local.get $n))))
     (memory.copy (local.get $p) (call $glide_state) (i32.const 256))
-    (memory.copy (i32.add (local.get $p) (i32.const 256)) (local.get $a) (i32.const 60))
+    (memory.copy (i32.add (local.get $p) (i32.const 256)) (call $glide3_tmu1) (i32.const 80))
+    (memory.copy (i32.add (local.get $p) (i32.const 336)) (local.get $a) (i32.const 60))
     (if (i32.ge_u (local.get $n) (i32.const 120)) (then
-      (memory.copy (i32.add (local.get $p) (i32.const 316)) (local.get $b) (i32.const 60))))
+      (memory.copy (i32.add (local.get $p) (i32.const 396)) (local.get $b) (i32.const 60))))
     (if (i32.eq (local.get $n) (i32.const 180)) (then
-      (memory.copy (i32.add (local.get $p) (i32.const 376)) (local.get $c) (i32.const 60)))))
+      (memory.copy (i32.add (local.get $p) (i32.const 456)) (local.get $c) (i32.const 60)))))
 
   (func $glide3_array (param $mode i32) (param $count i32) (param $vertices i32) (param $stride i32)
     (local $e i32) (local $a i32) (local $b i32) (local $c i32)
@@ -1239,9 +1361,8 @@
     (if (i32.or (i32.gt_u (local.get $arg1) (i32.const 4092))
       (i32.or (i32.and (local.get $arg1) (i32.const 3)) (i32.gt_u (local.get $arg2) (i32.const 1)))) (then (call $glide_fail)))
     (if (i32.and (i32.eqz (local.get $slot)) (i32.ne (local.get $arg1) (i32.const 0))) (then (call $glide_fail)))
-    ;; Generic vertex structs may declare ST1/Q1 even on a one-TMU board.
-    ;; Actual TMU1 state/source remains rejected by glide_tmu. Independent
-    ;; fog coordinates require a separate interpolator and are not advertised.
+    ;; Independent fog coordinates require a separate interpolator and
+    ;; are not advertised. ST0/Q0 and ST1/Q1 have independent interpolators.
     (if (i32.and (local.get $arg2) (i32.eq (local.get $slot) (i32.const 4)))
       (then (call $crash_unimplemented (local.get $name_ptr))))
     (local.set $p (i32.add (call $glide3_ext) (i32.add (i32.const 32) (i32.shl (local.get $slot) (i32.const 3)))))
@@ -1258,7 +1379,7 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
 
     (call $lock_acquire (global.get $GLIDE_STATE))
-    (if (local.get $arg0) (then (call $crash_unimplemented (local.get $name_ptr))))
+    (if (i32.gt_u (local.get $arg0) (i32.const 1)) (then (call $glide_fail)))
     (i32.store (call $glide3_ext) (local.get $arg0))
     (i32.store (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
@@ -1287,7 +1408,21 @@
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
+  ;; Pinned glide3x/h3/glide3/src/gsst.c: Finish submits then waits for
+  ;; issued commands; Flush only submits. RPC acknowledgement is not GPU idle.
   (func $handle_grFinish
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (call $glide_flush)
+    (if (i32.ne (call $host_glide_submit (i32.const 19) (i32.const 0) (i32.const 0)) (i32.const 1))
+      (then (call $glide_fail)))
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  (func $handle_grFlush
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
 
@@ -1296,14 +1431,6 @@
     (i32.store (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
-
-  ;; The synchronous transport completes submissions before returning, so
-  ;; grFlush has the same barrier contract as grFinish in this implementation.
-  (func $handle_grFlush
-    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
-    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_grFinish (local.get $arg0) (local.get $arg1)
-      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_grSelectContext
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
@@ -1408,6 +1535,19 @@
       (i32.store offset=8 (local.get $p) (i32.const 5))
       (i32.store offset=12 (local.get $p) (i32.const 0))
     ))
+    ;; Pinned h3/diget.c: [status & SST_PCIFIFO_FREE, status], not bytes.
+    ;; Conservatively drain the virtual queue and finish backend work before
+    ;; reporting all 31 PCI entries free and all busy bits clear.
+    (if (i32.eq (local.get $arg0) (i32.const 3)) (then
+      (local.set $n (i32.const 8))
+      (if (i32.eq (local.get $arg1) (i32.const 8)) (then
+        (call $glide_check_guest (local.get $arg2) (i32.const 8))
+        (call $glide_flush)
+        (if (i32.ne (call $host_glide_submit (i32.const 19) (i32.const 0) (i32.const 0)) (i32.const 1))
+          (then (call $glide_fail)))
+        (i32.store (local.get $p) (i32.const 31))
+        (i32.store offset=4 (local.get $p) (i32.or (i32.const 31)
+          (i32.shl (i32.eqz (call $vblank_in_blank (call $host_get_ticks))) (i32.const 6))))))))
     (if (i32.eq (local.get $arg0) (i32.const 4)) (then
       (local.set $n (i32.const 4))
       (i32.store offset=0 (local.get $p) (i32.const 64))
@@ -1418,7 +1558,7 @@
     ))
     (if (i32.eq (local.get $arg0) (i32.const 6)) (then
       (local.set $n (i32.const 4))
-      (i32.store offset=0 (local.get $p) (i32.const 384))
+      (i32.store offset=0 (local.get $p) (i32.const 464))
     ))
     (if (i32.eq (local.get $arg0) (i32.const 7)) (then
       (local.set $n (i32.const 4))
@@ -1466,7 +1606,7 @@
     ))
     (if (i32.eq (local.get $arg0) (i32.const 19)) (then
       (local.set $n (i32.const 4))
-      (i32.store offset=0 (local.get $p) (i32.const 1))
+      (i32.store offset=0 (local.get $p) (i32.const 2))
     ))
     (if (i32.eq (local.get $arg0) (i32.const 20)) (then
       (local.set $n (i32.const 4))
@@ -1735,6 +1875,13 @@
       (call $gs32 (i32.add (local.get $arg0) (local.get $i)) (i32.load (local.get $p)))
       (local.set $i (i32.add (local.get $i) (i32.const 4)))
       (br_if $copy (i32.lt_u (local.get $i) (i32.const 384))))
+    (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
+    (local.set $i (i32.const 0))
+    (loop $tmu_copy
+      (call $gs32 (i32.add (local.get $arg0) (i32.add (i32.const 384) (local.get $i)))
+        (i32.load (i32.add (call $glide3_tmu1) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br_if $tmu_copy (i32.lt_u (local.get $i) (i32.const 80))))))
     (i32.store (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
@@ -1747,6 +1894,8 @@
     (local.set $e (call $glide3_ext))
     (call $glide_copy_guest (call $glide_state) (local.get $arg0) (i32.const 256))
     (call $glide_copy_guest (local.get $e) (i32.add (local.get $arg0) (i32.const 256)) (i32.const 128))
+    (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
+      (call $glide_copy_guest (call $glide3_tmu1) (i32.add (local.get $arg0) (i32.const 384)) (i32.const 80))))
     (i32.store (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
@@ -1878,3 +2027,180 @@
     (i64.atomic.store offset=40 (local.get $p) (i64.extend_i32_u (local.get $h)))
     (i64.atomic.store offset=48 (local.get $p)
       (i64.extend_i32_u (call $gl32 (i32.load offset=16 (global.get $reg_base))))))
+
+  (func $glide3_tmu1 (result i32)
+    (i32.add (call $glide3_ext) (i32.const 2368)))
+  (func $glide_tmu_store (param $tmu i32) (param $offset i32) (param $value i32)
+    (local $p i32)
+    (if (i32.eqz (local.get $tmu))
+      (then (local.set $p (i32.add (call $glide_state) (local.get $offset))))
+      (else
+        (local.set $p (i32.add (call $glide3_tmu1) (i32.sub (local.get $offset) (i32.const 128))))
+        (if (i32.ge_u (local.get $offset) (i32.const 184))
+          (then (local.set $p (i32.add (call $glide3_tmu1) (i32.sub (local.get $offset) (i32.const 136))))))
+        (if (i32.eq (local.get $offset) (i32.const 240))
+          (then (local.set $p (i32.add (call $glide3_tmu1) (i32.const 72)))))))
+    (i32.store (local.get $p) (local.get $value)))
+
+  ;; Clip-space temporary vertices keep homogeneous W in the unused legacy
+  ;; z slot8 and unprojected Z in slot24. Every attribute is interpolated
+  ;; before division. Six clip-volume planes plus a positive normal-float W
+  ;; plane avoid infinity at the eye without rejecting ordinary small W.
+  (func $glide3_clip_distance (param $v i32) (param $plane i32) (result f64)
+    (local $w f64) (local $c f64)
+    (local.set $w (f64.promote_f32 (f32.load offset=8 (local.get $v))))
+    (if (i32.eq (local.get $plane) (i32.const 6))
+      (then (return (f64.sub (local.get $w) (f64.const 0x1p-126)))))
+    (local.set $c (f64.promote_f32 (f32.load (i32.add (local.get $v)
+      (if (result i32) (i32.lt_u (local.get $plane) (i32.const 4))
+        (then (i32.shl (i32.shr_u (local.get $plane) (i32.const 1)) (i32.const 2)))
+        (else (i32.const 24)))))))
+    (if (result f64) (i32.and (local.get $plane) (i32.const 1))
+      (then (f64.sub (local.get $w) (local.get $c)))
+      (else (f64.add (local.get $w) (local.get $c)))))
+
+  (func $glide3_clip_interpolate (param $dst i32) (param $a i32) (param $b i32)
+      (param $da f64) (param $db f64)
+    (local $i i32) (local $t f64) (local $v f64)
+    (local.set $t (f64.div (local.get $da) (f64.sub (local.get $da) (local.get $db))))
+    (loop $attributes
+      (local.set $v (f64.promote_f32 (f32.load (i32.add (local.get $a) (local.get $i)))))
+      (f32.store (i32.add (local.get $dst) (local.get $i)) (f32.demote_f64
+        (f64.add (local.get $v) (f64.mul (local.get $t)
+          (f64.sub (f64.promote_f32 (f32.load (i32.add (local.get $b) (local.get $i)))) (local.get $v))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br_if $attributes (i32.lt_u (local.get $i) (i32.const 60)))))
+
+  (func $glide3_texture_scale (param $aspect i32) (param $vertical i32) (result f32)
+    (local $shift i32)
+    (local.set $shift (if (result i32) (local.get $vertical)
+      (then (i32.sub (i32.const 3) (local.get $aspect)))
+      (else (i32.sub (local.get $aspect) (i32.const 3)))))
+    (if (i32.lt_s (local.get $shift) (i32.const 0)) (then (local.set $shift (i32.const 0))))
+    (f32.convert_i32_u (i32.shr_u (i32.const 256) (local.get $shift))))
+
+  ;; Multiply in double precision: at the eye-plane W=2^-126, q is
+  ;; finite but q*256 overflows float even when S=0 or very small. Reject
+  ;; genuinely unrepresentable final attributes before recording a draw.
+  (func $glide3_project_product (param $value f32) (param $q f32)
+      (param $scale f32) (result f32)
+    (local $out f32)
+    (local.set $out (f32.demote_f64 (f64.mul
+      (f64.mul (f64.promote_f32 (local.get $value)) (f64.promote_f32 (local.get $q)))
+      (f64.promote_f32 (local.get $scale)))))
+    (if (i32.eqz (f32.le (f32.abs (local.get $out)) (f32.const 0x1.fffffep127)))
+      (then (call $glide_fail)))
+    (local.get $out))
+
+  (func $glide3_project (param $dst i32) (param $src i32)
+    (local $e i32) (local $q f32) (local $half f32) (local $n f32) (local $f f32)
+    (local $aspect i32)
+    (local.set $e (call $glide3_ext))
+    (memory.copy (local.get $dst) (local.get $src) (i32.const 60))
+    (local.set $q (f32.div (f32.const 1) (f32.load offset=8 (local.get $src))))
+    (local.set $half (f32.mul (f32.convert_i32_s (i32.load offset=16 (local.get $e))) (f32.const 0.5)))
+    (f32.store (local.get $dst) (f32.add
+      (f32.mul (f32.mul (f32.load (local.get $src)) (local.get $q)) (local.get $half))
+      (f32.add (f32.convert_i32_s (i32.load offset=8 (local.get $e))) (local.get $half))))
+    (local.set $half (f32.mul (f32.convert_i32_s (i32.load offset=20 (local.get $e))) (f32.const 0.5)))
+    (f32.store offset=4 (local.get $dst) (f32.add
+      (f32.mul (f32.mul (f32.load offset=4 (local.get $src)) (local.get $q)) (local.get $half))
+      (f32.add (f32.convert_i32_s (i32.load offset=12 (local.get $e))) (local.get $half))))
+    (local.set $n (f32.load offset=24 (local.get $e)))
+    (local.set $f (f32.load offset=28 (local.get $e)))
+    (f32.store offset=24 (local.get $dst) (f32.add
+      (f32.mul (f32.mul (f32.load offset=24 (local.get $src)) (local.get $q))
+        (f32.mul (f32.sub (local.get $f) (local.get $n)) (f32.const 32767.5)))
+      (f32.mul (f32.add (local.get $f) (local.get $n)) (f32.const 32767.5))))
+    (f32.store offset=8 (local.get $dst) (f32.const 0))
+    (f32.store offset=32 (local.get $dst) (call $glide3_project_product (f32.load offset=32 (local.get $src)) (local.get $q) (f32.const 1)))
+    (f32.store offset=44 (local.get $dst) (call $glide3_project_product (f32.load offset=44 (local.get $src)) (local.get $q) (f32.const 1)))
+    (f32.store offset=56 (local.get $dst) (call $glide3_project_product (f32.load offset=56 (local.get $src)) (local.get $q) (f32.const 1)))
+    (local.set $aspect (i32.load offset=140 (call $glide_state)))
+    (f32.store offset=36 (local.get $dst) (call $glide3_project_product (f32.load offset=36 (local.get $src))
+      (local.get $q) (call $glide3_texture_scale (local.get $aspect) (i32.const 0))))
+    (f32.store offset=40 (local.get $dst) (call $glide3_project_product (f32.load offset=40 (local.get $src))
+      (local.get $q) (call $glide3_texture_scale (local.get $aspect) (i32.const 1))))
+    (local.set $aspect (i32.load offset=12 (call $glide3_tmu1)))
+    (f32.store offset=48 (local.get $dst) (call $glide3_project_product (f32.load offset=48 (local.get $src))
+      (local.get $q) (call $glide3_texture_scale (local.get $aspect) (i32.const 0))))
+    (f32.store offset=52 (local.get $dst) (call $glide3_project_product (f32.load offset=52 (local.get $src))
+      (local.get $q) (call $glide3_texture_scale (local.get $aspect) (i32.const 1)))))
+
+  (func $glide3_emit (param $op i32) (param $a i32) (param $b i32) (param $c i32)
+    (local $src i32) (local $dst i32) (local $tmp i32) (local $out i32)
+    (local $n i32) (local $m i32) (local $i i32) (local $plane i32)
+    (local $prev i32) (local $cur i32) (local $da f64) (local $db f64)
+    (if (i32.eqz (i32.load (call $glide3_ext))) (then
+      (call $glide3_emit_projected (local.get $op) (local.get $a) (local.get $b) (local.get $c))
+      (return)))
+    (local.set $src (i32.add (call $glide3_ext) (i32.const 2560)))
+    (local.set $dst (i32.add (local.get $src) (i32.const 960)))
+    (local.set $out (i32.add (call $glide3_ext) (i32.const 4480)))
+    (memory.copy (local.get $src) (local.get $a) (i32.const 60))
+    (local.set $n (i32.const 1))
+    (if (i32.ne (local.get $op) (i32.const 12)) (then
+      (memory.copy (i32.add (local.get $src) (i32.const 60)) (local.get $b) (i32.const 60))
+      (local.set $n (i32.const 2))))
+    (if (i32.eq (local.get $op) (i32.const 5)) (then
+      (memory.copy (i32.add (local.get $src) (i32.const 120)) (local.get $c) (i32.const 60))
+      (local.set $n (i32.const 3))))
+    (loop $planes
+      (if (i32.eq (local.get $op) (i32.const 5))
+        (then
+          ;; Sutherland-Hodgman preserves winding and interpolates every raw
+          ;; field. A triangle clipped by seven planes fits sixteen vertices.
+          (local.set $m (i32.const 0)) (local.set $i (i32.const 0))
+          (local.set $prev (i32.add (local.get $src) (i32.mul (i32.sub (local.get $n) (i32.const 1)) (i32.const 60))))
+          (local.set $da (call $glide3_clip_distance (local.get $prev) (local.get $plane)))
+          (loop $edges
+            (local.set $cur (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 60))))
+            (local.set $db (call $glide3_clip_distance (local.get $cur) (local.get $plane)))
+            (if (i32.ne (f64.ge (local.get $da) (f64.const 0)) (f64.ge (local.get $db) (f64.const 0))) (then
+              (if (i32.ge_u (local.get $m) (i32.const 16)) (then (call $glide_fail)))
+              (call $glide3_clip_interpolate (i32.add (local.get $dst) (i32.mul (local.get $m) (i32.const 60)))
+                (local.get $prev) (local.get $cur) (local.get $da) (local.get $db))
+              (if (i32.eq (local.get $plane) (i32.const 6)) (then
+                (f32.store offset=8 (i32.add (local.get $dst) (i32.mul (local.get $m) (i32.const 60))) (f32.const 0x1p-126))))
+              (local.set $m (i32.add (local.get $m) (i32.const 1)))))
+            (if (f64.ge (local.get $db) (f64.const 0)) (then
+              (if (i32.ge_u (local.get $m) (i32.const 16)) (then (call $glide_fail)))
+              (memory.copy (i32.add (local.get $dst) (i32.mul (local.get $m) (i32.const 60))) (local.get $cur) (i32.const 60))
+              (local.set $m (i32.add (local.get $m) (i32.const 1)))))
+            (local.set $prev (local.get $cur)) (local.set $da (local.get $db))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br_if $edges (i32.lt_u (local.get $i) (local.get $n))))
+          (if (i32.lt_u (local.get $m) (i32.const 3)) (then (return)))
+          (local.set $n (local.get $m))
+          (local.set $tmp (local.get $src)) (local.set $src (local.get $dst)) (local.set $dst (local.get $tmp)))
+        (else
+          (local.set $da (call $glide3_clip_distance (local.get $src) (local.get $plane)))
+          (if (i32.eq (local.get $n) (i32.const 1))
+            (then (if (f64.lt (local.get $da) (f64.const 0)) (then (return))))
+            (else
+              (local.set $cur (i32.add (local.get $src) (i32.const 60)))
+              (local.set $db (call $glide3_clip_distance (local.get $cur) (local.get $plane)))
+              (if (i32.and (f64.lt (local.get $da) (f64.const 0)) (f64.lt (local.get $db) (f64.const 0))) (then (return)))
+              (if (i32.ne (f64.ge (local.get $da) (f64.const 0)) (f64.ge (local.get $db) (f64.const 0))) (then
+                (call $glide3_clip_interpolate (local.get $dst) (local.get $src) (local.get $cur) (local.get $da) (local.get $db))
+                (if (i32.eq (local.get $plane) (i32.const 6)) (then
+                  (f32.store offset=8 (local.get $dst) (f32.const 0x1p-126))))
+                (memory.copy (if (result i32) (f64.lt (local.get $da) (f64.const 0))
+                  (then (local.get $src)) (else (local.get $cur))) (local.get $dst) (i32.const 60))))))))
+      (local.set $plane (i32.add (local.get $plane) (i32.const 1)))
+      (br_if $planes (i32.lt_u (local.get $plane) (i32.const 7))))
+    (if (i32.eq (local.get $op) (i32.const 5))
+      (then
+        (local.set $i (i32.const 1))
+        (loop $fan
+          (call $glide3_project (local.get $out) (local.get $src))
+          (call $glide3_project (i32.add (local.get $out) (i32.const 60)) (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 60))))
+          (call $glide3_project (i32.add (local.get $out) (i32.const 120)) (i32.add (local.get $src) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 60))))
+          (call $glide3_emit_projected (local.get $op) (local.get $out) (i32.add (local.get $out) (i32.const 60)) (i32.add (local.get $out) (i32.const 120)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $fan (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $n)))))
+      (else
+        (call $glide3_project (local.get $out) (local.get $src))
+        (if (i32.eq (local.get $n) (i32.const 2)) (then
+          (call $glide3_project (i32.add (local.get $out) (i32.const 60)) (i32.add (local.get $src) (i32.const 60)))))
+        (call $glide3_emit_projected (local.get $op) (local.get $out) (i32.add (local.get $out) (i32.const 60)) (i32.const 0)))))

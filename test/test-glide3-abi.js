@@ -12,7 +12,8 @@ const arities = {
   grVertexLayout: 3, grCoordinateSpace: 1, grViewport: 4, grDepthRange: 2,
   grDrawVertexArray: 3, grDrawVertexArrayContiguous: 4, grDrawTriangle: 3,
   grFinish: 0, grFlush: 0, grTexSource: 4, grTexDownloadMipMap: 4,
-  grTexCalcMemRequired: 4, grTexTextureMemRequired: 2,
+  grTexMaxAddress: 1, grTexCalcMemRequired: 4, grTexTextureMemRequired: 2,
+  grChromakeyMode: 1, grColorCombine: 5, grAlphaCombine: 5, grTexCombine: 7, grTexClampMode: 3, grTexFilterMode: 3, grDrawPoint: 1, grDrawLine: 2,
   glide3_grTexDownloadTable: 2, grTexDownloadTable: 3,
   grTexDownloadTablePartial: 4, grLoadGammaTable: 4, guGammaCorrectionRGB: 3,
   grGammaCorrectionValue: 1, glide3_grLfbWriteRegion: 9,
@@ -23,7 +24,7 @@ const arities = {
 };
 const bytes = compileSrcWasm((file, source) => file === '09a8h-glide.wat'
   ? source + Object.keys(arities).map(name =>
-    `\n(export "test_${name}" (func $handle_${name}))`).join('') + '\n(export "test_fpu_get" (func $fpu_get))' : source);
+    `\n(export "test_${name}" (func $handle_${name}))`).join('') + '\n(export "test_fpu_get" (func $fpu_get))\n(export "test_glide3_vertex" (func $glide3_vertex))' : source);
 const module_ = new WebAssembly.Module(bytes);
 const memory = new WebAssembly.Memory({initial: 8192, maximum: 8192, shared: true});
 const imports = {host: {memory}};
@@ -63,7 +64,11 @@ function records() {
     if (op !== 0) continue;
     for (let p=0;p<bytes.length;) {
       const kind=bytes.readUInt32LE(p), n=bytes.readUInt32LE(p+4);
-      result.push({op:kind,bytes:bytes.subarray(p+8,p+8+n)});
+      const payload=bytes.subarray(p+8,p+8+n);
+      if (kind>=15 && kind<=17) result.push({op:[5,11,12][kind-15],wireOp:kind,
+        tmu1:payload.subarray(256,336),bytes:Buffer.concat([payload.subarray(0,256),payload.subarray(336)])});
+      else if(kind===18) result.push({op:6,wireOp:kind,tmu:payload.readUInt32LE(),bytes:payload.subarray(4)});
+      else result.push({op:kind,bytes:payload});
       p += 8+((n+3)&~3);
     }
   }
@@ -86,7 +91,7 @@ assert.strictEqual(call('grGet',[2,16,output]),16);
 assert.deepStrictEqual(get(output,16),words([5,6,5,0]));
 assert.deepStrictEqual(get(output-4,4),Buffer.alloc(4,0xcc));
 assert.deepStrictEqual(get(output+16,4),Buffer.alloc(4,0xcc));
-for (const [key,n,expected] of [[15,4,[1]],[19,4,[1]],[10,4,[256]],[13,4,[4194304]],
+for (const [key,n,expected] of [[15,4,[1]],[19,4,[2]],[10,4,[256]],[13,4,[4194304]],
   [39,8,[0,65535]],[40,8,[65535,0]],[9,4,[0]]]) {
   assert.strictEqual(call('grGet',[key,n,output]),n);
   assert.deepStrictEqual(get(output,n),words(expected));
@@ -103,6 +108,48 @@ assert.strictEqual(call('grSelectContext',[1]),0,'no open context');
 assert.strictEqual(call('grSstWinOpen',[0,7,0,0,0,2,1]),1);
 assert.strictEqual(call('grSelectContext',[1]),1);
 assert.strictEqual(call('grSelectContext',[2]),0,'no fabricated second context');
+// FIFO_FULLNESS is free PCI entries plus status, after actual ordered drain.
+records();
+call('guGammaCorrectionRGB',[fbits(1),fbits(1),fbits(1)]);
+const fifoPending=view.getUint32(regions.BASE.GLIDE_STATE+20,true);
+assert.ok(fifoPending>0);
+put(output,Buffer.alloc(12,0xa6));
+const beforeInvalidFifo=submissions.length;
+assert.strictEqual(call('grGet',[3,4,output]),0);
+assert.strictEqual(submissions.length,beforeInvalidFifo,'wrong length does not submit');
+assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE+20,true),fifoPending);
+assert.deepStrictEqual(get(output,12),Buffer.alloc(12,0xa6));
+assert.strictEqual(call('grGet',[3,8,output]),8);
+const fifoStatus=get(output+4,4).readUInt32LE();
+assert.strictEqual(get(output,4).readUInt32LE(),31,'PCI entry count, not queue bytes');
+assert.strictEqual(fifoStatus&31,31);
+assert.strictEqual(fifoStatus&~64,31,'only retrace may vary after completion');
+assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE+20,true),0);
+assert.deepStrictEqual(submissions.slice(beforeInvalidFifo).map(x=>x.op),[0,19],
+  'pending commands reach backend before completion barrier');
+assert.strictEqual(submissions[beforeInvalidFifo].bytes.readUInt32LE(),14,'queued gamma precedes fence');
+assert.deepStrictEqual(get(output+8,4),Buffer.alloc(4,0xa6),'query writes exactly eight bytes');
+submissions.splice(0);
+
+// Completion is distinct from queue submission, including an empty queue.
+call('guGammaCorrectionRGB',[fbits(1),fbits(1),fbits(1)]);
+call('grFlush');
+assert.deepStrictEqual(submissions.map(x=>x.op),[0],'Flush submits without waiting for GPU completion');
+assert.strictEqual(submissions[0].bytes.readUInt32LE(),14);
+submissions.splice(0);
+call('grFlush');
+assert.strictEqual(submissions.length,0,'empty Flush has no completion fence');
+call('grFinish');
+assert.deepStrictEqual(submissions.map(x=>x.op),[19],'empty Finish still waits for previously issued GPU work');
+assert.strictEqual(submissions[0].bytes.length,0);
+submissions.splice(0);
+call('guGammaCorrectionRGB',[fbits(1),fbits(1),fbits(1)]);
+call('grFinish');
+assert.deepStrictEqual(submissions.map(x=>x.op),[0,19],'Finish submits pending commands before waiting');
+assert.strictEqual(submissions[0].bytes.readUInt32LE(),14);
+assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE+20,true),0);
+submissions.splice(0);
+
 call('grViewport',[3,5,320,200]);
 assert.strictEqual(call('grGet',[38,16,output]),16);
 assert.deepStrictEqual(get(output,16),words([3,5,320,200]));
@@ -127,15 +174,14 @@ let v=r[0].bytes.subarray(256);
 assert.deepStrictEqual(Array.from({length:12},(_,i)=>v.readFloatLE(i*4)),
   [17,19,0,64,32,16,0,128,0.5,64,32,0.25], 'Glide3 to SDK GrVertex byte offsets');
 assert.strictEqual(r[0].bytes.readUInt32LE(216)&2,2,'independent TMU Q is consumed');
-// Generic two-coordinate layouts remain legal on the advertised one-TMU
-// board. Declaring fields does not enable a second texture unit.
+// Independent second-stage coordinates retain their declared Q.
 call('grVertexLayout',[0x41,28,1]); call('grVertexLayout',[0x51,36,1]);
 put(vptr+28,words([fbits(96),fbits(48),fbits(0.125)]));
 call('grDrawVertexArray',[0,1,pointers]); v=records()[0].bytes.subarray(256);
 assert.deepStrictEqual([48,52,56].map(i=>v.readFloatLE(i)),[96,48,0.125]);
-call('grGet',[19,4,0x410100]);assert.strictEqual(get(0x410100,4).readUInt32LE(),1);
+call('grGet',[19,4,0x410100]);assert.strictEqual(get(0x410100,4).readUInt32LE(),2);
 call('grVertexLayout',[0x41,0,0]);call('grVertexLayout',[0x51,0,0]);
-call('grFinish'); // Both public barriers retain exactly one stdcall cleanup.
+call('grFinish'); // Finish retains exactly one stdcall cleanup.
 const verts=0x411000;
 for(let i=0;i<7;++i)put(verts+i*28,vertex(i,10+i,0xff112233,1,0,0,1));
 const triangleXs = recs => recs.filter(r=>r.op===5).map(r=>[0,1,2].map(i=>r.bytes.readFloatLE(256+i*60)));
@@ -166,6 +212,13 @@ put(data,Buffer.alloc(640,0x5c));
 call('grTexDownloadMipMap',[0,0,3,info]);call('grTexSource',[0,0,3,info]);
 r=records();assert.deepStrictEqual(Array.from({length:7},(_,i)=>r[0].bytes.readUInt32LE(i*4)),[0,4,3,4,0,3,640]);
 assert.deepStrictEqual(r[0].bytes.subarray(28),Buffer.alloc(640,0x5c));
+// The maximum is an aligned start address, not the final texture RAM byte.
+const maxTexture=call('grTexMaxAddress',[0]);assert.strictEqual(maxTexture,4194304-8);
+assert.strictEqual(call('grTexMaxAddress',[1]),maxTexture);
+assert.strictEqual(call('grTexCalcMemRequired',[0,0,0,0]),8);
+const boundaryInfo=0x419000;put(boundaryInfo,words([0,0,0,0,data]));
+for(const tmu of [0,1]) call('grTexDownloadMipMap',[tmu,maxTexture,3,boundaryInfo]);
+r=records();assert.deepStrictEqual(r.map(x=>[x.tmu,x.bytes.readUInt32LE(0),x.bytes.readUInt32LE(24)]),[[0,maxTexture,1],[1,maxTexture,1]]);
 const palette=0x413000;put(palette,words(Array.from({length:256},(_,i)=>0xff000000+i)));
 call('glide3_grTexDownloadTable',[2,palette]);
 put(palette+12,words([0xffabcdef]));call('grTexDownloadTablePartial',[2,palette,3,3]);
@@ -189,6 +242,100 @@ assert.deepStrictEqual(get(sparse+4080,64),Buffer.from(Array.from({length:64},(_
   Math.trunc(f(255*Math.max(0,Math.min(1,f(f(Math.min(65535,fogW(i))-10)/f(5000-10)))))))));
 const state=0x414000;call('grGlideGetState',[state]);call('grViewport',[0,0,1,1]);call('grGlideSetState',[state]);
 call('grGet',[38,16,output]);assert.deepStrictEqual(get(output,16),words([3,5,320,200]));
+// Two independent texture RAM namespaces and immutable queued TMU snapshots.
+put(info,words([4,5,1,0,data]));put(data,Buffer.alloc(640,0xa3));
+call('grTexDownloadMipMap',[1,0,3,info]);call('grTexSource',[1,0,3,info]);
+call('grTexCombine',[1,1,0,1,0,0,0]);call('grTexClampMode',[1,1,0]);
+call('grDrawPoint',[vptr]);call('grTexClampMode',[1,0,1]);call('grDrawPoint',[vptr]);
+r=records();assert.strictEqual(r[0].wireOp,18);assert.strictEqual(r[0].tmu,1);
+assert.deepStrictEqual(r[0].bytes.subarray(28),Buffer.alloc(640,0xa3));
+assert.strictEqual(r[1].wireOp,17);assert.strictEqual(r[1].bytes.readUInt32LE(140),4);
+assert.strictEqual(r[1].tmu1.readUInt32LE(12),2,'independent aspect');
+assert.deepStrictEqual([24,28,48,56].map(i=>r[1].tmu1.readUInt32LE(i)),[1,0,1,1]);
+assert.deepStrictEqual([24,28].map(i=>r[2].tmu1.readUInt32LE(i)),[0,1]);
+call('grGet',[6,4,output]);assert.strictEqual(get(output,4).readUInt32LE(),464);
+call('grGlideGetState',[state]);call('grTexClampMode',[1,1,1]);call('grGlideSetState',[state]);
+call('grDrawPoint',[vptr]);r=records();assert.deepStrictEqual([24,28].map(i=>r[0].tmu1.readUInt32LE(i)),[0,1]);
+// CLIP_COORDS uses homogeneous clipping before division, then SDK viewport,
+// depth, normalized float color, and independent texture-aspect conversion.
+for(const [param,offset] of [[1,0],[2,8],[3,12],[4,16],[0x20,20],[0x10,32],
+  [0x40,36],[0x50,44],[0x41,48],[0x51,56]]) call('grVertexLayout',[param,offset,1]);
+call('grColorCombine',[3,8,0,1,0]);call('grAlphaCombine',[1,0,0,2,0]);
+call('grTexCombine',[0,4,8,4,8,0,0]);call('grTexCombine',[1,1,0,1,0,0,0]);
+call('grCoordinateSpace',[1]);call('grViewport',[10,20,100,80]);call('grDepthRange',[fbits(.25),fbits(.75)]);
+put(info,words([4,5,0,0,data]));call('grTexSource',[0,0,3,info]);
+const clip=0x417000;
+const clipVertex=(x,y,z,w=1,color=[.25,.5,.75])=>words([x,y,z,w,.75,...color,.5,.5,.25,.5,.2,.4,.25].map(fbits));
+const near=(actual,expected,label)=>assert.ok(Math.abs(actual-expected)<.002,`${label}: ${actual} != ${expected}`);
+put(clip,clipVertex(-.5,.5,0,2));call('grDrawPoint',[clip]);r=records();v=r[0].bytes.subarray(256);
+for(const [offset,expected] of [[0,47.5],[4,70],[24,32767.5],[12,63.75],[16,127.5],
+  [20,191.25],[28,127.5],[32,.375],[36,64],[40,32],[44,.25],[48,25.6],[52,25.6],[56,.125]])
+  near(v.readFloatLE(offset),expected,'projected '+offset);
+call('grVertexLayout',[0x51,0,0]);call('grDrawPoint',[clip]);
+near(records()[0].bytes.readFloatLE(256+56),.5,'disabled Q1 uses reciprocal W');
+call('grVertexLayout',[0x51,56,1]);
+for(const xyz of [[-2,0,0],[2,0,0],[0,-2,0],[0,2,0],[0,0,-2],[0,0,2]]) {
+  put(clip,clipVertex(...xyz));call('grDrawPoint',[clip]);assert.strictEqual(records().length,0,'clip plane rejects '+xyz);
+}
+put(clip,clipVertex(0,0,0,-1));call('grDrawPoint',[clip]);assert.strictEqual(records().length,0,'negative W point rejected');
+put(clip,clipVertex(-2,0,0,1,[0,0,0]));put(clip+60,clipVertex(0,0,0,1,[1,1,1]));
+call('grDrawLine',[clip,clip+60]);r=records();v=r[0].bytes.subarray(256);
+near(v.readFloatLE(0),10,'line clipped left');near(v.readFloatLE(60),60,'line endpoint');
+near(v.readFloatLE(12),127.5,'line intersection color');
+put(clip,clipVertex(-.5,-.5,-2));put(clip+60,clipVertex(.5,-.5,0));put(clip+120,clipVertex(0,.5,0));
+call('grDrawTriangle',[clip,clip+60,clip+120]);r=records();assert.strictEqual(r.length,2,'near-clipped quad triangulates');
+const projected=r.flatMap(rec=>[0,1,2].map(i=>[0,4,24].map(j=>rec.bytes.readFloatLE(256+i*60+j))));
+for(const point of projected) {
+  assert.ok(point.every(Number.isFinite));assert.ok(point[0]>=10&&point[0]<=110&&point[1]>=20&&point[1]<=100);
+  assert.ok(point[2]>=16383.75&&point[2]<=49151.25);
+}
+assert.ok(projected.some(p=>Math.abs(p[0]-47.5)<.002&&Math.abs(p[1]-60)<.002&&Math.abs(p[2]-16383.75)<.002),'CA near intersection');
+assert.ok(projected.some(p=>Math.abs(p[0]-60)<.002&&Math.abs(p[1]-40)<.002&&Math.abs(p[2]-16383.75)<.002),'AB near intersection');
+// Crossing the eye clips to a finite visible polygon; no divide-by-zero
+// reaches the packet, including interpolated Q and both texture coordinates.
+put(clip,clipVertex(0,0,0,-1));put(clip+60,clipVertex(.5,-.5,0));put(clip+120,clipVertex(-.5,-.5,0));
+call('grDrawTriangle',[clip,clip+60,clip+120]);r=records();assert.ok(r.length>0);
+for(const rec of r) for(let offset=256;offset<rec.bytes.length;offset+=4)
+  assert.ok(Number.isFinite(rec.bytes.readFloatLE(offset)),'eye crossing output finite');
+// The smallest accepted W keeps zero/tiny enabled ST finite, even though
+// reciprocalW*256 alone would overflow f32. Exercise both independent units.
+const minimumW=2**-126, tiny=clipVertex(0,0,0,minimumW);
+for(const offset of [36,40,48,52]) tiny.writeFloatLE(offset===40||offset===52?minimumW:0,offset);
+put(clip,tiny);call('grDrawPoint',[clip]);r=records();
+assert.strictEqual(r.length,1);
+for(let offset=256;offset<r[0].bytes.length;offset+=4)
+  assert.ok(Number.isFinite(r[0].bytes.readFloatLE(offset)),'minimum-W output finite');
+for(const [offset,value] of [[36,0],[40,256],[48,0],[52,128]])
+  near(r[0].bytes.readFloatLE(256+offset),value,'minimum-W texture '+offset);
+// Hitman keeps ST/Q layouts enabled for an untextured quad but leaves
+// their storage undefined. Both finite overflow and NaNs must remain unread.
+call('grGlideGetState',[state]);
+call('grColorCombine',[1,0,0,2,0]);call('grAlphaCombine',[1,0,0,2,0]);
+const inactive=clipVertex(0,0,0,1);
+[36,40,44,48,52,56].forEach((offset,i)=>inactive.writeFloatLE(i%2?NaN:3e38,offset));
+put(clip,inactive);call('grDrawPoint',[clip]);r=records();
+assert.deepStrictEqual([36,40,44,48,52,56].map(offset=>r[0].bytes.readFloatLE(256+offset)),[0,0,1,0,0,1]);
+// A texture 'other' selector is still dead when the function is LOCAL.
+call('grColorCombine',[1,4,0,1,0]);call('grDrawPoint',[clip]);
+assert.strictEqual(records()[0].bytes.readFloatLE(256+36),0);
+// TMU0 can consume its local texture while unused TMU1 remains unread.
+call('grColorCombine',[3,8,0,1,0]);call('grTexCombine',[0,1,0,1,0,0,0]);
+[36,40,44].forEach((offset,i)=>inactive.writeFloatLE([.25,.5,1][i],offset));
+put(clip,inactive);call('grDrawPoint',[clip]);r=records();
+near(r[0].bytes.readFloatLE(256+36),64,'live TMU0 ST preserved');
+assert.deepStrictEqual([48,52,56].map(offset=>r[0].bytes.readFloatLE(256+offset)),[0,0,1]);
+// Chroma consumes RGB OTHER before LOCAL replaces framebuffer color.
+call('grColorCombine',[1,0,0,1,0]);call('grChromakeyMode',[1]);
+call('grDrawPoint',[clip]);r=records();
+near(r[0].bytes.readFloatLE(256+36),64,'texture OTHER remains live for chroma');
+// Changing chroma OTHER to iterated/constant makes texture fields dead again.
+for(const other of [0,2]) {
+  call('grColorCombine',[1,0,0,other,0]);
+  inactive.writeFloatLE(NaN,36);put(clip,inactive);call('grDrawPoint',[clip]);
+  assert.strictEqual(records()[0].bytes.readFloatLE(256+36),0,'nontexture chroma ignores ST');
+}
+call('grGlideSetState',[state]);call('grCoordinateSpace',[0]);
+
 // Diagnostic reasons observe actual staging, preserving the same readbacks.
 const metrics = reason => Array.from({length:7},(_,field)=>b.glide_lfb_metrics_get(reason,field));
 for(let reason=0;reason<5;++reason) assert.deepStrictEqual(metrics(reason),Array(7).fill(0));
@@ -236,7 +383,20 @@ assert.strictEqual(a.glide_lfb_metrics_get(0,0),0,'shutdown releases diagnostics
 assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE+116,true),0,'extension allocation released');
 call('grGlideInit');assert.strictEqual(a.glide_api_version(),2);
 assert.strictEqual(call('grTexCalcMemRequired',[4,3,4,0]),640,'Glide2 enum meanings preserved');
+assert.strictEqual(call('grTexMaxAddress',[0]),4194304-8,'Glide2 SDK aligned maximum preserved');
 call('grGlideShutdown');
 assert.deepStrictEqual(get(neighbor,4096),Buffer.alloc(4096,0xa7),'unrelated physical page unchanged');
 assert.strictEqual(a.guest_span_cursor_bytes(),0,'all sparse spans released');
+// A genuinely overflowing projected coordinate is an explicit fatal API
+// failure. Keep it last: production terminates the guest on this trap.
+call('glide3_grGlideInit');call('grSstWinOpen',[0,7,0,0,0,2,1]);
+for(const [param,offset] of [[1,0],[2,8],[3,12],[0x40,36]]) call('grVertexLayout',[param,offset,1]);
+call('grCoordinateSpace',[1]);
+call('grColorCombine',[3,8,0,1,0]);call('grTexCombine',[0,1,0,1,0,0,0]);
+const invalidLive=clipVertex(0,0,0,1);invalidLive.writeFloatLE(NaN,36);put(clip,invalidLive);
+assert.throws(()=>a.test_glide3_vertex(wa(0x418000),clip),WebAssembly.RuntimeError,'consumed NaN ST remains fatal');
+const extreme=clipVertex(0,0,0,minimumW);extreme.writeFloatLE(1,36);put(clip,extreme);
+const pendingBefore=view.getUint32(regions.BASE.GLIDE_STATE+20,true);
+assert.throws(()=>call('grDrawPoint',[clip]),WebAssembly.RuntimeError,'unrepresentable ST fails explicitly');
+assert.strictEqual(view.getUint32(regions.BASE.GLIDE_STATE+20,true),pendingBefore,'invalid projection publishes no command');
 console.log('PASS Glide3 native ABI, layouts, topology, sparse memory, textures, gamma and context');

@@ -2,7 +2,8 @@
 
 Status: Glide 2 and a bounded Glide 3 implementation, 2026-09-29. Both
 use the existing shared render worker with WebGL or native WAT software
-rendering. The virtual board has one TMU with 4 MiB texture memory.
+rendering. Glide 2 exposes one TMU; Glide 3 exposes two independent TMUs,
+each with 4 MiB texture memory.
 [NFS III's original Glide 2 route](re-notes/need-for-speed-glide.md) has
 race/HUD acceptance on both backends. Diablo II's original `d2glide.dll`
 now has Glide 3 WebGL and native software acceptance through character
@@ -111,9 +112,9 @@ Implemented Glide 3 behavior includes:
 - One board and one open context, with context selection/close validation.
   Queries require the SDK's exact output byte length and return that length
   on success; unsupported queries or incorrect lengths return zero without
-  modifying output. Reported limits include 256-pixel textures, one TMU and
-  4 MiB texture memory. Opaque state/layout save and restore agree with their
-  queried sizes. Discovery, strings, resolution enumeration and viewport
+  modifying output. Reported limits include 256-pixel textures, two TMUs and
+  4 MiB texture memory per TMU. Opaque state save/restore uses 464 bytes,
+  including both texture units; layout save/restore uses its queried size. Discovery, strings, resolution enumeration and viewport
   state are implemented without advertising unavailable extensions.
 - The changed two-argument texture-table download, one-argument context
   close and nine-argument LFB write conventions preserve stdcall cleanup.
@@ -127,7 +128,7 @@ Implemented Glide 3 behavior includes:
   mechanism. Fog-table helpers preserve the SDK's float rounding and the
   float-return helper's x87 ABI.
 
-The extension state is heap allocated through an unused shared header word;
+The 8192-byte extension state is heap allocated through an unused shared header word;
 it does not enlarge the tightly packed static Glide region. API version,
 layout, context and diagnostic state remain shared across guest threads.
 The existing process render worker hosts Glide alongside D3D and GL, with
@@ -136,15 +137,76 @@ use the existing bitmap presentation route; software frames use owned pixel
 copies. Glide 3 did not introduce a second renderer worker or a main-thread
 rasterization path.
 
-Explicit limits remain: clip-coordinate input is rejected; storing viewport
-and depth-range state does not imply clip-space drawing support. Independent
-fog-coordinate attributes, actual second-TMU state/sampling and optional
-`grEnable` rendering features are not implemented. Generic vertex layouts
-may declare ST1/Q1, which normalize into the canonical vertex tail, but this
-does not enable a second TMU or change the advertised count. No extensions
+`GR_CLIP_COORDS` accepts homogeneous XYZW. Native lowering clips points,
+lines and polygons against the six homogeneous view-volume planes before
+perspective division; a positive-W guard excludes the eye singularity.
+Intersections interpolate unprojected attributes, polygons preserve winding
+and triangulate as fans, and continued strips retain unprojected vertices.
+Projection applies the SDK's positive viewport-Y scale and configured depth
+range. Float colors scale from normalized values to bytes; packed ARGB keeps
+its byte values. Each TMU's ST uses its own nominal texture aspect scale,
+and Q defaults to reciprocal W when that layout attribute is disabled.
+Non-finite clip attributes consumed by the pipeline fail explicitly before
+clipping. Enabled ST/Q layout fields unused by the active framebuffer/TMU
+combiners are not fetched, matching Glide's parameter setup list.
+Analytical native ABI tests cover plane rejection, eye crossing, near-plane
+intersections, interpolated line colors and independent ST/Q projection;
+remote runtime and original-game acceptance are required for this extension.
+
+Explicit limits remain: independent fog-coordinate attributes and optional `grEnable` rendering features remain
+unimplemented. Both TMUs now retain independent texture RAM, source, sampler,
+combine and ST/Q inputs; TMU1 feeds TMU0, which feeds the framebuffer combiner.
+Detail/LOD combine factors and split odd/even mip chains still fail explicitly. No extensions
 are advertised. Unsupported meaningful operations fail explicitly; this is
 not a broad set of success-returning stubs. Full hardware-specific coverage,
 dithering, quantization and multi-context behavior remain beyond this subset.
+
+### Canonical two-TMU transport
+
+All integers and floats are little endian. The outer ordered batch format
+remains `[opcode:u32, payloadBytes:u32, payload]`. Glide 2 draw packets retain
+their 256-byte state header and 60-byte vertices. Glide 3 uses these additional
+records; neither backend infers an API generation from texture contents.
+
+| Opcode | Payload |
+| --- | --- |
+| 15 | Triangle vertices: state256 + TMU1 state80 + vertices60 |
+| 16 | Line vertices: state256 + TMU1 state80 + vertices60 |
+| 17 | Point vertices: state256 + TMU1 state80 + vertices60 |
+| 18 | TMU selector `u32` (0 or 1), then the existing opcode6 upload payload |
+| 19 | Empty payload; finish previously submitted backend work without readback |
+
+`grGet(GR_FIFO_FULLNESS, 8, ...)` follows the pinned h3 SDK: it writes
+`status & 0x1f` (free PCI FIFO entries) followed by the status register.
+The virtual implementation drains queued records, waits for opcode19, then
+reports 31 free entries and clear busy bits, with the virtual retrace bit.
+Software raster calls are synchronous; WebGL executes `gl.finish()` on the
+render worker. This conservative query can stall the GPU; it does not copy
+pixels or return an idle status while GPU work is still pending. Invalid
+query lengths return zero without draining or modifying caller storage.
+
+`grFinish` submits pending records and uses the same completion barrier,
+including when its queue is empty. `grFlush` only submits pending records;
+it does not wait for GPU completion.
+
+The 20-word TMU1 snapshot copies base-state words32–43 into words0–11
+(address, small/large LOD, aspect, format, even/odd mask, S/T clamp,
+min/mag filter, mip mode, float LOD bias), words46–51 into words12–17
+(RGB function/factor, alpha function/factor, RGB/alpha inversion), and
+word60 into word18 (LOD blending). Word19 is reserved zero. Clear and swap
+remain opcodes3/4 with their existing state256 snapshots. Upload headers
+following the selector retain seven words: address, smallLOD, largeLOD,
+aspect, format, evenOdd, byteLength, followed by the texture bytes.
+
+Canonical vertices retain TMU0 S/W, T/W, Q at float indices9–11 and TMU1
+at indices12–14. Each unit divides its own interpolated S/T by its own
+interpolated Q. The software path uses two FLOAT4 texture attributes and
+projected PS1.4 texture loads; the WebGL path uses separate vec3 varyings.
+Neither performs the division at the vertices. A pass-through TMU need not
+have a local texture bound; only the combine equation's actual local inputs
+are sampled. The shared pixel fixture checks independent addresses and
+coordinates, constant and varying unequal Q, upload isolation, saturation,
+and pass-through without a local source in native software and WebGL1/2.
 
 The full build, Glide 2/3 ABI tests, versioned loader tests and shared-worker
 regressions passed remotely. The metrics and independent software clear-mask
@@ -222,8 +284,8 @@ only when supported by a known DLL export table.
 
 Expose a documented virtual board profile rather than claiming every Voodoo
 capability. Texture memory size, TMU count, resolutions, extensions and query
-results must agree with implemented behavior. A two-TMU profile is an eventual
-goal; advertise only the supported profile at each milestone. Do not claim
+results must agree with implemented behavior. Advertise only the supported
+profile at each milestone. Do not claim
 unsupported rendering operations succeeded. Preserve the repository's
 fail-fast diagnostics for missing operations, while implementing specified
 API error returns for invalid calls.

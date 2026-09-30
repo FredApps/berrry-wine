@@ -2,6 +2,7 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const { Device } = require('../lib/glide-software');
+const glideTwoTMU = require('./glide-two-tmu-fixture');
 const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ fonts: 'none' });
@@ -294,6 +295,9 @@ const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
     assert.deepStrictEqual(rawPixel(pixel), [51, 34, 17, 77], 'depth-only clear preserves all color channels');
     assert(Math.abs(depthAt(pixel) - 32768 / 65535) < 1e-6, 'depth writes survive both color masks disabled');
     assert.strictEqual(depthAt(0), 1, 'clipped depth clear preserves outside depth');
+    const rgbaRead = () => { const [b, g, r, a] = read(); return [r, g, b, a]; };
+    assert.deepStrictEqual(glideTwoTMU(device, rgbaRead, 16), glideTwoTMU.expected,
+      'native software independent TMUs, liveness and chroma');
     console.log(
       'PASS Glide WAT software color, Z/W depth, table fog, palette, chroma, line/point, swap and LFB'
     );
