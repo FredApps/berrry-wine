@@ -12,7 +12,7 @@ Paths below are relative to `test/binaries/candidates/`.
 | Priority | Launch executable | Original Glide consumer | Static import count | Preparation |
 | --- | --- | --- | ---: | --- |
 | 1 | `diablo-2-demo-installer/installed-extracted/diablo ii.exe` | Same directory, `d2glide.dll` | 36 | Existing `diablo2_demo` app mounts installed data and renderer; override renderer selection only in the test launch. |
-| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Two TMUs, clip coordinates, original EAX dependency, complete DirectMusic vtable and unused texture-attribute lowering corrected. Browser gameplay validation remains pending. |
+| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Original Glide renderer on WebGL reaches the restaurant mission and sustains a 422.9-second route without renderer errors. A separate 210-second replay verifies numpad walking, turning and running with zero GPU readbacks. NaN asset UVs use documented deterministic zero coordinates. Full mission completion remains untested. |
 | 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Startup, keyboard input and fullscreen child layout corrected. World movement is visible; an alternating empty UI swap still restores the old menu. |
 
 The counts come from actual import descriptors/thunks, re-read with
@@ -21,7 +21,8 @@ of arbitrary strings, wrapper exports, or required calls observed at runtime.
 Hitman and Hype have complete original archives and `provenance.json` files
 in their respective fixture directories. Explicit entries are now
 `diablo2_glide_demo`, `hitman_glide_demo`, and `hype_glide_demo`; the latter
-two are labeled experimental pending gameplay validation.
+two remain labeled experimental: Hitman has bounded WebGL gameplay and
+movement acceptance; Hype still has an alternating UI-swap presentation blocker.
 
 Remote CLI startup smoke on 2026-09-29 established blockers before gameplay:
 Hitman initially stopped at `XML_ParserCreate`; Hype stopped at `DebugBreak`. Static
@@ -273,8 +274,13 @@ Glide wrapper or Voodoo driver binary. Each root also has a schema-v1
 `.wine-assembly-browser.json` consumed by its registered app; it enumerates
 all 75/59 files with explicit VFS paths. Diablo II's Glide entry shares its
 existing file manifest and changes only the two Render registry values to 3.
-These Hitman/Hype layouts are launch-prepared, **not proven playable**;
-the next step is an emulator launch with import/file tracing on the remote box.
+Both layouts have now launched their original Glide renderers on the remote
+host. Hitman has a seven-minute WebGL browser regression that reaches and
+sustains world rendering;
+Hype reaches moving world geometry but retains the UI-swap blocker described
+above. Neither result establishes complete game compatibility. See
+[Hitman notes](re-notes/hitman-demo.md) for screenshots, input limits and the
+explicit NaN-texture compatibility policy.
 
 Fresh local hashes from this audit:
 

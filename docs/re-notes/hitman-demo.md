@@ -1,7 +1,8 @@
 # Hitman: Codename 47 demo — original Glide 3 renderer
 
 The registered `hitman_glide_demo` runs the installer-derived `launch-game/Hitman.Exe`
-with the original `Render3DFX.dll`. Gameplay acceptance is still pending.
+with the original `Render3DFX.dll`. The WebGL route reaches the original
+restaurant mission; the current regression is described below.
 
 The renderer originally stopped with “Unable to run Glide on this card.” Static
 inspection showed a real capability requirement: `Render3DFX.dll` queries
@@ -12,7 +13,7 @@ clipping. Remote native ABI and software pixel tests passed, and the original
 renderer progressed beyond that capability failure. This does not establish
 complete game compatibility.
 
-## Next startup failure: original EAX dependency
+## Original EAX dependency
 
 The subsequent CLI run trapped as `UNIMPLEMENTED API: KERNEL32.#00005` with
 return address `0x00db82f8`. That fallback label misidentifies the missing DLL.
@@ -39,7 +40,7 @@ node tools/disasm_fn.js test/binaries/candidates/hitman-codename-47-demo/launch-
 The pre-EAX-fix log is retained on the reserved test machine under
 `~/nfs-movsd/build/hitman-two-tmu-startup.log`. It demonstrates progression
 past Glide initialization, then an audio import failure; it contains no
-successful gameplay screenshot. Rerun acceptance after the DLL seed change.
+successful gameplay screenshot. Later browser runs pass this dependency.
 
 ## After EAX loads: incomplete DirectMusic interface
 
@@ -52,7 +53,7 @@ Sound's preferred `0x0ff315c3` calls `CoCreateInstance` for
 `IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}`. Creation succeeds.
 At `0x0ff315f9` (runtime `0x00ebd5f9`) it calls vtable slot 3,
 `IDirectMusic::EnumPort(this, 0, caps)`, with `caps.dwSize = 0x134`.
-The current availability-probe implementation allocates only the three
+The earlier availability-probe implementation allocated only the three
 IUnknown slots (`src/09a7-handlers-dispatch.wat`, `init_com_vtable(3076,3)`).
 Reading slot 3 therefore obtains unrelated data (`0x20`) instead of a method.
 
@@ -92,9 +93,10 @@ projection initially multiplied those unused values by texture scale and
 tripped its finite-range check (`glide3_project_product`). The native setup
 now fetches texture attributes according to framebuffer/TMU consumption,
 leaving unused enabled fields unread. Regressions distinguish inactive NaN
-or huge values from active non-finite/overflowing values, which remain fatal.
+or huge values from consumed invalid values. The later NaN S/T policy below
+is the sole compatibility exception.
 Remote native ABI and software/WebGL pixel regressions pass. The browser then
-reached texture uploads; gameplay acceptance remains pending.
+reached texture uploads.
 
 ## Aligned texture-memory limit
 
@@ -139,4 +141,126 @@ the guest's virtual cursor and uses that cursor for button events. This
 preserves recentering without new game-specific input code. Real acceptance
 must acquire capture first, then move the guest-drawn cursor and click; an
 absolute `drawableClick` alone is not a valid input route for this engine.
-Gameplay acceptance remains pending.
+
+
+Trusted-host verification (`/home/vg/glide-validation`) passes the three
+existing relative-input/capture tests. With capture active, normal movement
+and clicks advance through Start Game, the restaurant mission loading splash,
+briefing, objectives, target, location map and equipment selection. Artifacts:
+`build/hitman-relative-world/006-drawable.png` (loading),
+`build/hitman-relative-world/013-drawable.png` (briefing), and
+`build/hitman-briefing-start/037-drawable.png` (equipment). These are observed
+original game UI screens; later captures establish in-world gameplay.
+The guest-drawn cursor starts at the top-left, independently of the Win32
+virtual cursor at `(400,300)`, and moves at roughly 0.4 drawable pixels per
+relative guest unit. The temporary route captures at center, sends
+`[1230,1190]` relative units to Start, then `[380,-130]` to the briefing's
+next arrow. Buttons use the virtual cursor and no longer add displacement.
+
+
+The subsequent `build/hitman-gameplay-final/025-drawable.png` reaches the
+actual third-person restaurant mission: Agent 47, textured streets/buildings,
+sky/fog and health/holster HUD are visible. An ArrowUp hold was sent at 180 s;
+before/after captures show character animation but do not establish translation.
+At approximately 301 s the guest traps in original Render3DFX runtime
+`0x00ec77d4`, preferred `0x0fba57d4`: an indirect jump through IAT
+`0x0fbb9230`, `_grDrawVertexArrayContiguous@16`. The browser worker discarded
+the native exception stack, so the exact failure branch is not retained in
+that run. A served-only diagnostic replay then captured native stack, ABI arguments
+and bounded raw/state data before worker teardown.
+
+The diagnostic replay reproduces the failure and resolves the native stack
+to `glide_fail → glide3_vertex → glide3_array →
+handle_grDrawVertexArrayContiguous`. Its retained artifact is
+`build/hitman-trap.json`: polygon mode 3, three vertices, stride 60, buffer
+`0x00ee39b0`. All three original guest vertices already contain quiet NaNs
+(`0x7fc00000`) in ST0 S/T; positions, homogeneous W, colors, Q and ST1 are
+finite. The active framebuffer/TMU combination samples texture 0, so treating
+these coordinates as unused would be incorrect.
+
+The original producer is preferred `Render3DFX!0x0fb91bc0`, called by
+`0x0fb93ad2` before the draw at `0x0fb93b06`. It adds texture-object offsets
+`+0x2c/+0x30` to indexed source UV pairs using simple FLD/FADD/FSTP operations,
+then writes Q=1. Source globals at preferred `0x0fbc194c`, `0x0fbc1950` and
+`0x0fbc195c` identify the source-UV object, index records and texture object.
+The subsequent capture below identifies the original source values.
+
+
+The next capture exonerates the CPU arithmetic and texture-offset animation.
+Both texture offsets are finite `0.001953125`; the indexed source UV pairs
+already contain NaNs. More decisively, the captured 2,048-byte neighborhood
+matches the original unmodified `C1_HongKong/C1_3.zip` member `Pack.SPK`
+byte-for-byte at offset `0x14defa`. The UV array starts 512 bytes later, at
+`0x14e0fa`, and contains six consecutive quiet-NaN floats. The asset itself
+ships these values. `C1_3_Laptop.zip:Pack.SPK` contains additional NaN runs.
+The prepared NaN-store CPU probe was therefore never built or run.
+
+The original Glide setup code forwards floating-point texture coordinates
+without a finite-value API check. The [Voodoo3 specification](https://ftp.netbsd.org/pub/NetBSD/misc/macallan/voodoo3_spec.pdf),
+sections 8.6 and 8.60–8.64, describes IEEE floating-point S/T inputs and
+internal fixed-point conversion but does not define NaN texel selection.
+[MAME's Voodoo register conversion](https://github.com/mamedev/mame/blob/master/src/devices/video/voodoo.cpp)
+saturates exponent-255 inputs; its Voodoo2 setup path uses a different host
+conversion. Neither justifies claiming a particular replacement texel is
+hardware-exact. The chosen policy preserves geometry and valid coordinates.
+
+The compatibility policy now replaces each consumed NaN S or T component
+with zero before clipping/projection. Both TMUs and both coordinate modes
+use the same conversion. Finite UV components, geometry, color, and Q are
+unchanged; existing infinity and non-UV validation remains in place. This
+is deterministic handling of unspecified texture sampling, not a claim of
+hardware-exact H3 output. ABI regression draws a complete textured triangle
+with mixed NaN/finite UVs and checks every emitted vertex. Remote focused
+ABI checks pass, including NaN position/W/Q/color rejection and infinite ST
+rejection.
+
+## Bounded WebGL gameplay regression
+
+The patched canonical build completed the same normal pointer-lock menu and
+briefing route for 422.9 seconds on the trusted remote host, with default CPU
+settings and no diagnostic WASM override. `build/hitman-nan-fixed/` retains
+screenshots and `states.jsonl`; `026-drawable.png` shows the restaurant mission,
+Agent 47, textured buildings/street/sky and health/holster HUD. The final
+`078-drawable.png` remains in the live world with zero renderer errors.
+The original route is unchanged through 320 seconds, beyond the earlier
+approximately 301-second failure. This run did not count NaN-coordinate draws,
+so elapsed survival is same-route regression evidence, not proof of a specific
+NaN-bearing draw executing. The ABI fixture supplies direct coverage of that
+case.
+
+ArrowUp, W and D were delivered through normal browser input. Before/after
+screenshots show character animation and advancing NPCs; they do not establish
+player translation. This is bounded sustained world-rendering acceptance, not
+complete mission/game compatibility, software-renderer acceptance, or a
+performance result. Three existing relative-input/capture regressions and the
+Glide 3 ABI regression also pass remotely. The deterministic NaN texel policy
+remains an explicit approximation.
+
+The shipped `HitmanKeyboardLayout_WASD.pdf` identifies W as Walk Forward
+and D as Turn Right. However, `HitmanKeyboardLayout_Numpad.pdf` also describes
+a default layout: Numpad5 walks forward, Numpad6 turns right, and Numpad8 runs.
+The fixture's empty `hitman.cfg` and lack of a binding override in `Hitman.ini`
+do not establish which preset is active. Probe logs confirm the WASD keydown,
+1.8/1.2-second hold, and keyup completed, but do not prove the active guest
+bindings or keyboard-state consumption.
+
+The separate `build/hitman-numpad-final/` replay resolves that input question.
+Using the same original menu/briefing route, it holds Numpad5 for eight seconds
+at 150 s, Numpad6 for four seconds at 170 s, and Numpad8 for six seconds at 185 s.
+Input is delivered through browser CDP key events with physical numpad codes,
+location 3 and VK 101/102/104; the ordinary browser input log records these
+key messages. No guest memory or bindings are modified. This avoids a test
+harness ambiguity where numlock-off synthetic keys can report Clear or arrow
+virtual keys instead of the intended numpad keys.
+
+Visual comparison establishes movement: `026-drawable.png` is the starting
+street view, `028-drawable.png` is against the building after walking,
+`032-drawable.png` faces the opposite street after turning, and
+`034-drawable.png` reaches the opposite building after running. The mission
+notification also appears. The active setup therefore accepts the shipped
+numpad layout; the earlier WASD result was not evidence of a keyboard failure.
+The replay completes at 210.5 s, still running, with zero renderer errors,
+zero LFB reads/writes, and zero GPU readbacks. These screenshots were opened
+in Preview. This establishes bounded walking/turning/running acceptance on
+the WebGL backend, while full mission completion and software gameplay remain
+untested.

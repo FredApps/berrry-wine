@@ -263,11 +263,11 @@ Wrapper `0x467180` decodes its second argument as device index `/16` and
 surface index `%16`, clears the surface's acquired flag at `+0x64`, and
 calls Glide swap when `[0x77728c] == 0`. Acquisition `0x467070` sets that
 global from whether device field `+0x38` is nonzero. No renderer suppression
-is justified by this evidence. The next diagnostic should record both
-surface IDs, their 100-byte descriptors, the surface records at ESI,
-UI-list head `0x7136e0`, mode byte `0x71c620`, and flag `0x5d9680`; the
-unresolved question is why this device/surface configuration requests a
-second flip without intervening color drawing.
+is justified by this evidence. The follow-up capture records world surface
+ID 0 and UI surface ID 1 on device 0, an empty UI-list head at `0x7136e0`,
+mode byte 9 at `0x71c620`, and zero flags at `0x5d9680/84`. The unresolved
+question is why this device/surface configuration requests a second flip
+without intervening color drawing.
 
 Device field `+0x38` is not populated by a Glide capability query. Constructor
 `0x466810` allocates a 0x10c-byte device and copies the caller's first
@@ -294,3 +294,21 @@ swaps. Browser compositing may therefore repeatedly sample the second UI
 presentation when our two swaps happen close together. Correct pacing
 would preserve both requested flips; it is not evidence that the retained
 menu pixels should be discarded or that pacing alone fixes gameplay.
+
+Buffer initialization does not explain the alternation either. All four
+original `grSstWinOpen` call sites request two color buffers and one auxiliary
+buffer. The executable imports no `grRenderBuffer`, `grGlideGetState`, or
+`grGlideSetState`; it keeps the default back-buffer target. The SDK's initial
+physical buffer numbering differs from ours, but the logical front/back
+rotation is equivalent. Initial parity cannot account for menu pixels retained
+after the later LFB uploads.
+
+An isolated 120-second default-CPU replay then tested an interval-1 wait
+before each swap using the existing virtual-vblank scheduler. It preserved
+every requested flip and left canonical WASM and production source unchanged.
+`build/hype-vsync-default/frame-capture.json` still alternates four finite
+world frames (403–406 triangles) with the same old menu. Device and main-thread
+present counts agree; the run ends without errors. World visibility between
+actual publications was about 32–38 ms, versus 36–47 ms in the unpaced sample.
+These are diagnostic observations, not controlled performance measurements.
+Pacing alone did not fix stable presentation and was not promoted to production.
