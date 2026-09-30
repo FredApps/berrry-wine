@@ -3462,6 +3462,14 @@
             (local.set $draw_x (i32.shr_s (i32.add
               (i32.load (local.get $rect)) (i32.load offset=8 (local.get $rect)))
               (i32.const 1)))))))
+    ;; USER draws each line through ExtTextOut with the DC's own TA_UPDATECP,
+    ;; so on such a DC the line starts at the current position (and moves it),
+    ;; and the rectangle only clips. Civilization II draws every city label
+    ;; that way -- MoveTo the label, DrawText with the region being repainted
+    ;; -- and anchoring on rect.left put the label at the left edge of that
+    ;; region instead: "RoRo" beside a unit that had just moved.
+    (local.set $draw_align (i32.or (local.get $draw_align)
+      (i32.and (local.get $saved_align) (i32.const 1))))
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
       (local.get $draw_align) (i32.const 0)))
     (local.set $device_y (local.get $top_device))
