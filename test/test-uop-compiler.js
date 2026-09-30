@@ -948,6 +948,52 @@ function movsdCodeCase(inst,a,nextCode){
   return errs;
 }
 
+// --uop-trace-heads=MIN,MAX (set_uop_trace_limits): a trace is formed only
+// between the two bounds, counted in x86 instructions. The head is K
+// straight-line `add ebx,edx` and a jmp -- no branch before the jmp, so a
+// trace cut at MAX has nothing to trim back to and declines whole (Caesar
+// III's unrolled blits, docs/uop-tier-design.md §19). MAX is clamped to
+// $UC_MAX_LOOP (400): asking for more silently means 400. Run under
+// --branch-clock, as the shipping tier is: the instruction clock also refuses
+// any one block over 200 instructions on a page (decline `long-block`).
+function traceLimitsCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const errs = [];
+  // The jmp is the trace's one exit (a ret is not: it has no in-region call
+  // to return to, so the trim would drop it and everything before it).
+  const straight = (k) => {
+    const at = nextCode();
+    mem.set(asm([...new Array(k).fill([0x01, 0xD3]), JMP('x'), L('x'), 0xC3]), g2w(at));
+    return at;
+  };
+  const tries = [
+    // [min, max, K, compiles?]
+    [8, 160, 200, false],   // the default cap cuts the run with no branch to keep
+    [8, 320, 200, true],
+    [8, 1000, 390, true],   // clamped to 400, still room
+    [8, 1000, 450, false],  // clamped to 400: 450 does not fit
+    [8, 160, 5, false],     // under the minimum
+    [4, 160, 5, true],
+  ];
+  e.set_uop(1);
+  e.set_uop_trace_heads(1);
+  e.set_branch_clock(1);
+  try {
+    for (const [mn, mx, k, want] of tries) {
+      e.set_uop_trace_limits(mn, mx);
+      const pc = e.uop_compile(straight(k));
+      if (!!pc !== want) errs.push(`limits ${mn},${mx} K=${k}: ${pc ? 'compiled' : 'declined'}, want ${want ? 'compiled' : 'declined'}`);
+    }
+  } finally {
+    e.set_uop_trace_limits(8, 160);
+    e.set_branch_clock(0);
+    e.set_uop_trace_heads(0);
+    e.set_uop(0);
+  }
+  if (!errs.length) console.log('trace-limits       ok');
+  return errs;
+}
+
 function windowCase(inst, a, nextCode) {
   const { e, mem, g2w } = inst;
   const P = nextCode(), Lc = nextCode();
@@ -1404,6 +1450,10 @@ async function main() {
       if(errs.length)fails++;
       console.log(`${name.padEnd(18)} ${errs.length?'FAIL '+errs.join(', '):'ok'}`);
     }
+  }
+  if (!only || only === 'trace-limits') {
+    const errs = traceLimitsCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`trace-limits       FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'window-keep') {
     const errs = windowCase(inst, a, () => a.code + 0x1000 * slot++);
