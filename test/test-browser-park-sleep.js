@@ -156,6 +156,30 @@ assert.strictEqual(WineAssembly.GUEST_TICK_POLL_STRIDE, 4,
 
 // ------------------------------------------------------------ sleep deadline
 
+// The Worker main thread shares the same input/resume wake path, while both
+// its own WM_TIMER and a helper's wait deadline bound its sleep.
+{
+  const wine = new WineAssembly();
+  wine.running = true;
+  wine._schedArms = new Set(['p']);
+  wine.threadManager = {
+    hasActiveThreads: () => true,
+    freeRunParkBound: () => 17,
+  };
+  wine._workerParkMain(40, nowMs);
+  assert.strictEqual(wine._workerMsgParkUntil, nowMs + 17);
+  wine._workerParkMain(7, nowMs);
+  assert.strictEqual(wine._workerMsgParkUntil, nowMs + 7,
+    'an earlier main-thread timer takes precedence over a helper wait');
+  let ran = 0;
+  wine._scheduleStep(() => ran++, 17);
+  wine.threadManager.onRunnable();
+  assert.strictEqual(pendingTimers().length, 0,
+    'creating or resuming a helper cancels the Worker main park');
+  wine._stepListenPort.onmessage();
+  assert.strictEqual(ran, 1);
+}
+
 function parkedHost(options = {}) {
   const wine = new WineAssembly();
   wine.running = true;

@@ -52,6 +52,94 @@ forward custom screen or input settings.
 | Collapse! Crunch | Default 640×480 is rejected. `--screen=800x600` renders the game's loading screen and starts guest threads. Initial 35-second run reaches batch 310 without an API trap (`collapse-800.png`). A longer run then reports a guest call through NULL at batch 317, ends after 41.836 seconds, and captures a black client area (`collapse-long.png`). Scheduled input starts at batch 500 and never fires. No gameplay confirmed. |
 | Alien Shooter | Main menu verified with native WebGL and software rendering after implementing DirectSoundCreate8 and fixing the backbuffer owner's device identity. Mission 01, character/camera movement and aiming verified in a fresh software CLI run with `--tick-ms-per-batch=5`. Combat and browser gameplay remain unverified. See [Alien Shooter notes](alien-shooter.md). |
 
+Collapse performance follow-up: a real-GPU, headful browser with Threads enabled
+presented 516 frames in 22.616 seconds on an active Crunch board (about 22.8/s),
+but its final rolling rate fell to 1.08/s. Page cadence stayed at 60 FPS, with
+zero long tasks. This establishes uneven guest presentation, not its cause;
+host load was extreme during the investigation (one-minute load reached 196).
+The static menu also legitimately presents rarely. Do not interpret the HUD's
+thread phase share as CPU utilization. Evidence: `/private/tmp/reflexive-probe/`
+`collapse-fps2.log`, `collapse-fps-board2.png`, `collapse-fps-end2.png`.
+
+CPU/wait follow-up (2026-09-29): `collapse-cpu-game.log` and the raw profiles in
+`/private/tmp/reflexive-probe/collapse-cpu-game/` cover an actual Crunch board
+with browser Workers, hardware GPU and RPC census. The first `collapse-cpu`
+run covered loading/menu instead and must not be called gameplay. Gameplay
+route at the profiler's default viewport: `click:147:277@1,click:190:277@8`
+after 20 seconds warmup; verify the final screenshot because startup varies.
+
+Across the final 17.998 seconds of wait snapshots, the main Worker completed
+116,880 slices (6,494/s) while every snapshot remained at GetMessage return
+`0x42a54e`, yield 7, usually one retired block per slice. Its 20-second V8
+profile attributes 2.220s to postMessage and 3.392s to handleMessage/send
+wrappers, versus only 81ms directly in exported `run`. The page additionally
+attributes 1.485s to worker.onmessage and 846ms to postMessage. These are
+sampled durations under load, not OS thread CPU utilization. This is concrete
+empty-slice/message overhead; inspect `host.js` `_workerParkMain`, the yield-7
+branch and `ThreadManager.freeRunParkBound` before tuning the renderer.
+
+The draw/update Worker has 10.861s sampled non-idle time, including 1.864s
+(17.2%) in native GDI BitBlt, plus interpreter work and 564ms in synchronous
+host-response waits. Function 10693 is the blitter in the captured artifact;
+current combined.wat indices have shifted, so resolve against the captured
+runtime rather than blindly naming the current index. Two auxiliary workers
+spend 16.116s and 13.240s in waitStepEpoch/Atomics.wait: these are short sleeps,
+not CPU burn. The profiler's generic "busy" total includes those waits.
+
+No permanent block was observed. In the final snapshot interval the draw
+thread advances 605 slices and issues 158 surface uploads; its sampled event
+wait deadlines are 43–46ms. Background slot 4 wakes six times from a 3000ms
+event wait. Draw-thread critical-section parks increase by only two, with no
+bad leaves; the large cumulative count is mostly earlier contention. Loader
+slot 3 has exited normally. Main-worker messages, multimedia SetEvent calls,
+audio submissions and drawing continue. Host load 41 during this run prevents
+claiming a clean throughput benchmark or a measured benefit from a fix.
+
+The subsequent gameplay census identifies the expensive BitBlt shape:
+50 declines in ten seconds, all for complex clips (reason 1), covering
+24,000,000 pixels—exactly 50 full 800×600 transfers. The decline counters live
+in shared memory; do not sum their identical readings across Workers.
+Collapse's sole BitBlt call at `0x40a3e3` uses SRCCOPY, and its DIB constructor
+at `0x403e3d` creates a top-down 32bpp bitmap. Evidence:
+`/private/tmp/reflexive-probe/collapse-ab/before2/result.json`.
+
+The generic raster loop now copies 32bpp SRCCOPY pixels directly after its
+existing visibility and bounds checks, avoiding destination reads and repeated
+color/ROP conversion. Other formats and ROPs retain their prior paths;
+overlap traversal and reserved-byte clearing are unchanged. The existing
+BitBlt widening regression includes 24 independent byte-oracle cases for clip
+holes, source/destination bounds, row orientation, padding and overlap;
+all 12 checks plus the 10 decline checks pass. An isolated, byte-identical
+799×599 overlapping-copy benchmark measured mean process CPU of 559.6ms
+before and 200.0ms after for 20 copies (64.3% reduction across two A/B/B/A
+cycles). That synthetic result is not a gameplay FPS claim. Reproduce with
+`node /private/tmp/reflexive-probe/bitblt-bench.js`; raw results are in
+`/private/tmp/reflexive-probe/bitblt-bench.json`.
+
+The scheduler fix makes `freeRunParkBound` recognize unsatisfied helper waits
+and their deadlines instead of treating them as runnable. Real browser windows
+using identical WASM and otherwise frozen host scripts measured 4,823–4,912
+main slices/second before versus 43–46 after (about 99% fewer). Presents stayed
+near 9–11/second. Worker scheduler tests cover finite/infinite waits, timeout
+expiry, consuming auto-reset signals exactly once, immediate signaled-worker
+dispatch, runnable siblings and serial mode; all 51 checks pass, along with
+existing browser parking/wakeup and ThreadManager tests.
+
+Both fixes together reached and advanced the Crunch board in two further
+windows (43–54 main slices/second, 8.5–16.9 presents/second). These runs were
+under changing heavy host load and the raster candidate also uses a newer
+shared source snapshot than the original baseline, so this is functional
+acceptance, not a controlled whole-game FPS gain. Raw windows, process CPU
+counters and screenshots are in `/private/tmp/reflexive-probe/collapse-ab/`;
+`summary.json` records the rates. The independent raster microbenchmark is
+the matched before/after evidence for the pixel-copy optimization.
+
+Build validation: the full build passed the preceding ABI, API, layout and
+browser cache/signature gates, then stopped at unrelated stale generated
+toy-VM browser bundles. Those files were left to their owner. The canonical
+WAT compiler is run separately to refresh native and compatibility artifacts;
+this does not turn the failed full-build check into a pass.
+
 The runner warns that shell32.dll and ole32.dll are missing locally. Do not
 confuse those environment warnings with the concrete blockers above.
 Use `--no-close` for these probes; the runner otherwise injects WM_CLOSE on

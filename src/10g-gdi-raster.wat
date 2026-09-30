@@ -5605,6 +5605,7 @@
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32) (local $fast i32)
     (local $source_background i32) (local $mono_key i32)
     (local $source_index i32) (local $dest_index i32)
+    (local $copy32 i32) (local $dp i32) (local $sp i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
           (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0))))
       (then (return (i32.const 0))))
@@ -5629,6 +5630,15 @@
           (i32.and (i32.eq (local.get $dy) (local.get $sy)) (i32.gt_s (local.get $dx) (local.get $sx)))))
       (then (local.set $step (i32.const -1)) (local.set $start (i32.const 1))))
     (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
+    ;; Complex clips and overlapping surfaces still use this traversal. A
+    ;; 32-bit SRCCOPY needs neither a destination read nor RGB conversion:
+    ;; keep those pixels in their stored BGR order, clearing the reserved byte
+    ;; exactly as gdi_raster_write does. Other depths/ROPs retain the converter.
+    (local.set $copy32 (i32.and
+      (i32.eq (local.get $rop3) (i32.const 0xCC))
+      (i32.and (i32.ne (local.get $src) (i32.const 0))
+        (i32.and (i32.eq (i32.load offset=16 (local.get $src)) (i32.const 32))
+          (i32.eq (i32.load offset=16 (local.get $dst)) (i32.const 32))))))
     (if (i32.and (i32.ne (local.get $hdc) (i32.const 0))
           (call $gdi_rop3_uses_pattern (local.get $rop3)))
       (then
@@ -5670,13 +5680,23 @@
         (br_if $cols_done (i32.or (i32.lt_s (local.get $x) (i32.const 0))
           (i32.ge_s (local.get $x) (local.get $w))))
         (if (i32.and
-              (i32.ne (call $gdi_raster_pixel_ptr (local.get $dst)
+              (i32.ne (local.tee $dp (call $gdi_raster_pixel_ptr (local.get $dst)
                 (i32.add (local.get $dx) (local.get $x))
-                (i32.add (local.get $dy) (local.get $y))) (i32.const 0))
+                (i32.add (local.get $dy) (local.get $y)))) (i32.const 0))
               (call $gdi_raster_clip_visible_row (local.get $hdc) (local.get $dst)
                 (i32.add (local.get $dx) (local.get $x))
                 (i32.add (local.get $dy) (local.get $y))))
           (then
+            (if (local.get $copy32)
+              (then
+                (local.set $sp (call $gdi_raster_pixel_ptr (local.get $src)
+                  (i32.add (local.get $sx) (local.get $x))
+                  (i32.add (local.get $sy) (local.get $y))))
+                (if (local.get $sp)
+                  (then (i32.store (local.get $dp)
+                    (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))))
+                (local.set $x (i32.add (local.get $x) (local.get $step)))
+                (br $cols)))
             ;; A DDB's raster-op domain is its stored device pixels. Keep the
             ;; palette indexes intact for a self SRCINVERT instead of expanding
             ;; them to RGB and quantizing the XOR result back to the palette.

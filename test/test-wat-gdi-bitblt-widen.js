@@ -391,6 +391,72 @@ const ROPS = {
     }
   });
 
+  check('generic 32bpp SRCCOPY preserves clips, row layout, overlap and reserved bytes', () => {
+    const bytes = new Uint8Array(memory.buffer);
+    const width = 13, height = 11;
+    const clips = [[1, 1, 6, 10], [8, 2, 12, 8]];
+    const visible = (x, y) => clips.some(([l, t, r, b]) =>
+      x >= l && x < r && y >= t && y < b);
+    const cases = [
+      { dx: 0, dy: 0, sx: 0, sy: 0, w: 13, h: 11 },
+      { dx: -2, dy: -1, sx: 1, sy: 2, w: 16, h: 13 },
+      { dx: 2, dy: 1, sx: -2, sy: -1, w: 15, h: 12 },
+      { dx: 9, dy: 8, sx: 10, sy: 9, w: 8, h: 8 },
+    ];
+    for (const dstTopDown of [0, 1]) {
+      for (const srcTopDown of [0, 1]) {
+        for (const overlap of [false, true]) {
+          if (overlap && dstTopDown !== srcTopDown) continue;
+          for (const c of cases) {
+            const dst = destination(width, height);
+            const src = overlap ? dst : packedSource(width, height, 32);
+            for (const [surface, topDown] of [[dst, dstTopDown], [src, srcTopDown]]) {
+              surface.stride = width * 4 + 12;
+              surface.topDown = topDown;
+              dv.setInt32(surface.desc + 12, surface.stride, true);
+              dv.setInt32(surface.desc + 20, topDown, true);
+              // Nonzero reserved bytes and padding catch accidental byte copies
+              // or writes outside the selected pixels, which RGB-only checks miss.
+              for (let i = 0; i < surface.stride * height; i++) {
+                bytes[surface.bits + i] = (i * 37 + (i >>> 3) * 17 + 101) & 255;
+              }
+            }
+            const region = wat.test_gdi_rgn_alloc_rect(...clips[0]);
+            const second = wat.test_gdi_rgn_alloc_rect(...clips[1]);
+            assert.strictEqual(wat.test_gdi_rgn_combine(region, region, second, 2), 3);
+            wat.test_gdi_dc_clip_select(dst.hdc, region);
+            wat.test_gdi_rgn_delete(second);
+            wat.test_gdi_rgn_delete(region);
+            const expected = bytes.slice(dst.bits, dst.bits + dst.stride * height);
+            const source = bytes.slice(src.bits, src.bits + src.stride * height);
+            const at = (surface, x, y) =>
+              (surface.topDown ? y : height - 1 - y) * surface.stride + x * 4;
+            // Snapshot oracle is independent of the kernel's traversal order.
+            for (let y = 0; y < c.h; y++) {
+              for (let x = 0; x < c.w; x++) {
+                const dx = c.dx + x, dy = c.dy + y;
+                const sx = c.sx + x, sy = c.sy + y;
+                if (dx < 0 || dy < 0 || dx >= width || dy >= height ||
+                    sx < 0 || sy < 0 || sx >= width || sy >= height ||
+                    !visible(dx, dy)) continue;
+                const dp = at(dst, dx, dy), sp = at(src, sx, sy);
+                expected.set(source.subarray(sp, sp + 3), dp);
+                expected[dp + 3] = 0;
+              }
+            }
+            const before = counts();
+            assert.strictEqual(wat.test_bitblt_dcs(dst.hdc, 0, dst.desc,
+              c.dx, c.dy, c.w, c.h, src.desc, c.sx, c.sy, 0, ROPS.SRCCOPY), 1);
+            assert.deepStrictEqual(moved(before, counts()),
+              [{ i: REASON.MULTI_CLIP, delta: 1 }], 'must exercise generic traversal');
+            assert.deepStrictEqual(bytes.slice(dst.bits, dst.bits + dst.stride * height),
+              expected, JSON.stringify({ dstTopDown, srcTopDown, overlap, ...c }));
+          }
+        }
+      }
+    }
+  });
+
   // A table shorter than the depth's index space leaves high indexes to
   // $gdi_raster_palette_color's default-palette fallback, which the fast loop
   // does not reproduce -- so it must decline rather than read off the end.

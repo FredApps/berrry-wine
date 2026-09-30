@@ -116,6 +116,83 @@ function makeManager(backend, extraOpts) {
 (async () => {
   console.log('ThreadManager worker backend\n');
 
+  // A parked helper must not force the host's idle GetMessage worker to spin.
+  // Exercise real wait bookkeeping, including consuming an auto-reset event
+  // exactly once between the parking decision and dispatch.
+  {
+    const backend = makeBackend([[]]);
+    const tm = makeManager(backend);
+    let now = 1000;
+    tm._waitNow = () => now;
+    const event = tm.createEvent(false, false);
+    const wait = { yield: 1, eip: 0x401000, waitHandle: event,
+      waitTimeout: 30, waitStackBytes: 12 };
+    // Spawn normally before enabling free-run; no uncontrolled async chain.
+    tm.createThread(0x401500, 0, 0, 0);
+    await tm._spawnPendingWorkers();
+    const thread = [...tm.threads.values()][0];
+    thread.link.script = [wait, { yield: 0 }];
+    await tm.runWorkerSlices(1000);
+    tm.workerFreeRun = true;
+    assert.strictEqual(tm.freeRunParkBound(50), 30);
+    now += 17;
+    assert.strictEqual(tm.freeRunParkBound(50), 13,
+      'a blocked helper bounds parking by its remaining timeout');
+    tm.setEvent(event);
+    await Promise.resolve();
+    assert.strictEqual(tm.freeRunParkBound(50), 0,
+      'a signaled helper needs a slice immediately');
+    assert.strictEqual(tm.freeRunParkBound(50), 0,
+      'rechecking the bound retains an already consumed signal');
+    assert.strictEqual(tm.waitSingle(event, 0), 0x102,
+      'the auto-reset signal was consumed exactly once');
+    tm.workerFreeRun = false;
+    await tm.runWorkerSlices(1000);
+    assert.deepStrictEqual(thread.link.completed, [{ result: 0, waitStackBytes: 12 }]);
+
+    thread.link.script = [wait];
+    await tm.runWorkerSlices(1000);
+    tm.workerFreeRun = true;
+    now += 30;
+    assert.strictEqual(tm.freeRunParkBound(50), 0,
+      'an expired helper timeout is immediately runnable');
+    tm.workerFreeRun = false;
+    thread.link.script = [{ yield: 0 }];
+    await tm.runWorkerSlices(1000);
+    assert.strictEqual(thread.link.completed[1].result, 0x102);
+
+    thread.link.script = [{ ...wait, waitTimeout: 0xFFFFFFFF }];
+    await tm.runWorkerSlices(1000);
+    tm.workerFreeRun = true;
+    assert.strictEqual(tm.freeRunParkBound(50), 50,
+      'an infinite unsatisfied wait permits the full park bound');
+    tm._freeRunStepAt = now;
+    tm._freeRunSliceSize = 1000;
+    let offered = 0;
+    tm._freeRunDispatch = (_handle, target) => {
+      assert.strictEqual(target, thread);
+      offered++;
+      target.inFlight = true;
+    };
+    tm.setEvent(event);
+    await Promise.resolve();
+    assert.strictEqual(offered, 1,
+      'a signal dispatches its parked worker without waiting for the host timer');
+    thread.inFlight = true;
+    assert.strictEqual(tm.freeRunParkBound(50), 50,
+      'an independently running sibling does not need a host step');
+    thread.inFlight = false;
+    thread.parkedWait = null;
+    assert.strictEqual(tm.freeRunParkBound(50), 0,
+      'an idle runnable sibling still prevents parking');
+    thread.sleepUntil = now + 8;
+    assert.strictEqual(tm.freeRunParkBound(50), 8);
+    tm.serialSlices = true;
+    assert.strictEqual(tm.freeRunParkBound(50), 0,
+      'serial scheduling keeps its existing no-park behavior');
+    check(true, 'free-run host parking respects event signals, finite deadlines and runnable siblings');
+  }
+
   // I/O selection belongs to the yielding thread in both scheduling modes.
   for (const workerMode of [true, false]) {
     const { VirtualFS } = require('../lib/filesystem');
