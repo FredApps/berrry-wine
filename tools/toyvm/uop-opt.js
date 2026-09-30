@@ -2222,46 +2222,54 @@ function naiveResident(reg, opts = {}) {
 // same block reads the register itself instead, and a copy none of whose uses
 // is left is deleted. One linear walk; the build cost naiveR exists for stays.
 function forwardFullGets(p) {
-  const nDef = new Map(), nUse = new Map();
-  const bump = (m, v) => m.set(v, (m.get(v) || 0) + 1);
+  const nv = p.nv;
+  const nDef = new Int32Array(nv), nUse = new Int32Array(nv), done = new Int32Array(nv);
+  const useOne = (v) => { nUse[v]++; return v; };
+  let any = false;
   for (const b of p.blocks) {
     if (b.kind === 'dead') continue;
     for (const op of b.ops) {
-      for (const v of opUses(op)) bump(nUse, v);
+      mapUses(op, useOne);
       const d = opDef(op);
-      if (d >= 0) bump(nDef, d);
+      if (d >= 0) nDef[d]++;
+      if ((op.o === 'getr' && op.w === 32) || op.o === 'gets') any = true;
     }
-    for (const v of termUses(b.term)) bump(nUse, v);
+    for (const v of termUses(b.term)) nUse[v]++;
   }
-  const done = new Map();          // copy vreg -> uses rewritten
+  if (!any) return;
+  // Per block: alias[copy] = register vreg + 1 (0 none); `live` lists the
+  // copies set in this block, so killing a register scans only those.
+  const alias = new Int32Array(nv);
+  const live = [];
+  const to = (v) => {
+    const r = alias[v];
+    if (r === 0) return v;
+    done[v]++;
+    return r - 1;
+  };
+  const kill = (r) => { for (const v of live) if (alias[v] === r + 1) alias[v] = 0; };
   for (const b of p.blocks) {
     if (b.kind === 'dead') continue;
-    const alias = new Map();       // copy vreg -> register vreg
-    const to = (v) => {
-      const r = alias.get(v);
-      if (r === undefined) return v;
-      done.set(v, (done.get(v) || 0) + 1);
-      return r;
-    };
-    const kill = (r) => { for (const [v, x] of alias) if (x === r) alias.delete(v); };
     for (const op of b.ops) {
-      mapUses(op, to);
-      if (op.o === 'reload') alias.clear();
+      if (live.length) mapUses(op, to);
+      if (op.o === 'reload') for (const v of live) alias[v] = 0;
       if (op.o === 'putr' && op.r < NREG) kill(op.r);
       if (op.o === 'puts') kill(SEGV + op.s);
       const d = opDef(op);
-      if (d >= 0) { kill(d); alias.delete(d); }
-      if (d >= FIRST_TEMP && nDef.get(d) === 1) {
-        if (op.o === 'getr' && op.w === 32) alias.set(d, op.r);
-        else if (op.o === 'gets') alias.set(d, SEGV + op.s);
+      if (d >= 0) { kill(d); alias[d] = 0; }
+      if (d >= FIRST_TEMP && nDef[d] === 1) {
+        if (op.o === 'getr' && op.w === 32) { alias[d] = op.r + 1; live.push(d); }
+        else if (op.o === 'gets') { alias[d] = SEGV + op.s + 1; live.push(d); }
       }
     }
-    mapTermUses(b.term, to);
+    if (live.length) mapTermUses(b.term, to);
+    for (const v of live) alias[v] = 0;
+    live.length = 0;
   }
   for (const b of p.blocks) {
     if (b.kind === 'dead') continue;
-    b.ops = b.ops.filter((op) => !((op.o === 'getr' || op.o === 'gets') && done.has(op.d)
-      && done.get(op.d) === nUse.get(op.d)));
+    b.ops = b.ops.filter((op) => !((op.o === 'getr' || op.o === 'gets') && done[op.d] !== 0
+      && done[op.d] === nUse[op.d]));
   }
 }
 

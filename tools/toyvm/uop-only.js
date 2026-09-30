@@ -95,6 +95,7 @@ class UopOnly {
     // ...and the same sites by `key|mask:` then by ip, which is how drive
     // looks the next one up: a number into the current key's map, no string.
     this.byKey = new Map();
+    this.preIdx = new Map();   // code base -> [{ mask, fl, m: byKey's map }] (siteOf)
     // Which fallback's words the scratch at the end of L1's arena holds.
     // Only fallbacks write there inside a drive; the session may between
     // them (TF single-stepping compiles there), so drive clears it on entry.
@@ -157,6 +158,33 @@ class UopOnly {
   at(ip, codeBase, mask, d32, ip32) { return this.siteOf(ip, codeBase, mask, d32, ip32).go; }
 
   siteOf(ip, codeBase, mask, d32, ip32) {
+    // Building the two string keys and hashing them cost CONTAGIO 6.7% of its
+    // whole run (--cpu-prof, 30M: 108K lookups under 39 prefixes), so a
+    // lookup finds its prefix's map by number -- code base, then a scan of
+    // the few mask/mode pairs seen under it -- and strings are only built for
+    // a site that is not there. byKey's per-prefix maps are never replaced.
+    const mk = mask >>> 0, fl = (d32 ? 2 : 0) | (ip32 ? 1 : 0);
+    const list = this.preIdx.get(codeBase);
+    if (list !== undefined) {
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (c.mask === mk && c.fl === fl) {
+          const s = c.m.get(ip);
+          if (s !== undefined) return s;
+          break;
+        }
+      }
+    }
+    const s = this.siteOfSlow(ip, codeBase, mask, d32, ip32);
+    if (!list || !list.some((c) => c.mask === mk && c.fl === fl)) {
+      const l = list || [];
+      l.push({ mask: mk, fl, m: this.byKey.get(s.pre) });
+      if (!list) this.preIdx.set(codeBase, l);
+    }
+    return s;
+  }
+
+  siteOfSlow(ip, codeBase, mask, d32, ip32) {
     const key = d32 ? `${codeBase}d` : (ip32 ? `${codeBase}w` : codeBase);
     const lk = `${key}|${mask >>> 0}:${ip}`;
     let s = this.sites.get(lk);
@@ -306,9 +334,15 @@ class UopOnly {
   build(lk, key, ip, env) {
     const vm = this.vm, rd = (lin) => vm.mem[lin];
     let reg = null, why = null;
-    const spin = this.spinBlock(key, ip, env);
+    // An INT ends its L1 block and names no target in it, so a program headed
+    // by one is that one block and never a spin. CONTAGIO.EXE builds 8632
+    // such sites in 30M (it patches its INT numbers), each paying the compile.
+    // uop-x86 decodes no INT, so discover would only refuse it, as `op cd`.
+    const isInt = vm.mem[(env.codeBase + ip) & env.mask] === 0xCD;
+    const spin = isInt ? null : this.spinBlock(key, ip, env);
     if (spin) return this.fallback(lk, key, ip, env, 'spin', spin);
     if (this.only && !this.only.has(ip)) return this.fallback(lk, key, ip, env, 'excluded');
+    if (isInt) return this.fallback(lk, key, ip, env, 'op cd');
     // A site that has already failed at full size is rebuilt at the line
     // length that worked, not tried whole again. BRW.EXE rewrites its code
     // every frame, so the same sites are invalidated and rebuilt thousands of
@@ -512,8 +546,12 @@ class UopOnly {
   // early and moved the SB interrupt. Null when this ip does not spin in L1.
   spinBlock(key, ip, env) {
     const vm = this.vm, cs = vm.get('cs'), rd = (lin) => vm.mem[lin];
+    // Decoded as L1's cache decodes: through the wasm decoder where the vm has
+    // one (byte-identical output, decode-diff.js), and with the session's
+    // benign store sites. The JS decoder here was 239ms of CONTAGIO's 2.4s.
     const opts = { arenaBase: this.cache.arenaEnd, maxWords: 256,
-      codeBase: env.codeBase, mask: env.mask, d32: env.d32, ip32: env.ip32 };
+      codeBase: env.codeBase, mask: env.mask, d32: env.d32, ip32: env.ip32,
+      benign: this.cache.benign, wasmDecoder: this.cache.wasmDecoder };
     let prog;
     try { prog = compileProgram(rd, cs, ip, opts); } catch (e) { return null; }
     if (!prog.spinBlocks) return null;
