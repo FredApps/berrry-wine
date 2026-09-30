@@ -1127,6 +1127,84 @@ function repCodeWriteCase(inst, a, nextCode) {
   return errs;
 }
 
+// Quake II's PCX/WAL run expander, verbatim from ref_soft.dll+0x1000580c (108
+// bytes): the loop the retired PCX_RUN fold (H462) used to replace. Its fill
+// is `rep stosd` + `rep stosb`, so the uop tier compiles it only through the
+// FILL lowering -- with set_uop_rep(0) it must decline. Threaded is the oracle:
+// the destination bytes, every register, the flags and the spilled cursor must
+// agree, over run lengths 0 / 1 / 3 / 5 / 63 and with DF set.
+const PCX_BODY = Uint8Array.from(Buffer.from(
+  '33c08a02428bc88954241081e1c000000080f9c075108bc833c08a0283e13f42' +
+  '89542410eb05b9010000008bf14985f67e2c8d3c2b8ad88d71018afb8bce8bc3' +
+  '8bd1c1e010668bc38b5c2418c1e902f3ab8bca83e10303eef3aa8b5424108b4c' +
+  '241433c0668b41083be87e94', 'hex'));
+function pcxBodyCase(inst, a, nextCode) {
+  const { e, g2w } = inst, errs = [];
+  const mem = () => new Uint8Array(e.memory.buffer);
+  const dv = () => new DataView(e.memory.buffer);
+  const src = a.buf + 0x1000, dst = a.buf + 0x2000, hdr = a.buf + 0x3000, base = dst + 0x100;
+  const dfCode = nextCode();
+  mem().set([0xFC, 0xC3, 0, 0, 0xFD, 0xC3], g2w(dfCode));
+  const streams = [
+    ['mixed', [0x41, 0xc5, 0x22, 0xc0, 0x33, 0xc3, 0x44, 0x55, 0xc7, 0x66], 16, 0],
+    ['max-run', [0xff, 0x11, 0xff, 0x22], 100, 0],
+    ['zero-runs', Array.from({ length: 64 }, (_, i) => (i & 1) ? 0x00 : 0xc0), 4, 0],
+    ['long', Array.from({ length: 400 }, (_, i) => (i & 1) ? (i * 7) & 0xFF : 0xC0 | ((i * 13) % 64)), 3000, 0],
+    ['df', [0xc5, 0x22, 0x41], 4, 1],
+  ];
+  e.set_uop_trace_heads(0);
+  try {
+    for (const [name, tokens, limit, df] of streams) {
+      const code = nextCode();
+      mem().set(PCX_BODY, g2w(code)); mem()[g2w(code) + PCX_BODY.length] = 0xC3;
+      const setup = () => {
+        const m = mem();
+        m.fill(0x77, g2w(dst), g2w(dst) + 0x1000);
+        m.fill(0, g2w(src), g2w(src) + 0x400);
+        m.set(tokens, g2w(src));
+        dv().setUint32(g2w(hdr + 8), limit, true);
+        dv().setUint32(g2w(a.stackTop + 0x10), src, true);
+        dv().setUint32(g2w(a.stackTop + 0x14), hdr, true);
+        dv().setUint32(g2w(a.stackTop + 0x18), base, true);
+        callAt(inst, a, dfCode + (df ? 4 : 0), {});
+      };
+      const regs = { edx: src, ebx: base, ebp: 0, eax: 0x11223344, ecx: 0x55667788, esi: 0x99aabbcc, edi: 0xddeeff00 };
+      const snap = () => ({
+        dst: Array.from(mem().subarray(g2w(dst), g2w(dst) + 0x1000)),
+        regs: REGS.map((r) => (e['get_' + r]() >>> 0).toString(16)).join(','),
+        flags: e.uop_flags(), spill: dv().getUint32(g2w(a.stackTop + 0x10), true),
+      });
+      e.set_uop(0); setup();
+      if (!callAt(inst, a, code, regs)) { errs.push(`${name}: threaded did not return`); continue; }
+      const want = snap();
+      // rep=0: the program side-exits at each rep (the pre-COPY/FILL shape);
+      // rep=1: the fills stay inside it, so it is entered far fewer times.
+      const entersBy = {};
+      for (const rep of [0, 1]) {
+        e.set_uop(1); e.set_uop_rep(rep);
+        const pc = e.uop_compile(code);
+        if (!pc) { errs.push(`${name} rep=${rep}: declined`); continue; }
+        e.uop_install(code, pc);
+        setup();
+        const enters = e.uop_stats(4);
+        if (!callAt(inst, a, code, regs)) errs.push(`${name} rep=${rep}: compiled did not return`);
+        entersBy[rep] = e.uop_stats(4) - enters;
+        if (!entersBy[rep]) errs.push(`${name} rep=${rep}: never entered`);
+        const got = snap();
+        const bad = got.dst.findIndex((v, i) => v !== want.dst[i]);
+        if (bad >= 0) errs.push(`${name} rep=${rep}: dst+0x${bad.toString(16)} ${got.dst[bad]} vs ${want.dst[bad]}`);
+        if (got.regs !== want.regs) errs.push(`${name} rep=${rep}: regs ${got.regs} vs ${want.regs}`);
+        if (got.flags !== want.flags) errs.push(`${name} rep=${rep}: flags differ`);
+        if (got.spill !== want.spill) errs.push(`${name} rep=${rep}: spilled cursor differs`);
+        e.set_uop(0);
+      }
+      if (name === 'long' && !(entersBy[1] * 4 < entersBy[0]))
+        errs.push(`long: rep lowering did not keep the fills in the program (enters ${entersBy[1]} vs ${entersBy[0]})`);
+    }
+  } finally { e.set_uop(0); e.set_uop_rep(1); callAt(inst, a, dfCode, {}); }
+  return errs;
+}
+
 function windowCase(inst, a, nextCode) {
   const { e, mem, g2w } = inst;
   const P = nextCode(), Lc = nextCode();
@@ -1578,7 +1656,8 @@ async function main() {
   }
   e.set_branch_clock(0);
   for(const [name,run] of [['movsd-sparse',movsdSparseCase],['movsd-code-write',movsdCodeCase],
-                           ['rep-oracle',repOracleCase],['rep-sparse',repSparseCase],['rep-code-write',repCodeWriteCase]]){
+                           ['rep-oracle',repOracleCase],['rep-sparse',repSparseCase],['rep-code-write',repCodeWriteCase],
+                           ['pcx-body',pcxBodyCase]]){
     if(!only||only===name){
       const errs=run(inst,a,()=>a.code+0x1000*slot++);
       if(errs.length)fails++;

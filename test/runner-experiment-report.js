@@ -410,15 +410,6 @@ function reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LO
         log(`loopmatch: ${label} AoE span prefixes`,
           e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
       }
-      // The stream-idiom fold. `tokens` are guest iterations, so multiplying
-      // them by the per-iteration op cost in §20 of the design note gives the
-      // ops a --handler-hist no longer sees.
-      if (e.get_pcx_run_runs) {
-        log(`loopmatch: ${label} PCX_RUN blocks`,
-          e.get_pcx_run_matches(), 'armed', e.get_pcx_run() ? 'yes' : 'no',
-          'runs', e.get_pcx_run_runs(),
-          'tokens', String(e.get_pcx_run_tokens()));
-      }
       if (e.get_implode_cmp_run_runs) {
         log(`loopmatch: ${label} IMPLODE_CMP_RUN blocks`,
           e.get_implode_cmp_run_matches(), 'armed', e.get_implode_cmp_run() ? 'yes' : 'no',

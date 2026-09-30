@@ -95,18 +95,6 @@
   (global $implode_cmp_run_runs    (mut i32) (i32.const 0))
   (global $implode_cmp_run_iters   (mut i64) (i64.const 0))
 
-  ;; $th_pcx_run's Quake II PCX/WAL run expander (handler 462). RLE_TOKEN's
-  ;; largest diamond-shaped instance in the loading windows: 24.6% of
-  ;; quake2-loading over five blocks. Off switch is for A/B only.
-  (global $pcx_run_enabled (mut i32) (i32.const 1))
-  (global $pcx_run_matches (mut i32) (i32.const 0))
-  (global $pcx_run_runs    (mut i32) (i32.const 0))
-  (global $pcx_run_tokens  (mut i64) (i64.const 0))
-  ;; One dispatch may not expand an unbounded picture: the guest's own loop is
-  ;; re-entered at the head after this many tokens, with every register and
-  ;; every spilled temporary in the state the x86 would have left.
-  (global $PCX_RUN_MAX_TOKENS i32 (i32.const 4096))
-
   ;; A/B off switches for the exact-byte folds that had none of their own
   ;; (docs/uop-tier-design.md section 18). One bit per fold, all clear by
   ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
@@ -583,51 +571,6 @@
       (br $l3)))
     (i32.const 1))
 
-  ;; ---- Quake II's PCX/WAL run expander ($th_pcx_run) -------------------
-  ;;
-  ;; ref_soft+0x1000580c, five blocks, 24.6% of the quake2-loading window in
-  ;; docs/hot-loop-vocabulary-2026-09.md §4b -- the largest diamond-shaped
-  ;; RLE_TOKEN instance in the whole loading set:
-  ;;
-  ;;   tok = *cursor++                      ; cursor is respilled every token
-  ;;   if ((tok & 0xc0) == 0xc0) n = tok & 0x3f, v = *cursor++
-  ;;   else                      n = 1,         v = tok
-  ;;   if (n > 0) memset(base + off, v, n)  ; rep stosd then rep stosb
-  ;;   off += n
-  ;;   while (off <= (u16)hdr[8])
-  ;;
-  ;; MATCHED BY EXACT BODY HASH, following $try_emit_mmx_copy64 (and the
-  ;; retired SimGolf blend16 fold). 108 bytes of MSVC output with three ESP
-  ;; displacements, a partial-register value replication and two `rep stos`:
-  ;; a grammar loose enough to write for that would also accept bodies that
-  ;; expand something else, and the executor reproduces the arithmetic in
-  ;; closed form, so byte-exactness is the licence. Two cheap dword anchors
-  ;; reject an ordinary block before the hash loop runs.
-  (func $try_emit_pcx_run (param $start_eip i32) (result i32)
-    (local $head i32)
-    (if (i32.eqz (global.get $pcx_run_enabled)) (then (return (i32.const 0))))
-    (if (i32.or (global.get $code16) (global.get $d_addr16))
-      (then (return (i32.const 0))))
-    (if (global.get $d_seg) (then (return (i32.const 0))))
-    (local.set $head (global.get $d_pc))
-    ;; xor eax,eax / mov al,[edx]
-    (if (i32.ne (call $gl32 (local.get $head)) (i32.const 0x028AC033))
-      (then (return (i32.const 0))))
-    ;; cmp ebp,eax / jle head
-    (if (i32.ne (call $gl32 (i32.add (local.get $head) (i32.const 104)))
-                (i32.const 0x947EE83B))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $loop_hash_bytes (local.get $head) (i32.const 108))
-                (i32.const 0x77147317))
-      (then (return (i32.const 0))))
-
-    (global.set $pcx_run_matches
-      (i32.add (global.get $pcx_run_matches) (i32.const 1)))
-    (call $te (i32.const 462) (i32.const 0))
-    (call $te_raw (local.get $head))
-    (call $te_raw (i32.add (local.get $head) (i32.const 108)))
-    (i32.const 1))
-
   ;; ---- PKWARE implode's match-extension loops ($th_implode_cmp_run) -----
   ;;
   ;; The two byte-at-a-time "how long is this match" loops of the DCL implode
@@ -907,7 +850,7 @@
 
   ;; A set of register numbers as a bitmask: $n members, all distinct, none
   ;; of them ESP. (The ck_ prefix is from the retired SimGolf colour-keyed
-  ;; folds that introduced these helpers; the PCX matcher above uses them.)
+  ;; folds that introduced these helpers; the implode matcher above uses them.)
   (func $ck_regs_mask_ok (param $seen i32) (param $n i32) (result i32)
     (if (i32.and (local.get $seen) (i32.const 0x10))
       (then (return (i32.const 0))))
@@ -3118,16 +3061,8 @@
               (br $decode)))
           ;; SimGolf's four colour-keyed jgl.dll blits (H455/456/457/460) were
           ;; matched here; retired to the uop tier, docs/uop-tier-design.md
-          ;; section 18.
-          ;; The stream-idiom fold of the design note's §20 (its SMK_TREE
-          ;; sibling was retired to the uop tier, docs/uop-tier-design.md
-          ;; section 18). A loop NEST entered only at its head, so like the
-          ;; blits above it is tried at a block start and declines for
-          ;; the cost of one or two loads when the block is anything else.
-          (if (call $try_emit_pcx_run (local.get $start_eip))
-            (then
-              (local.set $done (i32.const 1))
-              (br $decode)))
+          ;; section 18. So were the stream-idiom folds SMK_TREE and PCX_RUN
+          ;; (Quake II's PCX expander, whose `rep stos` fills uop runs as FILL).
           (if (call $try_emit_implode_cmp_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))

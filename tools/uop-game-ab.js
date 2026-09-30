@@ -192,7 +192,8 @@ const GAMES = {
   },
   q2: {
     // Quake II demo, software renderer, straight into demo1: the level load
-    // is where ref_soft's PCX/WAL run expander (H462) runs, then the map.
+    // is where ref_soft's PCX/WAL run expander runs (the retired H462 fold;
+    // uop now runs it, its `rep stos` fills as FILL), then the map.
     app: 'quake2_demo', split: 900,
     args: ['--args=+set vid_ref soft +map demo1', '--batch-size=100000', '--max-batches=1400',
       '--stuck-after=1000000'],
@@ -407,7 +408,7 @@ async function main() {
     ARMS[spec.slice(0, eq)] = [...ARMS.uop, ...spec.slice(eq + 1).split(/\s+/).filter(Boolean)];
   }
   // --arm-off=NAME=FLAGS: the same on the off (--no-uop) arm, e.g. the
-  // fold-off control of a fold A/B: --arm-off='nopcxoff=--no-fold=pcx-run'.
+  // fold-off control of a fold A/B: --arm-off='norleoff=--no-fold=rle-run'.
   for (const a of process.argv.filter(s => s.startsWith('--arm-off='))) {
     const spec = a.slice(10), eq = spec.indexOf('=');
     if (eq <= 0) throw new Error(`bad ${a}`);

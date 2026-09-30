@@ -2555,19 +2555,6 @@
     (global.set $rle_run_enabled (local.get $flag)))
   (func (export "get_rle_run") (result i32) (global.get $rle_run_enabled))
 
-  ;; The stream-idiom fold of docs/loop-idiom-superops-design.md §20 (SMK_TREE,
-  ;; its sibling, is retired: docs/uop-tier-design.md section 18).
-  ;; `matches` counts blocks the recognizer accepted, `runs` entries into the
-  ;; super-op, and `tokens` the guest iterations those entries stand for --
-  ;; that last one is what a --handler-hist total is divided into to get the
-  ;; share of work caught. The off switch is decode-time, so an A/B needs two
-  ;; code addresses or a cleared block cache.
-  (func (export "set_pcx_run") (param $flag i32)
-    (global.set $pcx_run_enabled (local.get $flag)))
-  (func (export "get_pcx_run") (result i32) (global.get $pcx_run_enabled))
-  (func (export "get_pcx_run_matches") (result i32) (global.get $pcx_run_matches))
-  (func (export "get_pcx_run_runs") (result i32) (global.get $pcx_run_runs))
-  (func (export "get_pcx_run_tokens") (result i64) (global.get $pcx_run_tokens))
   (func (export "set_alu8_sib") (param $flag i32)
     (global.set $alu8_sib_enabled (local.get $flag)))
   (func (export "get_alu8_sib") (result i32) (global.get $alu8_sib_enabled))
