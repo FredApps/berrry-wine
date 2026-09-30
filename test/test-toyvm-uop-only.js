@@ -166,7 +166,10 @@ async function same(name, bytes, shape, budget) {
   const com = path.join(dir, `${name}.COM`);
   fs.writeFileSync(com, bytes);
   const off = await run(com, null, budget);
-  const on = await run(com, { shape }, budget);
+  // A shape is a name ('loop', 'straight') or a whole uopOnly config.
+  const cfg = typeof shape === 'string' ? { shape } : shape;
+  shape = typeof shape === 'string' ? shape : cfg.label;
+  const on = await run(com, cfg, budget);
   const u = on.uop;
   assert.ok(u && u.builds >= 1, `${name}: no µop program built`);
   assert.ok(u.uopShare > 0.5, `${name}: only ${(100 * u.uopShare).toFixed(1)}% of steps in µop programs`);
@@ -180,10 +183,18 @@ async function same(name, bytes, shape, budget) {
 }
 
 async function main() {
-  for (const shape of ['loop', 'straight']) {
+  // ...and tier-up: every program built cold on promoteLiveRP, rebuilt on
+  // allRP after 4 header counts and swapped in under whatever links into it.
+  // Cold needs flaglive: without it a program materializes flags L1 leaves
+  // stale because nothing reads them (PMENTRY's last ZF), which is right by
+  // the architecture and a difference from the oracle all the same.
+  const TIER = { label: 'tier', shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP',
+    tier: { passes: 'allRP', after: 4 } };
+  let tierUps = 0;
+  for (const shape of ['loop', 'straight', TIER]) {
     const p = await same('PATCH', patchProgram(), shape);
     assert.ok(p.invalidated >= 1, `PATCH (${shape}): no program was dropped when the guest rewrote it`);
-    await same('SIDEEXIT', sideExitProgram(), shape);
+    tierUps += (await same('SIDEEXIT', sideExitProgram(), shape)).tierUps || 0;
     await same('FLAGS', flagsProgram(), shape);
     await same('SHRDEC', shrDecProgram(), shape);
     await same('MULDIV', muldivProgram(), shape);
@@ -196,8 +207,10 @@ async function main() {
     const rt = await same('RETRACE', retraceProgram(), shape);
     await same('PMENTRY', pmEntryProgram(), shape, 2e6);
     await same('TWOSTORE', twoStoreProgram(), shape);
-    assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
+    assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape.label || shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
+    tierUps += rt.tierUps || 0;
   }
+  assert.ok(tierUps >= 1, 'tier: no program was ever tiered up');
   console.log('test-toyvm-uop-only: ok');
 }
 

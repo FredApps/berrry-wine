@@ -552,6 +552,70 @@ What is left, and why it was not done yet:
 - **REP MOVS/STOS.** The count is large, but each fallback is a whole L1
   string loop, so the entry cost is already amortized.
 
+### Phase 1, step 3: a cheap cold tier and tier-up (2026-09-29, 21f4c54e + this)
+
+**A cheap build is a pass set, not a new lowering.** The earlier worry was
+that OPT.build's fixed structure (fast and slow halves, cfg, mergeStraight,
+finalize) was the floor, since a no-pass build cannot be resident. It isn't
+the floor. With promote alone, the arena accepts every program. A replay of
+ACCIDENT's 2001 captured builds (same inputs, configs alternated) prices them:
+
+| config | ms per build | static µops per insn |
+|---|---|---|
+| allRP | 2.3-2.9 | 15.5 |
+| baselineRP | 3.0 | 19.3 |
+| promoteLiveRP | 0.73 | 17.7 |
+| promoteRP | 0.55-0.66 | 18.5 |
+
+The cold tier is **promoteLiveRP** (promote + flaglive), not promoteRP.
+Without flaglive, a program materializes flags L1 leaves stale because
+nothing reads them. PMENTRY's last `xor dx,cx` leaves DX=0, so ZF=1 by the
+architecture, but L1 and allRP both skip the dead record. That is correct,
+and it still differs from the oracle.
+
+**Planar VGA in place** (21f4c54e). A full-checked access that hit planar
+VGA used to hand its whole block to the JS reference interpreter. That was
+1.1M hand-backs on DREAM, and runRef + enter made up 38% of the run.
+`ldfv`/`stfv` now call L1's own `uop_vga_rd8/wr8`, imported into E1. DREAM
+went from x14.4 to x4.4 of L1.
+
+The fast half still deopts at every planar access. On DREAM, 65% of the hot
+program's blocks run in the slow half, so optimizing that loop buys
+nothing. That is the next VGA lever: predict planar from the segment base at
+build time, and make the op a barrier to forwarding.
+
+**Tier-up** (`tier: { passes, after }`, arms `only-tK`):
+- Each cold program's first arena word is a counter, bumped by a `cnt` op at
+  every loop header (fast head included), so it counts entries and iterations
+  alike. Chained entries never return to JS (ACCIDENT: 151K chains against
+  172K entries), so the count has to be kept in wasm.
+- drive() scans the cold list at the start of each call. A site at K is
+  rebuilt on allRP and its rec is swapped in place (setHead re-points every
+  inbound link).
+- A failed hot build keeps the cold program and counts the reason.
+- Exact on all fourteen test shapes after 4 counts, and on the twelve demos.
+
+Results, cpu against l1, exact everywhere:
+
+| dispatches | only (allRP) | only-min | only-t1k | only-t10k |
+|---|---|---|---|---|
+| 10M, 12 programs | x12.3 | **x6.6** | x8.9 | |
+| 100M, DTM2 / B-STEEL / CMA_SHRT | x5.0 | x3.7 | x3.7 | **x3.5** |
+
+allRP code does run faster. In B-STEEL's profile, its E1 time is 0.09s
+against promoteLiveRP's 0.19s. But E1 execution is a sliver of a 10M run,
+and a hot site is a big region, so its allRP rebuild costs ~12ms. The garbage
+from those builds is also billed to `cpuSecs` through the concurrent GC
+threads, which `buildSecs` never sees. At 10M, tier-up cannot amortize. At
+100M it breaks even (CMA_SHRT gains, x2.85 to x2.38).
+
+So the gap to L1 at long runs is no longer builds. DTM2 on only-min spends
+2.9s outside builds against L1's 0.74s total, with 608K one-instruction L1
+fallbacks and every program entry a JS round trip. What's next:
+- cross-key links, so far call/ret stops being a fallback;
+- VGA prediction in the fast half;
+- only then a K sweep that means something.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

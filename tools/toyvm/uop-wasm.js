@@ -98,6 +98,9 @@ const bin = (name, wop) => def(name, 'vvv', ({ V, SET }) => SET(0, `(${wop} ${V(
 const imm = (name, wop) => def(name, 'vvi', ({ V, I, SET }) => SET(0, `(${wop} ${V(1)} ${I(2)})`));
 
 def('movi', 'vi', ({ I, SET }) => SET(0, I(1)));
+// A tier-up counter: one word in the program's arena space, bumped at every
+// loop header (the fast head included), so it counts entries and iterations.
+def('cnt', 'i', ({ I }) => `(i32.store ${I(0)} (i32.add (i32.load ${I(0)}) (i32.const 1)))`);
 def('mov', 'vv', ({ V, SET }) => SET(0, V(1)));
 bin('add', 'i32.add'); bin('sub', 'i32.sub'); bin('and', 'i32.and'); bin('or', 'i32.or');
 bin('xor', 'i32.xor'); bin('mul', 'i32.mul');
@@ -806,6 +809,7 @@ function lowerProgram(p, lo = {}) {
     try {
       curBlock = b.id; effected = false;
       lastFull = null;
+      if (lo.count && b.header) out.push({ name: 'cnt', args: [im(lo.count)] });
       for (const op of b.ops) if ((op.o === 'ld' || op.o === 'st') && op.chk === 'full') lastFull = op;
       for (const op of b.ops) {
         lowerOp(op, out);
@@ -1246,13 +1250,16 @@ class E1Arena {
 
   // Lower and encode p (resident, built for `key` -- a head key with its
   // linear mask) into the arena. Throws when it does not fit.
-  add(p, key, stats = null) {
-    const low = lowerProgram(p, { link: true });
+  // With `count`, the program's first word is a counter its loop headers
+  // bump (rec.cnt), for a tier-up to read.
+  add(p, key, stats = null, { count = false } = {}) {
+    const start = this.at + (count ? 16 : 0);
+    const low = lowerProgram(p, { link: true, count: count ? this.at : 0 });
     if (!low.resident) throw new Error('uop-wasm: an arena program is resident');
     if (low.nvTotal > MAXV - 1) throw new Error(`uop-wasm: ${low.nvTotal} vregs > ${MAXV - 1}`);
     const constOf = new Map([...low.consts].map(([x, v]) => [v, x]));
     const addr = new Map();
-    let at = this.at, nb = 0;
+    let at = start, nb = 0;
     for (const [id, b] of low.blocks) {
       addr.set(id, at);
       nb = Math.max(nb, id + 1);
@@ -1264,9 +1271,10 @@ class E1Arena {
     if (at > ARENA_END) throw new Error(`uop-wasm: arena full (${at - ARENA} bytes)`);
     const id = this.progs.length, base = this.nextHandle;
     const rec = { id, p, low, key, base, addr, native: new Set(), links: [], live: true, stats,
-      entry: 0, codeFrom: this.at, codeTo: at, h: null };
+      entry: 0, codeFrom: this.at, codeTo: at, h: null, cnt: count ? this.at : 0 };
     const w = this.w;
-    let k = this.at >> 2;
+    if (count) w[this.at >> 2] = 0;
+    let k = start >> 2;
     for (const [bid, b] of low.blocks) {
       if (b.native) rec.native.add(bid);
       for (const o of b.ops) {

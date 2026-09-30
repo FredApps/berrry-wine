@@ -80,6 +80,10 @@ function ablationConfigs(which = PASSES) {
     // registers): promote alone, and promote with the clock pass.
     ['promoteRP', { ...Object.fromEntries(PASSES.map(p => [p, p === 'promote'])), resident: 'promote' }],
     ['promoteClockRP', { ...Object.fromEntries(PASSES.map(p => [p, p === 'promote' || p === 'clock'])), resident: 'promote' }],
+    // ...and promote with flaglive: dead flag records dropped the way L1 drops
+    // them, so a cold program leaves the same (stale) flags L1 does where
+    // nothing reads them -- the oracle's state, not only the architecture's.
+    ['promoteLiveRP', { ...Object.fromEntries(PASSES.map(p => [p, p === 'promote' || p === 'flaglive'])), resident: 'promote' }],
     // baselineBF: the baseline passes with a reload/flush at every block
     // boundary (finalize, blockflush) -- the register traffic of a chained
     // per-block tier without resident registers; baselineRF is the same tier

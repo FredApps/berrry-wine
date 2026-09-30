@@ -52,7 +52,7 @@ const EXIT_END = EXIT_WHY.end;
 const FB_ON = new Set([EXIT_WHY.end, EXIT_WHY.edge, EXIT_WHY.indirect, EXIT_WHY.ret]);
 
 class UopOnly {
-  constructor({ session, vm, passes = 'allRP', linePasses = null, shape = 'loop', only = null, ref = false, stay = true, io = true, maxLine = 32, log = () => {} }) {
+  constructor({ session, vm, passes = 'allRP', linePasses = null, shape = 'loop', only = null, ref = false, stay = true, io = true, maxLine = 32, tier = null, log = () => {} }) {
     this.session = session;
     this.vm = vm;
     this.cache = session.cache;
@@ -66,7 +66,8 @@ class UopOnly {
     // loop head or leaves -- so it may be built with a cheaper pass set: the
     // optimizer's fixed cost per program is most of this arm's build time.
     this.linePassName = linePasses || passes;
-    this.linePasses = linePasses ? OPT.ablationConfigs().find(([n]) => n === linePasses)[1] : this.passes;
+    this.linePasses = !linePasses ? this.passes
+      : typeof linePasses === 'string' ? (OPT.ablationConfigs().find(([n]) => n === linePasses) || [])[1] : linePasses;
     if (!this.linePasses || this.linePasses.resident !== 'promote') throw new Error(`uop-only: passes ${linePasses} are not resident: 'promote'`);
     this.shape = shape;
     // The longest straight line built (see build).
@@ -109,11 +110,21 @@ class UopOnly {
     // a line is correct whatever the bytes become.
     this.lineCap = new Map();   // site -> line length a rebuild goes straight to
     this.progCache = new Map(); // progKey -> [{ lins, bytes, prog }], newest first
+    // Tier-up: { passes, after }. Every program is first built on `passes`
+    // (the cold tier) with a counter its loop headers bump; once a site's
+    // counter reaches `after`, its region is rebuilt on tier.passes and put at
+    // its head in place -- every link into it re-pointed (setHead). Checked
+    // at the start of each drive(): sites reached only through links never
+    // come back to JS, so their entries are counted in wasm, not here.
+    this.tier = tier ? { ...tier, cfg: typeof tier.passes === 'string'
+      ? OPT.ablationConfigs().find(([n]) => n === tier.passes)[1] : tier.passes } : null;
+    if (this.tier && (!this.tier.cfg || this.tier.cfg.resident !== 'promote')) throw new Error(`uop-only: tier passes ${tier.passes} are not resident: 'promote'`);
+    this.cold = [];             // sites on the cold tier, counting
     this.progCacheSize = 0;
     this.tooBig = new Set();
     this.stats = {
       builds: 0, fbSites: 0, entries: 0, uopSteps: 0, fbEntries: 0, fbSteps: 0,
-      invalidated: 0, flushes: 0, arenaResets: 0, buildNs: 0n, stays: 0, modeStays: 0, calls: 0, ioCuts: 0, farStays: 0, builtStays: 0, lineRetries: 0, progHits: 0,
+      invalidated: 0, flushes: 0, arenaResets: 0, buildNs: 0n, tierUps: 0, tierNs: 0n, tierFails: new Map(), stays: 0, modeStays: 0, calls: 0, ioCuts: 0, farStays: 0, builtStays: 0, lineRetries: 0, progHits: 0,
       // why drive handed the slice back to the session
       why: { budget: 0, smc: 0, fbExit: 0, mode: 0, unbuilt: 0 },
       fbExitWhy: new Map(),    // `fallback why>exitwhy` -> handbacks
@@ -191,6 +202,7 @@ class UopOnly {
     // slice, so its budget is set here. Every fallback run below restarts it
     // at what is left and moves the phase by what is spent: the sum stays.
     ex.set_slice_budget(budget);
+    if (this.cold.length) this.tierCheck();
     const machine = this.session.machine;
     let left = budget;
     for (;;) {
@@ -352,45 +364,15 @@ class UopOnly {
   }
 
   program(lk, key, ip, env, reg) {
-    const pk = this.progKey(lk, reg, env);
-    const mem = this.vm.mem;
-    let prog = null;
-    for (const c of this.progCache.get(pk) || []) {
-      let ok = true;
-      for (let i = 0; i < c.lins.length; i++) if (mem[c.lins[i]] !== c.bytes[i]) { ok = false; break; }
-      if (ok) { prog = c.prog; this.stats.progHits++; break; }
-    }
-    if (!prog) {
-      const read = new Set();
-      for (const k of reg.body) {
-        const n = reg.nodes.get(k);
-        const lin = (env.codeBase + n.ip) & env.mask;
-        for (let l = lin; l < lin + n.d.len; l++) read.add(l);
-      }
-      prog = OPT.build(reg, { passes: reg.cyclic ? this.passes : this.linePasses, env, vm: this.vm,
-        rd: (lin) => { read.add(lin); return mem[lin]; } });
-      const lins = Int32Array.from(read);
-      const c = { lins, bytes: Uint8Array.from(lins, (l) => mem[l]), prog };
-      if (this.progCacheSize >= 4096) { this.progCache.clear(); this.progCacheSize = 0; }
-      const list = this.progCache.get(pk);
-      if (list) { list.unshift(c); if (list.length > 8) list.pop(); else this.progCacheSize++; }
-      else { this.progCache.set(pk, [c]); this.progCacheSize++; }
-    }
-    const akey = `${key}|${env.mask}`;
-    let rec;
-    try { rec = this.A.add(prog, akey, {}); } catch (e) {
-      if (!/arena full/.test(e.message)) throw e;
-      this.resetArena();
-      rec = this.A.add(prog, akey, {});
-    }
+    const count = !!this.tier;
+    const prog = this.compile(lk, reg, env, reg.cyclic ? this.passes : this.linePasses, '');
+    const rec = this.install(prog, key, env, ip, count);
     const covered = [];
     for (const k of reg.body) {
       const n = reg.nodes.get(k);
       const lin = (env.codeBase + n.ip) & env.mask;
       covered.push([lin, lin + n.d.len]);
     }
-    if (this.ref) { rec.native = new Set(); rec.entry = 0; }
-    this.A.setHead(rec, ip);
     this.stats.builds++;
     this.stats.shapes[reg.cyclic ? 'loop' : 'line']++;
     const A = this.A, st = this.stats;
@@ -409,12 +391,94 @@ class UopOnly {
     const s = { lk, ip, rec, covered, enter: null, inner };
     s.enter = (vm2, left) => {
       st.entries++;
-      const out = A.enter(rec, left);
+      const out = A.enter(s.rec, left);
       st.uopSteps += left - out;
       return out;
     };
+    if (count) { s.tierOf = { key, env, reg }; this.cold.push(s); }
     this.index(s);
     return s;
+  }
+
+  // Cold sites whose counter reached tier.after, rebuilt hot.
+  tierCheck() {
+    const after = this.tier.after;
+    let j = 0;
+    for (let i = 0; i < this.cold.length; i++) {
+      const s = this.cold[i];
+      if (s.dead || !s.rec || !s.rec.live) continue;
+      if (this.A.w[s.rec.cnt >> 2] >= after) { this.tierUp(s); continue; }
+      this.cold[j++] = s;
+    }
+    this.cold.length = j;
+  }
+
+  tierUp(s) {
+    const t0 = process.hrtime.bigint();
+    const { key, env, reg } = s.tierOf;
+    const old = s.rec, A = this.A;
+    let rec;
+    try {
+      const prog = this.compile(s.lk, reg, env, this.tier.cfg, '|hot');
+      rec = this.install(prog, key, env, s.ip, false);
+    } catch (e) {
+      // Too big hot (more vregs), or anything else: the cold program stays,
+      // exact as it was, and the reason is counted.
+      const why = String(e && e.message || e).slice(0, 60);
+      this.stats.tierFails.set(why, (this.stats.tierFails.get(why) || 0) + 1);
+      s.tierOf = null;
+      return;
+    }
+    // An arena reset inside install forgot every site, s with them.
+    if (this.A !== A || s.dead) return;
+    s.rec = rec;
+    s.tierOf = null;
+    A.dropHead(old, s.ip, true);
+    this.stats.tierUps++;
+    this.stats.tierNs += process.hrtime.bigint() - t0;
+  }
+
+  // The program for reg on these passes: cached by bytes, else built.
+  compile(lk, reg, env, passes, tag) {
+    const pk = this.progKey(lk, reg, env) + tag;
+    const mem = this.vm.mem;
+    let prog = null;
+    for (const c of this.progCache.get(pk) || []) {
+      let ok = true;
+      for (let i = 0; i < c.lins.length; i++) if (mem[c.lins[i]] !== c.bytes[i]) { ok = false; break; }
+      if (ok) { prog = c.prog; this.stats.progHits++; break; }
+    }
+    if (!prog) {
+      const read = new Set();
+      for (const k of reg.body) {
+        const n = reg.nodes.get(k);
+        const lin = (env.codeBase + n.ip) & env.mask;
+        for (let l = lin; l < lin + n.d.len; l++) read.add(l);
+      }
+      prog = OPT.build(reg, { passes, env, vm: this.vm,
+        rd: (lin) => { read.add(lin); return mem[lin]; } });
+      const lins = Int32Array.from(read);
+      const c = { lins, bytes: Uint8Array.from(lins, (l) => mem[l]), prog };
+      if (this.progCacheSize >= 4096) { this.progCache.clear(); this.progCacheSize = 0; }
+      const list = this.progCache.get(pk);
+      if (list) { list.unshift(c); if (list.length > 8) list.pop(); else this.progCacheSize++; }
+      else { this.progCache.set(pk, [c]); this.progCacheSize++; }
+    }
+    return prog;
+  }
+
+  // prog into the arena at ip, at the head of its link key.
+  install(prog, key, env, ip, count) {
+    const akey = `${key}|${env.mask}`;
+    let rec;
+    try { rec = this.A.add(prog, akey, {}, { count }); } catch (e) {
+      if (!/arena full/.test(e.message)) throw e;
+      this.resetArena();
+      rec = this.A.add(prog, akey, {}, { count });
+    }
+    if (this.ref) { rec.native = new Set(); rec.entry = 0; }
+    this.A.setHead(rec, ip);
+    return rec;
   }
 
   // One instruction on L1, compiled where TF single-stepping compiles it.
@@ -498,6 +562,7 @@ class UopOnly {
   }
 
   forget(s) {
+    s.dead = true;
     this.sites.delete(s.lk);
     const m = this.byKey.get(s.pre);
     if (m && m.get(s.ip) === s) m.delete(s.ip);
@@ -581,6 +646,7 @@ class UopOnly {
       invalidated: st.invalidated, flushes: st.flushes, arenaResets: st.arenaResets,
       calls: st.calls, stays: st.stays, farStays: st.farStays, builtStays: st.builtStays, modeStays: st.modeStays, lineRetries: st.lineRetries, progHits: st.progHits, ioCuts: st.ioCuts, why: st.why, fbExitWhy: [...st.fbExitWhy].sort((a, b) => b[1] - a[1]).slice(0, 12),
       buildSecs: Number(st.buildNs) / 1e9,
+      tierUps: st.tierUps, tierFails: [...st.tierFails], tierSecs: Number(st.tierNs) / 1e9, cold: this.cold.length,
       sitesList: [...this.sites.values()].filter((s) => s.rec).map((s) => s.ip),
       arenaBytes: this.A ? this.A.at - (this.A.progs[0] ? this.A.progs[0].codeFrom : this.A.at) : 0,
       fallbacks: [...st.fbWhy].sort((a, b) => b[1].entries - a[1].entries)

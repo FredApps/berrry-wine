@@ -13,8 +13,10 @@
 //   only       the µop-only arm (uop-only.js): loop nests and straight lines
 //   only-line  ...straight lines only, linked
 //   only-bl    only, with straight lines built on the baseline passes
-//   only-min   only, every program built with promote alone (promoteRP)
+//   only-min   only, every program built with promote + flaglive (promoteLiveRP)
 //   only-base  only, every program built on the baseline passes (baselineRP)
+//   only-tK    tier-up: built on promoteLiveRP, rebuilt on allRP once its loop
+//              headers have counted K (only-t64, only-t1k, ...)
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -51,8 +53,17 @@ const ARMS = {
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes
   'only-bl': () => ({ uopOnly: { shape: 'loop', linePasses: 'baselineRP' } }),
-  'only-min': () => ({ uopOnly: { shape: 'loop', passes: 'promoteRP', linePasses: 'promoteRP' } }),
+  'only-min': () => ({ uopOnly: { shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP' } }),
   'only-base': () => ({ uopOnly: { shape: 'loop', passes: 'baselineRP', linePasses: 'baselineRP' } }),
+};
+
+const armOf = (a) => {
+  const t = /^only-t(\d+[km]?)$/i.exec(a);
+  if (t) {
+    const after = count(t[1]);
+    return () => ({ uopOnly: { shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP', tier: { passes: 'allRP', after } } });
+  }
+  return ARMS[a];
 };
 
 // --child: one run, printed as one JSON line.
@@ -60,13 +71,14 @@ async function child(spec) {
   const { exe, budget, arm } = JSON.parse(spec);
   const { runDos } = require('./run-dos');
   const r = await runDos({ exe, variant: 'tailcall', budget, cpu: 386, autoKey: true, log: () => {},
-    ...ARMS[arm](budget) });
+    ...armOf(arm)(budget) });
   const u = r.uop;
   console.log('ARMBENCH ' + JSON.stringify({
     secs: r.secs, cpuSecs: r.cpuSecs, guestSecs: r.guestSecs, dispatched: r.dispatched, frame: r.frame,
     handbacks: r.session ? r.session.handbacks : undefined,
     only: u && u.fallbacks ? { share: u.uopShare, builds: u.builds, fbSites: u.fbSites, fbEntries: u.fbEntries,
       fbSteps: u.fbSteps, entries: u.entries, chains: u.chains, buildSecs: u.buildSecs, invalidated: u.invalidated,
+      tierUps: u.tierUps, tierSecs: u.tierSecs, tierFails: u.tierFails,
       top: u.fallbacks.slice(0, 5).map((f) => `${f.why}:${f.steps}`) } : null,
     uop: u && !u.fallbacks ? { steps: u.steps, installs: u.installs } : null,
     jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs } : null,
@@ -98,7 +110,7 @@ async function main() {
   const spec = arg('child');
   if (spec) return child(spec);
   const arms = arg('arms', 'l1,uop,jit,only').split(',').filter(Boolean);
-  for (const a of arms) if (!ARMS[a]) throw new Error(`unknown arm ${a} (known: ${Object.keys(ARMS).join(',')})`);
+  for (const a of arms) if (!armOf(a)) throw new Error(`unknown arm ${a} (known: ${Object.keys(ARMS).join(',')})`);
   if (arms[0] !== 'l1') throw new Error('the first arm is the oracle: l1');
   const budget = count(arg('dispatches', '20m'));
   const reps = Number(arg('reps', 1));
@@ -136,7 +148,8 @@ async function main() {
       if (!r.ok) return `${l} FAIL(${r.reason.slice(0, 50)})`;
       const x = ref.ok ? ` x${(r.cpuSecs / ref.cpuSecs).toFixed(2)}` : '';
       return `${l} ${r.cpuSecs.toFixed(2)}s${x}`
-        + (r.only ? ` [${(100 * r.only.share).toFixed(0)}% µop, fb ${r.only.fbEntries}, build ${r.only.buildSecs.toFixed(2)}s]` : '');
+        + (r.only ? ` [${(100 * r.only.share).toFixed(0)}% µop, fb ${r.only.fbEntries}, build ${r.only.buildSecs.toFixed(2)}s`
+          + (r.only.tierUps !== undefined && (r.only.tierUps || r.only.tierFails.length) ? `, up ${r.only.tierUps} ${r.only.tierSecs.toFixed(2)}s` : '') + ']' : '');
     };
     console.log(`[${pi + 1}/${progs.length}] ${row.name.padEnd(14)} ${labels.map(cell).join('  ')}`
       + (row.bad.length ? `  DISAGREE ${row.bad.map((l) => `${l} ${row.arms[l].dispatched}/${row.arms[l].frame} vs ${ref.dispatched}/${ref.frame}`).join(', ')}` : '')
