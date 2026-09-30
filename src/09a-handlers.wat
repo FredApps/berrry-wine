@@ -416,6 +416,14 @@
   ;; Source metadata is private to USER, not a bit stolen from guest messages.
   ;; One dword per ring slot, 16 queues of 64 slots. Moved under LOCK_WND.
   (global $user_queue_input_flags (mut i32) (i32.const 0))
+  ;; Slot flag bits: 1 = hardware input (published as $user_queue_input_flags),
+  ;; 2 = produced by WAT menu tracking ($menu_post). The raw word and the
+  ;; retrieved hwnd/msg are kept for $shared_post_queue_peek_tid's filter.
+  (global $USER_QUEUE_FLAG_INPUT i32 (i32.const 1))
+  (global $USER_QUEUE_FLAG_MENU i32 (i32.const 2))
+  (global $user_queue_raw_flags (mut i32) (i32.const 0))
+  (global $user_queue_raw_hwnd (mut i32) (i32.const 0))
+  (global $user_queue_raw_msg (mut i32) (i32.const 0))
   (func $thread_msg_input_flags_addr (param $tid i32) (param $queue i32) (param $slot i32) (result i32)
     (i32.add (global.get $THREAD_MSG_INPUT_FLAGS)
       (i32.add (i32.mul (i32.sub (local.get $tid) (i32.const 1)) (i32.const 256))
@@ -562,7 +570,54 @@
   ;; Scan both the fixed shared ring and its overflow list with PeekMessage's
   ;; filters. Queue mutation stays under LOCK_WND; timestamp/point synthesis
   ;; happens after release because it calls the host clock.
+  ;; Windows discards input aimed at a disabled window. Menu tracking here is
+  ;; asynchronous to the guest, so its WM_COMMAND/WM_INITMENU* can outlive the
+  ;; moment the owner was enabled; a modal loop that disabled the owner must
+  ;; not receive them. Walks WS_CHILD parents so an MDI child's system-menu
+  ;; command is judged by its frame.
+  (func $menu_post_target_disabled (param $hwnd i32) (result i32)
+    (local $style i32) (local $depth i32)
+    (block $done (loop $walk
+      (br_if $done (i32.eqz (local.get $hwnd)))
+      (br_if $done (i32.ge_u (local.get $depth) (i32.const 64)))
+      (br_if $done (i32.eq (call $wnd_table_find (local.get $hwnd)) (i32.const -1)))
+      (local.set $style (call $wnd_get_style (local.get $hwnd)))
+      (if (call $ctrl_style_disabled (local.get $style))
+        (then (return (i32.const 1))))
+      (br_if $done (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
+      (local.set $hwnd (call $wnd_get_parent (local.get $hwnd)))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
+      (br $walk)))
+    (i32.const 0))
+
+  ;; PeekMessage's queue retrieval, minus stale menu output (see above). A
+  ;; discarded message is removed even by a PM_NOREMOVE peek, since no later
+  ;; retrieval may see it either; the narrow removal filter (its own hwnd and
+  ;; msg) cannot match an earlier entry, which would have matched first.
   (func $shared_post_queue_peek_tid
+        (param $tid i32) (param $msg_ptr i32) (param $hwnd_filter i32)
+        (param $msg_min i32) (param $msg_max i32) (param $remove i32)
+        (result i32)
+    (loop $retry
+      (if (i32.eqz (call $shared_post_queue_peek_tid_raw
+            (local.get $tid) (local.get $msg_ptr) (local.get $hwnd_filter)
+            (local.get $msg_min) (local.get $msg_max) (local.get $remove)))
+        (then (return (i32.const 0))))
+      (if (i32.eqz (i32.and (global.get $user_queue_raw_flags)
+                            (global.get $USER_QUEUE_FLAG_MENU)))
+        (then (return (i32.const 1))))
+      (if (i32.eqz (call $menu_post_target_disabled (global.get $user_queue_raw_hwnd)))
+        (then (return (i32.const 1))))
+      (if (i32.eqz (local.get $remove))
+        (then
+          (drop (call $shared_post_queue_peek_tid_raw
+            (local.get $tid) (i32.const 0) (global.get $user_queue_raw_hwnd)
+            (global.get $user_queue_raw_msg) (global.get $user_queue_raw_msg)
+            (i32.const 1)))))
+      (br $retry))
+    (i32.const 0))
+
+  (func $shared_post_queue_peek_tid_raw
         (param $tid i32) (param $msg_ptr i32) (param $hwnd_filter i32)
         (param $msg_min i32) (param $msg_max i32) (param $remove i32)
         (result i32)
@@ -733,7 +788,11 @@
     (call $lock_wnd_release)
     (if (local.get $free_node) (then (call $heap_free (local.get $free_node))))
     (if (local.get $free_state) (then (call $heap_free (local.get $free_state))))
-    (global.set $user_queue_input_flags (local.get $flags))
+    (global.set $user_queue_raw_flags (local.get $flags))
+    (global.set $user_queue_raw_hwnd (local.get $hwnd))
+    (global.set $user_queue_raw_msg (local.get $msg))
+    (global.set $user_queue_input_flags
+      (i32.and (local.get $flags) (global.get $USER_QUEUE_FLAG_INPUT)))
     ;; A null pointer is an internal USER probe: publish only the four fields
     ;; its caller needs in instance-private globals. Full guest MSG writes also
     ;; synthesize time/pt; they must receive a real 28-byte output buffer.

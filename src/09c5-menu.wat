@@ -4673,10 +4673,19 @@
   ;; Internal: enqueue a posted message for hwnd. This is a UI-originated
   ;; command and may be produced outside the owning guest instance, so always
   ;; use the shared per-thread queue rather than the local post-count global.
+  ;;
+  ;; Real USER tracks a menu synchronously inside the owner's DefWindowProc;
+  ;; ours runs on host input while the guest may be busy elsewhere, so the
+  ;; result can sit in the queue until some unrelated pump -- typically a
+  ;; modal loop that has just disabled the owner -- retrieves it. The tag
+  ;; lets retrieval discard it then, as Windows discards input aimed at a
+  ;; disabled window (Civ2 Win16: Save Game ran nested inside the AI news
+  ;; box's modal and wedged it).
   (func $menu_post (param $hwnd i32) (param $msg i32)
                     (param $wp i32) (param $lp i32)
-    (drop (call $shared_post_queue_enqueue
-      (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp))))
+    (drop (call $shared_post_queue_enqueue_flags
+      (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp)
+      (global.get $USER_QUEUE_FLAG_MENU))))
 
   ;; Activate the currently-hovered child of the open menu. Posts a
   ;; WM_COMMAND to the parent hwnd, then closes the menu. Returns the command
