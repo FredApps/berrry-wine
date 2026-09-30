@@ -3306,8 +3306,7 @@
         (if (i32.eq (local.get $ah) (i32.const 0x3F))
           (then (call $handle__lread (local.get $h) (call $dos_ptr) (local.get $n)
                   (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else (call $handle__lwrite (local.get $h) (call $dos_ptr) (local.get $n)
-                  (i32.const 0) (i32.const 0) (i32.const 0))))
+          (else (call $win16_file_write (local.get $h) (call $dos_ptr) (local.get $n))))
         (call $win16_call32_end)
         (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -1))
           (then (call $dos_set_ax (i32.const 5)) (call $dos_cf (i32.const 1)))  ;; access denied
@@ -5036,6 +5035,25 @@
     (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; _lwrite/_hwrite and INT 21h AH=40h, inside a call32 frame. A write of
+  ;; zero bytes is DOS's way to set the end of the file: it truncates or
+  ;; extends the file to the current position and writes nothing. Authorware
+  ;; preallocates a new .REC as eight zeroed 512-byte blocks and then cuts it
+  ;; back to empty that way; with count 0 read as "write nothing" the zeroed
+  ;; 4KB stayed, and the next process to open Civilization II's Civilopedia
+  ;; rejected get_info.REC as damaged and left the game waiting on it.
+  (func $win16_file_write (param $h i32) (param $buf i32) (param $n i32)
+    (if (i32.eqz (local.get $n))
+      (then
+        (i32.store offset=0 (global.get $reg_base)
+          (select (i32.const 0) (i32.const -1)
+            (call $host_fs_set_end_of_file (local.get $h))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    (call $handle__lwrite (local.get $h) (local.get $buf) (local.get $n)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+
   (func $win16_lread (param $write i32)
     (local $h i32) (local $buf i32) (local $n i32) (local $lazy i32)
     (local.set $n (call $win16_arg16 (i32.const 0)))
@@ -5044,8 +5062,7 @@
     (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 3))))
     (call $win16_call32_begin (i32.const 3))
     (if (local.get $write)
-      (then (call $handle__lwrite (local.get $h) (local.get $buf) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
+      (then (call $win16_file_write (local.get $h) (local.get $buf) (local.get $n)))
       (else (call $handle__lread (local.get $h) (local.get $buf) (local.get $n)
               (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
