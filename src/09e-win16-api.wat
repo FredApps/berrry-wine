@@ -4561,7 +4561,7 @@
   ;; Allocate `bytes` and answer with the head selector, or 0 if the arena
   ;; cannot cover it.
   (func $win16_global_alloc (param $bytes i32) (result i32)
-    (local $need i32) (local $i i32) (local $head i32) (local $n i32)
+    (local $need i32) (local $head i32)
     (local.set $bytes (call $win16_gsize (local.get $bytes)))
     (local.set $need (call $win16_gseg_count (local.get $bytes)))
     (if (i32.and (i32.le_u (local.get $bytes) (i32.const 0x1000))
@@ -4569,20 +4569,46 @@
                            (i32.shr_u (global.get $WIN16_SEG_MAX) (i32.const 1))))
       (then (return (call $win16_pool_alloc (local.get $bytes)))))
 
-    ;; Reuse pass: the first freed block big enough. A larger one is split and
-    ;; its tail stays free as a block of its own. Taking it whole wasted every
-    ;; slot past the first whenever a small block landed in a freed large one,
-    ;; and Civilization II, which keeps ~700 small blocks live beside its
-    ;; WinG bitmaps, ran the 959-slot arena dry that way.
+    ;; An app that asks for more than fits is entitled to a NULL and its own
+    ;; out-of-memory path, not the trap $win16_alloc_segment would give it.
+    (local.set $head (call $win16_arena_take (local.get $need)))
+    (if (i32.eqz (local.get $head)) (then (return (i32.const 0))))
+    (call $win16_gseg_store (local.get $head) (i32.const 8) (global.get $WIN16_SEG_GLOBAL))
+    (call $win16_gseg_store (local.get $head) (i32.const 12) (local.get $bytes))
+    (call $zero_memory (call $g2w (call $win16_seg_base (local.get $head)))
+      (i32.mul (local.get $need) (i32.const 0x10000)))
+    (call $win16_index_to_sel (local.get $head)))
+
+  ;; `need` consecutive arena slots, as the index of the first, or 0 when the
+  ;; arena cannot cover them. The caller owns the head slot's table entry.
+  ;;
+  ;; Freed blocks come first: the first one big enough wins, and a larger one
+  ;; is split with its tail left free as a block of its own. Taking it whole
+  ;; wasted every slot past the first whenever a small block landed in a freed
+  ;; large one, and Civilization II, which keeps ~700 small blocks live beside
+  ;; its WinG bitmaps, ran the arena dry that way. A freed block whose
+  ;; neighbour is free too is joined with it on the way past, so a freed DLL's
+  ;; run and the global blocks freed after it can hold the next, larger DLL.
+  (func $win16_arena_take (param $need i32) (result i32)
+    (local $i i32) (local $n i32) (local $j i32)
+    (if (i32.eqz (local.get $need)) (then (return (call $win16_next_seg_get))))
     (local.set $i (i32.const 1))
     (block $scanned (loop $scan
       (br_if $scanned (i32.ge_u (local.get $i) (call $win16_next_seg_get)))
-      (if (i32.eq (i32.and (call $win16_gseg_field (local.get $i) (i32.const 8))
-                           (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
-                  (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
+      (if (call $win16_arena_free_head (local.get $i))
         (then
           (local.set $n (call $win16_gseg_count
             (call $win16_gseg_field (local.get $i) (i32.const 12))))
+          (block $joined (loop $join
+            (local.set $j (i32.add (local.get $i) (local.get $n)))
+            (br_if $joined (i32.ge_u (local.get $j) (call $win16_next_seg_get)))
+            (br_if $joined (i32.eqz (call $win16_arena_free_head (local.get $j))))
+            (local.set $n (i32.add (local.get $n) (call $win16_gseg_count
+              (call $win16_gseg_field (local.get $j) (i32.const 12)))))
+            (call $win16_gseg_store (local.get $j) (i32.const 8) (i32.const 0))
+            (call $win16_gseg_store (local.get $i) (i32.const 12)
+              (i32.shl (local.get $n) (i32.const 16)))
+            (br $join)))
           (if (i32.ge_u (local.get $n) (local.get $need))
             (then
               (if (i32.gt_u (local.get $n) (local.get $need))
@@ -4591,31 +4617,51 @@
                     (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
                   (call $win16_gseg_store (i32.add (local.get $i) (local.get $need)) (i32.const 12)
                     (i32.shl (i32.sub (local.get $n) (local.get $need)) (i32.const 16)))))
-              (call $win16_gseg_store (local.get $i) (i32.const 8)
-                (global.get $WIN16_SEG_GLOBAL))
-              (call $win16_gseg_store (local.get $i) (i32.const 12) (local.get $bytes))
-              (call $zero_memory (call $g2w (call $win16_seg_base (local.get $i)))
-                (i32.mul (local.get $need) (i32.const 0x10000)))
-              (return (call $win16_index_to_sel (local.get $i)))))))
+              (call $win16_gseg_store (local.get $i) (i32.const 8) (i32.const 0))
+              (return (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (local.get $n)))
+          (br $scan)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-
-    ;; Fresh slots. $win16_alloc_segment traps when the arena runs out, and a
-    ;; trap is the wrong answer here — an app that asks for more than fits is
-    ;; entitled to a NULL and its own out-of-memory path.
     (if (i32.gt_u (i32.add (call $win16_next_seg_get) (local.get $need))
                   (global.get $WIN16_SEG_MAX))
       (then (return (i32.const 0))))
-    (local.set $head (call $win16_alloc_segment))
+    (local.set $i (call $win16_alloc_segment))
     (local.set $n (i32.const 1))
     (block $done (loop $more
       (br_if $done (i32.ge_u (local.get $n) (local.get $need)))
       (drop (call $win16_alloc_segment))
       (local.set $n (i32.add (local.get $n) (i32.const 1)))
       (br $more)))
-    (call $win16_gseg_store (local.get $head) (i32.const 8) (global.get $WIN16_SEG_GLOBAL))
-    (call $win16_gseg_store (local.get $head) (i32.const 12) (local.get $bytes))
-    (call $win16_index_to_sel (local.get $head)))
+    (local.get $i))
+
+  ;; The head of a freed global block (pooled blocks live past WIN16_SEG_MAX
+  ;; and are never scanned here).
+  (func $win16_arena_free_head (param $i i32) (result i32)
+    (i32.eq (i32.and (call $win16_gseg_field (local.get $i) (i32.const 8))
+                     (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
+            (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE))))
+
+  ;; Give `count` slots from `index` back as one freed global block. Their
+  ;; table entries go back to plain 64KB slots, and every thread's decoded code
+  ;; for them is thrown away: the next owner writes different bytes there.
+  (func $win16_arena_give (param $index i32) (param $count i32)
+    (local $k i32) (local $base i32)
+    (if (i32.eqz (local.get $count)) (then (return)))
+    (local.set $base (call $win16_arena_slot_base (local.get $index)))
+    (block $done (loop $each
+      (br_if $done (i32.ge_u (local.get $k) (local.get $count)))
+      (call $win16_seg_set (i32.add (local.get $index) (local.get $k))
+        (i32.add (local.get $base) (i32.mul (local.get $k) (i32.const 0x10000)))
+        (i32.const 0x10000) (i32.const 0) (i32.const 0))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $each)))
+    (call $win16_gseg_store (local.get $index) (i32.const 8)
+      (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
+    (call $win16_gseg_store (local.get $index) (i32.const 12)
+      (i32.shl (local.get $count) (i32.const 16)))
+    (call $process_code_cache_invalidate (local.get $base)
+      (i32.mul (local.get $count) (i32.const 0x10000))))
 
   (func $win16_GlobalAlloc
     (local $bytes i32)
@@ -6092,6 +6138,17 @@
                 (call $win16_local_identity (i32.const 4) (i32.const 2))
                 (return)))
             (local.set $fresh (i32.const 1))))))
+    ;; One reference per LoadLibrary, which FreeLibrary gives back. A module
+    ;; that was already loaded some other way -- an import of the task, an
+    ;; installable driver -- starts from the one reference that load holds.
+    (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+      (then
+        (i32.store (call $win16_dll_refs_ptr (local.get $id))
+          (select (i32.const 1)
+            (i32.add (i32.const 1) (select (i32.load (call $win16_dll_refs_ptr (local.get $id)))
+                                           (i32.const 1)
+                                           (i32.load (call $win16_dll_refs_ptr (local.get $id)))))
+            (local.get $fresh)))))
     (local.set $handle
       (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
     ;; Windows calls a newly loaded NE DLL's LibEntry before LoadLibrary
@@ -6136,20 +6193,27 @@
   ;; corrupted. Freeing marks the record unloaded and gives the name slot back,
   ;; so the next LoadLibrary of a different module has somewhere to go.
   ;;
-  ;; The module's segments stay in the arena. Real Windows discards them and
-  ;; reloads on demand; here they are simply no longer reachable by name, which
-  ;; costs arena slots and nothing else — and a module the app frees and loads
+  ;; Only the last reference unloads, and unloading gives the module's arena
+  ;; slots back ($win16_dll_unload), so a module the app loaded twice must not
+  ;; disappear at the first FreeLibrary: its segments would be handed to the
+  ;; next allocation while it still runs. A module the app frees and loads
   ;; again is staged and placed afresh.
   (func $win16_FreeLibrary
-    (local $id i32)
+    (local $id i32) (local $refs i32)
     (local.set $id (call $win16_h32 (call $win16_arg16 (i32.const 0))))
     (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
         (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
           (then
-            (call $win16_dll_unload (local.get $id))
-            (call $win16_dynamic_module_release (local.get $id))))))
+            (local.set $refs (i32.load (call $win16_dll_refs_ptr (local.get $id))))
+            (if (i32.gt_u (local.get $refs) (i32.const 1))
+              (then
+                (i32.store (call $win16_dll_refs_ptr (local.get $id))
+                  (i32.sub (local.get $refs) (i32.const 1))))
+              (else
+                (call $win16_dll_unload (local.get $id))
+                (call $win16_dynamic_module_release (local.get $id))))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 

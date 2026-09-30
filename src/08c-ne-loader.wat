@@ -921,12 +921,16 @@
         (call $host_log_i32 (local.get $index))
         (unreachable)))
     (call $win16_next_seg_set (i32.add (local.get $index) (i32.const 1)))
-    (local.set $base (i32.add (global.get $WIN16_ARENA)
-                              (i32.mul (i32.sub (local.get $index) (i32.const 1)) (i32.const 0x10000))))
+    (local.set $base (call $win16_arena_slot_base (local.get $index)))
     (call $win16_seg_set (local.get $index) (local.get $base) (i32.const 0x10000)
       (i32.const 0) (i32.const 0))
     (call $zero_memory (call $g2w (local.get $base)) (i32.const 0x10000))
     (local.get $index))
+
+  ;; The guest address arena slot `index` always covers, whoever holds it.
+  (func $win16_arena_slot_base (param $index i32) (result i32)
+    (i32.add (global.get $WIN16_ARENA)
+             (i32.mul (i32.sub (local.get $index) (i32.const 1)) (i32.const 0x10000))))
 
   ;; ---- Task startup ----
   ;;
@@ -1168,11 +1172,35 @@
   (func $win16_dll_loaded (param $module_id i32) (result i32)
     (i32.load offset=12 (call $win16_dll_rec (local.get $module_id))))
 
-  ;; Forget a module: FreeLibrary's half of the above. The segments stay where
-  ;; they were placed — nothing here moves or discards them — but the id stops
-  ;; naming a loaded module, so the slot can describe a different one.
+  ;; How many arena slots the module's load took (its segments plus, for an
+  ;; app-local module, its private metadata pages), and how many LoadLibrary
+  ;; references it holds. Both parallel the 16-byte record, like the image size.
+  (func $win16_dll_run_ptr (param $module_id i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0x8900) (i32.shl (local.get $module_id) (i32.const 2)))))
+  (func $win16_dll_refs_ptr (param $module_id i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0x8A00) (i32.shl (local.get $module_id) (i32.const 2)))))
+
+  ;; Forget a module: FreeLibrary's half of the above. The id stops naming a
+  ;; loaded module, so the slot can describe a different one, and the module's
+  ;; arena slots go back to the allocator. They used to stay where they were
+  ;; placed, and Civilization II loads and frees a resource DLL for every
+  ;; wonder video, throne room, advisor portrait and city view: a few hundred
+  ;; turns in, the next LoadLibrary found the selector arena exhausted.
   (func $win16_dll_unload (param $module_id i32)
-    (i32.store offset=12 (call $win16_dll_rec (local.get $module_id)) (i32.const 0))
+    (local $rec i32)
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (if (i32.load offset=12 (local.get $rec))
+      (then
+        (call $win16_arena_give
+          (i32.add (i32.load offset=4 (local.get $rec)) (i32.const 1))
+          (i32.load (call $win16_dll_run_ptr (local.get $module_id))))))
+    (i32.store (call $win16_dll_run_ptr (local.get $module_id)) (i32.const 0))
+    (i32.store (call $win16_dll_refs_ptr (local.get $module_id)) (i32.const 0))
+    (i32.store offset=12 (local.get $rec) (i32.const 0))
     (i32.store (call $win16_dll_image_size_ptr (local.get $module_id)) (i32.const 0)))
 
   ;; Which image owns the code currently running, as (ne_off, staging base).
@@ -1363,8 +1391,27 @@
     (local.set $seg_tab (i32.add (local.get $ne_off)
       (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x22)))))
 
-    ;; Segment 1 lands at the next free index, so the base is one less.
-    (local.set $seg_index_base (i32.sub (call $win16_next_seg_get) (i32.const 1)))
+    ;; An app-local module also keeps its header and tables in private
+    ;; metadata pages placed right after its segments (below), so the whole
+    ;; load is one run of arena slots, handed back as one when it is freed.
+    (if (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
+      (then
+        (local.set $meta_size (local.get $staged_size))
+        (if (i32.eqz (local.get $meta_size))
+          (then (local.set $meta_size (i32.const 0x10000))))
+        (if (i32.gt_u (local.get $meta_size) (global.get $WIN16_APP_DLL_STAGING_SIZE))
+          (then (return (i32.const 0))))
+        (local.set $meta_pages (i32.shr_u
+          (i32.add (local.get $meta_size) (i32.const 0xFFFF)) (i32.const 16)))))
+    (local.set $index (call $win16_arena_take
+      (i32.add (local.get $seg_count) (local.get $meta_pages))))
+    (if (i32.eqz (local.get $index))
+      (then
+        (call $host_log_i32 (i32.const 0xCA165E5A))  ;; selector arena exhausted
+        (call $host_log_i32 (i32.add (local.get $seg_count) (local.get $meta_pages)))
+        (return (i32.const 0))))
+    ;; Segment 1 lands at the run's first index, so the base is one less.
+    (local.set $seg_index_base (i32.sub (local.get $index) (i32.const 1)))
 
     (local.set $i (i32.const 0))
     (block $place_done (loop $place
@@ -1377,8 +1424,8 @@
       (if (i32.and (i32.eqz (local.get $len)) (i32.ne (local.get $file_pos) (i32.const 0)))
         (then (local.set $len (i32.const 0x10000))))
       (if (i32.eqz (local.get $alloc)) (then (local.set $alloc (i32.const 0x10000))))
-      (local.set $index (call $win16_alloc_segment))
-      (local.set $seg_base (call $win16_seg_base (local.get $index)))
+      (local.set $index (i32.add (local.get $seg_index_base) (i32.add (local.get $i) (i32.const 1))))
+      (local.set $seg_base (call $win16_arena_slot_base (local.get $index)))
       (call $win16_seg_set (local.get $index)
         (local.get $seg_base) (local.get $alloc)
         (local.get $flags) (i32.add (local.get $i) (i32.const 1)))
@@ -1429,24 +1476,19 @@
     ;; its small contents into the metadata page and retarget the NE header.
     (if (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
       (then
-        (local.set $meta_size (local.get $staged_size))
-        (if (i32.eqz (local.get $meta_size))
-          (then (local.set $meta_size (i32.const 0x10000))))
-        (if (i32.gt_u (local.get $meta_size) (global.get $WIN16_APP_DLL_STAGING_SIZE))
-          (then (return (i32.const 0))))
-        (local.set $meta_pages (i32.shr_u
-          (i32.add (local.get $meta_size) (i32.const 0xFFFF)) (i32.const 16)))
-        (if (i32.ge_u (i32.add (call $win16_next_seg_get) (local.get $meta_pages))
-                       (global.get $WIN16_SEG_MAX))
-          (then (return (i32.const 0))))
         (local.set $ne_delta (i32.sub (local.get $ne_off) (local.get $stage)))
-        (local.set $meta (call $g2w (call $win16_seg_base (call $win16_alloc_segment))))
-        (local.set $meta_i (i32.const 1))
+        (local.set $index (i32.add (local.get $seg_index_base)
+                                   (i32.add (local.get $seg_count) (i32.const 1))))
+        (local.set $meta (call $g2w (call $win16_arena_slot_base (local.get $index))))
         (block $meta_done (loop $meta_alloc
           (br_if $meta_done (i32.ge_u (local.get $meta_i) (local.get $meta_pages)))
-          (drop (call $win16_alloc_segment))
+          (call $win16_seg_set (i32.add (local.get $index) (local.get $meta_i))
+            (call $win16_arena_slot_base (i32.add (local.get $index) (local.get $meta_i)))
+            (i32.const 0x10000) (i32.const 0) (i32.const 0))
           (local.set $meta_i (i32.add (local.get $meta_i) (i32.const 1)))
           (br $meta_alloc)))
+        (call $zero_memory (local.get $meta)
+          (i32.mul (local.get $meta_pages) (i32.const 0x10000)))
         (call $memcpy (local.get $meta) (local.get $stage) (local.get $meta_size))
         (local.set $ne_off (i32.add (local.get $meta) (local.get $ne_delta)))
         (local.set $nonres_off (i32.load (i32.add (local.get $ne_off) (i32.const 0x2C))))
@@ -1466,6 +1508,9 @@
     (i32.store offset=4 (local.get $rec) (local.get $seg_index_base))
     (i32.store offset=8 (local.get $rec) (local.get $base))
     (i32.store offset=12 (local.get $rec) (local.get $seg_count))
+    (i32.store (call $win16_dll_run_ptr (local.get $module_id))
+      (i32.add (local.get $seg_count) (local.get $meta_pages)))
+    (i32.store (call $win16_dll_refs_ptr (local.get $module_id)) (i32.const 0))
     (i32.store (call $win16_dll_image_size_ptr (local.get $module_id))
       (select (local.get $meta_size) (global.get $WIN16_DLL_STAGING_STRIDE)
         (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))))
