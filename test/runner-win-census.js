@@ -45,6 +45,12 @@ function reportCounters(x, log) {
   const bc = c(64);
   log(`bulk g2w_affine_span sparse: calls=${bc} ok=${c(65)} (${pct(c(65), bc)}, ${c(71)} bytes) ` +
     `unmapped0=${c(66)} wrap=${c(67)} unmappedN=${c(68)} NONADJ=${c(69)} (${pct(c(69), bc)}, ${c(70)} bytes)`);
+  const rc = c(76);
+  if (rc) {
+    const ring = [];
+    for (let i = 0; i < Math.min(16, rc); i++) ring.push('0x' + (c(80 + ((rc - 1 - i) & 15)) >>> 0).toString(16));
+    log(`uop-win code-page refusals: ${rc} direct=${c(73)} DIB=${c(74)} sparse=${c(75)}  last pages: ${ring.join(' ')}`);
+  }
 }
 
 function reportAllocator(x, log) {
