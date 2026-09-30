@@ -307,6 +307,29 @@ for(let offset=256;offset<r[0].bytes.length;offset+=4)
   assert.ok(Number.isFinite(r[0].bytes.readFloatLE(offset)),'minimum-W output finite');
 for(const [offset,value] of [[36,0],[40,256],[48,0],[52,128]])
   near(r[0].bytes.readFloatLE(256+offset),value,'minimum-W texture '+offset);
+// Original Hitman Pack.SPK contains NaN UVs. Preserve the textured triangle
+// and finite components; undefined NaN S/T selects deterministic coordinate 0.
+for (const mode of [1,0]) {
+  call('grCoordinateSpace',[mode]);
+  for (let i=0;i<3;i++) {
+    const raw=clipVertex(...[[-.5,-.5,0],[.5,-.5,0],[0,.5,0]][i],2);
+    raw.writeFloatLE(NaN,36);raw.writeFloatLE(.25,40);
+    raw.writeFloatLE(.2,48);raw.writeFloatLE(NaN,52);
+    put(clip+i*60,raw);
+  }
+  call('grDrawTriangle',[clip,clip+60,clip+120]);r=records();
+  assert.strictEqual(r.length,1,'NaN UV triangle retained');
+  assert.strictEqual(r[0].wireOp,15,'both texture units retained');
+  assert.strictEqual(r[0].bytes.length,256+180,'all three vertices retained');
+  for(let i=0;i<3;i++) {
+    const out=r[0].bytes.subarray(256+i*60);
+    for(const [offset,value] of [[36,0],[40,mode?32:.25],[48,mode?25.6:.2],[52,0],
+      [44,mode?.25:.5],[56,mode?.125:.25]]) near(out.readFloatLE(offset),value,'NaN policy '+mode+'/'+offset);
+    near(out.readFloatLE(0),mode?[47.5,72.5,60][i]:[-.5,.5,0][i],'preserved geometry X');
+    near(out.readFloatLE(12),mode?63.75:.25,'preserved color');
+  }
+}
+call('grCoordinateSpace',[1]);
 // Hitman keeps ST/Q layouts enabled for an untextured quad but leaves
 // their storage undefined. Both finite overflow and NaNs must remain unread.
 call('grGlideGetState',[state]);
@@ -393,8 +416,15 @@ call('glide3_grGlideInit');call('grSstWinOpen',[0,7,0,0,0,2,1]);
 for(const [param,offset] of [[1,0],[2,8],[3,12],[0x40,36]]) call('grVertexLayout',[param,offset,1]);
 call('grCoordinateSpace',[1]);
 call('grColorCombine',[3,8,0,1,0]);call('grTexCombine',[0,1,0,1,0,0,0]);
-const invalidLive=clipVertex(0,0,0,1);invalidLive.writeFloatLE(NaN,36);put(clip,invalidLive);
-assert.throws(()=>a.test_glide3_vertex(wa(0x418000),clip),WebAssembly.RuntimeError,'consumed NaN ST remains fatal');
+const invalidLive=clipVertex(0,0,0,1);invalidLive.writeFloatLE(Infinity,36);put(clip,invalidLive);
+assert.throws(()=>a.test_glide3_vertex(wa(0x418000),clip),WebAssembly.RuntimeError,'consumed infinite ST remains fatal');
+// The UV policy must not absorb NaN position, W, or live texture Q.
+call('grVertexLayout',[0x50,44,1]);
+call('grVertexLayout',[0x20,20,1]);
+for(const offset of [0,4,8,12,20,44]) {
+  const invalid=clipVertex(0,0,0,1);invalid.writeFloatLE(NaN,offset);put(clip,invalid);
+  assert.throws(()=>a.test_glide3_vertex(wa(0x418000),clip),WebAssembly.RuntimeError,'non-UV NaN remains fatal '+offset);
+}
 const extreme=clipVertex(0,0,0,minimumW);extreme.writeFloatLE(1,36);put(clip,extreme);
 const pendingBefore=view.getUint32(regions.BASE.GLIDE_STATE+20,true);
 assert.throws(()=>call('grDrawPoint',[clip]),WebAssembly.RuntimeError,'unrepresentable ST fails explicitly');

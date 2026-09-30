@@ -14,6 +14,14 @@ The current implementation and limits are recorded below. Later sections
 retain the broader architecture and compatibility milestones; they are not
 claims of complete Glide compatibility.
 
+Glide 3 replaces NaN texture S/T components with zero before projection,
+for either TMU in window or clip coordinates. Original Hitman demo assets
+contain these values; the original SDK forwards them without rejecting the
+draw. This deterministic compatibility policy preserves geometry and finite
+components but does not claim hardware-exact NaN texel selection. Existing
+non-UV and infinity validation remains unchanged; see the
+[Hitman investigation](re-notes/hitman-demo.md).
+
 ## Summary
 
 Implement `glide2x.dll` and `glide3x.dll` API interception, normalize their

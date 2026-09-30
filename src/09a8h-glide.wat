@@ -1210,6 +1210,19 @@
         (then (local.set $mask (i32.or (local.get $mask) (i32.const 2)))))))
     (local.get $mask))
 
+  ;; Original Hitman assets contain quiet NaN UVs, and the SDK forwards
+  ;; them without rejecting the draw. NaN texel selection is unspecified;
+  ;; use zero deterministically for S/T only, preserving geometry and all
+  ;; finite components. This is not a claim of bit-exact H3 NaN sampling.
+  ;; Infinity and non-finite geometry/Q/color retain their existing checks.
+  (func $glide3_texcoord_field (param $guest i32) (param $slot i32)
+      (param $offset i32) (result f32)
+    (local $value f32)
+    (local.set $value (call $glide3_field (local.get $guest)
+      (local.get $slot) (local.get $offset) (f32.const 0)))
+    (if (result f32) (f32.ne (local.get $value) (local.get $value))
+      (then (f32.const 0)) (else (local.get $value))))
+
   (func $glide3_vertex (param $dst i32) (param $guest i32)
     (local $e i32) (local $c i32) (local $i i32) (local $mask i32) (local $q f32) (local $default f32)
     (local.set $e (call $glide3_ext))
@@ -1258,13 +1271,13 @@
     (f32.store offset=44 (local.get $dst) (f32.const 1))
     (f32.store offset=56 (local.get $dst) (f32.const 1))
     (if (i32.and (local.get $mask) (i32.const 1)) (then
-    (f32.store offset=36 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 8) (i32.const 0) (f32.const 0)))
-    (f32.store offset=40 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 8) (i32.const 4) (f32.const 0)))
+    (f32.store offset=36 (local.get $dst) (call $glide3_texcoord_field (local.get $guest) (i32.const 8) (i32.const 0)))
+    (f32.store offset=40 (local.get $dst) (call $glide3_texcoord_field (local.get $guest) (i32.const 8) (i32.const 4)))
     (f32.store offset=44 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 10) (i32.const 0) (local.get $default)))
 ))
     (if (i32.and (local.get $mask) (i32.const 2)) (then
-    (f32.store offset=48 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 9) (i32.const 0) (f32.const 0)))
-    (f32.store offset=52 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 9) (i32.const 4) (f32.const 0)))
+    (f32.store offset=48 (local.get $dst) (call $glide3_texcoord_field (local.get $guest) (i32.const 9) (i32.const 0)))
+    (f32.store offset=52 (local.get $dst) (call $glide3_texcoord_field (local.get $guest) (i32.const 9) (i32.const 4)))
     (f32.store offset=56 (local.get $dst) (call $glide3_field (local.get $guest) (i32.const 11) (i32.const 0) (local.get $default)))
 ))
 
