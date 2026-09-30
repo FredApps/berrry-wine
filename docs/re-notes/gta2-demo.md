@@ -76,3 +76,13 @@ Slot 7 is the primary gameplay surface. The generic screenshot heuristic can
 otherwise select a cached front-end surface because this title creates many
 DirectDraw surfaces. The captured 640x480 frame contains the player in the
 Wild Demo playfield, the health-heart HUD, and the opening tutorial message.
+
+## Shared lazy synchronization A/B (2026-09-29)
+
+The [hardware browser benchmark](../lazy-sync-game-results.md) reached gameplay
+with two live guest workers throughout measurement. Lazy OFF / ON measured
+29.86 / 29.79 FPS and about one readback per frame in both modes. ON leaves
+one armed Lock untouched per frame, but presentation still needs its readback
+and transport fences increase from one to two. The helper recorded no lazy
+surface touches, so this is coexistence coverage, not a real-game test of
+foreign-thread pixel access. Global lazy synchronization remains opt-in.

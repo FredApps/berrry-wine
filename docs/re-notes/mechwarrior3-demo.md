@@ -1517,3 +1517,14 @@ counted as coverage. Retained native/GDI pointers also remain unaudited. Those
 gaps rule out enabling this globally despite the demonstrated MW3 reduction
 from three readbacks to one. Artifacts: experiment worktree
 `build/mw3-lazy-results/*-lazy-coverage2-{off,on}/`.
+
+### Shared synchronization follow-up (2026-09-29)
+
+Commit `1730589d` replaces the instance-local pending range with shared state
+and synchronization. The subsequent [real-game A/B](../lazy-sync-game-results.md)
+measured 21.29 FPS OFF / 22.64 ON, with GPU readbacks dropping from 3.016 to
+1.011 per frame. ON submitted about 10% fewer triangles, so the FPS difference
+is not an isolated speedup measurement. Each launch created a helper that
+exited before measurement; persistent thread history catches this startup
+activity. Global enablement remains deferred based on GTA2's extra fence with
+no readback reduction, and the documented retained GDI/native-pointer limit.
