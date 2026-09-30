@@ -17,6 +17,9 @@
 //   only-base  only, every program built on the baseline passes (baselineRP)
 //   only-R     only, on resident: true (narrow registers stored in place, allR)
 //   only-RF    only, on resident: 'full' (allRF)
+//   only-naive only, every program the naive lowering (naiveR): no passes
+//   only-nK    tier-up from naiveR: rebuilt on allRP once its loop headers
+//              have counted K (only-n1k, only-n100k, ...)
 //   only-tK    tier-up: built on promoteLiveRP, rebuilt on allRP once its loop
 //              headers have counted K (only-t64, only-t1k, ...)
 //
@@ -61,10 +64,16 @@ const ARMS = {
   // (allR) and the same with read-modify-write narrow stores (allRF)
   'only-R': () => ({ uopOnly: { shape: 'loop', passes: 'allR', linePasses: 'allR' } }),
   'only-RF': () => ({ uopOnly: { shape: 'loop', passes: 'allRF', linePasses: 'allRF' } }),
+  'only-naive': () => ({ uopOnly: { shape: 'loop', passes: 'naiveR', linePasses: 'naiveR' } }),
 };
 
 const armOf = (a) => {
   const t = /^only-t(\d+[km]?)$/i.exec(a);
+  const nv = /^only-n(\d+[km]?)$/i.exec(a);
+  if (nv) {
+    const after = count(nv[1]);
+    return () => ({ uopOnly: { shape: 'loop', passes: 'naiveR', linePasses: 'naiveR', tier: { passes: 'allRP', after } } });
+  }
   if (t) {
     const after = count(t[1]);
     return () => ({ uopOnly: { shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP', tier: { passes: 'allRP', after } } });

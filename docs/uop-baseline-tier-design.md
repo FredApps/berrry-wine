@@ -764,6 +764,58 @@ The 10M runs are build-bound (step 6), so this says nothing about the three
 models' execution speed. That question stays with the resident-registers
 section above.
 
+### Phase 1, step 8: the naive lowering as the cold tier (2026-09-30)
+
+**Why a first build cost more than L1's whole compile.** Measured with a
+phase probe and an optimizer replay over captured regions:
+
+| cost per x86 instruction | |
+|---|---|
+| L1 `compileProgram` (decode, emit words) | ~3 µs |
+| µop optimizer, promoteRP (cheapest set) | ~54 µs |
+| µop optimizer, baselineRP | ~405 µs |
+| µop optimizer, allRP | ~680 µs |
+
+That is before discover, `IR.lower`, `lowerProgram` and encode, and
+spinBlock's own L1 compile. The optimizer copies the region into a fast half,
+then walks every op 10-20 times: constprop alone runs up to five times, each
+up to 12 rounds. After two fixes (54555207, output-identical: mergeStraight
+was quadratic, and each op was cloned through JSON) no function stands out.
+GC is 12-14%, and the rest is spread thin.
+
+**The cold tier needs no passes.** The naive lowering (`IR.lower`) is already
+valid in any machine state: every register is a GETR/PUTR of L1's register
+file, every flag a REC into L1's lazy-flag globals, every access the full
+accessor, and the budget is tested at every transfer. It names no guest vreg,
+so resident changes nothing in it but where its temporaries live. Pass set
+`naiveR` (uop-opt.js `naiveResident`) installs it as an arena program:
+
+- Its loop headers are the back-edge targets and the head, marked so a
+  counting arena bumps the tier-up counter there.
+- Dead flag records go the way L1 drops them: the flaglive rule, run on the
+  naive CFG, with each exit reading what `liveFlagsAt` says is live at its
+  target. Without it PMENTRY left ZF set where L1 leaves it stale-clear.
+  That is 84 µops per wraps iteration, against naive's 88.
+
+**Arms.** `only-naive` (naiveR everywhere) and `only-nK` (naiveR cold,
+rebuilt on allRP after K header counts). Tests: test-toyvm-uop runs naiveR
+as its 28th configuration (5040 differential runs agree), and
+test-toyvm-uop-only runs every program on `naive` and on `naive-tier`
+(tier after 4).
+
+**Results.** All 12 programs are exact at 10M in every arm, load 13-20:
+
+| 10M geomean vs l1 | only (allRP) | only-min | only-naive | only-n100k |
+|---|---|---|---|---|
+| programs 1-6 | x15.6 | x8.1 | x6.9 | x6.7 |
+| programs 7-12 | x9.3 | x5.1 | x4.3 | x4.8 |
+
+A naive build is about 5-10x cheaper than the old one. At this run length the
+unoptimized program beats every optimized one outright: the optimizer never
+earns its build back. What is left, x4-7 of L1, is no longer build time.
+DTM2 builds for 0.07s of a 0.63s run, against L1's 0.08s total, so the next
+lever is the arm's execution and handback overhead.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

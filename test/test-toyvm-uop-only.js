@@ -283,8 +283,12 @@ async function main() {
   // the architecture and a difference from the oracle all the same.
   const TIER = { label: 'tier', shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP',
     tier: { passes: 'allRP', after: 4 } };
+  // The naive cold tier (naiveR), alone and tiering up to allRP.
+  const NAIVE = { label: 'naive', shape: 'loop', passes: 'naiveR', linePasses: 'naiveR' };
+  const NAIVE_TIER = { label: 'naive-tier', shape: 'loop', passes: 'naiveR', linePasses: 'naiveR',
+    tier: { passes: 'allRP', after: 4 } };
   let tierUps = 0;
-  for (const shape of ['loop', 'straight', TIER]) {
+  for (const shape of ['loop', 'straight', TIER, NAIVE, NAIVE_TIER]) {
     const p = await same('PATCH', patchProgram(), shape);
     assert.ok(p.invalidated >= 1, `PATCH (${shape}): no program was dropped when the guest rewrote it`);
     tierUps += (await same('SIDEEXIT', sideExitProgram(), shape)).tierUps || 0;

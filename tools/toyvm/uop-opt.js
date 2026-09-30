@@ -88,7 +88,14 @@ function ablationConfigs(which = PASSES) {
     // boundary (finalize, blockflush) -- the register traffic of a chained
     // per-block tier without resident registers; baselineRF is the same tier
     // with them. The pair prices what resident removes.
-    ['baselineBF', { ...base, blockflush: true }]];
+    ['baselineBF', { ...base, blockflush: true }],
+    // naiveR: the naive lowering itself, no passes, as a resident program --
+    // the µop-only arm's cold tier. It names no guest vreg (every register is
+    // a GETR/PUTR of L1's register file, every flag a REC into L1's lazy-flag
+    // globals, every access the full accessor), so resident changes nothing
+    // in it but where its temporaries live. Its build is discover + lower:
+    // no fast half, no passes, a fraction of promoteRP's.
+    ['naiveR', { naive: true, resident: true }]];
   for (const p of which) out.push([`-${p}`, { ...all, [p]: false }]);
   return out;
 }
@@ -2099,6 +2106,7 @@ function sinkDeoptDefs(B) {
 function build(reg, opts = {}) {
   const passes = opts.passes;
   if (!passes) return IR.lower(reg);
+  if (passes.naive) return naiveResident(reg, opts);
   const B = new Build(reg, { ...opts, passes });
   // opts.timing (a Map) collects ms per pass: where a slow build goes.
   const T = opts.timing;
@@ -2169,6 +2177,80 @@ function build(reg, opts = {}) {
   B.p.build = B;
   B.p.headBlocks = new Set([B.fastHead, B.slowOf.get(reg.headKey)]);
   return B.p;
+}
+
+// The naive lowering as a resident program (naiveR). Its loop headers --
+// the targets of back edges, and the head -- are marked so that a counting
+// arena (tier-up) bumps a counter there, as it does at a built program's.
+//
+// Its dead flag records go the way L1 drops them (the flaglive pass's rule,
+// on the naive CFG): a REC none of whose flags any path reads before they
+// are written again, where an exit reads what liveFlagsAt says is live at
+// its target. Kept, they leave the architectural flags where L1 leaves stale
+// ones -- PMENTRY's ZF, in test-toyvm-uop-only.
+function naiveResident(reg, opts = {}) {
+  const p = IR.lower(reg);
+  const vm = opts.vm || null;
+  const rd = opts.rd || (vm ? (lin) => vm.mem[lin] : null);
+  if (rd) {
+    const env = opts.env || reg.env;
+    const shmask = opts.shmask !== undefined ? opts.shmask : vm ? vm.exports.mget_shmask() : 0x1F;
+    killDeadRecsNaive(p, rd, env, shmask);
+  }
+  const state = new Uint8Array(p.blocks.length);   // 0 new, 1 on stack, 2 done
+  const st = [[p.entry, IR.succOf(p.blocks[p.entry]), 0]];
+  state[p.entry] = 1;
+  while (st.length) {
+    const top = st[st.length - 1];
+    if (top[2] === top[1].length) { state[top[0]] = 2; st.pop(); continue; }
+    const s = top[1][top[2]++];
+    if (state[s] === 1) p.blocks[s].header = true;
+    else if (state[s] === 0) { state[s] = 1; st.push([s, IR.succOf(p.blocks[s]), 0]); }
+  }
+  p.blocks[p.blocks[p.entry].term.t].header = true;
+  p.resident = true;
+  p.stats = { naive: true };
+  return p;
+}
+
+function killDeadRecsNaive(p, rd, env, shmask) {
+  const memo = new Map();
+  const liveIn = new Map();
+  const body = [];
+  for (const b of p.blocks) {
+    if (b.kind === 'dead' || !b.term) continue;
+    if (b.term.o === 'exit') {
+      const t = b.term;
+      liveIn.set(b.id, t.ipv !== undefined || t.far || t.ip === undefined ? new Set(ALL6)
+        : liveFlagsAt(rd, env, t.ip, { shmask, memo }));
+    } else { liveIn.set(b.id, new Set()); body.push(b); }
+  }
+  const step = (b, kill) => {
+    const live = new Set();
+    for (const s of IR.succOf(b)) for (const f of liveIn.get(s) || ALL6) live.add(f);
+    for (let i = b.ops.length - 1; i >= 0; i--) {
+      const op = b.ops[i];
+      if (op.dx !== undefined && op.dx >= 0) for (const f of liveIn.get(op.dx) || ALL6) live.add(f);
+      if (op.o === 'rec') {
+        const defs = recDefs(op);
+        if (kill && !defs.some((f) => live.has(f))) { b.ops.splice(i, 1); continue; }
+        for (const f of defs) live.delete(f);
+      } else if (op.o === 'getcc') for (const f of CC_READS[op.cc]) live.add(f);
+      else if (op.o === 'callh') {
+        for (const f of callhDefs(op, shmask)) live.delete(f);
+        for (const f of callhReads(op)) live.add(f);
+      }
+    }
+    return live;
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let k = body.length - 1; k >= 0; k--) {
+      const b = body[k], li = step(b, false), old = liveIn.get(b.id);
+      if (li.size !== old.size || [...li].some((x) => !old.has(x))) { liveIn.set(b.id, li); changed = true; }
+    }
+  }
+  for (const b of body) step(b, true);
 }
 
 // Machine settings the loop reads: specialize them under an entry guard.
