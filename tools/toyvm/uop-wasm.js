@@ -1424,4 +1424,4 @@ class E1Arena {
 }
 
 
-module.exports = { EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE, E1Arena };
+module.exports = { EFFECT, CF_READERS, EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE, E1Arena };

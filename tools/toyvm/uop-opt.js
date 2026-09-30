@@ -2190,6 +2190,7 @@ function build(reg, opts = {}) {
 // ones -- PMENTRY's ZF, in test-toyvm-uop-only.
 function naiveResident(reg, opts = {}) {
   const p = IR.lower(reg);
+  splitFullAfterEffect(p);
   const vm = opts.vm || null;
   const rd = opts.rd || (vm ? (lin) => vm.mem[lin] : null);
   if (rd) {
@@ -2211,6 +2212,37 @@ function naiveResident(reg, opts = {}) {
   p.resident = true;
   p.stats = { naive: true };
   return p;
+}
+
+// A full-checked access (ldf/stf) hands its block to the reference
+// interpreter when it cannot be done in place, and that reruns the block from
+// its start, so lowerProgram refuses one that follows a side effect in its
+// block: the store of a read-modify-write, a push's store after its SP write.
+// In an optimized program only the slow half has them; in a naive one every
+// access is full, and DTM2 bailed 93144 times in 10M on nothing else. The
+// block is cut before such an access instead: the effects stay behind in a
+// block that already ran, and a hand-back reruns the access onward.
+function splitFullAfterEffect(p) {
+  const { EFFECT, CF_READERS } = require('./uop-wasm');
+  const work = p.blocks.filter((b) => b.kind === 'body');
+  while (work.length) {
+    const b = work.pop();
+    let eff = false;
+    for (let i = 0; i < b.ops.length; i++) {
+      const op = b.ops[i];
+      if (eff && (op.o === 'ld' || op.o === 'st') && op.chk === 'full') {
+        const nb = p.block('body');
+        nb.ip = b.ip;
+        nb.node = b.node;
+        nb.ops = b.ops.splice(i);
+        nb.term = b.term;
+        b.term = { o: 'br', t: nb.id, tx: -1 };
+        work.push(nb);
+        break;
+      }
+      if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) eff = true;
+    }
+  }
 }
 
 function killDeadRecsNaive(p, rd, env, shmask) {

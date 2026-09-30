@@ -816,6 +816,73 @@ earns its build back. What is left, x4-7 of L1, is no longer build time.
 DTM2 builds for 0.07s of a 0.63s run, against L1's 0.08s total, so the next
 lever is the arm's execution and handback overhead.
 
+### Phase 1, step 9: no reference-interpreter blocks, and what Ion makes of E1
+
+**Bails.** Profiling only-naive showed arena blocks the lowering refuses,
+all for one reason: *full memory after an effect*. A full-checked load or
+store can hand back, which reruns the block from its start, so it must not
+follow a side effect in the same block. Naive blocks are one instruction but
+still hit it (`push` stores after a register write; `movsw` does both). Those
+blocks ran on `runRef`, the JS reference interpreter: DTM2 93,144 in 10M,
+DEMO5 138,706, ACCIDENT 31,997. `splitFullAfterEffect` (uop-opt.js) cuts a
+body block at each such access, and `br` joins the two halves. Non-native
+blocks are now zero on every probed program. The remaining hand-backs are
+runtime ones: 0-135 per 10M.
+
+| 10M geomean vs l1, all 12 exact, load 16-28 | only-naive | only-n100k | only-min |
+|---|---|---|---|
+| after the split | x4.61 | x5.00 | x5.97 |
+
+That is down from about x5.4 for only-naive (step 8's two halves combined).
+Spin fallback is still large: DREAM hands L1 2.9M spin dispatches of 10M,
+RUNDEMO 6.2M, CYCLE 0.5M. Those run at L1 speed and cost this arm nothing.
+So the x4.6 is the arena's own per-µop cost.
+
+**What SpiderMonkey Ion makes of `$run`.** Measured with `tools/wasm-native.js`
+on the E1 engine, with arms named through Ion's jump table. `$run` is one
+function: 785 br_table arms, 128 KB of arm64 for 68 KB of wasm. The dispatch
+head costs 10 instructions and 4 memory operations per µop:
+
+```
+ldr  w16,[x23,#56] ; cbnz        interrupt check, every µop
+ldr  w0,[x20,#60]                $pc reloaded from a stack slot
+ldr  w2,[x21,x0]                 opcode
+cmp  w1,#0x311 ; b.cs            br_table bounds check
+ldr  x3,=table ; ldr x16,[x3,x1,lsl#3] ; br x16
+```
+
+Every arm ends with `ldr w6,[x20,#36]` (the $shm param, reloaded),
+`str w0,[x20,#60]` ($pc spilled) and `b head`. The loop-carried locals live
+in memory, not registers: $pc makes a store-to-load round trip through the
+stack on every µop, on the critical path. Each operand costs two instructions
+(`add x16,x0,#k; ldr w,[x21,x16]`), because arm64 has no base+index+offset
+mode.
+
+| arm (naive-hot) | insns | loads/stores |
+|---|---|---|
+| mov | 10 | 6 |
+| getr32 / putr32 / getr16 / putr16 | 13 | 8 |
+| add / sub / and / xor | 14 | 8 |
+| step | 10 | 5 |
+| link | 34 | 12 |
+| exit | 39 | 14 |
+| ldf16a | 41 | 14 |
+| stf16a | 52 | 15 |
+| all 785 arms: median / p90 / max | 28 / 72 / 2304 | |
+
+So a register copy µop costs 20 native instructions with the head, and 10
+memory operations, of which 2 are the work. The levers, in order:
+
+1. **Fewer µops per x86 instruction.** This is the naive tier's own lever:
+   84 µops per wraps iteration against allRP's 39. Fused naive shapes
+   (getr+op+putr as one µop) remove heads without any pass.
+2. **Keep $pc in a register.** This is an Ion register-allocation outcome,
+   not something the WAT can request directly. The candidate test is a smaller
+   `$run`, with cold arms moved out to callees: if $pc stays in a register in
+   a 50-arm engine, arm count is the cause.
+3. **The interrupt check.** Ion inserts it at the loop head. A loop that exits
+   through `$budget` does not need it per µop, but wasm has no way to say so.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost
