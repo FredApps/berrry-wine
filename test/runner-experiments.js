@@ -99,6 +99,11 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     const [mn = '0', mx = '0'] = (UOP_TRACE_ARG && UOP_TRACE_ARG !== 'true' ? UOP_TRACE_ARG : '').split(',');
     return [parseInt(mn, 10) || 0, parseInt(mx, 10) || 0];
   })();
+  // --uop-poor-work=N: the x86 instructions per entry a trace program must
+  // average to escape the poor-program retirement (07d $uop_poor_check,
+  // default 16; docs/uop-tier-design.md §21.1). A huge N restores the
+  // blocks-only rule for traces.
+  const UOP_POOR_WORK = getArg('uop-poor-work', null);
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -359,6 +364,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
     }
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
+    if (UOP_POOR_WORK !== null) inheritWasm('set_uop_poor_work', Number(UOP_POOR_WORK) | 0);
     if (UOP_REGUARD_SPAN !== null) inheritWasm('set_uop_reguard_span', Number(UOP_REGUARD_SPAN) | 0);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -379,6 +385,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       instance.exports.set_uop(1);
       if (UOP_WIN_CENSUS && instance.exports.set_uop_win_census) instance.exports.set_uop_win_census(1);
       if (UOP_REGUARD_SPAN !== null && instance.exports.set_uop_reguard_span) instance.exports.set_uop_reguard_span(Number(UOP_REGUARD_SPAN) | 0);
+      if (UOP_POOR_WORK !== null && instance.exports.set_uop_poor_work) instance.exports.set_uop_poor_work(Number(UOP_POOR_WORK) | 0);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       for (const [setter, wanted] of WIDEN) if (wanted() && instance.exports[setter]) instance.exports[setter](1);
       if (instance.exports.set_uop_trace_heads) instance.exports.set_uop_trace_heads(traceWanted() ? 1 : 0);

@@ -208,7 +208,18 @@
   (global $uop_cw_skipped (mut i32) (i32.const 0))
   (global $uop_cw_scans   (mut i32) (i32.const 0))
   (global $uop_cw_rebuilds (mut i32) (i32.const 0))
-  (global $UOP_HDR        i32 (i32.const 32))
+  ;; Program header: +0 gen +4 head eip +8 nwins +12 wins +16 enters
+  ;; +20 blocks +24 head exits +28 window epoch +32 work (a trace's x86
+  ;; instructions retired, summed over its exits' WORK ops; 0 for a loop)
+  ;; +36..+47 unused.
+  (global $UOP_HDR        i32 (i32.const 48))
+  ;; Set by 84 WORK on the way out of a trace program, read and cleared by
+  ;; the enter op.
+  (global $uop_xwork (mut i32) (i32.const 0))
+  ;; A trace averaging this many x86 instructions per entry is worth its
+  ;; enter/exit (§21.1); set_uop_poor_work changes it, 0x40000000 restores
+  ;; the blocks-only rule for traces too.
+  (global $UOP_POOR_WORK (mut i32) (i32.const 16))
   (global $uop_guard_fails (mut i32) (i32.const 0))
   (global $uop_reguards    (mut i32) (i32.const 0))
   ;; DIVW exits (the threaded div then raises #DE, or finds it does not);
@@ -909,7 +920,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c83 (block $c82 (block $c81 (block $c78
+      (block $c84 (block $c83 (block $c82 (block $c81 (block $c78
       (block $c77 (block $c76 (block $mxcore (block $c75 (block $c74 (block $c73 (block $c72
       (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
@@ -932,7 +943,7 @@
                   $c78
                   ;; 79-80 are not emitted
                   $c0 $c0
-                  $c81 $c82 $c83
+                  $c81 $c82 $c83 $c84
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -1786,6 +1797,12 @@
                    (select (i32.sub (i32.const 0) (local.get $bw)) (local.get $bw) (global.get $df))))
         (i32.store (i32.load offset=12 (local.get $pc)) (i32.const 0))
         (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L))
+        ;; 84 WORK n: a trace's exit stub, just before its EXIT: the x86
+        ;; instructions the path to this exit retired at the least (07e
+        ;; $uc_exit_work). The enter op sums it into the header's +32 for the
+        ;; poor test. No block, no state.
+        (global.set $uop_xwork (i32.load offset=4 (local.get $pc)))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 8))) (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))
@@ -1799,7 +1816,7 @@
     (unreachable))
 
   ;; ===================================================================
-  ;; Installation. A program header, 32 bytes, precedes its code:
+  ;; Installation. A program header, $UOP_HDR (48) bytes, precedes its code:
   ;;   +0 gen   ($uop_gen at install; a killed program holds 0; necessary
   ;;            for "live" but not sufficient -- see $uop_live)
   ;;   +4 head  (the guest EIP it is entered at)
@@ -1807,6 +1824,7 @@
   ;;   +16 entries  +20 blocks spent in it  (stats, and the retire policy)
   ;;   +24 exits back to the head
   ;;   +28 the $UOP_WIN_EPOCH its windows were last poisoned under
+  ;;   +32 work: x86 instructions its exits' WORK ops credited (traces only)
   ;; ===================================================================
 
   ;; The verdict map is 2048 sets of two {eip, pc} ways. It was direct-mapped
@@ -2237,6 +2255,14 @@
         (i32.store offset=16 (local.get $op) (local.get $n))
         (local.set $spent (i32.add (i32.load offset=20 (local.get $op)) (local.get $spent)))
         (i32.store offset=20 (local.get $op) (local.get $spent))
+        ;; A trace's exit said how far it got (84 WORK); saturating, so a
+        ;; long-lived program's sum never wraps back to "poor".
+        (if (global.get $uop_xwork)
+          (then
+            (local.set $ep (i32.add (i32.load offset=32 (local.get $op)) (global.get $uop_xwork)))
+            (i32.store offset=32 (local.get $op)
+              (select (i32.const 0x40000000) (local.get $ep) (i32.gt_u (local.get $ep) (i32.const 0x40000000))))
+            (global.set $uop_xwork (i32.const 0))))
         ;; EXITB: the batch is over, at the transfer target, as in threaded.
         (if (global.get $uop_bexit)
           (then
@@ -2268,11 +2294,21 @@
     (dispatch-next))
 
   ;; Retire a program that is entered often and does almost nothing per
-  ;; entry: the enter/exit is then pure overhead.
+  ;; entry: the enter/exit is then pure overhead. Blocks per entry measure a
+  ;; loop's work (its trips); they cannot measure a trace's, since a trace
+  ;; never comes back to its head and under --branch-clock straight-line code
+  ;; spends no block at all -- a 400-instruction run ending in one jnz scores
+  ;; 1. So a trace is also credited the x86 instructions each exit's WORK op
+  ;; names, and is poor only when it averages fewer than $UOP_POOR_WORK of
+  ;; them per entry as well (docs/uop-tier-design.md §21.1). A loop's work
+  ;; word stays 0, so for loops the rule is exactly the old one.
   (func $uop_poor_check (param $op i32)
-    (if (i32.and (i32.ge_u (i32.load offset=16 (local.get $op)) (i32.const 256))
-                 (i32.lt_u (i32.load offset=20 (local.get $op))
-                           (i32.shl (i32.load offset=16 (local.get $op)) (i32.const 1))))
+    (if (i32.and
+          (i32.and (i32.ge_u (i32.load offset=16 (local.get $op)) (i32.const 256))
+                   (i32.lt_u (i32.load offset=20 (local.get $op))
+                             (i32.shl (i32.load offset=16 (local.get $op)) (i32.const 1))))
+          (i32.lt_u (i32.div_u (i32.load offset=32 (local.get $op)) (global.get $UOP_POOR_WORK))
+                    (i32.load offset=16 (local.get $op))))
       (then
         (global.set $uop_retired_poor (i32.add (global.get $uop_retired_poor) (i32.const 1)))
         (if (global.get $uop_census)
@@ -2342,5 +2378,7 @@
   (func (export "uop_gen") (result i32) (global.get $uop_gen))
   ;; Test hook: install a hand-built program for $eip without the hotness
   ;; gate, exactly as $uop_try would.
+  (func (export "set_uop_poor_work") (param $n i32)
+    (global.set $UOP_POOR_WORK (select (local.get $n) (i32.const 1) (local.get $n))))
   (func (export "uop_install") (param $eip i32) (param $pc i32)
     (call $uop_install (local.get $eip) (local.get $pc)))

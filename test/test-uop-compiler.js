@@ -1251,6 +1251,58 @@ function traceLimitsCase(inst, a, nextCode) {
   return errs;
 }
 
+// The poor rule vs straight-line traces (docs/uop-tier-design.md §21.1).
+// Under --branch-clock a trace that is K straight instructions and one jmp
+// spends 1 block per entry, which the blocks-only rule (retire below 2 per
+// entry after 256 entries) always retires. A trace is also credited the x86
+// instructions its exit retired (07e $uc_exit_work -> 84 WORK), and lives
+// while it averages $UOP_POOR_WORK (16) of them: K=40 must survive, K=10 must
+// still be retired, and set_uop_poor_work(huge) must bring back the old rule.
+function tracePoorWorkCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const errs = [];
+  const straight = (k) => {
+    const at = nextCode();
+    mem.set(asm([...new Array(k).fill([0x01, 0xD3]), JMP('x'), L('x'), 0xC3]), g2w(at));
+    return at;
+  };
+  const tries = [
+    // [K, poor-work floor, retired?]
+    [40, 16, false],
+    [10, 16, true],
+    [40, 0x40000000, true],
+  ];
+  e.set_uop(1);
+  e.set_uop_trace_heads(1);
+  e.set_branch_clock(1);
+  const notes = [];
+  try {
+    for (const [k, floor, want] of tries) {
+      e.set_uop_poor_work(floor);
+      const at = straight(k);
+      const pc = e.uop_compile(at);
+      if (!pc) { errs.push(`K=${k}: declined`); continue; }
+      e.uop_install(at, pc);
+      const poor0 = e.uop_stats(7), en0 = e.uop_stats(4);
+      for (let i = 0; i < 300; i++) {
+        if (!callAt(inst, a, at, { ebx: 0, edx: 3 + i })) { errs.push(`K=${k}: did not return`); break; }
+        if ((e.get_ebx() >>> 0) !== ((k * (3 + i)) >>> 0)) { errs.push(`K=${k}: ebx ${(e.get_ebx() >>> 0)} want ${k * (3 + i)}`); break; }
+      }
+      const enters = e.uop_stats(4) - en0, retired = e.uop_stats(7) !== poor0;
+      if (enters < 256) errs.push(`K=${k}: entered only ${enters} times`);
+      if (retired !== want) errs.push(`K=${k} floor=${floor}: ${retired ? 'retired' : 'kept'}, want ${want ? 'retired' : 'kept'} (enters=${enters})`);
+      notes.push(`K=${k}/${floor > 1000 ? 'off' : floor}:${retired ? 'retired' : 'kept'}`);
+    }
+  } finally {
+    e.set_uop_poor_work(16);
+    e.set_branch_clock(0);
+    e.set_uop_trace_heads(0);
+    e.set_uop(0);
+  }
+  if (!errs.length) console.log(`trace-poor-work    ok (${notes.join(' ')})`);
+  return errs;
+}
+
 function windowCase(inst, a, nextCode) {
   const { e, mem, g2w } = inst;
   const P = nextCode(), Lc = nextCode();
@@ -1713,6 +1765,10 @@ async function main() {
   if (!only || only === 'trace-limits') {
     const errs = traceLimitsCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`trace-limits       FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'trace-poor-work') {
+    const errs = tracePoorWorkCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`trace-poor-work    FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'window-keep') {
     const errs = windowCase(inst, a, () => a.code + 0x1000 * slot++);
