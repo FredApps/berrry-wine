@@ -38,8 +38,10 @@ async function main() {
   const calls = [];
   let reply = 2;
   let executor;
-  const { exports: ex, memory: wasmMemory } = await bootRenderHarness({ fonts: 'none',
+  let sharedPublish = true;
+  const harness = await bootRenderHarness({ fonts: 'none',
     extraHostOverrides: { gpu_gl_call: (...args) => {
+      if (args[0] === 0x20007) return sharedPublish ? 1 : 0;
       calls.push(args); return executor ? executor.call(...args) : reply;
     } },
     extraWat: `
@@ -124,6 +126,8 @@ async function main() {
         (call $d3dim_texture_view_release (local.get $this))
         (i32.load (global.get $reg_base)))
     ` });
+  const { exports: ex, memory: wasmMemory } = harness;
+  const other = (await WebAssembly.instantiate(harness.module, { host: harness.host, gdi: harness.gdi })).exports;
   assert.strictEqual(ex.test_surface_fence(1, 1), 1, 'scoped fence preserves global pending state');
   assert.deepStrictEqual(calls.pop(), [OPCODES.FENCE, 4096, 614400]);
   assert.strictEqual(ex.test_global_fence(), 0);
@@ -213,6 +217,16 @@ async function main() {
       'baseline and folded wide reads synchronize before crossing an aligned surface start');
     assert.equal(calls.length, 1);
   }
+  for (const kind of [0, 1, 2]) {
+    calls.length = 0; lazyTarget.dirty = true; pixels.fill(0);
+    ex.test_lazy_arm(lazy, 1);
+    const value = other.test_lazy_access(lazyDib, kind);
+    if (kind !== 1) assert.equal(value, 0xf800, 'foreign instance sees fresh pixels');
+    assert.equal(ex.test_lazy_unlock(lazy), 0, 'foreign touch is visible to locking thread');
+    ex.test_global_fence();
+    assert.equal(new Uint16Array(pixels.buffer, pixels.byteOffset, 2)[0], kind === 1 ? 0x1234 : 0xf800,
+      'later owner fence preserves foreign writes');
+  }
   calls.length = 0; lazyTarget.dirty = true; pixels.fill(0);
   ex.test_lazy_arm(lazy, 1); ex.test_lazy_unlock(lazy);
   ex.test_lazy_replace(lazy, lazyDib + 4096, 8);
@@ -226,6 +240,85 @@ async function main() {
   ex.test_lazy_offset(lazy, 1);
   ex.test_lazy_arm(lazy, 1);
   assert.equal(calls.length, 1, 'unaligned backing remains eager for boundary-straddling scalar accesses');
+  ex.test_lazy_offset(lazy, 0); lazyTarget.dib = lazyDib;
+  sharedPublish = false; calls.length = 0; lazyTarget.dirty = true;
+  const armedBefore = ex.get_d3dim_lazy_armed();
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(ex.get_d3dim_lazy_armed(), armedBefore, 'private transport cannot arm a shared range');
+  assert.equal(calls.length, 1, 'private transport keeps eager synchronization');
+  sharedPublish = true;
+  await crossWorkerAccess(harness, executor, lazy, lazyDib, lazyTarget);
   console.log('PASS surface fences: aliases, pixels, dirty state, global/software ordering');
+}
+
+async function crossWorkerAccess(harness, gpu, surface, dib, target) {
+  const { Worker } = require('worker_threads');
+  const workerSource = `
+    const {parentPort,workerData}=require('worker_threads');
+    const control=new Int32Array(workerData.control),imports={};
+    for(const i of WebAssembly.Module.imports(workerData.module)) {
+      const ns=imports[i.module]||(imports[i.module]={});
+      ns[i.name]=i.kind==='memory'?workerData.memory:i.name==='gpu_gl_call'?(op,wa,len)=>{
+        if(op!==0x20001)throw Error('unexpected worker GPU opcode');
+        Atomics.store(control,0,0);parentPort.postMessage({t:'fence',wa,len});
+        while(!Atomics.load(control,0))Atomics.wait(control,0,0,1000);
+        return Atomics.load(control,1);
+      }:()=>0;
+    }
+    WebAssembly.instantiate(workerData.module,imports).then(instance=>{
+      parentPort.on('message',m=>{
+        parentPort.postMessage({t:'started'});
+        try {parentPort.postMessage({t:'done',value:instance.exports.test_lazy_access(m.dib,m.kind)});}
+        catch(e){parentPort.postMessage({t:'done',error:String(e)});}
+      });
+      parentPort.postMessage({t:'ready'});
+    });`;
+  const workers=[];
+  let hold, held;
+  try {
+    for(let i=0;i<2;i++) {
+      const control=new Int32Array(new SharedArrayBuffer(8));
+      const w=new Worker(workerSource,{eval:true,workerData:{module:harness.module,memory:harness.memory,control:control.buffer}});
+      const peer={w,control};workers.push(peer);
+      await new Promise((resolve,reject)=>{
+        w.on('error',reject);
+        w.on('message',m=>{
+          if(m.t==='ready')resolve();
+          if(m.t==='started')peer.started?.();
+          if(m.t==='done')m.error?peer.reject(Error(m.error)):peer.done(m.value);
+          if(m.t==='fence') {
+            const complete=()=>{
+              Atomics.store(control,1,gpu.fence(m.wa,m.len));
+              Atomics.store(control,0,1);Atomics.notify(control,0);
+            };
+            if(hold){held=complete;hold();hold=null;}else complete();
+          }
+        });
+      });
+    }
+    const access=(peer,kind)=>new Promise((resolve,reject)=>{
+      peer.done=resolve;peer.reject=reject;peer.w.postMessage({dib,kind});
+    });
+    const ex=harness.exports,pixels=new Uint16Array(harness.memory.buffer,dib,2);
+    target.dirty=true;pixels.fill(0);ex.test_lazy_arm(surface,1);
+    const waiting=new Promise(resolve=>{hold=resolve;});
+    const first=access(workers[0],0);await waiting;
+    const started=new Promise(resolve=>{workers[1].started=resolve;});
+    let completed=false;
+    const second=access(workers[1],0).then(value=>{completed=true;return value;});
+    await started;
+    await new Promise(resolve=>setTimeout(resolve,30));
+    assert(!completed,'second thread cannot read while first readback is parked');
+    held();
+    assert.deepStrictEqual(await Promise.all([first,second]),[0xf800,0xf800]);
+    assert.equal(ex.test_lazy_unlock(surface),0,'foreign touches update owner Unlock');
+    target.dirty=true;pixels.fill(0);ex.test_lazy_arm(surface,1);
+    await access(workers[1],1);
+    assert.equal(ex.test_lazy_unlock(surface),0);
+    ex.test_global_fence();
+    assert.deepStrictEqual([...pixels],[0x1234,0x07e0],'write-only foreign access preserves GPU pixels and survives owner fence');
+  } finally {
+    await Promise.all(workers.map(({w})=>w.terminate()));
+  }
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });

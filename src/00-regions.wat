@@ -910,3 +910,6 @@
   ;; Fixed state uses 532 bytes; streams, texture payloads and LFB live on heap.
   (region.declare $GLIDE_STATE (size 0x00000220) (align 0x00000010)
     (owner "09a8h-glide.wat:$GLIDE_STATE"))
+  ;; Lazy surface barriers shared by guest instances, never initialized by data.
+  (region.declare $D3DIM_LAZY_SHARED (size 0x00000020) (align 0x00000010)
+    (owner "09ab-handlers-d3dim-core.wat:$D3DIM_LAZY_SHARED"))

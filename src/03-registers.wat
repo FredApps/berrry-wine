@@ -325,7 +325,7 @@
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
           (global.get $DIB_GUEST_CAPACITY))
       (then
-        (if (global.get $d3dim_lazy_length) (then
+        (if (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 4)) (then
           (call $d3dim_lazy_access
             (i32.add (global.get $DIB_BACKING_BASE)
               (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))) (i32.const 1))))
@@ -412,7 +412,7 @@
           (i32.le_u (local.get $len)
             (i32.sub (global.get $DIB_GUEST_CAPACITY) (local.get $off))))
       (then
-        (if (global.get $d3dim_lazy_length) (then
+        (if (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 4)) (then
           (call $d3dim_lazy_access
             (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)) (local.get $len))))
         (return (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)))))

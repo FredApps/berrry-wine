@@ -75,7 +75,7 @@ async function boot(module, config) {
   memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   control = new Int32Array(new SharedArrayBuffer(8));
   e = (await WebAssembly.instantiate(module, imports(module, memory,
-    (op, wa, len) => op === 0x20001 ? gpu.fence(wa, len) : 0))).exports;
+    (op, wa, len) => op === 0x20007 ? 1 : op === 0x20001 ? gpu.fence(wa, len) : 0))).exports;
   helper = null;
   importScripts('/lib/d3dim-gpu.js');
   const canvas = new OffscreenCanvas(width, height);
@@ -262,7 +262,8 @@ onmessage = async ({ data }) => {
           fail('owner fence failed');
         return Atomics.load(c, 1);
       }))).exports;
-      e.d3dim_lazy_enable(1);
+      // A CPU-only helper must observe shared barriers without enabling the
+      // optimization itself (or draining the owner during initialization).
       postMessage({ id: data.id, value: true });
     } else if (data.t === 'access') {
       const value = data.writeOnly ? 0 : e.bl_read(data.dib);

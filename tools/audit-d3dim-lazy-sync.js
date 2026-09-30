@@ -11,6 +11,7 @@ const { bootRenderHarness } = require('../test/render-helper');
   let reads = 0, dib = 0, memory;
   const h = await bootRenderHarness({ fonts: 'none',
     extraHostOverrides: { gpu_gl_call(op) {
+      if (op === 0x20007) return 1; // both instances use this shared fixture owner
       if (op === 0x20001) {
         reads++;
         new Uint16Array(memory.buffer, dib, 2).set([0xf800, 0x07e0]);

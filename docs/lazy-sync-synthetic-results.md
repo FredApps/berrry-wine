@@ -161,5 +161,50 @@ slowdown in this sample. Untouched-Lock counts remain exactly 3 eager versus
 Results: `build/lazy-sync-fix/results/fix-{strict,1-before,2-after,3-after,4-before}/results.json`;
 matched artifacts: `build/lazy-sync-fix/{before,after}.wasm`.
 
-Lazy sync remains opt-in. These fixes do not resolve shared-thread ownership,
-retained GDI access, or the benchmark's guest-thread lifetime coverage.
+At this stage lazy sync remained opt-in, with shared-thread ownership,
+retained GDI access and the gameplay benchmark's thread coverage still open.
+
+## Shared-thread follow-up (2026-09-29)
+
+The pending range now lives in shared memory. First-touch readback is serialized
+across guest instances and sent to the process renderer, whose fence visits
+the legacy/D3DIM endpoints that own the GPU pixels. Lazy Lock first publishes
+buffered draws without reading pixels back. Private executors that cannot
+service another producer's request use eager synchronization.
+
+`test/test-d3dim-surface-fence.js` covers foreign reads, write-only access,
+native span proofs, original-owner Unlock and subsequent fences. Two real
+Node workers contend while readback is deliberately held open: the second
+reader cannot finish early. CPU-only peers never enable lazy sync themselves.
+The same test checks the private-transport eager fallback. Existing wide/x87
+and backing-replacement cases remain covered.
+
+`test/test-shared-render-worker.js` covers buffered batch publication without
+a readback request and a fence from a software endpoint reaching another
+endpoint's GPU through the production shared-worker dispatcher/adapter.
+The GPU in this ordering test is deterministic; the WebGL suite below checks
+actual readPixels/conversion separately.
+
+On box8 (Intel UHD 620 / ANGLE), all **52 arms passed**: 13 cases, eager/lazy/
+lazy/eager, 64 measured units after 8 warmup units, strict correctness enabled.
+The cases include thread reads/writes, write-only access, thread creation while
+a range is pending, and thread history, plus ordinary GDI, x87 and lifetime
+controls. The three retained-GDI cases remain unsupported and were excluded.
+Results: `build/lazy-sync-shared/results.json`; remote artifact directory:
+`/home/user/lazy-sync-synthetic/build/shared-final-strict`.
+
+After moving the shared-region declaration to the end of the memory map,
+all five allocation stress modes passed. A final-layout repeat also passed
+all 52 arms (16 units after 4 warmup units):
+`build/lazy-sync-shared/appended-results.json`, remote
+`build/shared-appended-strict`. Both canonical browser artifacts were rebuilt
+and their layout stamp verified against the generated JS mirror. The full
+build passes the memory/layout and protocol gates, then stops at unrelated
+stale toy-VM browser bundles; it is not reported as a full-build pass.
+
+The synthetic HUD still takes three eager readbacks versus one lazy readback;
+cross-thread read/write and write-only cases take one in either mode. These
+are correctness runs, not evidence of a real-game speedup or zero overhead.
+In particular, this minimal synthetic host does not measure the production
+command-queue publication wait. Lazy synchronization remains opt-in, and
+retained GDI/native pointers remain a documented limitation.

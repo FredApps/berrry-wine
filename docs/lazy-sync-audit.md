@@ -7,8 +7,52 @@ diagnostic reproducer; it does not change runtime behavior.
 Follow-up: wide/x87 reads and SetSurfaceDesc backing replacement now have
 runtime fixes and focused regressions. See the matched before/after results
 in [lazy-sync-synthetic-results.md](lazy-sync-synthetic-results.md). The
-cross-instance and retained-GDI findings remain open; default stays off.
+retained-GDI finding remains an unsupported limitation; default stays off.
+The cross-instance correction is described below.
 The findings below describe the original audited revision.
+
+## Shared-thread correction (2026-09-29)
+
+Pending Lock range and deferred-work state now live in the allocated
+`D3DIM_LAZY_SHARED` region, with no active data initializer that could reset
+them when another instance starts. All guest DIB translations consult the
+shared range, including CPU-only threads that never enabled lazy sync.
+
+```text
+Lock owner                 Shared state                CPU thread B
+submit buffered draws ---> renderer completes batch
+publish Lock range ------> armed range ----------------> first access
+                                                      acquire mutex
+                           range remains armed <------- request fence
+renderer fences ALL legacy/D3DIM endpoints
+  -> owning GPU reads pixels into shared backing
+  -> completion --------------------------------------> clear range
+                                                      release mutex
+                                                      perform read/write
+Unlock observes shared range was touched
+```
+
+The process renderer is independent of the parked guest. Publication waits
+for batch consumption without requesting pixel readback; a scoped fence from
+another producer reaches the owning GPU endpoint even if the caller has no
+GPU of its own. The mutex coalesces simultaneous first accesses and remains
+held until readback completes. Reentrant owner readback helpers and the native
+renderer instance bypass this client-side barrier to avoid self-deadlock.
+An unsuccessful fence traps instead of returning stale pixels; mutex waiters
+trap after a 30-second timeout rather than waiting indefinitely.
+
+Only transports advertising shared-surface publication can arm the range.
+Private executors keep eager Lock behavior. This does not disable guest
+threads. Ordinary direct-window heap/code translation is unchanged; DIB
+translation now reads a shared atomic range flag. Mutex work happens only
+while a range is armed, or when draining deferred GPU work.
+
+Scope remains properly ordered guest surface access through translated
+pointers during Lock. Concurrent unsynchronized drawing to a CPU-locked
+surface is not made valid by this change. Retained GDI/native pointers remain
+unsupported as described below. The gameplay benchmark still restricts its
+measurement to its existing single-producer route; it is not a whole-corpus
+multithreaded performance measurement.
 
 Run `node tools/audit-d3dim-lazy-sync.js`. It compiles the canonical source,
 uses real WAT access paths, and substitutes a deterministic GPU readback
@@ -53,7 +97,14 @@ aliases/subranges of larger guest-owned buffers. Audit all raw wide loads,
 x87 environment loads and folded paths. They need full-width span/access
 validation, including a page-correct fallback, before default promotion.
 
-### P1 for supported retained-DC use: native GDI bypasses the barrier
+### Known limitation: retained native/GDI pointers bypass the barrier
+
+Disposition (2026-09-29): document this as an unsupported use of the opt-in
+experiment; no GDI runtime fix is planned in this change. Keep lazy sync off
+for workloads that access GPU-pending surface backing through a retained DC
+or another native pointer that bypasses guest translation. This is a usage
+restriction, not an enforced runtime exclusion or a claim that the corruption
+has been fixed. No real corpus game has been confirmed to hit this sequence.
 
 `src/10f-gdi-dc.wat`, `gdi_surface_descriptor` loads backing directly from the
 surface entry; `src/09a4-handlers-gdi.wat`, `GetPixel` and `SetPixel`.
@@ -65,7 +116,7 @@ GetDC performs a global fence. The reproduced case retains the DC from before
 the arm. The emulator accepts that state; this audit does not establish that
 holding a DirectDraw DC across Lock is a valid Windows application sequence.
 
-Either reject/exclude incompatible outstanding-DC states at Lock, or fence
+If support is added later, either reject/exclude incompatible outstanding-DC states at Lock, or fence
 native GDI reads/writes by their actual backing range before rasterization.
 Also audit selected DIB aliases and host-side consumers, which do not have
 to pass through guest address translation. A write notification after drawing
@@ -103,9 +154,12 @@ a thread-safety proof.
 
 ## Order of work
 
-1. Enforce the supported thread/DC scope and make benchmark coverage honest.
-2. Close wide-access and retained/native-pointer barriers with regression tests
-   requiring fresh reads and preservation of CPU writes.
-3. Cover backing replacement, aliases, lifetime and reentrant/other-thread
-   accesses; then repeat real-game off/on validation.
-4. Consider a default only after those correctness checks pass.
+1. Validate shared-thread synchronization and retain the fixed wide-access /
+   backing-replacement regressions. The previously proposed blanket
+   multithreaded eager fallback was not implemented.
+2. Extend real-game measurement coverage beyond the existing single-producer
+   benchmark route, with complete producer/thread history and counters.
+3. Keep retained native/GDI access documented as unsupported. External backing
+   aliases, lifetime and reentrant consumers still need further coverage.
+4. Any default promotion must account for these limitations; documenting them
+   alone does not make unrestricted enablement safe.

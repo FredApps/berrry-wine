@@ -78,12 +78,13 @@ function fixture(legacy=false){
   return {manager,events,pending,adopted,sharedMemory,importOrder,failedImports,counts:()=>({init,retire,terminated})};
 }
 function encoderScopedFence(){
-  let control;const messages=[];
+  let control,consume=false;const messages=[];
   const memory={buffer:new SharedArrayBuffer(4096)},descriptor=new DataView(memory.buffer);
   [64,1032,1200,200].forEach((v,i)=>descriptor.setUint32(i*4,v,true));
   const worker={postMessage(message){
     messages.push(message);
     if(message.t==='init'){control=new Int32Array(message.control);Atomics.store(control,0,1);}
+    if(message.t==='batch'&&consume)Atomics.store(control,1,message.seq);
     // Deliberately leave batches in flight. The second draw remains buffered
     // until the scoped fence submits it. The synchronous reply avoids waits.
     if(message.t==='legacy-fence'){
@@ -103,6 +104,19 @@ function encoderScopedFence(){
   assert(messages.at(-1).seq>scopedSequence);
   assert.deepStrictEqual([messages.at(-1).address,messages.at(-1).length],[0,0]);
   encoder.stop();
+  messages.length=0;
+  const shared=new Stream.Encoder({workerFactory:()=>worker,memory,module:{},
+    getImageBase:()=>0x400000,guestToWasm:p=>p,explicitFence:true,sharedSurfaceSync:true});
+  // Already consumed batches need no readback to publish a lazy range.
+  assert.strictEqual(shared.call(0x20007,0,0),1);
+  assert.deepStrictEqual(messages.map(m=>m.t),['init']);
+  consume=true;
+  shared.call(0x20005,0);shared.call(0x20005,0);
+  assert.strictEqual(shared.call(0x20007,0,0),1);
+  assert.deepStrictEqual(messages.map(m=>m.t),['init','batch','batch'],
+    'lazy publication consumes both buffered batches without requesting readback');
+  assert.strictEqual(encoder.call(0x20007,0,0),0,'private encoder declines shared lazy synchronization');
+  shared.stop();
 }
 encoderScopedFence();
 (async()=>{
@@ -186,6 +200,17 @@ encoderScopedFence();
   assert.strictEqual(l.events[softwareIndex-1][0],'gpu-fence','fallback materializes prior GPU writes');
   const flipIndex=l.events.findIndex(e=>e[0]==='flip');
   assert.strictEqual(l.events[flipIndex-1][0],'gpu-fence','DIB swap follows GPU materialization');
+  const peer=l.manager.createEndpoint({api:'legacy',backend:'software'});
+  await peer.ready;
+  const peerControl=new Int32Array(new SharedArrayBuffer(64));
+  peer.postMessage({t:'init',control:peerControl.buffer,buffers:[]});await tick();
+  const priorFences=l.events.filter(e=>e[0]==='gpu-fence').length;
+  peer.postMessage({t:'legacy-fence',seq:1,address:8192,length:4});await tick();
+  assert.strictEqual(Atomics.load(peerControl,1),1,'foreign caller completes only after owner fence');
+  assert.strictEqual(l.events.filter(e=>e[0]==='gpu-fence').length,priorFences+1,
+    'producer without a GPU still reaches the owning endpoint');
+  assert.strictEqual(Atomics.load(peerControl,11),2,'foreign producer receives pending-target result');
+  await peer.terminate();
   port.postMessage({t:'legacy-close'});await tick();
   assert(l.events.some(e=>e[0]==='gpu-stop'));assert.strictEqual(l.counts().retire,0);
   await l.manager.stop();assert.strictEqual(l.counts().init,1);assert.strictEqual(l.counts().retire,1);
