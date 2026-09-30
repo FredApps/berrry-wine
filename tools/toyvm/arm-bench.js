@@ -27,7 +27,9 @@
 // was before uop-wasm.js callSafe: the A/B for that change. `@nofuse` runs it
 // without the fused `X_s` step µops (TOYVM_STEPFUSE=0), `@nomask` without the
 // fused narrow masks (TOYVM_MASKFUSE=0), `@norep` with REP MOVS/STOS on the
-// L1 fallback instead of the REP µop (TOYVM_UOPREP=0). They stack:
+// L1 fallback instead of the REP µop (TOYVM_UOPREP=0), `@nofwd` without the
+// naive register/mask forwarding (TOYVM_NAIVEFWD=0), `@nok` with a naive
+// program's constants back on `movi` (TOYVM_CONSTK=0). They stack:
 // only-naive@spill@nofuse.
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
@@ -86,7 +88,8 @@ const ARMS = {
 // (TOYVM_CALLSAFE=0): Ion keeps $pc and the machine params on the stack.
 // `ARM@nofuse` runs it without step fusion (TOYVM_STEPFUSE=0), `ARM@nomask`
 // without mask fusion (TOYVM_MASKFUSE=0).
-const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE', '@nomask': 'TOYVM_MASKFUSE', '@norep': 'TOYVM_UOPREP' };
+const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE', '@nomask': 'TOYVM_MASKFUSE', '@norep': 'TOYVM_UOPREP',
+  '@nofwd': 'TOYVM_NAIVEFWD', '@nok': 'TOYVM_CONSTK' };
 const armOf = (a) => {
   for (const k of Object.keys(KNOBS)) if (a.endsWith(k)) return armOf(a.slice(0, -k.length));
   const t = /^only-t(\d+[km]?)$/i.exec(a);

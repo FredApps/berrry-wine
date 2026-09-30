@@ -585,7 +585,24 @@ function lowerProgram(p, lo = {}) {
     return { v: consts.get(x) };
   };
   const scratch = [next++, next++];
-  const vr = (x) => ({ v: x });
+  // A naive program's constants as pool operands (TOYVM_CONSTK, on by
+  // default; =0 is the A/B): a temp its one `movi` defines is read straight
+  // from the constant pool, and the movi -- 8.9% of the µops a naiveR program
+  // ran (TOYVM_E1HIST, six corpus programs) -- is not emitted. Optimized
+  // programs have constprop and are left as they were.
+  const kOf = new Map();
+  if (CONST_K && p.stats && p.stats.naive) {
+    const nd = new Map();
+    for (const b of p.blocks) {
+      if (!b || b.kind === 'dead') continue;
+      for (const op of b.ops) if (op.d !== undefined && op.d >= 0) nd.set(op.d, (nd.get(op.d) || 0) + 1);
+    }
+    for (const b of p.blocks) {
+      if (!b || b.kind === 'dead') continue;
+      for (const op of b.ops) if (op.o === 'movi' && op.d >= FIRST_TEMP && nd.get(op.d) === 1) kOf.set(op.d, op.i | 0);
+    }
+  }
+  const vr = (x) => (kOf.has(x) ? K(kOf.get(x)) : { v: x });
   const im = (x) => ({ i: x | 0 });
   const tg = (x) => ({ t: x });
   // A block id the engine hands back to JS (bail, ldf/stf): an arena encodes
@@ -620,7 +637,7 @@ function lowerProgram(p, lo = {}) {
       if (op.dw) return lowerNarrow(op, out);
     }
     switch (op.o) {
-      case 'movi': return E('movi', vr(op.d), im(op.i));
+      case 'movi': return kOf.has(op.d) ? undefined : E('movi', vr(op.d), im(op.i));
       case 'mov': return E('mov', vr(op.d), vr(op.a));
       case 'add': case 'sub': case 'and': case 'or': case 'xor': case 'mul': case 'eq': case 'ne':
       case 'mulhu': case 'mulhs': case 'imulov':
@@ -977,6 +994,8 @@ function lowerProgram(p, lo = {}) {
 //   X e,.. masked m ; putrN at,e  -> X unmasked, when m keeps every stored bit
 const MASK_FUSE = globalThis.TOYVM_MASKFUSE !== '0'
   && (typeof process === 'undefined' || !process.env || process.env.TOYVM_MASKFUSE !== '0');
+const CONST_K = globalThis.TOYVM_CONSTK !== '0'
+  && (typeof process === 'undefined' || !process.env || process.env.TOYVM_CONSTK !== '0');
 const UNMASK = { addm: 'add', subm: 'sub', addim: 'addi' };
 function fuseMask2(a, b, once) {
   const d0 = (o) => o.args[0].v;

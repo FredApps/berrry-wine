@@ -287,6 +287,23 @@ function repProgram() {
   ]);
 }
 
+// A constant forwarded into a later block that hands back to uop-ref: BX's
+// movi is in the `mov bx` block, the word read at DS:FFFF wraps and so runs
+// in the reference interpreter from its block's start -- which reads BX's
+// temp out of VFILE, where E1 (its constants in the pool) never wrote it.
+function kfwdProgram() {
+  return Buffer.from([
+    0xBD, 0x28, 0x00,             // 100 mov bp,40
+    0xBB, 0xFF, 0xFF,             // 103 top: mov bx,0FFFFh
+    0x8B, 0x07,                   //     mov ax,[bx]     (wraps: a hand-back)
+    0x01, 0xC2,                   //     add dx,ax
+    0x01, 0xDA,                   //     add dx,bx
+    0x4D,                         //     dec bp
+    0x75, 0xF4,                   //     jnz top
+    0xCD, 0x20,                   //     int 20h
+  ]);
+}
+
 async function run(com, uopOnly, budget = 60e6) {
   const r = await runDos({ exe: com, budget, slice: 5e4, log: () => {}, uopOnly });
   const regs = r.vm.getAll();
@@ -354,6 +371,7 @@ async function main() {
     await same('NARROWHI', narrowHiProgram(), shape);
     // REP MOVS/STOS are µops only on naive programs; elsewhere they fall back.
     if (shape === NAIVE || shape === NAIVE_TIER) {
+      await same('KFWD', kfwdProgram(), shape);
       const rp = await same('REP', repProgram(), shape);
       const str = rp.fallbacks.filter((f) => f.why === 'movs' || f.why === 'stos');
       assert.strictEqual(str.length, 0, `REP (${shape.label}): ${JSON.stringify(str)} -- rep movs/stos should be µops`);

@@ -2217,6 +2217,7 @@ function naiveResident(reg, opts = {}) {
   }
   p.blocks[p.blocks[p.entry].term.t].header = true;
   if (opts.fwdGetr !== false) forwardFullGets(p);
+  if (NAIVE_FWD && opts.fwdNaive !== false) forwardNaive(p);
   p.resident = true;
   p.stats = { naive: true };
   return p;
@@ -2279,6 +2280,103 @@ function forwardFullGets(p) {
     b.ops = b.ops.filter((op) => !((op.o === 'getr' || op.o === 'gets') && done[op.d] !== 0
       && done[op.d] === nUse[op.d]));
   }
+}
+
+// Register reads and narrow masks forwarded along single-predecessor chains
+// (TOYVM_NAIVEFWD, on by default; =0 is the A/B). A naive program is one
+// block per x86 instruction, each reading its operands out of the register
+// file afresh and masking them to width -- getr and andi were 20% of the µops
+// a naiveR program ran (TOYVM_E1HIST, six corpus programs). Here:
+//   getr rN.w  after getr rN.w / putr rN.w of a value clean to w bits
+//              -> the temp that already holds it
+//   andi d,a,m where a is known to fit m (getr16, ld8, an earlier andi...)
+//              -> a
+// A temp is defined once and its definition dominates its uses, so both are
+// program-wide aliases; only which register holds what is per path, and it
+// flows into a block from its one predecessor (never into a header or the
+// entry). The temps live in VFILE, which only this program writes while it
+// runs, and a hand-back to uop-ref reruns the same IR on the same slots. One
+// walk over the blocks, like forwardFullGets.
+const NAIVE_FWD = globalThis.TOYVM_NAIVEFWD !== '0'
+  && (typeof process === 'undefined' || !process.env || process.env.TOYVM_NAIVEFWD !== '0');
+function forwardNaive(p) {
+  const nv = p.nv, nb = p.blocks.length;
+  const nDef = new Int32Array(nv);
+  const npred = new Int32Array(nb);
+  for (const b of p.blocks) {
+    if (b.kind === 'dead' || !b.term) continue;
+    for (const op of b.ops) { const d = opDef(op); if (d >= 0) nDef[d]++; }
+    for (const s of IR.succOf(b)) npred[s]++;
+  }
+  const one = (v) => v >= FIRST_TEMP && v < nv && nDef[v] === 1;
+  const alias = new Int32Array(nv).fill(-1);
+  const bits = new Uint8Array(nv);            // 0: may use all 32
+  const root = (v) => (alias[v] >= 0 ? alias[v] : v);
+  const blen = (k) => 32 - Math.clz32(k);
+  const fits = (v, w) => bits[v] !== 0 && bits[v] <= w;
+  const WB = { 8: 8, 9: 8, 16: 16, 32: 32 };
+  // A view key: register r at width w (8, 9 = high byte, 16, 32), or a
+  // segment base (the vreg past NREG, width 32).
+  const key = (r, w) => r * 64 + w;
+  const killReg = (views, r) => { for (const w of [8, 9, 16, 32]) views.delete(key(r, w)); };
+  const del = new Set();
+  const kv = new Map();                       // temp -> the constant its movi makes
+  const seen = new Uint8Array(nb);
+  const st = [[p.entry, new Map()]];
+  seen[p.entry] = 1;
+  while (st.length) {
+    const [id, views] = st.pop();
+    const b = p.blocks[id];
+    if (b.kind === 'dead' || !b.term) continue;
+    for (const op of b.ops) {
+      mapUses(op, root);
+      const d = opDef(op);
+      if (op.o === 'getr' || op.o === 'gets') {
+        const k = op.o === 'getr' ? key(op.r, op.w) : key(SEGV + op.s, 32);
+        const t = views.get(k);
+        const w = op.o === 'getr' ? WB[op.w] : 32;
+        // A constant is re-made here, never read across blocks: E1 reads a
+        // naive movi from the pool and never writes its temp (TOYVM_CONSTK),
+        // so a later block handed back to uop-ref would read a stale slot.
+        if (one(d) && t !== undefined && kv.has(t)) {
+          op.o = 'movi'; op.i = kv.get(t); delete op.r; delete op.w; delete op.s;
+          kv.set(d, op.i); if (op.i > 0) bits[d] = blen(op.i);
+          continue;
+        }
+        if (one(d) && t !== undefined) { alias[d] = t; del.add(op); continue; }
+        if (one(d)) { views.set(k, d); if (w < 32) bits[d] = w; }
+        continue;
+      }
+      if (op.o === 'putr' || op.o === 'puts') {
+        const r = op.o === 'putr' ? op.r : SEGV + op.s;
+        const w = op.o === 'putr' ? op.w : 32;
+        killReg(views, r);
+        if (one(op.a) && (WB[w] === 32 || fits(op.a, WB[w]))) views.set(key(r, w), op.a);
+        continue;
+      }
+      if (op.o === 'reload' || op.o === 'rep') { views.clear(); continue; }
+      if (d >= 0 && d < FIRST_TEMP) { killReg(views, d); continue; }
+      if (!one(d)) continue;
+      if (op.o === 'andi') {
+        const m = op.i >>> 0;
+        if (bits[op.a] !== 0 && m < 0x80000000 && blen(m) >= bits[op.a]
+          && ((m + 1) & m) === 0) { alias[d] = op.a; del.add(op); continue; }
+        if (m !== 0 && m < 0x80000000) bits[d] = blen(m);
+      } else if (op.o === 'movi') { kv.set(d, op.i | 0); if (op.i > 0) bits[d] = blen(op.i); }
+      else if (op.o === 'ld' && op.w < 32) bits[d] = op.w;
+      else if (op.o === 'getcc') bits[d] = 1;
+    }
+    mapTermUses(b.term, root);
+    for (const s of IR.succOf(b)) {
+      if (seen[s]) continue;
+      seen[s] = 1;
+      const sb = p.blocks[s];
+      const chain = npred[s] === 1 && !sb.header && s !== p.entry;
+      st.push([s, chain ? new Map(views) : new Map()]);
+    }
+  }
+  if (!del.size) return;
+  for (const b of p.blocks) if (b.kind !== 'dead') b.ops = b.ops.filter((op) => !del.has(op));
 }
 
 // A full-checked access (ldf/stf) hands its block to the reference
