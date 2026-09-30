@@ -1697,6 +1697,16 @@
   (global $uc_trace_max (mut i32) (i32.const 160))
   (global $uc_ntraces (mut i32) (i32.const 0))
   (global $uc_is_trace (mut i32) (i32.const 0))
+  ;; Straight-line cut exits (docs/uop-tier-design.md §21.3, on by default,
+  ;; --no-uop-trace-cut): under --branch-clock a trace may also leave where
+  ;; straight-line code runs on out of it -- past $uc_trace_max, or into an
+  ;; unsupported instruction -- through an EXIT to the fall-through. The
+  ;; program spends no block there, and the enter op's add-one-back around
+  ;; $branch_end nets the resume to zero, which is exactly what threaded code
+  ;; charges for running on. Off, or on the instruction clock (where the
+  ;; threaded block the program cut into would end somewhere else), such
+  ;; tails are trimmed back to the branch in front of them, as before.
+  (global $uc_trace_cut (mut i32) (i32.const 1))
   (func $uc_form_trace (param $head i32) (result i32)
     (local $k i32) (local $R i32) (local $S i32) (local $j i32) (local $n i32)
     (local $qh i32) (local $qt i32) (local $pos i32) (local $h i32)
@@ -1752,6 +1762,11 @@
         (local.set $k (i32.add (local.get $k) (i32.const 1)))
         (br_if $kl (i32.eqz (call $uc_flag (local.get $R) (i32.const 1))))
         (br_if $kl (call $uc_is_branch (local.get $R)))
+        ;; a cut exit keeps the tail (not in front of the game-step marker,
+        ;; which must be entered as the threaded block it paces)
+        (br_if $kl (i32.and (i32.and (i32.ne (global.get $uc_trace_cut) (i32.const 0))
+                                     (i32.ne (global.get $branch_clock) (i32.const 0)))
+                            (i32.ne (call $uc_succ (local.get $R) (i32.const 0)) (global.get $logical_frame_addr))))
         (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (i32.const 0))))
         (if (i32.ge_s (local.get $S) (i32.const 0))
           (then (br_if $kl (call $uc_flag (local.get $S) (i32.const 1)))))
@@ -4680,6 +4695,8 @@
   (func (export "set_uop_trace_heads") (param $on i32)
     (global.set $uc_trace (i32.ne (local.get $on) (i32.const 0))))
   (func (export "get_uop_trace_heads") (result i32) (global.get $uc_trace))
+  (func (export "set_uop_trace_cut") (param $on i32)
+    (global.set $uc_trace_cut (i32.ne (local.get $on) (i32.const 0))))
   (func (export "set_uop_trace_limits") (param $min i32) (param $max i32)
     (if (local.get $min) (then (global.set $uc_trace_min (local.get $min))))
     (if (local.get $max)
