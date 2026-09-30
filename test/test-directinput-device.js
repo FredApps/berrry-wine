@@ -353,12 +353,24 @@ const extraWat = `
     wat.guest_read32(info), wat.guest_read32(info + 4) >>> 0,
     wat.guest_read32(info + 36) >>> 0,
   ], [580, 0x6f1d2b60, 0x0202], 'GetDeviceInfo returns the same system-mouse identity');
-  wat.guest_write32(caps, 44);
-  assert.strictEqual(wat.test_di_get_caps(mouse, caps) >>> 0, 0);
-  assert.deepStrictEqual([
-    wat.guest_read32(caps), wat.guest_read32(caps + 8) >>> 0,
-    wat.guest_read32(caps + 12), wat.guest_read32(caps + 20),
-  ], [44, 0x0202, 3, 3], 'GetCapabilities reports legacy mouse type, axes, and buttons');
+  // Both DX3 and DX5 structures must identify the enumerated system devices
+  // as attached. Hype tests this flag before ever polling the keyboard.
+  for (const size of [24, 44]) {
+    for (const [device, type, axes, buttons] of [
+      [mouse, 0x0202, 3, 3], [keyboard, 0x0403, 0, 256],
+    ]) {
+      for (let offset = 0; offset < size + 4; offset += 4)
+        wat.guest_write32(caps + offset, 0xfeedface);
+      wat.guest_write32(caps, size);
+      assert.strictEqual(wat.test_di_get_caps(device, caps) >>> 0, 0);
+      assert.deepStrictEqual(Array.from({length:6}, (_, i) => wat.guest_read32(caps+i*4) >>> 0),
+        [size, 1, type, axes, buttons, 0], 'attached device, correct buttons field, no POV hats');
+      for (let offset = 24; offset < size; offset += 4)
+        assert.strictEqual(wat.guest_read32(caps + offset), 0, 'no force-feedback capability');
+      assert.strictEqual(wat.guest_read32(caps + size) >>> 0, 0xfeedface,
+        'capabilities preserve bytes beyond caller structure');
+    }
+  }
 
   // Microsoft defines GetObjectInfo as a lookup over the current data-format
   // offset, the dwType returned by EnumObjects, or packed HID usage. These

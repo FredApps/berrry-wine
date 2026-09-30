@@ -12,8 +12,8 @@ Paths below are relative to `test/binaries/candidates/`.
 | Priority | Launch executable | Original Glide consumer | Static import count | Preparation |
 | --- | --- | --- | ---: | --- |
 | 1 | `diablo-2-demo-installer/installed-extracted/diablo ii.exe` | Same directory, `d2glide.dll` | 36 | Existing `diablo2_demo` app mounts installed data and renderer; override renderer selection only in the test launch. |
-| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Initial remote CLI smoke stopped at `XML_ParserCreate`; original parser DLL now explicitly seeded, rerun pending. No Glide gameplay claim. |
-| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Remote CLI smoke stopped at startup `DebugBreak`; assertion cause unresolved. No Glide gameplay claim. |
+| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Two TMUs, clip coordinates, original EAX dependency, complete DirectMusic vtable and unused texture-attribute lowering corrected. Browser gameplay validation remains pending. |
+| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Main-EXE export lookup fixes startup; DirectInput attached-device reporting enables normal menu input. Remote WebGL reaches the level, but viewport size and subsequent movement remain under investigation. |
 
 The counts come from actual import descriptors/thunks, re-read with
 `node tools/pe-imports.js <consumer> --dll=glide3x.dll`. They are not counts
@@ -36,10 +36,26 @@ the original renderer's error, “3DFX: Unable to run Glide on this card.”
 `Render3DFX.dll` at preferred VA `0x0fb978f3` queries `GR_NUM_TMU` (`0x13`)
 and at `0x0fb978fd` explicitly rejects a result of one. Later initialization
 requests `grCoordinateSpace(1)` (clip coordinates) and TMU1 operations.
-Real two-TMU rendering and clipping are required; changing the reported
-capability would only hide the incompatibility. Hype's break may indicate an assertion, but its cause is not
-yet established; bypassing `DebugBreak` would conceal the failure. Neither
-smoke establishes gameplay support.
+Real two-TMU rendering and clipping are now implemented, with independent
+texture memory, coordinates and combination on both backends. Native ABI,
+software pixel and WebGL 1/2 pixel regressions pass on the remote box. The
+new Hitman startup run passes this rejection. Subsequent EAX import,
+DirectMusic vtable and unused texture-attribute failures have been corrected;
+see [Hitman's investigation](re-notes/hitman-demo.md) for the evidence.
+
+Hype's break was caused by `GetProcAddress` failing to resolve an existing
+callback exported by the main executable. The fix resolves that export;
+`DebugBreak` itself remains unchanged. The remote software rerun reaches
+the visible menu without the previous crash. Correct attached-device flags
+then allow normal Enter input to load the level on WebGL. The scene currently
+fills only part of the drawable and movement is not yet verified. See
+[Hype's diagnosis and reproduction commands](re-notes/hype.md).
+
+After the two-TMU changes, the remote Diablo II browser regression again
+passed character creation, world rendering and normal-input movement on both
+WebGL and native software (2026-09-30). Captures are in the test machine's
+`build/diablo2-glide-dual/{webgl,software}/` directories. WebGL used SwiftShader;
+these are functional results, not hardware-GPU performance measurements.
 
 ## Diablo II: shortest route to real gameplay
 

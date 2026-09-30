@@ -8996,19 +8996,26 @@
     (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
     (call $zero_memory (local.get $wa) (local.get $size))
     (i32.store (local.get $wa) (local.get $size))
+    ;; DIDEVCAPS: flags4, type8, axes12, buttons16, POVs20. The browser
+    ;; exposes attached system devices; Hype gates all polling on this flag.
+    ;; https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee416607(v=vs.85)
+    (if (i32.or
+      (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 1))
+      (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 2)))
+      (then (i32.store offset=4 (local.get $wa) (i32.const 1)))) ;; DIDC_ATTACHED
     (if (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 1))
       (then
         (i32.store (i32.add (local.get $wa) (i32.const 8))
           (select (i32.const 0x0413) (i32.const 0x0403)
             (i32.ge_u (local.get $version) (i32.const 0x0800))))
-        (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 256)))) ;; 256 keys
+        (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 256)))) ;; 256 keys
     (if (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 2))
       (then
         (i32.store (i32.add (local.get $wa) (i32.const 8))
           (select (i32.const 0x0212) (i32.const 0x0202)
             (i32.ge_u (local.get $version) (i32.const 0x0800))))
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 3)) ;; 3 axes
-        (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 3)))) ;; 3 buttons
+        (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 3)))) ;; 3 buttons
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 

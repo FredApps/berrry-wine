@@ -16,7 +16,7 @@ for (const family of ['IDirectMusic', 'IAMMultiMediaStream', 'IDirectDrawGammaCo
 const extraWat = String.raw`
   (func (export "test_create_directmusic") (result i32)
     (call $dx_create_com_obj
-      (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))
+      (i32.const 35) (call $directmusic_vtable)))
 
   (func (export "test_create_amstream") (result i32)
     (call $dx_create_com_obj
@@ -50,6 +50,14 @@ const extraWat = String.raw`
       (local.get $clsid) (local.get $outer) (i32.const 1)
       (local.get $iid) (local.get $out) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+
+  (func (export "test_enum_port") (param $obj i32) (param $index i32) (param $caps i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $dispatch_api_table
+      (call $gl32 (i32.add (call $gl32 (i32.add (call $gl32 (local.get $obj)) (i32.const 12))) (i32.const 4)))
+      (local.get $obj) (local.get $index) (local.get $caps)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
 
   (func (export "test_call_IDirectMusic_QueryInterface")
         (param $obj i32) (param $iid i32) (param $out i32) (result i32)
@@ -149,6 +157,29 @@ async function main() {
   const obj = e.test_create_directmusic() >>> 0;
   check('creates the bounded IDirectMusic object with one caller reference',
     obj !== 0 && e.test_directmusic_refcount(obj) === 1);
+
+  const methods = ['QueryInterface','AddRef','Release','EnumPort','CreateMusicBuffer',
+    'CreatePort','EnumMasterClock','GetMasterClock','SetMasterClock','Activate','GetDefaultPort','SetDirectSound'];
+  const vtable=dv.getUint32(wa(obj),true);
+  for(let slot=0;slot<methods.length;++slot) {
+    const thunk=dv.getUint32(wa(vtable)+slot*4,true);
+    check(`DirectMusic slot ${slot} maps to ${methods[slot]}`,
+      dv.getUint32(wa(thunk),true)===0xcaca0010 &&
+      dv.getUint32(wa(thunk)+4,true)===apiId('IDirectMusic_'+methods[slot]));
+  }
+  const caps=alloc(308), capBytes=new Uint8Array(memory.buffer,wa(caps),308);
+  capBytes.fill(0xa7);dv.setUint32(wa(caps),308,true);
+  const unchanged=Buffer.from(capBytes);
+  for(const index of [0,1,0xffffffff]) check(`no fabricated DirectMusic port ${index}`,
+    e.test_enum_port(obj,index,caps)===1 && e.get_esp()===0x00300010 &&
+    Buffer.from(capBytes).equals(unchanged));
+  check('EnumPort null caps is E_POINTER', (e.test_enum_port(obj,0,0)>>>0)===0x80004003);
+  dv.setUint32(wa(caps),307,true);
+  check('empty enumeration never reads or changes descriptor content', e.test_enum_port(obj,0,caps)===1 && dv.getUint32(wa(caps),true)===307);
+  for(let slot=4;slot<methods.length;++slot) {
+    const thunk=dv.getUint32(wa(vtable)+slot*4,true), id=dv.getUint32(wa(thunk)+4,true);
+    assert.throws(()=>e.test_ref_dispatch(id,obj),WebAssembly.RuntimeError,methods[slot]+' fails explicitly');
+  }
 
   check('IDirectMusic QueryInterface returns E_POINTER for null output without AddRef',
     (e.test_call_IDirectMusic_QueryInterface(obj, idirectmusic, 0) >>> 0) === 0x80004003 &&

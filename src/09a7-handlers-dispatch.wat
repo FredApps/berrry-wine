@@ -2346,6 +2346,32 @@
       (local.get $obj) (local.get $iid_wa) (local.get $out)
       (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))
 
+  ;; IDirectMusic has twelve slots even when no rendering ports exist.
+  ;; The first three API ids predate the append-only nine-method tail.
+  (func $directmusic_vtable (result i32)
+    (local $v i32) (local $slot i32)
+    (local.set $v (call $init_com_vtable (i32.const 3076) (i32.const 12)))
+    (local.set $slot (i32.const 3))
+    (loop $tail
+      (call $set_com_vtable_slot_api_id (local.get $v) (local.get $slot)
+        (i32.add (global.get $API_ID_IDirectMusic_EnumPort) (i32.sub (local.get $slot) (i32.const 3))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br_if $tail (i32.lt_u (local.get $slot) (i32.const 12))))
+    (local.get $v))
+
+  ;; No DirectMusic synth/MIDI port is implemented. S_FALSE is the SDK's
+  ;; enumeration terminator, not a fictitious successful port descriptor.
+  (func $handle_IDirectMusic_EnumPort
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (local.set $hr (i32.const 1))
+    (if (i32.eqz (local.get $arg2))
+      (then (local.set $hr (i32.const 0x80004003))))
+    (i32.store (global.get $reg_base) (local.get $hr))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
     (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
@@ -2937,7 +2963,7 @@
           (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))))
       (if (i32.eq (local.get $local_class) (i32.const 2))
         (then (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))))
+          (i32.const 35) (call $directmusic_vtable)))))
       (if (i32.eq (local.get $local_class) (i32.const 3))
         (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 36) (call $init_com_vtable

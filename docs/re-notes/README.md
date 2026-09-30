@@ -63,6 +63,8 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Half-Life: Uplink | [half-life-uplink.md](half-life-uplink.md) |
 | Heroes of Might and Magic III (demo) | [heroes3-demo.md](heroes3-demo.md) |
 | Heroes of Might and Magic II (demo) | [heroes2-demo.md](heroes2-demo.md) |
+| Hitman: Codename 47 demo | [hitman-demo.md](hitman-demo.md) |
+| Hype: The Time Quest demo | [hype.md](hype.md) |
 | Icy Tower v1.3.1 | [icy-tower.md](icy-tower.md) |
 | Jardinains! v1.2 | [jardinains.md](jardinains.md) |
 | JigSawedME 1.3 (VB6; version-resource byte counts) | [jigsawedme.md](jigsawedme.md) |

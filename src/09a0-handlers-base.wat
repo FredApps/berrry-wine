@@ -238,6 +238,43 @@
     (block $gpa
     ;; Default return value: NULL (function not found)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    ;; The main EXE can export callbacks for runtime-loaded plugins. Hype's
+    ;; sound driver asks its EXE for _SND_fn_vDisplayError@8; it is not in
+    ;; DLL_TABLE. Read the mapped PE header rather than the loader-instance
+    ;; exe_export_rva global: GetProcAddress may run on a secondary thread.
+    (if (i32.eq (local.get $arg0) (global.get $image_base))
+      (then
+        (if (i32.eq (call $gl16 (global.get $image_base)) (i32.const 0x5a4d))
+          (then
+            (local.set $export (i32.add (global.get $image_base)
+              (call $gl32 (i32.add (global.get $image_base) (i32.const 0x3c)))))
+            (if (i32.eq (call $gl32 (local.get $export)) (i32.const 0x4550))
+              (then
+                (local.set $resolved (call $resolve_image_export
+                  (global.get $image_base)
+                  (call $gl32 (i32.add (local.get $export) (i32.const 120)))
+                  (local.get $arg1) (local.get $name_wa)))
+                (if (local.get $resolved)
+                  (then
+                    ;; An EAT RVA inside the export-directory range names a
+                    ;; forwarder string, not code/data in this image. The shared
+                    ;; image resolver does not follow DLL.Symbol / DLL.#ordinal
+                    ;; forwarders yet. Fail explicitly rather than returning a
+                    ;; plausible address that the guest would execute as text.
+                    (local.set $dll_base (i32.add (global.get $image_base)
+                      (call $gl32 (i32.add (local.get $export) (i32.const 120)))))
+                    (if (i32.lt_u (i32.sub (local.get $resolved) (local.get $dll_base))
+                          (call $gl32 (i32.add (local.get $export) (i32.const 124))))
+                      (then
+                        (call $host_log_i32 (i32.const 0x46574452)) ;; FWDR
+                        (call $host_log_i32 (local.get $resolved))
+                        (unreachable)))
+                    (i32.store (global.get $reg_base) (local.get $resolved))
+                    (i32.store offset=16 (global.get $reg_base)
+                      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+                    (return)))))))))
+    ;; Preserve the existing fallback below: native KERNEL32 currently shares
+    ;; this image-base handle, so a missing EXE name can still be a Win32 API.
     ;; `_acmdln` is an exported data cell, not a callable CRT function. Old
     ;; MSVC runtimes resolve it dynamically and abort startup if it is absent.
     ;; Our static-system-DLL handles are intentionally aliases, so the export

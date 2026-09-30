@@ -33416,5 +33416,76 @@
     "convention": "stdcall",
     "hash": 2584968025,
     "handler": "glide3_grLfbWriteRegion"
+  },
+  {
+    "id": 3947,
+    "name": "IDirectMusic_EnumPort",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 386437615
+  },
+  {
+    "id": 3948,
+    "name": "IDirectMusic_CreateMusicBuffer",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2334005562,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3949,
+    "name": "IDirectMusic_CreatePort",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1356003098,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3950,
+    "name": "IDirectMusic_EnumMasterClock",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3562733196,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3951,
+    "name": "IDirectMusic_GetMasterClock",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1935237977,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3952,
+    "name": "IDirectMusic_SetMasterClock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2396515021,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3953,
+    "name": "IDirectMusic_Activate",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 575003748,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3954,
+    "name": "IDirectMusic_GetDefaultPort",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2559606087,
+    "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3955,
+    "name": "IDirectMusic_SetDirectSound",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1597275093,
+    "handler": "ftm_unimplemented"
   }
 ]
