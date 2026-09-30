@@ -140,6 +140,13 @@ def('eq', 'vvv', ({ V, SET }) => SET(0, `(i32.eq ${V(1)} ${V(2)})`));
 def('ne', 'vvv', ({ V, SET }) => SET(0, `(i32.ne ${V(1)} ${V(2)})`));
 imm('addi', 'i32.add'); imm('andi', 'i32.and'); imm('ori', 'i32.or'); imm('xori', 'i32.xor');
 imm('shli', 'i32.shl'); imm('shri', 'i32.shr_u'); imm('sari', 'i32.shr_s');
+// Narrow arithmetic with its mask (fuseMasks): a 16-bit ADD/SUB/INC or an SP
+// adjust lowers naively to the sum and then an ANDI or AND with the SP mask.
+def('addm', 'vvvi', ({ V, I, SET }) => SET(0, `(i32.and (i32.add ${V(1)} ${V(2)}) ${I(3)})`));
+def('subm', 'vvvi', ({ V, I, SET }) => SET(0, `(i32.and (i32.sub ${V(1)} ${V(2)}) ${I(3)})`));
+def('addim', 'vvii', ({ V, I, SET }) => SET(0, `(i32.and (i32.add ${V(1)} ${I(2)}) ${I(3)})`));
+def('andspm', 'vv', ({ V, SET }) => SET(0, `(i32.and ${V(1)} (local.get $spm))`));
+def('addispm', 'vvi', ({ V, I, SET }) => SET(0, `(i32.and (i32.add ${V(1)} ${I(2)}) (local.get $spm))`));
 def('addi16', 'vvi', ({ V, I, SET }) => SET(0, `(i32.and (i32.add ${V(1)} ${I(2)}) (i32.const 65535))`));
 def('addi8', 'vvi', ({ V, I, SET }) => SET(0, `(i32.and (i32.add ${V(1)} ${I(2)}) (i32.const 255))`));
 def('sx8', 'vv', ({ V, SET }) => SET(0, `(i32.extend8_s ${V(1)})`));
@@ -885,6 +892,31 @@ function lowerProgram(p, lo = {}) {
     throw new Unsupported(`term ${t.o}`);
   };
 
+  // once(v): an IR temp defined once and read once, so the op that reads it
+  // may absorb the op that makes it. Every numeric field but `d` counts as a
+  // read -- an immediate that happens to equal v only over-counts, which is
+  // the safe direction.
+  const nDef = new Map(), nRd = new Map();
+  if (MASK_FUSE) {
+    const bump = (m, v) => m.set(v, (m.get(v) || 0) + 1);
+    const reads = (o, top = true) => {
+      for (const k in o) {
+        if (top && k === 'd') continue;
+        if (typeof o[k] === 'number') bump(nRd, o[k]);
+        else if (o[k] && typeof o[k] === 'object') reads(o[k], false);
+      }
+    };
+    for (const b of p.blocks) {
+      if (!b || b.kind === 'dead') continue;
+      for (const op of b.ops) {
+        reads(op);
+        if (op.d !== undefined && op.d >= 0) bump(nDef, op.d);
+      }
+      if (b.term) reads(b.term);
+    }
+  }
+  const once = (v) => v >= FIRST_TEMP && v < nv && nDef.get(v) === 1 && nRd.get(v) === 1;
+
   const blocks = new Map();
   const why = new Map();
   let curBlock = -1, effected = false, lastFull = null, vgaOk = new Set();
@@ -911,7 +943,8 @@ function lowerProgram(p, lo = {}) {
         if (EFFECT.has(op.o) || (op.o === 'callh' && CF_READERS.has(op.sh))) effected = true;
       }
       lowerTerm(b.term, E);
-      blocks.set(b.id, { native: true, ops: STEP_FUSE ? fuseSteps(out) : out });
+      const fused = MASK_FUSE ? fuseMasks(out, once) : out;
+      blocks.set(b.id, { native: true, ops: STEP_FUSE ? fuseSteps(fused) : fused });
     } catch (e) {
       if (!(e instanceof Unsupported)) throw e;
       why.set(e.message, (why.get(e.message) || 0) + 1);
@@ -920,6 +953,61 @@ function lowerProgram(p, lo = {}) {
   }
   return { blocks: lo.fallthrough ? fallThrough(blocks, p.entry) : blocks,
     nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
+}
+
+// Masks fused into the op that makes their operand, on adjacent pairs whose
+// middle vreg is `once` (lowerProgram). Measured on four corpus programs
+// (TOYVM_E1HIST): addi/add/sub then andi, getm_spm then and, and andi then a
+// narrow putr -- whose mask is dead, the store keeps only the low bits.
+//   getm_spm s ; and d,x,s        -> andspm d,x
+//   addi t,x,i ; andspm d,t       -> addispm d,x,i
+//   addi t,x,i ; andi d,t,m       -> addim d,x,i,m
+//   add|sub t,x,y ; andi d,t,m    -> addm|subm d,x,y,m
+//   movi t,k ; andi d,t,m         -> movi d,k&m
+//   X e,.. masked m ; putrN at,e  -> X unmasked, when m keeps every stored bit
+const MASK_FUSE = globalThis.TOYVM_MASKFUSE !== '0'
+  && (typeof process === 'undefined' || !process.env || process.env.TOYVM_MASKFUSE !== '0');
+const UNMASK = { addm: 'add', subm: 'sub', addim: 'addi' };
+function fuseMask2(a, b, once) {
+  const d0 = (o) => o.args[0].v;
+  const V = (o, k) => o.args[k].v;
+  if (b.name === 'and' && a.name === 'getm_spm' && once(d0(a))) {
+    const s = d0(a);
+    if (V(b, 2) === s && V(b, 1) !== s) return [{ name: 'andspm', args: [b.args[0], b.args[1]] }];
+    if (V(b, 1) === s && V(b, 2) !== s) return [{ name: 'andspm', args: [b.args[0], b.args[2]] }];
+    return null;
+  }
+  if (b.name === 'andspm' && a.name === 'addi' && V(b, 1) === d0(a) && once(d0(a))) {
+    return [{ name: 'addispm', args: [b.args[0], a.args[1], a.args[2]] }];
+  }
+  if (b.name === 'andi' && V(b, 1) === d0(a) && once(d0(a))) {
+    const m = b.args[2];
+    if (a.name === 'addi') return [{ name: 'addim', args: [b.args[0], a.args[1], a.args[2], m] }];
+    if (a.name === 'add' || a.name === 'sub') return [{ name: `${a.name}m`, args: [b.args[0], a.args[1], a.args[2], m] }];
+    if (a.name === 'movi') return [{ name: 'movi', args: [b.args[0], { i: (a.args[1].i & m.i) | 0 }] }];
+    return null;
+  }
+  const keep = { putr16: 0xFFFF, putr8: 0xFF }[b.name];
+  if (keep && V(b, 1) === d0(a) && once(d0(a))) {
+    const m = a.name === 'andi' ? a.args[2].i : UNMASK[a.name] ? a.args[a.args.length - 1].i : null;
+    if (m === null || (m & keep) !== keep) return null;
+    if (a.name === 'andi') return [{ name: b.name, args: [b.args[0], a.args[1]] }];
+    return [{ name: UNMASK[a.name], args: a.args.slice(0, -1) }, b];
+  }
+  return null;
+}
+function fuseMasks(ops, once) {
+  const out = [];
+  for (const o of ops) {
+    out.push(o);
+    while (out.length >= 2) {
+      const f = fuseMask2(out[out.length - 2], out[out.length - 1], once);
+      if (!f) break;
+      out.splice(out.length - 2, 2, ...f);
+      if (f.length === 2) break;
+    }
+  }
+  return out;
 }
 
 // X, step -> X_s wherever X has a fused form (STEP_FUSE above).
