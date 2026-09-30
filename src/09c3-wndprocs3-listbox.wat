@@ -1,3 +1,14 @@
+  ;; Set while LB_INSERTSTRING appends through LB_ADDSTRING, so an LBS_SORT
+  ;; listbox does not move the row it is about to rotate into place.
+  (global $lb_add_unsorted (mut i32) (i32.const 0))
+  (func $lb_append_unsorted (param $hwnd i32) (param $str i32) (result i32)
+    (local $r i32)
+    (global.set $lb_add_unsorted (i32.const 1))
+    (local.set $r (call $listbox_wndproc (local.get $hwnd)
+      (i32.const 0x0180) (i32.const 0) (local.get $str)))
+    (global.set $lb_add_unsorted (i32.const 0))
+    (local.get $r))
+
   ;; ============================================================
   ;; ListBox WndProc  (control class 4)
   ;; ============================================================
@@ -123,6 +134,39 @@
           (if (i32.eqz (local.get $src_g)) (then (return (i32.const -1))))
           (local.set $src_w (call $g2w (local.get $src_g)))
           (local.set $slen (call $strlen (local.get $src_w)))))
+        ;; LBS_SORT (0002h): a string listbox keeps its rows in lstrcmpi order,
+        ;; a new row going after every row that does not sort above it. Only
+        ;; LB_ADDSTRING (and LB_DIR/DlgDirList, which add through it) sort;
+        ;; LB_INSERTSTRING puts a row where it is told, even in a sorted list,
+        ;; and sets $lb_add_unsorted around the append it builds on.
+        ;;
+        ;; Appending here instead put DlgDirList's "[-x-]" drives after the
+        ;; files. Civilization II walks that list for its CD, copying each row
+        ;; into a 6-byte stack buffer and stopping at the drive it wants, so it
+        ;; never reaches a file on Windows; here every 12-character name
+        ;; (council0.fre) ran over its saved DS, and the next fopen wrote its
+        ;; FILE record into the game's own code, trapping at the Defense
+        ;; Minister (F2) much later.
+        (if (i32.and (i32.eqz (local.get $ownerdraw))
+              (i32.and (i32.eqz (global.get $lb_add_unsorted))
+                (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0002))
+                        (i32.const 0))))
+          (then
+            (local.set $count (call $lb_count (local.get $sw)))
+            (local.set $p (call $lb_items_ptr (local.get $sw)))
+            (local.set $i (i32.const 0))
+            (block $sorted_at (loop $sorted_scan
+              (br_if $sorted_at (i32.ge_s (local.get $i) (local.get $count)))
+              (br_if $sorted_at (i32.lt_s
+                (call $lstr_cmp (local.get $src_g) (local.get $p) (i32.const 0) (i32.const 1))
+                (i32.const 0)))
+              (local.set $p (i32.add (local.get $p)
+                (i32.add (call $strlen (call $g2w (local.get $p))) (i32.const 1))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $sorted_scan)))
+            (if (i32.lt_s (local.get $i) (local.get $count))
+              (then (return (call $listbox_wndproc (local.get $hwnd)
+                (i32.const 0x0181) (local.get $i) (local.get $lParam)))))))
         (local.set $used (call $lb_items_used (local.get $sw)))
         (local.set $cap  (call $lb_items_cap (local.get $sw)))
         (local.set $need (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
@@ -742,10 +786,8 @@
         (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
-          (then (return (call $listbox_wndproc (local.get $hwnd)
-                          (i32.const 0x0180) (i32.const 0) (local.get $lParam)))))
-        (if (i32.lt_s (call $listbox_wndproc (local.get $hwnd)
-                        (i32.const 0x0180) (i32.const 0) (local.get $lParam))
+          (then (return (call $lb_append_unsorted (local.get $hwnd) (local.get $lParam)))))
+        (if (i32.lt_s (call $lb_append_unsorted (local.get $hwnd) (local.get $lParam))
                       (i32.const 0))
           (then (return (i32.const -1))))
         (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
