@@ -214,7 +214,7 @@
             (return)))
         ;; Other dispositions should have resumed inside the Delphi runtime.
         ;; If one returns here, fail closed instead of jumping through stale stack.
-        (call $host_exit (i32.or (i32.const 0xDE00)
+        (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00)
           (call $gl32 (global.get $delphi_exception_record))))
         (return)))
 
