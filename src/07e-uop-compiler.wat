@@ -1798,6 +1798,24 @@
     (global.set $uc_nloop (local.get $pos))
     (global.set $uc_head (local.get $head))
     (global.set $uc_is_trace (i32.const 1))
+    ;; Every straight-line cut lands mid-way through the threaded block that
+    ;; runs on past it. Name each landing to the decoder as a block boundary
+    ;; before it is ever entered (07d $uop_cut_note, section 21.6).
+    (if (i32.and (i32.ne (global.get $uc_trace_cut) (i32.const 0))
+                 (i32.ne (global.get $branch_clock) (i32.const 0)))
+      (then
+        (local.set $k (i32.const 0))
+        (block $nd (loop $nl
+          (br_if $nd (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+          (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br_if $nl (i32.eqz (call $uc_flag (local.get $R) (i32.const 1))))
+          (br_if $nl (call $uc_is_branch (local.get $R)))
+          (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (i32.const 0))))
+          (if (i32.ge_s (local.get $S) (i32.const 0))
+            (then (br_if $nl (call $uc_flag (local.get $S) (i32.const 1)))))
+          (call $uop_cut_note (call $uc_succ (local.get $R) (i32.const 0)))
+          (br $nl)))))
     (i32.const 0))
 
   (func $uc_depth_p (param $R i32) (result i32)

@@ -2279,7 +2279,37 @@
       (then (call $uop_census_ev (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $uop_flush)
     (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_map_off))
-                 (i32.const 0) (i32.const 0x8000)))
+                 (i32.const 0) (i32.const 0x8000))
+    (memory.fill (call $uop_cut_slot (i32.const 0)) (i32.const 0) (i32.const 1024)))
+
+  ;; Cut-exit landings (docs/uop-tier-design.md section 21.6). A trace's
+  ;; straight-line cut EXITs to an address in the middle of the threaded
+  ;; block that runs on past it, and publishing a block there retires that
+  ;; covering block (the page index has one owner per byte). When the code is
+  ;; generated and rewritten -- Smacker's blitters in Diablo's intro -- every
+  ;; rewrite re-decodes the covering blocks first and every cut then retires
+  ;; one: 99.5K overlap retirements in 1200 batches against 1.9K without
+  ;; cuts, and the chunk garbage doubled the full cache clears. So the
+  ;; lowering names every landing here and $fuse_stop ends a block at one,
+  ;; with $th_block_end, which the branch clock (the only clock cuts exist
+  ;; on) does not charge. A stale entry costs one free split, never a wrong
+  ;; answer. 256 direct-mapped EIPs in the windows area's unused top 1KB
+  ;; (the win census owns its first 9KB); cleared with the verdicts.
+  (func $uop_cut_slot (param $eip i32) (result i32)
+    (i32.add (i32.add (global.get $uop_arena) (global.get $uop_wins_off))
+      (i32.add (i32.const 0x3000)
+        (i32.shl
+          (i32.and (i32.xor (local.get $eip) (i32.shr_u (local.get $eip) (i32.const 8)))
+                   (i32.const 255))
+          (i32.const 2)))))
+  (global $uop_cut_notes (mut i32) (i32.const 0))
+  (func $uop_cut_note (param $eip i32)
+    (global.set $uop_cut_notes (i32.add (global.get $uop_cut_notes) (i32.const 1)))
+    (i32.store (call $uop_cut_slot (local.get $eip)) (local.get $eip)))
+  (func $uop_cut_probe (param $eip i32) (result i32)
+    (if (i32.eqz (global.get $uop_enabled)) (then (return (i32.const 0))))
+    (i32.eq (i32.load (call $uop_cut_slot (local.get $eip))) (local.get $eip)))
+  (func (export "uop_cut_notes") (result i32) (global.get $uop_cut_notes))
   ;; Point this instance at its arena and start it empty. A worker's arena is
   ;; carved out of memory that held another thread's threaded code, so the map
   ;; is garbage until this clears it.
