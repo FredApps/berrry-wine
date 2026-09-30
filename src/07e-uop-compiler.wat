@@ -179,6 +179,7 @@
   (global $uc_iat      (mut i32) (i32.const 0))
   ;; --no-uop-mmx turns kind 27 (MMX) off: on by default.
   (global $uc_mmx      (mut i32) (i32.const 1))
+  (global $uc_rep      (mut i32) (i32.const 1))
   ;; sites in installed programs (uop_cstat 27 muldiv, 28 icall, 29 iat) and
   ;; FF /2 decodes refused for a target outside every image (30)
   (global $uc_n_muldiv (mut i32) (i32.const 0))
@@ -390,7 +391,7 @@
   (func $uc_decode (param $addr i32) (param $R i32)
     (local $p i32) (local $v i32) (local $b i32) (local $n i32) (local $form i32)
     (local $w i32) (local $e i32) (local $op i32) (local $b2 i32) (local $O0 i32)
-    (local $O1 i32) (local $O2 i32) (local $reg i32)
+    (local $O1 i32) (local $O2 i32) (local $reg i32) (local $rep i32)
     (memory.fill (local.get $R) (i32.const 0) (i32.const 256))
     (i32.store (local.get $R) (local.get $addr))
     (local.set $O0 (i32.add (local.get $R) (i32.const 56)))
@@ -400,6 +401,13 @@
     (local.set $v (i32.const 32))
     (local.set $b (call $uc_rd8 (local.get $p)))
     (block $pd (loop $pl
+      ;; one F3 among the 66s: only REP MOVS/STOS take it (kind 30, below)
+      (if (i32.and (i32.eq (local.get $b) (i32.const 0xF3)) (i32.eqz (local.get $rep)))
+        (then
+          (local.set $rep (i32.const 1))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (local.set $b (call $uc_rd8 (local.get $p)))
+          (br $pl)))
       (br_if $pd (i32.ne (local.get $b) (i32.const 0x66)))
       (local.set $n (i32.add (local.get $n) (i32.const 1)))
       (if (i32.gt_u (local.get $n) (i32.const 14)) (then (call $uc_unsup (local.get $R)) (return)))
@@ -407,6 +415,25 @@
       (local.set $p (i32.add (local.get $p) (i32.const 1)))
       (local.set $b (call $uc_rd8 (local.get $p)))
       (br $pl)))
+    ;; 30 REP MOVS{B,W,D} / REP STOS{B,W,D}, 32-bit addressing, no segment
+    ;; override (either would have stopped the loop above on an unsupported
+    ;; prefix byte below). +12 is 0 movs / 1 stos, +16 the element width in
+    ;; bits; O0 is [EDI], O1 [ESI] -- the operands $uc_win proves windows on.
+    (if (local.get $rep)
+      (then
+        (if (i32.or (i32.eqz (global.get $uc_rep))
+              (i32.eqz (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0xA4)) (i32.eq (local.get $b) (i32.const 0xA5)))
+                               (i32.or (i32.eq (local.get $b) (i32.const 0xAA)) (i32.eq (local.get $b) (i32.const 0xAB))))))
+          (then (call $uc_unsup (local.get $R)) (return)))
+        (i32.store offset=12 (local.get $R) (i32.ge_u (local.get $b) (i32.const 0xAA)))
+        (i32.store offset=16 (local.get $R)
+          (select (local.get $v) (i32.const 8) (i32.and (local.get $b) (i32.const 1))))
+        (call $uc_stack_slot (local.get $O0) (i32.const 0))
+        (i32.store offset=4 (local.get $O0) (i32.const 7))
+        (call $uc_stack_slot (local.get $O1) (i32.const 0))
+        (i32.store offset=4 (local.get $O1) (i32.const 6))
+        (call $uc_fin (local.get $R) (i32.const 30) (i32.add (local.get $p) (i32.const 1)))
+        (return)))
     (if (i32.or (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0x26)) (i32.eq (local.get $b) (i32.const 0x2E)))
                         (i32.or (i32.eq (local.get $b) (i32.const 0x36)) (i32.eq (local.get $b) (i32.const 0x3E))))
                 (i32.or (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0x64)) (i32.eq (local.get $b) (i32.const 0x65)))
@@ -987,6 +1014,9 @@
     (local $k i32)
     (local.set $k (call $uc_kind (local.get $R)))
     (if (i32.eq (local.get $k) (i32.const 29)) (then (return (i32.const 192))))
+    ;; rep movs: ECX ESI EDI; rep stos: ECX EDI
+    (if (i32.eq (local.get $k) (i32.const 30))
+      (then (return (select (i32.const 130) (i32.const 194) (i32.load offset=12 (local.get $R))))))
     (if (i32.eq (local.get $k) (i32.const 1))
       (then (return (select (i32.const 0) (call $uc_regbit (i32.add (local.get $R) (i32.const 56)))
                             (i32.eq (i32.load offset=12 (local.get $R)) (i32.const 7))))))
@@ -1020,7 +1050,8 @@
   (func $uc_touches_mem (param $R i32) (result i32)
     (local $k i32) (local $a i32) (local $b i32) (local $c i32)
     (local.set $k (call $uc_kind (local.get $R)))
-    (if (i32.eq (local.get $k) (i32.const 29)) (then (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $k) (i32.const 29)) (i32.eq (local.get $k) (i32.const 30)))
+      (then (return (i32.const 1))))
     (local.set $a (call $uc_is_mem (i32.add (local.get $R) (i32.const 56))))
     (local.set $b (call $uc_is_mem (i32.add (local.get $R) (i32.const 80))))
     (local.set $c (call $uc_is_mem (i32.add (local.get $R) (i32.const 104))))
@@ -2475,6 +2506,25 @@
         (call $uc_load (local.get $O1) (i32.const 32) (i32.const 0) (local.get $v))
         (call $uc_store (local.get $O0) (i32.const 32) (local.get $v))
         (call $uc_o2 (i32.const 78) (call $uc_aR (i32.const 6)) (call $uc_aR (i32.const 7)))
+        (return (i32.const 0))))
+    ;; rep movs / rep stos: one COPY / FILL over EDI, ESI, ECX (07d 82/83).
+    ;; The op leaves every register as the threaded rep does, and its deopt
+    ;; stub is this instruction, taken before anything is written.
+    (if (i32.eq (local.get $k) (i32.const 30))
+      (then
+        (if (global.get $uc_fwd_kind) (then (return (i32.const 22))))
+        (local.set $w (i32.shr_u (i32.load offset=16 (local.get $R)) (i32.const 3)))
+        (if (i32.load offset=12 (local.get $R))
+          (then
+            (call $uc_emit (i32.const 83) (i32.const 6)
+              (call $uc_aR (i32.const 7)) (call $uc_aR (i32.const 0)) (call $uc_aR (i32.const 1))
+              (call $uc_aN (local.get $w)) (call $uc_win (local.get $O0) (i32.const 1))
+              (call $uc_xstub) (i64.const 0)))
+          (else
+            (call $uc_emit (i32.const 82) (i32.const 7)
+              (call $uc_aR (i32.const 7)) (call $uc_aR (i32.const 6)) (call $uc_aR (i32.const 1))
+              (call $uc_aN (local.get $w)) (call $uc_win (local.get $O0) (i32.const 1))
+              (call $uc_win (local.get $O1) (i32.const 0)) (call $uc_xstub))))
         (return (i32.const 0))))
     ;; push: the store first, so a deopt re-executes the whole push
     (if (i32.eq (local.get $k) (i32.const 21))
@@ -4556,6 +4606,12 @@
     (global.set $uc_mmx (i32.ne (local.get $flag) (i32.const 0)))
     (call $uop_flush))
   (func (export "get_uop_mmx") (result i32) (global.get $uc_mmx))
+  ;; --no-uop-rep: kind 30 (rep movs/stos -> COPY/FILL) off for programs
+  ;; compiled from now on.
+  (func (export "set_uop_rep") (param $flag i32)
+    (global.set $uc_rep (i32.ne (local.get $flag) (i32.const 0)))
+    (call $uop_flush))
+  (func (export "get_uop_rep") (result i32) (global.get $uc_rep))
   ;; MMn of this instance's file, for tests.
   (func (export "get_mmx") (param $i i32) (result i64) (call $mmx_get (local.get $i)))
   (func (export "set_mmx") (param $i i32) (param $v i64) (call $mmx_set (local.get $i) (local.get $v)))

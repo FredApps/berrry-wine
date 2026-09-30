@@ -145,6 +145,22 @@
   ;; sub is 06c's $mmx_opcode_subop numbering and every arm is $mmx_binop /
   ;; $mmx_shift inlined, so the two tiers compute the same bits.
   ;;   78 STRSTEP4 src dst                    advance both pointers by DF ? -4 : 4
+  ;; Bulk memory (07e kind 30, --no-uop-rep): REP MOVS / REP STOS as one op.
+  ;;   82 COPY d s n w wd ws x                n elements of w bytes from [s] to
+  ;;                                          [d] in DF order; d/s/n are slots
+  ;;                                          (EDI/ESI/ECX), left as the rep
+  ;;                                          leaves them; wd a store window,
+  ;;                                          ws a load window
+  ;;   83 FILL d v n w wd x                   n elements of v's low w bytes at
+  ;;                                          [d]; v an i32 slot, or an MMX cell
+  ;;                                          when w is 8
+  ;; The fast arm runs when the whole extent is inside its windows and, for
+  ;; COPY, the two do not overlap: then it is one memory.copy/memory.fill.
+  ;; Anything else is $uop_bulk_slow, which re-guards the windows and runs
+  ;; 05b's $rep_movs_mem / $rep_stos_mem -- the same code the threaded rep
+  ;; handlers run -- or leaves to x when a page is unmapped or would need a
+  ;; store barrier. Neither charges a block: a rep is one instruction inside
+  ;; its threaded block too.
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -721,6 +737,78 @@
   ;; GETCF, BCC -- and hands it back here with the op still at $pc; this loop
   ;; does the call and re-enters. A miss that re-guards re-runs its op, which
   ;; changed nothing before it looked at its window.
+  ;; COPY / FILL's slow half ($uop_fast took nothing). Re-guard both windows
+  ;; at the extent's low end, so the next run of this op can be the fast arm;
+  ;; then, when every page of the extent is mapped and no destination page
+  ;; would need a store barrier (decoded code -- the write could retire this
+  ;; very program -- or a watched page), run it through 05b's
+  ;; $rep_movs_mem / $rep_stos_mem, the threaded rep handlers' own code, and
+  ;; leave the registers where they leave them. Otherwise nothing has been
+  ;; written: exit to x and let the threaded rep run it. Answers the next pc.
+  (global $uop_bulk_slow_n  (mut i32) (i32.const 0))
+  (global $uop_bulk_deopt_n (mut i32) (i32.const 0))
+  (func (export "uop_bulk_stats") (param $k i32) (result i32)
+    (select (global.get $uop_bulk_deopt_n) (global.get $uop_bulk_slow_n) (local.get $k)))
+  (func $uop_bulk_span_ok (param $lo i32) (param $len i32) (param $rw i32) (result i32)
+    (local $p i32) (local $end i32)
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 1))))
+    (local.set $end (i32.add (local.get $lo) (i32.sub (local.get $len) (i32.const 1))))
+    (if (i32.lt_u (local.get $end) (local.get $lo)) (then (return (i32.const 0))))
+    (local.set $p (local.get $lo))
+    (loop $pages
+      (if (i32.eqz (call $guest_addr_mapped (local.get $p))) (then (return (i32.const 0))))
+      (if (i32.and (i32.ne (local.get $rw) (i32.const 0))
+                   (call $store_page_needs_barrier (local.get $p)))
+        (then (return (i32.const 0))))
+      (if (i32.eq (i32.and (local.get $p) (i32.const 0xFFFFF000))
+                  (i32.and (local.get $end) (i32.const 0xFFFFF000)))
+        (then (return (i32.const 1))))
+      (local.set $p (i32.add (i32.and (local.get $p) (i32.const 0xFFFFF000)) (i32.const 0x1000)))
+      (br $pages))
+    (unreachable))
+  (func $uop_bulk_slow (param $pc i32) (result i32)
+    (local $copy i32) (local $n i32) (local $wd i32) (local $bw i32) (local $back i32)
+    (local $dlo i32) (local $slo i32) (local $step i32)
+    (local.set $copy (i32.eq (i32.load (local.get $pc)) (i32.const 82)))
+    (local.set $n (i32.load (i32.load offset=12 (local.get $pc))))
+    (local.set $wd (i32.load offset=16 (local.get $pc)))
+    (if (i32.eqz (local.get $n))
+      (then (return (i32.add (local.get $pc) (select (i32.const 32) (i32.const 28) (local.get $copy))))))
+    (global.set $uop_bulk_slow_n (i32.add (global.get $uop_bulk_slow_n) (i32.const 1)))
+    ;; n * w wraps exactly as the threaded handlers' count does
+    (local.set $bw (i32.mul (local.get $n) (local.get $wd)))
+    (local.set $back (select (i32.sub (local.get $bw) (local.get $wd)) (i32.const 0) (global.get $df)))
+    (local.set $dlo (i32.sub (i32.load (i32.load offset=4 (local.get $pc))) (local.get $back)))
+    (drop (call $uop_reguard (i32.load offset=20 (local.get $pc)) (local.get $dlo) (i32.const 1)))
+    (if (local.get $copy)
+      (then
+        (local.set $slo (i32.sub (i32.load (i32.load offset=8 (local.get $pc))) (local.get $back)))
+        (drop (call $uop_reguard (i32.load offset=24 (local.get $pc)) (local.get $slo) (i32.const 1)))))
+    (if (i32.or (i32.eqz (call $uop_bulk_span_ok (local.get $dlo) (local.get $bw) (i32.const 1)))
+                (i32.and (local.get $copy)
+                         (i32.eqz (call $uop_bulk_span_ok (local.get $slo) (local.get $bw) (i32.const 0)))))
+      (then
+        (global.set $uop_bulk_deopt_n (i32.add (global.get $uop_bulk_deopt_n) (i32.const 1)))
+        (return (i32.load (i32.add (local.get $pc) (select (i32.const 28) (i32.const 24) (local.get $copy)))))))
+    (local.set $step (select (i32.sub (i32.const 0) (local.get $bw)) (local.get $bw) (global.get $df)))
+    (if (local.get $copy)
+      (then
+        (call $rep_movs_mem (i32.load (i32.load offset=4 (local.get $pc)))
+                            (i32.load (i32.load offset=8 (local.get $pc)))
+                            (local.get $n) (local.get $wd))
+        (i32.store (i32.load offset=8 (local.get $pc))
+          (i32.add (i32.load (i32.load offset=8 (local.get $pc))) (local.get $step))))
+      (else
+        (call $rep_stos_mem (i32.load (i32.load offset=4 (local.get $pc)))
+                            (local.get $n) (local.get $wd)
+                            (if (result i64) (i32.eq (local.get $wd) (i32.const 8))
+                              (then (i64.load (i32.load offset=8 (local.get $pc))))
+                              (else (i64.extend_i32_u (i32.load (i32.load offset=8 (local.get $pc)))))))))
+    (i32.store (i32.load offset=4 (local.get $pc))
+      (i32.add (i32.load (i32.load offset=4 (local.get $pc))) (local.get $step)))
+    (i32.store (i32.load offset=12 (local.get $pc)) (i32.const 0))
+    (i32.add (local.get $pc) (select (i32.const 32) (i32.const 28) (local.get $copy))))
+
   (global $uop_io_kind   (mut i32) (i32.const 0)) ;; 0 exited, 1 service op at pc, 2 window miss
   (global $uop_io_budget (mut i32) (i32.const 0))
   (global $uop_io_ga     (mut i32) (i32.const 0))
@@ -804,6 +892,9 @@
             (else (global.set $uop_icg_fail0 (i32.add (global.get $uop_icg_fail0) (i32.const 1)))))
           (call $uop_icg_note (i32.load offset=16 (local.get $pc)))
           (local.set $pc (i32.load offset=20 (local.get $pc))) (br $L)))
+      ;; 82 COPY / 83 FILL: everything the fast arm would not take
+      (if (i32.or (i32.eq (local.get $op) (i32.const 82)) (i32.eq (local.get $op) (i32.const 83)))
+        (then (local.set $pc (call $uop_bulk_slow (local.get $pc))) (br $L)))
       ;; 57 BCC cc t
       (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
       (local.set $pc
@@ -814,10 +905,11 @@
 
   (func $uop_fast (param $pc i32) (param $budget i32) (result i32)
     (local $ga i32) (local $w i32) (local $v i32) (local $x i64) (local $y i64) (local $q i64)
+    (local $n i32) (local $bw i32) (local $dw i32) (local $sw i32)
     (loop $L
       (block $svc
       (block $miss
-      (block $c81 (block $c78
+      (block $c83 (block $c82 (block $c81 (block $c78
       (block $c77 (block $c76 (block $mxcore (block $c75 (block $c74 (block $c73 (block $c72
       (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
@@ -840,7 +932,7 @@
                   $c78
                   ;; 79-80 are not emitted
                   $c0 $c0
-                  $c81
+                  $c81 $c82 $c83
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -1612,6 +1704,88 @@
           (then (local.set $pc (i32.load offset=20 (i32.add (local.get $pc) (i32.shl (local.get $v) (i32.const 3))))))
           (else (local.set $pc (i32.load offset=12 (local.get $pc)))))
         (br $L))
+        ;; 82 COPY d s n w wd ws x. The extent is [p - back, p - back + bytes)
+        ;; for both pointers, back = bytes - w when DF walks down. Any doubt
+        ;; -- a count past 1M elements, an extent not wholly inside its
+        ;; window, overlapping source and destination (x86 order then
+        ;; matters) -- is $uop_bulk_slow's.
+        (local.set $n (i32.load (i32.load offset=12 (local.get $pc))))
+        (if (i32.eqz (local.get $n))
+          (then (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L)))
+        (br_if $svc (i32.gt_u (local.get $n) (i32.const 0x100000)))
+        (local.set $v (i32.load offset=16 (local.get $pc)))
+        (local.set $bw (i32.mul (local.get $n) (local.get $v)))
+        (local.set $v (select (i32.sub (local.get $bw) (local.get $v)) (i32.const 0) (global.get $df)))
+        (local.set $ga (i32.sub (i32.load (i32.load offset=4 (local.get $pc))) (local.get $v)))
+        (local.set $w (i32.load offset=20 (local.get $pc)))
+        (br_if $svc (i32.or (i32.gt_u (local.get $bw) (i32.load offset=4 (local.get $w)))
+                            (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                                      (i32.sub (i32.load offset=4 (local.get $w)) (local.get $bw)))))
+        (local.set $dw (i32.add (local.get $ga) (i32.load offset=8 (local.get $w))))
+        (local.set $ga (i32.sub (i32.load (i32.load offset=8 (local.get $pc))) (local.get $v)))
+        (local.set $w (i32.load offset=24 (local.get $pc)))
+        (br_if $svc (i32.or (i32.gt_u (local.get $bw) (i32.load offset=4 (local.get $w)))
+                            (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                                      (i32.sub (i32.load offset=4 (local.get $w)) (local.get $bw)))))
+        (local.set $sw (i32.add (local.get $ga) (i32.load offset=8 (local.get $w))))
+        (br_if $svc (i32.and (i32.lt_u (local.get $dw) (i32.add (local.get $sw) (local.get $bw)))
+                             (i32.lt_u (local.get $sw) (i32.add (local.get $dw) (local.get $bw)))))
+        (memory.copy (local.get $dw) (local.get $sw) (local.get $bw))
+        (local.set $v (select (i32.sub (i32.const 0) (local.get $bw)) (local.get $bw) (global.get $df)))
+        (i32.store (i32.load offset=4 (local.get $pc))
+          (i32.add (i32.load (i32.load offset=4 (local.get $pc))) (local.get $v)))
+        (i32.store (i32.load offset=8 (local.get $pc))
+          (i32.add (i32.load (i32.load offset=8 (local.get $pc))) (local.get $v)))
+        (i32.store (i32.load offset=12 (local.get $pc)) (i32.const 0))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
+        ;; 83 FILL d v n w wd x. Every element is the same value, so the order
+        ;; they are written in cannot show: one memory.fill for a value that
+        ;; is one repeated byte, else the first element and doubling copies.
+        (local.set $n (i32.load (i32.load offset=12 (local.get $pc))))
+        (if (i32.eqz (local.get $n))
+          (then (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L)))
+        (br_if $svc (i32.gt_u (local.get $n) (i32.const 0x100000)))
+        (local.set $v (i32.load offset=16 (local.get $pc)))
+        (local.set $bw (i32.mul (local.get $n) (local.get $v)))
+        (local.set $ga (i32.sub (i32.load (i32.load offset=4 (local.get $pc)))
+          (select (i32.sub (local.get $bw) (local.get $v)) (i32.const 0) (global.get $df))))
+        (local.set $w (i32.load offset=20 (local.get $pc)))
+        (br_if $svc (i32.or (i32.gt_u (local.get $bw) (i32.load offset=4 (local.get $w)))
+                            (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                                      (i32.sub (i32.load offset=4 (local.get $w)) (local.get $bw)))))
+        (local.set $dw (i32.add (local.get $ga) (i32.load offset=8 (local.get $w))))
+        (if (i32.eq (local.get $v) (i32.const 8))
+          (then (local.set $x (i64.load (i32.load offset=8 (local.get $pc))))
+                (local.set $y (i64.const -1)))
+          (else (local.set $x (i64.extend_i32_u (i32.load (i32.load offset=8 (local.get $pc)))))
+                (local.set $y (i64.sub (i64.shl (i64.const 1)
+                                                (i64.extend_i32_u (i32.shl (local.get $v) (i32.const 3))))
+                                       (i64.const 1)))))
+        (local.set $x (i64.and (local.get $x) (local.get $y)))
+        (local.set $q (i64.and (local.get $x) (i64.const 0xFF)))
+        (if (i64.eq (local.get $x)
+                    (i64.and (i64.mul (local.get $q) (i64.const 0x0101010101010101)) (local.get $y)))
+          (then (memory.fill (local.get $dw) (i32.wrap_i64 (local.get $q)) (local.get $bw)))
+          (else
+            (if (i32.eq (local.get $v) (i32.const 8))
+              (then (i64.store (local.get $dw) (local.get $x)))
+              (else (if (i32.eq (local.get $v) (i32.const 4))
+                (then (i32.store (local.get $dw) (i32.wrap_i64 (local.get $x))))
+                (else (i32.store16 (local.get $dw) (i32.wrap_i64 (local.get $x)))))))
+            ;; $ga: bytes written so far; $sw: this copy's length
+            (local.set $ga (local.get $v))
+            (block $fd (loop $fl
+              (br_if $fd (i32.ge_u (local.get $ga) (local.get $bw)))
+              (local.set $sw (select (local.get $ga) (i32.sub (local.get $bw) (local.get $ga))
+                                     (i32.le_u (local.get $ga) (i32.sub (local.get $bw) (local.get $ga)))))
+              (memory.copy (i32.add (local.get $dw) (local.get $ga)) (local.get $dw) (local.get $sw))
+              (local.set $ga (i32.add (local.get $ga) (local.get $sw)))
+              (br $fl)))))
+        (i32.store (i32.load offset=4 (local.get $pc))
+          (i32.add (i32.load (i32.load offset=4 (local.get $pc)))
+                   (select (i32.sub (i32.const 0) (local.get $bw)) (local.get $bw) (global.get $df))))
+        (i32.store (i32.load offset=12 (local.get $pc)) (i32.const 0))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))

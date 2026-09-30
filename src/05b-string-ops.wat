@@ -155,230 +155,189 @@
       (then (i32.store offset=24 (global.get $reg_base) (i32.sub (i32.load offset=24 (global.get $reg_base)) (i32.const 4))))
       (else (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (i32.const 4)))))
     (dispatch-next))
-  ;; REP versions (inline loop)
+  ;; REP MOVS / REP STOS
   ;;
-  ;; Each one is split into a `_do` body and a thin handler that calls it and
-  ;; dispatches. The body is what TREE_FOLD's TU_REP_STR micro-op calls, so a
-  ;; folded `rep movsd` runs THIS code rather than a transcription of it --
-  ;; the DF direction, the overlap and page-contiguity tests, the
-  ;; $invalidate_code_write extent, the per-element $gl/$gs fallback and the
-  ;; ECX-exhaustion write are all the interpreter's, once. These read and write
-  ;; the register GLOBALS, which is why the fold publishes its locals before
-  ;; the call and reloads them after: that also makes a fault mid-copy leave
-  ;; ECX/ESI/EDI exactly where the unfolded path would have left them, because
-  ;; it is the same stores to the same globals.
-  (func $rep_movsb_do
-    (local $n i32) (local $dst i32) (local $src i32) (local $i i32)
+  ;; The memory half of every REP MOVS{B,W,D} and REP STOS{B,W,D} is one pair
+  ;; of functions, $rep_movs_mem and $rep_stos_mem: n elements of w bytes at
+  ;; EDI (from ESI), in x86 element order, direction $df. Everything that runs
+  ;; a rep string op calls them -- the threaded handlers below, TREE_FOLD's
+  ;; TU_REP_STR through the `_do` bodies (07c), and the micro-op tier's COPY
+  ;; and FILL ops (07d 82/83) on their slow path -- so the DF direction, the
+  ;; overlap and page-contiguity tests, the $invalidate_code_write extent and
+  ;; the per-element $gl/$gs fallback exist once, and a rep run in either tier
+  ;; is the same code over the same bytes.
+  ;;
+  ;; They take the register VALUES and leave the registers alone. The `_do`
+  ;; bodies read and write the register globals around them, which is why
+  ;; TREE_FOLD publishes its locals before the call and reloads them after:
+  ;; that also makes a fault mid-copy leave ECX/ESI/EDI exactly where the
+  ;; unfolded path would have left them, because it is the same stores to the
+  ;; same globals.
+  ;;
+  ;; w is 1, 2, 4 or 8 (8 only from the micro-op tier's MMX idioms). n is the
+  ;; element count and must be nonzero; n*w wraps exactly as the old
+  ;; per-width bodies' `n << 2` did.
+  (func $rep_movs_mem (param $edi i32) (param $esi i32) (param $n i32) (param $w i32)
+    (local $bytes i32) (local $dst i32) (local $src i32) (local $step i32)
+    (local $i i32) (local $d i32) (local $s i32)
+    (local.set $bytes (i32.mul (local.get $n) (local.get $w)))
+    (local.set $dst (local.get $edi))
+    (local.set $src (local.get $esi))
+    (local.set $step (local.get $w))
+    (if (global.get $df)
+      (then
+        ;; Backward: EDI/ESI name the highest element, so the extent starts
+        ;; n-1 elements below them.
+        (local.set $dst (i32.sub (local.get $edi) (i32.sub (local.get $bytes) (local.get $w))))
+        (local.set $src (i32.sub (local.get $esi) (i32.sub (local.get $bytes) (local.get $w))))
+        (local.set $step (i32.sub (i32.const 0) (local.get $w)))))
+    ;; One call over the whole destination extent, not two endpoint calls.
+    ;; Endpoints were enough while invalidation was per-page and a copy of
+    ;; this size spanned at most two pages; per-offset retirement
+    ;; (docs/page-compile-design.md section 5) retires exactly the bytes it
+    ;; is handed, so the middle has to be named too.
+    (call $invalidate_code_write (local.get $dst) (local.get $bytes))
+    ;; memory.copy is memmove. x86 copies element by element in the direction
+    ;; DF names, so a destination that starts inside the source on the side
+    ;; the copy moves toward reads bytes the same instruction already wrote
+    ;; (the LZ pattern-replication idiom): those, and sparse spans whose
+    ;; backing is not linear, take the element loop.
+    (if (i32.or
+          (if (result i32) (global.get $df)
+            (then (i32.and
+                    (i32.lt_u (local.get $dst) (local.get $src))
+                    (i32.lt_u (local.get $src) (i32.add (local.get $dst) (local.get $bytes)))))
+            (else (i32.and
+                    (i32.lt_u (local.get $src) (local.get $dst))
+                    (i32.lt_u (local.get $dst) (i32.add (local.get $src) (local.get $bytes))))))
+          (i32.or
+            (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
+            (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $bytes)))))
+      (then
+        (local.set $d (local.get $edi))
+        (local.set $s (local.get $esi))
+        (block $done (loop $copy
+          (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+          (if (i32.eq (local.get $w) (i32.const 4))
+            (then (call $gs32 (local.get $d) (call $gl32 (local.get $s))))
+            (else (if (i32.eq (local.get $w) (i32.const 1))
+              (then (call $gs8 (local.get $d) (call $gl8 (local.get $s))))
+              (else (if (i32.eq (local.get $w) (i32.const 2))
+                (then (call $gs16 (local.get $d) (call $gl16 (local.get $s))))
+                ;; 8: the whole element is read before any of it is written
+                (else (call $gs64 (local.get $d)
+                        (i64.or (i64.extend_i32_u (call $gl32 (local.get $s)))
+                                (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $s) (i32.const 4))))
+                                         (i64.const 32))))))))))
+          (local.set $d (i32.add (local.get $d) (local.get $step)))
+          (local.set $s (i32.add (local.get $s) (local.get $step)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy))))
+      (else
+        (memory.copy
+          (call $g2w (local.get $dst))
+          (call $g2w (local.get $src))
+          (local.get $bytes)))))
+
+  ;; n elements of w bytes of $v (its low w bytes) at EDI, direction $df.
+  ;; Every element is the same, so the result does not depend on the order
+  ;; they are written in: a linear span is one memory.fill when the value is
+  ;; one repeated byte, else one element and then doubling copies of what is
+  ;; already written. Non-linear spans keep the element loop.
+  (func $rep_stos_mem (param $edi i32) (param $n i32) (param $w i32) (param $v i64)
+    (local $bytes i32) (local $dst i32) (local $step i32) (local $i i32) (local $d i32)
+    (local $b i32) (local $wa i32) (local $k i32) (local $c i32) (local $mask i64)
+    (local.set $bytes (i32.mul (local.get $n) (local.get $w)))
+    (local.set $dst (local.get $edi))
+    (local.set $step (local.get $w))
+    (if (global.get $df)
+      (then
+        (local.set $dst (i32.sub (local.get $edi) (i32.sub (local.get $bytes) (local.get $w))))
+        (local.set $step (i32.sub (i32.const 0) (local.get $w)))))
+    (local.set $mask
+      (select (i64.const -1)
+              (i64.sub (i64.shl (i64.const 1) (i64.extend_i32_u (i32.shl (local.get $w) (i32.const 3))))
+                       (i64.const 1))
+              (i32.eq (local.get $w) (i32.const 8))))
+    (local.set $v (i64.and (local.get $v) (local.get $mask)))
+    (local.set $b (i32.and (i32.wrap_i64 (local.get $v)) (i32.const 0xFF)))
+    (call $invalidate_code_write (local.get $dst) (local.get $bytes))
+    (if (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes))
+      (then
+        (local.set $wa (call $g2w (local.get $dst)))
+        (if (i64.eq (local.get $v)
+                    (i64.and (i64.mul (i64.extend_i32_u (local.get $b)) (i64.const 0x0101010101010101))
+                             (local.get $mask)))
+          (then (memory.fill (local.get $wa) (local.get $b) (local.get $bytes)))
+          (else
+            (if (i32.eq (local.get $w) (i32.const 8))
+              (then (i64.store (local.get $wa) (local.get $v)))
+              (else (if (i32.eq (local.get $w) (i32.const 4))
+                (then (i32.store (local.get $wa) (i32.wrap_i64 (local.get $v))))
+                (else (i32.store16 (local.get $wa) (i32.wrap_i64 (local.get $v)))))))
+            (local.set $k (local.get $w))
+            (block $done (loop $dbl
+              (br_if $done (i32.ge_u (local.get $k) (local.get $bytes)))
+              (local.set $c (select (local.get $k) (i32.sub (local.get $bytes) (local.get $k))
+                                    (i32.le_u (local.get $k) (i32.sub (local.get $bytes) (local.get $k)))))
+              (memory.copy (i32.add (local.get $wa) (local.get $k)) (local.get $wa) (local.get $c))
+              (local.set $k (i32.add (local.get $k) (local.get $c)))
+              (br $dbl))))))
+      (else
+        (local.set $d (local.get $edi))
+        (block $done (loop $fill
+          (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+          (if (i32.eq (local.get $w) (i32.const 4))
+            (then (call $gs32 (local.get $d) (i32.wrap_i64 (local.get $v))))
+            (else (if (i32.eq (local.get $w) (i32.const 1))
+              (then (call $gs8 (local.get $d) (local.get $b)))
+              (else (if (i32.eq (local.get $w) (i32.const 2))
+                (then (call $gs16 (local.get $d) (i32.wrap_i64 (local.get $v))))
+                (else (call $gs64 (local.get $d) (local.get $v))))))))
+          (local.set $d (i32.add (local.get $d) (local.get $step)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $fill))))))
+
+  ;; The register half, on the globals: ESI/EDI move by the whole extent in
+  ;; the DF direction and ECX ends at zero; a zero count touches nothing.
+  (func $rep_movs_do (param $w i32)
+    (local $n i32) (local $bytes i32)
     (local.set $n (i32.load offset=4 (global.get $reg_base)))
     (if (local.get $n) (then
+      (call $rep_movs_mem (i32.load offset=28 (global.get $reg_base))
+                          (i32.load offset=24 (global.get $reg_base))
+                          (local.get $n) (local.get $w))
+      (local.set $bytes (i32.mul (local.get $n) (local.get $w)))
       (if (global.get $df)
-        (then
-          ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
-          (local.set $dst (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $n) (i32.const 1))))
-          (local.set $src (i32.sub (i32.load offset=24 (global.get $reg_base)) (i32.sub (local.get $n) (i32.const 1))))
-          ;; One call over the whole destination extent, not two endpoint calls.
-          ;; Endpoints were enough while invalidation was per-page and a copy of
-          ;; this size spanned at most two pages; per-offset retirement
-          ;; (docs/page-compile-design.md section 5) retires exactly the bytes it
-          ;; is handed, so the middle has to be named too.
-          (call $invalidate_code_write (local.get $dst) (local.get $n))
-          (if (i32.or
-                (i32.and
-                  (i32.lt_u (local.get $dst) (local.get $src))
-                  (i32.lt_u (local.get $src) (i32.add (local.get $dst) (local.get $n))))
-                (i32.or
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $n)))
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $n)))))
-            (then
-              (local.set $i (i32.const 0))
-              (block $done (loop $copy
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs8
-                  (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $i))
-                  (call $gl8 (i32.sub (i32.load offset=24 (global.get $reg_base)) (local.get $i))))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $copy))))
-            (else
-              (memory.copy
-                (call $g2w (local.get $dst))
-                (call $g2w (local.get $src))
-                (local.get $n))))
-          (i32.store offset=24 (global.get $reg_base) (i32.sub (i32.load offset=24 (global.get $reg_base)) (local.get $n)))
-          (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $n))))
-        (else
-          (local.set $src (i32.load offset=24 (global.get $reg_base)))
-          (local.set $dst (i32.load offset=28 (global.get $reg_base)))
-          (call $invalidate_code_write (i32.load offset=28 (global.get $reg_base)) (local.get $n))
-          (if (i32.or
-                (i32.and
-                  (i32.lt_u (local.get $src) (local.get $dst))
-                  (i32.lt_u (local.get $dst) (i32.add (local.get $src) (local.get $n))))
-                (i32.or
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $n)))
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $n)))))
-            (then
-              (local.set $i (i32.const 0))
-              (block $done (loop $copy
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs8
-                  (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $i))
-                  (call $gl8 (i32.add (i32.load offset=24 (global.get $reg_base)) (local.get $i))))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $copy))))
-            (else
-              (memory.copy (call $g2w (i32.load offset=28 (global.get $reg_base))) (call $g2w (i32.load offset=24 (global.get $reg_base))) (local.get $n))))
-          (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (local.get $n)))
-          (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $n)))))
+        (then (local.set $bytes (i32.sub (i32.const 0) (local.get $bytes)))))
+      (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (local.get $bytes)))
+      (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $bytes)))
       (i32.store offset=4 (global.get $reg_base) (i32.const 0)))))
+  (func $rep_stos_do (param $w i32)
+    (local $n i32) (local $bytes i32)
+    (local.set $n (i32.load offset=4 (global.get $reg_base)))
+    (if (local.get $n) (then
+      (call $rep_stos_mem (i32.load offset=28 (global.get $reg_base))
+                          (local.get $n) (local.get $w)
+                          (i64.extend_i32_u (i32.load offset=0 (global.get $reg_base))))
+      (local.set $bytes (i32.mul (local.get $n) (local.get $w)))
+      (if (global.get $df)
+        (then (local.set $bytes (i32.sub (i32.const 0) (local.get $bytes)))))
+      (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $bytes)))
+      (i32.store offset=4 (global.get $reg_base) (i32.const 0)))))
+  (func $rep_movsb_do (call $rep_movs_do (i32.const 1)))
+  (func $rep_movsd_do (call $rep_movs_do (i32.const 4)))
+  (func $rep_stosb_do (call $rep_stos_do (i32.const 1)))
+  (func $rep_stosd_do (call $rep_stos_do (i32.const 4)))
   (func $th_rep_movsb (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (call $rep_movsb_do)
     (dispatch-next))
-  (func $rep_movsd_do
-    (local $n i32) (local $bytes i32) (local $dst i32) (local $src i32) (local $i i32)
-    (local.set $n (i32.load offset=4 (global.get $reg_base)))
-    (if (local.get $n) (then
-      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
-      (if (global.get $df)
-        (then
-          (local.set $dst (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $bytes) (i32.const 4))))
-          (local.set $src (i32.sub (i32.load offset=24 (global.get $reg_base)) (i32.sub (local.get $bytes) (i32.const 4))))
-          (call $invalidate_code_write (local.get $dst) (local.get $bytes))
-          (if (i32.or
-                (i32.and
-                  (i32.lt_u (local.get $dst) (local.get $src))
-                  (i32.lt_u (local.get $src) (i32.add (local.get $dst) (local.get $bytes))))
-                (i32.or
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $bytes)))))
-            (then
-              (local.set $i (i32.const 0))
-              (block $done (loop $copy
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs32
-                  (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.shl (local.get $i) (i32.const 2)))
-                  (call $gl32 (i32.sub (i32.load offset=24 (global.get $reg_base)) (i32.shl (local.get $i) (i32.const 2)))))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $copy))))
-            (else
-              (memory.copy
-                (call $g2w (local.get $dst))
-                (call $g2w (local.get $src))
-                (local.get $bytes))))
-          (i32.store offset=24 (global.get $reg_base) (i32.sub (i32.load offset=24 (global.get $reg_base)) (local.get $bytes)))
-          (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $bytes))))
-        (else
-          (local.set $src (i32.load offset=24 (global.get $reg_base)))
-          (local.set $dst (i32.load offset=28 (global.get $reg_base)))
-          (call $invalidate_code_write (i32.load offset=28 (global.get $reg_base)) (local.get $bytes))
-          (if (i32.or
-                (i32.and
-                  (i32.lt_u (local.get $src) (local.get $dst))
-                  (i32.lt_u (local.get $dst) (i32.add (local.get $src) (local.get $bytes))))
-                (i32.or
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
-                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $bytes)))))
-            (then
-              (local.set $i (i32.const 0))
-              (block $done (loop $copy
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs32
-                  (i32.add (i32.load offset=28 (global.get $reg_base)) (i32.shl (local.get $i) (i32.const 2)))
-                  (call $gl32 (i32.add (i32.load offset=24 (global.get $reg_base)) (i32.shl (local.get $i) (i32.const 2)))))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $copy))))
-            (else
-              (memory.copy (call $g2w (i32.load offset=28 (global.get $reg_base))) (call $g2w (i32.load offset=24 (global.get $reg_base))) (local.get $bytes))))
-          (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (local.get $bytes)))
-          (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $bytes)))))
-      (i32.store offset=4 (global.get $reg_base) (i32.const 0)))))
   (func $th_rep_movsd (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (call $rep_movsd_do)
     (dispatch-next))
-  (func $rep_stosb_do
-    (local $n i32) (local $dst i32) (local $i i32)
-    (local.set $n (i32.load offset=4 (global.get $reg_base)))
-    (if (local.get $n) (then
-      (if (global.get $df)
-        (then
-          (local.set $dst (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $n) (i32.const 1))))
-          (call $invalidate_code_write (local.get $dst) (local.get $n))
-          (if (call $string_guest_range_contiguous (local.get $dst) (local.get $n))
-            (then
-              (memory.fill
-                (call $g2w (local.get $dst))
-                (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF))
-                (local.get $n)))
-            (else
-              (local.set $i (i32.const 0))
-              (block $done (loop $fill
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs8 (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $i))
-                  (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $fill)))))
-          (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $n))))
-        (else
-          (call $invalidate_code_write (i32.load offset=28 (global.get $reg_base)) (local.get $n))
-          (if (call $string_guest_range_contiguous (i32.load offset=28 (global.get $reg_base)) (local.get $n))
-            (then
-              (memory.fill (call $g2w (i32.load offset=28 (global.get $reg_base)))
-                (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)) (local.get $n)))
-            (else
-              (local.set $i (i32.const 0))
-              (block $done (loop $fill
-                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                (call $gs8 (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $i))
-                  (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $fill)))))
-          (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $n)))))
-      (i32.store offset=4 (global.get $reg_base) (i32.const 0)))))
   (func $th_rep_stosb (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (call $rep_stosb_do)
     (dispatch-next))
-  (func $rep_stosd_do
-    (local $n i32) (local $bytes i32) (local $al i32) (local $dst i32)
-    (local.set $n (i32.load offset=4 (global.get $reg_base)))
-    (if (local.get $n) (then
-      ;; Ensure n is positive for shift (ECX is unsigned)
-      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
-      (local.set $al (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))
-      (local.set $dst
-        (select
-          (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $bytes) (i32.const 4)))
-          (i32.load offset=28 (global.get $reg_base))
-          (i32.ne (global.get $df) (i32.const 0))))
-      ;; Fast path: if all 4 bytes of EAX are the same, use memory.fill
-      (if (i32.and
-            (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.or (i32.shl (local.get $al) (i32.const 24))
-              (i32.or (i32.shl (local.get $al) (i32.const 16))
-                (i32.or (i32.shl (local.get $al) (i32.const 8)) (local.get $al)))))
-            (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
-        (then
-          (if (global.get $df)
-            (then
-              (call $invalidate_code_write
-                (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $bytes) (i32.const 4)))
-                (local.get $bytes))
-              (memory.fill
-                (call $g2w (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.sub (local.get $bytes) (i32.const 4))))
-                (local.get $al) (local.get $bytes))
-              (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (local.get $bytes))))
-            (else
-              (call $invalidate_code_write (i32.load offset=28 (global.get $reg_base)) (local.get $bytes))
-              (memory.fill (call $g2w (i32.load offset=28 (global.get $reg_base))) (local.get $al) (local.get $bytes))
-              (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $bytes))))))
-        (else
-          ;; Slow path: arbitrary dword value
-          (block $d (loop $l
-            (br_if $d (i32.eqz (local.get $n)))
-            (call $gs32 (i32.load offset=28 (global.get $reg_base)) (i32.load offset=0 (global.get $reg_base)))
-            (if (global.get $df)
-              (then (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.const 4))))
-              (else (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (i32.const 4)))))
-            (local.set $n (i32.sub (local.get $n) (i32.const 1)))
-            (br $l)))))
-      (i32.store offset=4 (global.get $reg_base) (i32.const 0)))))
   (func $th_rep_stosd (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (call $rep_stosd_do)
     (dispatch-next))
