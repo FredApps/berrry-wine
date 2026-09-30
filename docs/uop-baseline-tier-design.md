@@ -1051,6 +1051,56 @@ How it was found:
 Result: arm-bench, 12 programs at 30M, l1 against only-naive: **12 of 12
 clean**. Geomean x3.44 cpu and x2.97 slice, at load ~3.8.
 
+### Phase 1, step 14: fewer naive µops, cheaper builds, every arm measured (2026-09-30)
+
+Dynamic µop census (`TOYVM_E1HIST=1`, BRW, CONTAGIO, DEMO5 and ACCIDENT at
+10M each), and what each change took out:
+
+| change | µops run | where |
+|---|---|---|
+| step 13 | 140.2M | |
+| full-width `getr`/`gets` forwarded (17.8% of µops were these copies) | 116.5M | `forwardFullGets`, uop-opt.js |
+| narrow masks fused into the op making their operand | 107.4M | `fuseMasks`, uop-wasm.js |
+
+- **Forwarding.** In a resident program vregs 0..13 are the registers, so a
+  32-bit `getr` is a copy. Until the register is written again in the
+  block, a use reads the register itself. A copy with no uses left is
+  deleted. Slice geomean x2.97 → x2.69 (12/12 clean).
+- **Mask fusion.** `addm`, `subm`, `addim`, `andspm`, `addispm`, `movi`+`andi`
+  folded, and a mask ahead of `putr16`/`putr8` dropped. Only when the vreg
+  between the pair is an IR temp defined once and read once.
+  `TOYVM_MASKFUSE=0` (arm-bench `@nomask`) turns it off. Alternating
+  off/on/off/on: slice x2.751 x2.747 → x2.688 x2.673.
+- **Builds** (CONTAGIO, `--cpu-prof`):
+  - `siteOf` built two string keys per lookup: 6.7% of the run. Lookups now
+    find the prefix's map by number.
+  - CONTAGIO patches its INT numbers and rebuilt 8632 INT sites in 30M. A
+    head `0xCD` now skips the L1 spin-check compile and discover (neither
+    can do anything with an INT): 77ms → 20ms.
+  - What is left is program builds: 3465 at ~200µs. Their parts are
+    spinBlock ~43µs, discover ~16µs, optimizer ~50µs and arena add ~54µs.
+    They are ~17% of only-naive's CPU across the corpus.
+
+Every arm, 12 programs at 30M, all clean. CPU geomean against l1, the two
+halves of the corpus run separately at load ~2.5-2.8:
+
+| arm | cpu (1-6) | cpu (7-12) | slice (1-6) | slice (7-12) |
+|---|---|---|---|---|
+| uop (l1 + µop loop tier) | x2.07 | x1.97 | x1.00 | x0.95 |
+| jit (l1 + region JIT) | x2.66 | x2.61 | x1.06 | x0.94 |
+| only (allRP) | x10.0 | x5.98 | x9.73 | x4.49 |
+| **only-naive** | **x3.82** | **x2.87** | **x3.07** | **x2.22** |
+| only-n1k (naive, tier-up to allRP) | x5.83 | x3.97 | x4.92 | x2.76 |
+
+How to read it:
+- "slice" includes uop-only's builds, because drive builds a site inside
+  the slice.
+- `only` executes faster than naive. On B-STEEL, execution is ~0.05s
+  against ~0.25s. Its cost is allRP builds, 0.69s in the slice, plus V8's
+  GC and JIT threads: 2.09s CPU against 1.47s sampled on the main thread.
+- `uop` and `jit` arm late (after b/10 and b/4). At 30M they are mostly
+  profiling and compile cost, and their slice time already matches L1.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

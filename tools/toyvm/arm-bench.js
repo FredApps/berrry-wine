@@ -25,8 +25,8 @@
 //
 // Any arm name + `@spill` (only-naive@spill) runs it on the E1 engine as it
 // was before uop-wasm.js callSafe: the A/B for that change. `@nofuse` runs it
-// without the fused `X_s` step µops (TOYVM_STEPFUSE=0). They stack:
-// only-naive@spill@nofuse.
+// without the fused `X_s` step µops (TOYVM_STEPFUSE=0), `@nomask` without the
+// fused narrow masks (TOYVM_MASKFUSE=0). They stack: only-naive@spill@nofuse.
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -74,8 +74,9 @@ const ARMS = {
 
 // `ARM@spill` runs ARM on the E1 engine without uop-wasm.js callSafe
 // (TOYVM_CALLSAFE=0): Ion keeps $pc and the machine params on the stack.
-// `ARM@nofuse` runs it without step fusion (TOYVM_STEPFUSE=0).
-const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE' };
+// `ARM@nofuse` runs it without step fusion (TOYVM_STEPFUSE=0), `ARM@nomask`
+// without mask fusion (TOYVM_MASKFUSE=0).
+const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE', '@nomask': 'TOYVM_MASKFUSE' };
 const armOf = (a) => {
   for (const k of Object.keys(KNOBS)) if (a.endsWith(k)) return armOf(a.slice(0, -k.length));
   const t = /^only-t(\d+[km]?)$/i.exec(a);
