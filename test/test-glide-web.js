@@ -5,10 +5,13 @@ const assert = require('assert');
 const path = require('path');
 const puppeteer = require('puppeteer');
 (async () => {
+  const args = ['--no-first-run', '--no-default-browser-check'];
+  if (process.argv.includes('--no-sandbox')) args.push('--no-sandbox');
+  if (process.argv.includes('--swiftshader')) args.push('--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader');
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    args: ['--no-first-run', '--no-default-browser-check']
+    args
   });
   try {
     const page = await browser.newPage();
@@ -80,7 +83,36 @@ const puppeteer = require('puppeteer');
             backend.readPixels(4,27,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
             zFog.push(Array.from(pixels));
           }
-          results.push({version,clamped,occluded,published,unusedZ,zFog,error:gl.getError()});
+          // Exercise the actual presentation shaders in both ESSL versions.
+          // DAC correction must change display pixels without touching the
+          // render target or the RGB565 bytes returned through an LFB read.
+          const displayPixel = () => Array.from(backend.getPresentationSurface()
+            .getContext('2d').getImageData(4,4,1,1).data);
+          device.submit(3,packet([0x404040,255,65535]));
+          device.submit(4,new Uint8Array());
+          device.submit(14,new Uint8Array(new Float32Array([2,1,.5]).buffer));
+          const rgbGamma = displayPixel();
+          const ramp = new Uint8Array(4+66*3);
+          new DataView(ramp.buffer).setUint32(0,66,true);
+          for(let c=0;c<3;c++) {
+            ramp[4+c*66+64]=7+c;
+            ramp[4+c*66+65]=211+c;
+          }
+          device.submit(13,ramp);
+          const gammaTable = displayPixel();
+          device.bind(0);
+          backend.readPixels(4,27,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+          const rawGamma = Array.from(pixels);
+          const lfb = new Uint8Array(20+32*32*2);
+          lfb.set(packet([0,0,0,32,32]));device.submit(9,lfb);
+          const lfbGamma = new DataView(lfb.buffer).getUint16(20+(4*32+4)*2,true);
+          device.bind(1);
+          device.submit(3,packet([0xc8c8c8,255,65535]));device.submit(4,new Uint8Array());
+          const untouchedGammaTail = displayPixel();
+          device.submit(14,new Uint8Array(new Float32Array([1,1,1]).buffer));
+          const gammaIdentity = displayPixel();
+          results.push({version,clamped,occluded,published,unusedZ,zFog,rgbGamma,gammaTable,
+            rawGamma,lfbGamma,untouchedGammaTail,gammaIdentity,error:gl.getError()});
         } finally { device.destroy();backend.destroy(); }
       }
       return results;
@@ -92,6 +124,12 @@ const puppeteer = require('puppeteer');
       for(const pixels of result.unusedZ)
         assert.deepStrictEqual(pixels,[191,0,64,255],`WebGL${result.version} W mode ignores unused ooz`);
       assert.deepStrictEqual(result.zFog,[[255,0,0,255],[0,0,255,255]],`WebGL${result.version} W mode preserves Z fog`);
+      assert.deepStrictEqual(result.rgbGamma,[128,64,16,255],`WebGL${result.version} independent RGB gamma`);
+      assert.deepStrictEqual(result.gammaTable,[7,8,9,255],`WebGL${result.version} DAC uses exact nearest entries`);
+      assert.deepStrictEqual(result.rawGamma,[64,64,64,255],`WebGL${result.version} DAC preserves render target`);
+      assert.strictEqual(result.lfbGamma,0x4208,`WebGL${result.version} DAC preserves raw RGB565 LFB`);
+      assert.deepStrictEqual(result.untouchedGammaTail,[226,200,157,255],`WebGL${result.version} partial upload preserves DAC tail`);
+      assert.deepStrictEqual(result.gammaIdentity,[200,200,200,255],`WebGL${result.version} RGB correction replaces custom DAC`);
       assert.strictEqual(result.error,0);
     }
     const composed = await page.evaluate(async () => {
@@ -139,6 +177,6 @@ const puppeteer = require('puppeteer');
     assert.deepStrictEqual(composed.closed,[192,192,192,255],'closed Glide layer disappears');
     assert(composed.childOwn,'Glide child owns its GPU surface');
     assert.deepStrictEqual(composed.child,[0,255,0,255],'actual desktop compositor displays GPU child');
-    console.log('Glide WebGL1/WebGL2 mip/W-depth and real window compositor PASS');
+    console.log('Glide WebGL1/WebGL2 mip/W-depth, gamma DAC and real window compositor PASS');
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

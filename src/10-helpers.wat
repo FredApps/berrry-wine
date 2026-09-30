@@ -86,13 +86,35 @@
       (br $scan)))
     (i32.const 0xFFFF))
 
+  ;; These Glide 3 exports collide with Glide 2 names/ABIs. The DLL name,
+  ;; not a previous query call, selects their thunk. Other names use the
+  ;; ordinary API table. Keep static imports and GetProcAddress consistent.
+  (func $glide3_named_api (param $name_wa i32) (result i32)
+    (if (i32.or (call $str_eq (local.get $name_wa) "grGlideInit")
+        (call $str_eq (local.get $name_wa) "_grGlideInit@0"))
+      (then (return (call $lookup_api_id "glide3_grGlideInit"))))
+    (if (i32.or (call $str_eq (local.get $name_wa) "grSstWinClose")
+        (call $str_eq (local.get $name_wa) "_grSstWinClose@4"))
+      (then (return (call $lookup_api_id "glide3_grSstWinClose"))))
+    (if (i32.or (call $str_eq (local.get $name_wa) "grTexDownloadTable")
+        (call $str_eq (local.get $name_wa) "_grTexDownloadTable@8"))
+      (then (return (call $lookup_api_id "glide3_grTexDownloadTable"))))
+    (if (i32.or (call $str_eq (local.get $name_wa) "grLfbWriteRegion")
+        (call $str_eq (local.get $name_wa) "_grLfbWriteRegion@36"))
+      (then (return (call $lookup_api_id "glide3_grLfbWriteRegion"))))
+    (i32.const -1))
+
   ;; Some Win9x-era binaries carry stale import-name strings but correct
   ;; export hints. Funtris imports USER32 hint 446 (MessageBoxA) with the
   ;; name string "GetMessageA"; resolving only by name sends its startup
   ;; message box through the message pump.
   (func $import_hint_override_api_id (param $dll_name_ga i32) (param $hint_name_wa i32) (result i32)
-    (local $name_wa i32)
+    (local $name_wa i32) (local $glide_id i32)
     (local.set $name_wa (i32.add (local.get $hint_name_wa) (i32.const 2)))
+    (if (call $dll_name_match (local.get $dll_name_ga) "glide3x.dll") (then
+      (local.set $glide_id (call $glide3_named_api (local.get $name_wa)))
+      (if (i32.ne (local.get $glide_id) (i32.const -1))
+        (then (return (local.get $glide_id))))))
     (if (i32.and
           (i32.and
             (i32.eq (i32.load16_u (local.get $hint_name_wa)) (i32.const 446))

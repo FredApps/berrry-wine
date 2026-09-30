@@ -3023,7 +3023,7 @@
       (then
         (call $dispatch_api_table_page_14 (i32.sub (local.get $api_id) (i32.const 3584)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 3888))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3947))
       (then
         (call $dispatch_api_table_page_15 (i32.sub (local.get $api_id) (i32.const 3840)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -18511,8 +18511,67 @@
   )
 
   (func $dispatch_api_table_page_15 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 3840..3887
+    ;; api ids 3840..3946
     (block $fallback
+    (block $api_106
+    (block $api_105
+    (block $api_104
+    (block $api_103
+    (block $api_102
+    (block $api_101
+    (block $api_100
+    (block $api_99
+    (block $api_98
+    (block $api_97
+    (block $api_96
+    (block $api_95
+    (block $api_94
+    (block $api_93
+    (block $api_92
+    (block $api_91
+    (block $api_90
+    (block $api_89
+    (block $api_88
+    (block $api_87
+    (block $api_86
+    (block $api_85
+    (block $api_84
+    (block $api_83
+    (block $api_82
+    (block $api_81
+    (block $api_80
+    (block $api_79
+    (block $api_78
+    (block $api_77
+    (block $api_76
+    (block $api_75
+    (block $api_74
+    (block $api_73
+    (block $api_72
+    (block $api_71
+    (block $api_70
+    (block $api_69
+    (block $api_68
+    (block $api_67
+    (block $api_66
+    (block $api_65
+    (block $api_64
+    (block $api_63
+    (block $api_62
+    (block $api_61
+    (block $api_60
+    (block $api_59
+    (block $api_58
+    (block $api_57
+    (block $api_56
+    (block $api_55
+    (block $api_54
+    (block $api_53
+    (block $api_52
+    (block $api_51
+    (block $api_50
+    (block $api_49
+    (block $api_48
     (block $api_47
     (block $api_46
     (block $api_45
@@ -18561,7 +18620,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $fallback (local.get $api_id))
     ) ;; 3840: grTexCombine
       (call $handle_grTexCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -18705,6 +18764,183 @@
       (return)
     ) ;; 3887: IDirectSound8_VerifyCertification
       (call $handle_IDirectSound8_VerifyCertification (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3888: grVertexLayout
+      (call $handle_grVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3889: _grVertexLayout@12
+      (call $handle_grVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3890: grCoordinateSpace
+      (call $handle_grCoordinateSpace (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3891: _grCoordinateSpace@4
+      (call $handle_grCoordinateSpace (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3892: grDrawVertexArray
+      (call $handle_grDrawVertexArray (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3893: _grDrawVertexArray@12
+      (call $handle_grDrawVertexArray (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3894: grDrawVertexArrayContiguous
+      (call $handle_grDrawVertexArrayContiguous (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3895: _grDrawVertexArrayContiguous@16
+      (call $handle_grDrawVertexArrayContiguous (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3896: grGet
+      (call $handle_grGet (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3897: _grGet@12
+      (call $handle_grGet (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3898: grGetString
+      (call $handle_grGetString (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3899: _grGetString@4
+      (call $handle_grGetString (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3900: grSelectContext
+      (call $handle_grSelectContext (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3901: _grSelectContext@4
+      (call $handle_grSelectContext (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3902: grFinish
+      (call $handle_grFinish (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3903: _grFinish@0
+      (call $handle_grFinish (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3904: grFlush
+      (call $handle_grFlush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3905: _grFlush@0
+      (call $handle_grFlush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3906: grLoadGammaTable
+      (call $handle_grLoadGammaTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3907: _grLoadGammaTable@16
+      (call $handle_grLoadGammaTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3908: guGammaCorrectionRGB
+      (call $handle_guGammaCorrectionRGB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3909: _guGammaCorrectionRGB@12
+      (call $handle_guGammaCorrectionRGB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3910: grViewport
+      (call $handle_grViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3911: _grViewport@16
+      (call $handle_grViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3912: grDepthRange
+      (call $handle_grDepthRange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3913: _grDepthRange@8
+      (call $handle_grDepthRange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3914: grQueryResolutions
+      (call $handle_grQueryResolutions (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3915: _grQueryResolutions@8
+      (call $handle_grQueryResolutions (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3916: grTexDownloadTablePartial
+      (call $handle_grTexDownloadTablePartial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3917: _grTexDownloadTablePartial@16
+      (call $handle_grTexDownloadTablePartial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3918: grGetProcAddress
+      (call $handle_grGetProcAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3919: _grGetProcAddress@4
+      (call $handle_grGetProcAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3920: grEnable
+      (call $handle_grEnable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3921: _grEnable@4
+      (call $handle_grEnable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3922: grDisable
+      (call $handle_grDisable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3923: _grDisable@4
+      (call $handle_grDisable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3924: grLfbConstantDepth
+      (call $handle_grLfbConstantDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3925: _grLfbConstantDepth@4
+      (call $handle_grLfbConstantDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3926: grGlideGetState
+      (call $handle_grGlideGetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3927: _grGlideGetState@4
+      (call $handle_grGlideGetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3928: grGlideSetState
+      (call $handle_grGlideSetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3929: _grGlideSetState@4
+      (call $handle_grGlideSetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3930: grGlideGetVertexLayout
+      (call $handle_grGlideGetVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3931: _grGlideGetVertexLayout@4
+      (call $handle_grGlideGetVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3932: grGlideSetVertexLayout
+      (call $handle_grGlideSetVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3933: _grGlideSetVertexLayout@4
+      (call $handle_grGlideSetVertexLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3934: guFogGenerateExp2
+      (call $handle_guFogGenerateExp2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3935: _guFogGenerateExp2@8
+      (call $handle_guFogGenerateExp2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3936: guFogGenerateLinear
+      (call $handle_guFogGenerateLinear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3937: _guFogGenerateLinear@12
+      (call $handle_guFogGenerateLinear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3938: guFogTableIndexToW
+      (call $handle_guFogTableIndexToW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3939: _guFogTableIndexToW@4
+      (call $handle_guFogTableIndexToW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3940: glide3_grGlideInit
+      (call $handle_glide3_grGlideInit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3941: glide3_grSstWinClose
+      (call $handle_glide3_grSstWinClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3942: _grSstWinClose@4
+      (call $handle_glide3_grSstWinClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3943: glide3_grTexDownloadTable
+      (call $handle_glide3_grTexDownloadTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3944: _grTexDownloadTable@8
+      (call $handle_glide3_grTexDownloadTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3945: glide3_grLfbWriteRegion
+      (call $handle_glide3_grLfbWriteRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3946: _grLfbWriteRegion@36
+      (call $handle_glide3_grLfbWriteRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3840)))

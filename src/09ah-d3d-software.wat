@@ -143,7 +143,15 @@
 (func $d3d_software_clear (export "d3d_software_clear")
   (param $target i32) (param $width i32) (param $height i32) (param $pitch i32)
   (param $color i32) (param $depth i32) (param $depth_pitch i32) (param $z f32) (param $flags i32) (result i32)
-  (local $x i32) (local $y i32)
+  (call $d3d_software_clear_masked (local.get $target) (local.get $width) (local.get $height)
+    (local.get $pitch) (local.get $color) (local.get $depth) (local.get $depth_pitch)
+    (local.get $z) (local.get $flags) (i32.const -1)))
+
+(func $d3d_software_clear_masked (export "d3d_software_clear_masked")
+  (param $target i32) (param $width i32) (param $height i32) (param $pitch i32)
+  (param $color i32) (param $depth i32) (param $depth_pitch i32) (param $z f32) (param $flags i32)
+  (param $mask i32) (result i32)
+  (local $x i32) (local $y i32) (local $pixel i32) (local $value i32)
   (if (i32.or (i32.eqz (local.get $width))
     (i32.or (i32.eqz (local.get $height))
     (i32.or (i32.gt_u (local.get $width) (i32.const 2048))
@@ -164,7 +172,12 @@
     (local.set $x (i32.const 0))
     (loop $pixels
       (if (i32.and (local.get $flags) (i32.const 1)) (then
-        (i32.store (i32.add (local.get $target) (i32.add (i32.mul (local.get $y) (local.get $pitch)) (i32.shl (local.get $x) (i32.const 2)))) (local.get $color))))
+        (local.set $pixel (i32.add (local.get $target) (i32.add (i32.mul (local.get $y) (local.get $pitch)) (i32.shl (local.get $x) (i32.const 2)))))
+        (local.set $value (local.get $color))
+        (if (i32.ne (local.get $mask) (i32.const -1)) (then
+          (local.set $value (i32.or (i32.and (local.get $value) (local.get $mask))
+            (i32.and (i32.load (local.get $pixel)) (i32.xor (local.get $mask) (i32.const -1)))))))
+        (i32.store (local.get $pixel) (local.get $value))))
       (if (i32.and (local.get $flags) (i32.const 2)) (then
         (f32.store (i32.add (local.get $depth) (i32.add (i32.mul (local.get $y) (local.get $depth_pitch)) (i32.shl (local.get $x) (i32.const 2)))) (local.get $z))))
       (local.set $x (i32.add (local.get $x) (i32.const 1))) (br_if $pixels (i32.lt_u (local.get $x) (local.get $width))))

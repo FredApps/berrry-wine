@@ -774,14 +774,14 @@
   ;; image and no DLL-table entry, so GetModuleHandle has to recognize them by
   ;; name. Lower case and without the ".dll" suffix; the matcher accepts
   ;; either form. See $guest_name_is_static_system_dll in 09a-handlers.wat.
-  ;; ORDER MATTERS: everything from index $STATIC_SYS_DLL_FIRST_DX onwards is
-  ;; part of DirectX and answers the file-version query with the DirectX
-  ;; version below, so new non-DirectX names belong before "dplayx".
+  ;; ORDER MATTERS: the DirectX range starts at $STATIC_SYS_DLL_FIRST_DX and
+  ;; contains $STATIC_SYS_DLL_DX_COUNT entries. Append other module names so
+  ;; existing pseudo handles remain stable.
   ;; GDI32 is here because Win9x maps it into every process: InstallShield 3's
   ;; engine registers GDI32, KERNEL32 and USER32 by GetModuleHandle at startup,
   ;; stops at the first NULL, and then silently drops every script call into
   ;; USER32 — War Wind II's SdAskOptions never shows its dialog and spins.
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x280) "ole32\00user32\00comctl32\00gdi32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x280) "ole32\00user32\00comctl32\00gdi32\00dplayx\00ddraw\00dsound\00d3drm\00glide2x\00glide3x\00\00")
   ;; Where those modules claim to live, and the suffix appended to the stem.
   (data (region.addr $RESERVED_PAGE_STRINGS 0x25C) "C:\\WINDOWS\\SYSTEM\\\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x274) ".dll\00")
@@ -3947,6 +3947,7 @@
   (global $STATIC_SYS_DLL_HANDLE_BASE i32 (i32.const 0x5D110000))
   ;; First index in the name list that belongs to DirectX.
   (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 4))
+  (global $STATIC_SYS_DLL_DX_COUNT i32 (i32.const 4))
   (global $DX_VERSION_INFO i32 (region.addr $DX_VERSION_INFO 0))
   (global $DX_VERSION_INFO_SIZE i32 (region.size $DX_VERSION_INFO))
   (global $WIN16_NAME_KERNEL   i32 (region.addr $RESERVED_PAGE_STRINGS 0x000000F0))

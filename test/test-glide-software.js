@@ -260,6 +260,40 @@ const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
       0xf800,
       'opaque presentation preserves raw RGB565 LFB red'
     );
+    draw([64, 64, 64], 0, { 11: 0, 45: 0 });
+    device.submit(14, new Uint8Array(new Float32Array([2, 1, .5]).buffer));
+    const pixel = (3 * 16 + 3) * 4;
+    assert.deepStrictEqual(Array.from(displayed.slice(pixel, pixel + 4)), [128, 64, 16, 255],
+      'independent gamma ramps apply only to presentation');
+    const ramp = new Uint8Array(4 + 65 * 3);
+    new DataView(ramp.buffer).setUint32(0, 65, true);
+    ramp[4 + 64] = 7; ramp[4 + 65 + 64] = 8; ramp[4 + 130 + 64] = 9;
+    device.submit(13, ramp);
+    assert.deepStrictEqual(Array.from(displayed.slice(pixel, pixel + 4)), [7, 8, 9, 255]);
+    assert.deepStrictEqual(Array.from(device.native.readColor(device.target(0)).pixels.slice(pixel, pixel + 3)),
+      [64, 64, 64], 'DAC table leaves raw framebuffer bytes unchanged');
+    // Color and depth masks are independent, including within a clipped clear.
+    // Seed nontrivial alpha so RGB-only cannot accidentally pass as RGBA clear.
+    device.native.clear([.2, .4, .6, .8], 3, 1, null, device.depthAttachment, 0, device.target(0));
+    const maskedClear = new Uint8Array(268), clearState = new Uint32Array(maskedClear.buffer);
+    clearState[26] = clearState[27] = 2; clearState[28] = clearState[29] = 6;
+    clearState[30] = 1; clearState[31] = 0; clearState[45] = 0; clearState[61] = 0;
+    clearState[64] = 0x112233; clearState[65] = 55; clearState[66] = 32768;
+    const rawPixel = at => Array.from(device.native.readColor(device.target(0)).pixels.slice(at, at + 4));
+    const depthSurface = device.native.depthSurface(device.depthAttachment, 16, 16);
+    const depthAt = at => new DataView(memory.buffer).getFloat32(depthSurface.wa + at, true);
+    device.submit(3, maskedClear);
+    assert.deepStrictEqual(rawPixel(pixel), [51, 34, 17, 204], 'RGB-only clear preserves alpha');
+    assert.deepStrictEqual(rawPixel(0), [153, 102, 51, 204], 'clipped clear preserves outside color');
+    assert.strictEqual(depthAt(pixel), 1, 'disabled depth clear preserves depth');
+    clearState[30] = 0; clearState[31] = 1; clearState[65] = 77;
+    device.submit(3, maskedClear);
+    assert.deepStrictEqual(rawPixel(pixel), [51, 34, 17, 77], 'alpha-only clear preserves RGB');
+    clearState[31] = 0; clearState[13] = 1;
+    device.submit(3, maskedClear);
+    assert.deepStrictEqual(rawPixel(pixel), [51, 34, 17, 77], 'depth-only clear preserves all color channels');
+    assert(Math.abs(depthAt(pixel) - 32768 / 65535) < 1e-6, 'depth writes survive both color masks disabled');
+    assert.strictEqual(depthAt(0), 1, 'clipped depth clear preserves outside depth');
     console.log(
       'PASS Glide WAT software color, Z/W depth, table fog, palette, chroma, line/point, swap and LFB'
     );

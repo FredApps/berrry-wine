@@ -1,13 +1,17 @@
 # 3dfx Glide support design
 
-Status: first Glide 2 implementation, 2026-09-28. The architecture below
-includes future work; it is not a claim of complete Glide compatibility.
-The implementation exposes one TMU with 4 MiB texture memory, 65 canonical
-Glide 2 entry points and their decorated aliases, immutable command batches,
-WebGL rendering and native WAT software rendering. Glide 3 and two TMUs remain
-future milestones. See [NFS III integration evidence](re-notes/need-for-speed-glide.md)
-for tested behavior and compatibility boundaries. The first two milestones
-below are complete for the NFS III route on both rendering backends.
+Status: Glide 2 and a bounded Glide 3 implementation, 2026-09-29. Both
+use the existing shared render worker with WebGL or native WAT software
+rendering. The virtual board has one TMU with 4 MiB texture memory.
+[NFS III's original Glide 2 route](re-notes/need-for-speed-glide.md) has
+race/HUD acceptance on both backends. Diablo II's original `d2glide.dll`
+now has Glide 3 WebGL and native software acceptance through character
+creation, gameplay and normal movement. This does not establish support
+for other Glide 3 games.
+
+The current implementation and limits are recorded below. Later sections
+retain the broader architecture and compatibility milestones; they are not
+claims of complete Glide compatibility.
 
 ## Summary
 
@@ -53,7 +57,7 @@ or symbol does not establish that its path currently launches successfully.
 | Unreal Special Edition | `system/glidedrv.dll`, Glide 2 references | Second engine; textures, fog and multitexture coverage |
 | Deus Ex demo | Installed `system/glidedrv.dll`, Glide 2 references | Later UE1 coverage; verify launch manifest mounts the selected renderer |
 | GTA2 demo | `DMAGlide.dll`, `3dfx.dll`, Glide 2 references | Additional 2D/3D mixing and texture workload |
-| Diablo II demo | `d2glide.dll` imports `glide3x.dll`; existing notes record failure at `_grGet@12` | First Glide 3 target |
+| Diablo II demo | Original `d2glide.dll` imports `glide3x.dll`; native Glide 3 WebGL gameplay and movement verified | First accepted Glide 3 renderer path |
 | Quake II / Half-Life Uplink | Bundled `3dfxgl.dll` OpenGL mini-drivers | Indirect users; lower priority because our OpenGL path already exists |
 
 Our NFS II fixture is the original software/DirectDraw demo, not the separate
@@ -77,9 +81,138 @@ Related investigations: [NFS demos](re-notes/need-for-speed.md),
 [Diablo II](re-notes/diablo2-demo.md),
 [Unreal-family demos](re-notes/unreal-family-demos.md).
 
+## Implemented Glide 3 support and limits
+
+The ABI follows the original Glide 3 headers and implementation at
+[sezero/glide revision 2f226f0](https://github.com/sezero/glide/tree/2f226f0f9225ce8ee83e6a4a7042981e719d19ee/glide3x/h3/glide3/src).
+The frontend is [src/09a8h-glide.wat](../src/09a8h-glide.wat).
+Glide 2 and Glide 3 retain distinct DLL identities for both static import
+resolution and dynamic `GetProcAddress`. DLL-scoped mappings select the
+Glide 3 initialization, close, texture-table and LFB-write handlers where
+same-name entry points have different meanings or signatures. Decorated
+and undecorated names are covered; an unknown extension lookup returns NULL.
+`glide_api_version()` reads the process-shared active ABI mode, set explicitly
+by the selected DLL's initialization entry point, rather than inferred from
+which query the game happens to call first.
+
+Implemented Glide 3 behavior includes:
+
+- Window-coordinate vertex layouts with float RGB/alpha or packed ARGB,
+  optional Z/Q, and ST/Q texture fields. Packed ARGB is independent of the
+  context's constant-color format. Pointer arrays dereference guest pointers;
+  contiguous arrays use byte strides. Points, line pairs/strips, triangle
+  lists/strips/fans, polygons as fans, and strip/fan continuation normalize
+  into immutable canonical Glide command records. Continuation retains
+  copied vertices and strip winding across calls.
+- Glide 3 texture log2 LOD and signed aspect enums convert to the canonical
+  Glide 2 representation (`8 - lod`, `3 - aspect`). Upload size calculations,
+  source bindings and uploads use the same conversion. Full and partial
+  palette updates preserve queued snapshots and untouched table entries.
+- One board and one open context, with context selection/close validation.
+  Queries require the SDK's exact output byte length and return that length
+  on success; unsupported queries or incorrect lengths return zero without
+  modifying output. Reported limits include 256-pixel textures, one TMU and
+  4 MiB texture memory. Opaque state/layout save and restore agree with their
+  queried sizes. Discovery, strings, resolution enumeration and viewport
+  state are implemented without advertising unavailable extensions.
+- The changed two-argument texture-table download, one-argument context
+  close and nine-argument LFB write conventions preserve stdcall cleanup.
+  RGB565 LFB access supports the existing front/back buffers and origins;
+  pixel-pipeline LFB writes are not advertised and return failure.
+- RGB gamma correction and partial gamma-table updates operate on displayed
+  output, preserving linear render targets and raw LFB pixels. The ordered
+  transport uses opcode 13 for a count plus three byte-table prefixes and
+  opcode 14 for three float gamma values. Entries outside a partial update
+  retain their prior values. Scalar Glide 2 gamma uses the same presentation
+  mechanism. Fog-table helpers preserve the SDK's float rounding and the
+  float-return helper's x87 ABI.
+
+The extension state is heap allocated through an unused shared header word;
+it does not enlarge the tightly packed static Glide region. API version,
+layout, context and diagnostic state remain shared across guest threads.
+The existing process render worker hosts Glide alongside D3D and GL, with
+separate endpoints and serialized native scratch ownership. WebGL frames
+use the existing bitmap presentation route; software frames use owned pixel
+copies. Glide 3 did not introduce a second renderer worker or a main-thread
+rasterization path.
+
+Explicit limits remain: clip-coordinate input is rejected; storing viewport
+and depth-range state does not imply clip-space drawing support. Independent
+fog-coordinate attributes, actual second-TMU state/sampling and optional
+`grEnable` rendering features are not implemented. Generic vertex layouts
+may declare ST1/Q1, which normalize into the canonical vertex tail, but this
+does not enable a second TMU or change the advertised count. No extensions
+are advertised. Unsupported meaningful operations fail explicitly; this is
+not a broad set of success-returning stubs. Full hardware-specific coverage,
+dithering, quantization and multi-context behavior remain beyond this subset.
+
+The full build, Glide 2/3 ABI tests, versioned loader tests and shared-worker
+regressions passed remotely. The metrics and independent software clear-mask
+regressions also passed, followed by another full build. The original
+Diablo II demo passed both backends' menu, character creation, world rendering and
+normal movement acceptance using
+[test/test-diablo2-glide-web.js](../test/test-diablo2-glide-web.js).
+The software route required RGB-only clears that preserve alpha; these now
+execute in WAT. A headful WebGL gameplay diagnostic recorded zero LFB calls
+and zero GPU readbacks over 535 presents in 20.13 seconds on SwiftShader.
+This is readback evidence, not a hardware-GPU throughput claim.
+Hitman and Hype remain corpus targets,
+not supported-game claims; see [the exact import and launch inventory](glide3-corpus.md).
+
+### LFB staging diagnostics
+
+The following native exports provide opt-in cumulative counters without
+changing any staging or readback decisions:
+
+```js
+exports.glide_lfb_metrics_enable(1); // Atomic flag; no allocation or wait.
+const value = exports.glide_lfb_metrics_get(reason, field); // JS Number.
+exports.glide_lfb_metrics_enable(0); // Preserve counters, stop recording.
+```
+
+| Reason | Staging caller |
+| ---: | --- |
+| 0 | Read lock |
+| 1 | Write lock |
+| 2 | Read region |
+| 3 | Glide 2 write region |
+| 4 | Glide 3 write region |
+
+| Field | Value |
+| ---: | --- |
+| 0 | Number of actual staging attempts |
+| 1 | Sum of requested rectangle pixels |
+| 2 | Sum of full framebuffer pixels staged |
+| 3 | Number of requests covering the full framebuffer |
+| 4, 5 | Last requested width and height |
+| 6 | Last guest return address at the staging call |
+
+Recording occurs immediately before the host LFB read command. An invalid
+API call rejected earlier contributes nothing; a read rejected by the
+backend still counts as an attempted staging operation. Counters are aligned
+64-bit atomics in the optional heap extension. Getters and the enable setter
+do not acquire the guest lock, allocate, or wait on the main thread.
+Individual counter reads are atomic; a multi-field snapshot is not a single
+transaction. Compare snapshots over a defined interval, and capture before
+shutdown, which releases the extension and resets the counters. An enabled
+pure Glide 2 process allocates this optional storage only when staging occurs.
+
+Backend statistics separately report GPU readback count/bytes and wall time
+inside the readback API (`gpuReadbackCpuMs`), LFB conversion time and packet
+bytes. That time can include synchronization and is **not GPU timer time**.
+Software presentation copies and CPU LFB access must not be reported as GPU
+readbacks. Correlate backend deltas with these native reason counters before
+choosing an optimization.
+
+Region writes currently retain their full read-before-write staging. A future
+rectangle upload could avoid that read for RGB565 writes with the pixel
+pipeline disabled while preserving untouched pixels, depth and command order.
+This optimization has not been implemented or measured. Write-lock pointers
+expose no dirty rectangle and cannot safely be treated as full replacement.
+
 ## Scope and compatibility contract
 
-First support ordinary Win32 Glide 2.x DLL consumers, followed by Glide 3.x.
+Support ordinary Win32 Glide 2.x and the bounded Glide 3.x DLL subset above.
 Keep the original game renderer DLLs intact. Resolve both static imports and
 dynamic `LoadLibrary`/`GetProcAddress` usage through the existing thunk system.
 Verify decorated names, argument widths, float arguments, return values and
@@ -236,9 +369,10 @@ Safari and Chromium. Do not disable guest threads to conceal ordering bugs.
 3. **Second engine and semantic breadth.** Exercise Unreal/Deus Ex; complete
    required two-TMU, mipmap, table, fog and LFB behavior. Add GTA2 as an
    independent workload rather than equating one engine with general support.
-4. **Glide 3.** Add configurable vertex layouts, context/query differences and
-   extensions actually needed by Diablo II. Verify game/menu transitions and
-   gameplay without regressing Glide 2.
+4. **Glide 3.** Window-coordinate layouts, context/query differences and the
+   Diablo II gameplay routes on both backends are implemented. Expand
+   only against actual Hitman/Hype requirements;
+   preserve Glide 2 coverage. Clip input and other limits remain explicit.
 5. **Performance and robustness.** Measure batching, texture caching and LFB
    synchronization; validate close/reopen, resource exhaustion and backend
    failure. Expand titles only with recorded renderer-path evidence.

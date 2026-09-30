@@ -32970,5 +32970,451 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4126570558
+  },
+  {
+    "id": 3888,
+    "name": "grVertexLayout",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2339079236
+  },
+  {
+    "id": 3889,
+    "name": "_grVertexLayout@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1431888170,
+    "handler": "grVertexLayout"
+  },
+  {
+    "id": 3890,
+    "name": "grCoordinateSpace",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2356562300
+  },
+  {
+    "id": 3891,
+    "name": "_grCoordinateSpace@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 113067737,
+    "handler": "grCoordinateSpace"
+  },
+  {
+    "id": 3892,
+    "name": "grDrawVertexArray",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 841807601
+  },
+  {
+    "id": 3893,
+    "name": "_grDrawVertexArray@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 644930675,
+    "handler": "grDrawVertexArray"
+  },
+  {
+    "id": 3894,
+    "name": "grDrawVertexArrayContiguous",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3949840089
+  },
+  {
+    "id": 3895,
+    "name": "_grDrawVertexArrayContiguous@16",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2022015007,
+    "handler": "grDrawVertexArrayContiguous"
+  },
+  {
+    "id": 3896,
+    "name": "grGet",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 884187272
+  },
+  {
+    "id": 3897,
+    "name": "_grGet@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 28572120,
+    "handler": "grGet"
+  },
+  {
+    "id": 3898,
+    "name": "grGetString",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2707785489
+  },
+  {
+    "id": 3899,
+    "name": "_grGetString@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2546946084,
+    "handler": "grGetString"
+  },
+  {
+    "id": 3900,
+    "name": "grSelectContext",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3448218823
+  },
+  {
+    "id": 3901,
+    "name": "_grSelectContext@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 426274006,
+    "handler": "grSelectContext"
+  },
+  {
+    "id": 3902,
+    "name": "grFinish",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 53188843
+  },
+  {
+    "id": 3903,
+    "name": "_grFinish@0",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3978859188,
+    "handler": "grFinish"
+  },
+  {
+    "id": 3904,
+    "name": "grFlush",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1675040242
+  },
+  {
+    "id": 3905,
+    "name": "_grFlush@0",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1920882727,
+    "handler": "grFlush"
+  },
+  {
+    "id": 3906,
+    "name": "grLoadGammaTable",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4031368507
+  },
+  {
+    "id": 3907,
+    "name": "_grLoadGammaTable@16",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1619802419,
+    "handler": "grLoadGammaTable"
+  },
+  {
+    "id": 3908,
+    "name": "guGammaCorrectionRGB",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2200338157
+  },
+  {
+    "id": 3909,
+    "name": "_guGammaCorrectionRGB@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3897841765,
+    "handler": "guGammaCorrectionRGB"
+  },
+  {
+    "id": 3910,
+    "name": "grViewport",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 119916518
+  },
+  {
+    "id": 3911,
+    "name": "_grViewport@16",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 631513192,
+    "handler": "grViewport"
+  },
+  {
+    "id": 3912,
+    "name": "grDepthRange",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1490623582
+  },
+  {
+    "id": 3913,
+    "name": "_grDepthRange@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 626133417,
+    "handler": "grDepthRange"
+  },
+  {
+    "id": 3914,
+    "name": "grQueryResolutions",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1003354203
+  },
+  {
+    "id": 3915,
+    "name": "_grQueryResolutions@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1442107504,
+    "handler": "grQueryResolutions"
+  },
+  {
+    "id": 3916,
+    "name": "grTexDownloadTablePartial",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 180287768
+  },
+  {
+    "id": 3917,
+    "name": "_grTexDownloadTablePartial@16",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 180646564,
+    "handler": "grTexDownloadTablePartial"
+  },
+  {
+    "id": 3918,
+    "name": "grGetProcAddress",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2950775536
+  },
+  {
+    "id": 3919,
+    "name": "_grGetProcAddress@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 756910763,
+    "handler": "grGetProcAddress"
+  },
+  {
+    "id": 3920,
+    "name": "grEnable",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1783241435
+  },
+  {
+    "id": 3921,
+    "name": "_grEnable@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2053563304,
+    "handler": "grEnable"
+  },
+  {
+    "id": 3922,
+    "name": "grDisable",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3377410376
+  },
+  {
+    "id": 3923,
+    "name": "_grDisable@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1580856281,
+    "handler": "grDisable"
+  },
+  {
+    "id": 3924,
+    "name": "grLfbConstantDepth",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1353385
+  },
+  {
+    "id": 3925,
+    "name": "_grLfbConstantDepth@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4008935098,
+    "handler": "grLfbConstantDepth"
+  },
+  {
+    "id": 3926,
+    "name": "grGlideGetState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2753602624
+  },
+  {
+    "id": 3927,
+    "name": "_grGlideGetState@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3609194645,
+    "handler": "grGlideGetState"
+  },
+  {
+    "id": 3928,
+    "name": "grGlideSetState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3626438172
+  },
+  {
+    "id": 3929,
+    "name": "_grGlideSetState@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 522755041,
+    "handler": "grGlideSetState"
+  },
+  {
+    "id": 3930,
+    "name": "grGlideGetVertexLayout",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3290364171
+  },
+  {
+    "id": 3931,
+    "name": "_grGlideGetVertexLayout@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2499739096,
+    "handler": "grGlideGetVertexLayout"
+  },
+  {
+    "id": 3932,
+    "name": "grGlideSetVertexLayout",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 25154887
+  },
+  {
+    "id": 3933,
+    "name": "_grGlideSetVertexLayout@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1343695572,
+    "handler": "grGlideSetVertexLayout"
+  },
+  {
+    "id": 3934,
+    "name": "guFogGenerateExp2",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2526294507
+  },
+  {
+    "id": 3935,
+    "name": "_guFogGenerateExp2@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 259188646,
+    "handler": "guFogGenerateExp2"
+  },
+  {
+    "id": 3936,
+    "name": "guFogGenerateLinear",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1102595037
+  },
+  {
+    "id": 3937,
+    "name": "_guFogGenerateLinear@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1793565779,
+    "handler": "guFogGenerateLinear"
+  },
+  {
+    "id": 3938,
+    "name": "guFogTableIndexToW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 577190211
+  },
+  {
+    "id": 3939,
+    "name": "_guFogTableIndexToW@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4009926724,
+    "handler": "guFogTableIndexToW"
+  },
+  {
+    "id": 3940,
+    "name": "glide3_grGlideInit",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3338543036,
+    "handler": "glide3_grGlideInit"
+  },
+  {
+    "id": 3941,
+    "name": "glide3_grSstWinClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 539628539,
+    "handler": "glide3_grSstWinClose"
+  },
+  {
+    "id": 3942,
+    "name": "_grSstWinClose@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2759042553,
+    "handler": "glide3_grSstWinClose"
+  },
+  {
+    "id": 3943,
+    "name": "glide3_grTexDownloadTable",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2622981862,
+    "handler": "glide3_grTexDownloadTable"
+  },
+  {
+    "id": 3944,
+    "name": "_grTexDownloadTable@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4245139420,
+    "handler": "glide3_grTexDownloadTable"
+  },
+  {
+    "id": 3945,
+    "name": "glide3_grLfbWriteRegion",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 726499634,
+    "handler": "glide3_grLfbWriteRegion"
+  },
+  {
+    "id": 3946,
+    "name": "_grLfbWriteRegion@36",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 2584968025,
+    "handler": "glide3_grLfbWriteRegion"
   }
 ]

@@ -1572,6 +1572,15 @@ for (const iface of d3d8Ifaces) {
   }
 }
 
+// Keep the two Glide ABIs distinct while appending new exports after every
+// existing API. The DLL-aware resolver selects signature-colliding names.
+for (const entry of require('./glide3-methods').entries) {
+  if (!seen.has(entry.name)) {
+    existing.push({id: existing.length, ...entry, convention: 'stdcall', hash: 0});
+    seen.add(entry.name);
+  }
+}
+
 // Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
 // belongs to the API row rather than the name/hash generator.
 const table = existing.map((api, id) => {

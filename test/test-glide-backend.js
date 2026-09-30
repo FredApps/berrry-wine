@@ -9,14 +9,25 @@ assert.throws(()=>Glide.decodeTexture(new Uint8Array(1),1),/texture format/);
 const palette=new Uint32Array(256);palette[7]=0x123456;
 assert.deepStrictEqual(Array.from(Glide.decodeTexture(Uint8Array.of(7),5,palette)),[18,52,86,255]);
 function packet(values){return new Uint8Array(new Uint32Array(values).buffer);}
+const rgbGamma = new Uint8Array(new Float32Array([2,1,.5]).buffer);
+const gammaRamp = Glide.gammaTable(14,rgbGamma);
+assert.deepStrictEqual([gammaRamp[64],gammaRamp[320],gammaRamp[576]],[128,64,16]);
+const prefix = new Uint8Array(4+65*3);new DataView(prefix.buffer).setUint32(0,65,true);
+prefix[4+64]=7;prefix[4+65+64]=8;prefix[4+130+64]=9;
+const patchedRamp=Glide.gammaTable(13,prefix,gammaRamp);
+assert.deepStrictEqual([patchedRamp[64],patchedRamp[320],patchedRamp[576]],[7,8,9]);
+assert.strictEqual(patchedRamp[200],gammaRamp[200],'partial DAC update preserves remaining entries');
+assert.strictEqual(gammaRamp[64],128,'gamma update owns its table');
+assert.throws(()=>Glide.gammaTable(14,new Uint8Array(new Float32Array([1,NaN,1]).buffer)),/gamma factor/);
+assert.throws(()=>Glide.gammaTable(13,packet([257])),/gamma table/);
 const unsupported=new Glide.Device({});
 assert.throws(()=>unsupported.submit(1,packet([0,32,32,0,0])),/GPU backend/);
 assert.throws(()=>unsupported.submit(0,packet([5,999])),/batch/);
 const hgl=require('../lib/headless-gl');
 if(!hgl.available()) {console.log('Glide format/packet checks pass; GPU checks SKIP: '+hgl.unavailableReason());process.exit(0);}
 const {createCanvas}=require('../lib/canvas-compat'),{WebGLBackend}=require('../lib/gpu-backend');
-const backend=new WebGLBackend(createCanvas(32,32));let presents=0;
-const device=new Glide.Device({backend,onPresent(){presents++;}});
+const backend=new WebGLBackend(createCanvas(32,32));let presents=0,displayed;
+const device=new Glide.Device({backend,onPresent(frame){presents++;displayed=Array.from(frame.surface.getContext('2d').getImageData(4,4,1,1).data);}});
 function draw(rgb,z=1000,overrides={},vertex={},defer=false){
   const bytes=new Uint8Array(436),s=new Uint32Array(bytes.buffer,0,64),v=new DataView(bytes.buffer);
   s[0]=1;s[5]=1;s[11]=1;s[12]=1;s[13]=1;s[14]=4;s[16]=4;s[18]=7;s[28]=32;s[29]=32;s[30]=1;s[31]=1;s[45]=1;s[61]=1;
@@ -72,5 +83,9 @@ try{
   new Uint32Array(batch.buffer,8,64)[45]=0;new Uint32Array(batch.buffer,16+red.length,64)[45]=0;
   const frontPresents=device.stats.presents,frontSwaps=device.stats.swaps;device.submit(0,batch);
   assert.strictEqual(device.stats.presents-frontPresents,1,'front batch publishes once');assert.strictEqual(device.stats.swaps,frontSwaps,'front publication preserves swap identity');
-  assert.strictEqual(backend.getError(),0);console.log('Glide formats, packet validation, Z/W occlusion, textures, palette replacement, fog, presentation, RGB565 LFB PASS');
+  draw([64,64,64],1,{11:0,45:0});
+  device.submit(14,rgbGamma);assert.deepStrictEqual(displayed,[128,64,16,255],'independent hardware gamma ramps apply to display');
+  device.bind(0);assert.deepStrictEqual(read(),[64,64,64,255],'DAC does not modify render target');
+  device.submit(13,prefix);assert.deepStrictEqual(displayed,[7,8,9,255],'partial DAC table is sampled per channel');
+  assert.strictEqual(backend.getError(),0);console.log('Glide formats, packet validation, Z/W occlusion, textures, palette replacement, fog, presentation, gamma DAC, RGB565 LFB PASS');
 }finally{device.destroy();backend.destroy();}

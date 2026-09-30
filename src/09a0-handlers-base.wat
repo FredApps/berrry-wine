@@ -115,15 +115,19 @@
     (local.get $entry))
 
   ;; Is this guest path one of the statically dispatched DirectX components?
-  ;; Those are the tail of the name list, so a list position at or past
-  ;; $STATIC_SYS_DLL_FIRST_DX (0-based) answers with the DirectX version.
+  ;; Only the DirectX range answers with the DirectX version; later static
+  ;; modules such as Glide have distinct handles but are not DirectX DLLs.
   (func $name_is_static_dx_dll (param $name i32) (result i32)
     (local $idx i32)
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (local.set $idx (call $guest_name_is_static_system_dll (local.get $name)))
     (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
-    (i32.ge_u (i32.sub (local.get $idx) (i32.const 1))
-              (global.get $STATIC_SYS_DLL_FIRST_DX)))
+    (i32.and
+      (i32.ge_u (i32.sub (local.get $idx) (i32.const 1))
+        (global.get $STATIC_SYS_DLL_FIRST_DX))
+      (i32.lt_u (i32.sub (local.get $idx) (i32.const 1))
+        (i32.add (global.get $STATIC_SYS_DLL_FIRST_DX)
+          (global.get $STATIC_SYS_DLL_DX_COUNT)))))
 
   ;; A pseudo module handle back to its 1-based list position, or 0.
   (func $static_sys_dll_from_handle (param $h i32) (result i32)
@@ -325,7 +329,15 @@
     (call $memcpy (i32.add (local.get $v_wa) (i32.const 2))
     (local.get $name_wa) (i32.add (local.get $tmp) (i32.const 1)))
     ;; Look up api_id — if unknown (0xFFFF), return NULL instead of creating broken thunk
-    (local.set $i (call $lookup_api_id (i32.add (local.get $v_wa) (i32.const 2))))
+    (local.set $i (i32.const -1))
+    (local.set $api_id (call $static_sys_dll_from_handle (local.get $arg0)))
+    (if (local.get $api_id) (then
+      (if (call $str_eq
+          (call $static_sys_dll_name_at (i32.sub (local.get $api_id) (i32.const 1)))
+          "glide3x")
+        (then (local.set $i (call $glide3_named_api (local.get $name_wa)))))))
+    (if (i32.eq (local.get $i) (i32.const -1))
+      (then (local.set $i (call $lookup_api_id (i32.add (local.get $v_wa) (i32.const 2))))))
     (if (i32.eq (local.get $i) (i32.const 0xFFFF))
       (then (br $gpa))) ;; return 0 — function not found
     ;; Create thunk: store RVA and api_id at THUNK_BASE + num_thunks*8.
