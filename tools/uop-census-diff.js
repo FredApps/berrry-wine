@@ -16,7 +16,10 @@
 // counts): installs, loop or trace, instruction count, enters, blocks, poor
 // retirements, code-write and megamorphic kills, cut exits, the dominant exit.
 // From 07e kinds 14/15: the calls each program kept (E8 / icall / IAT, with
-// target) and the instruction ranges it covers.
+// target) and the instruction ranges it covers. From 07e kind 17: a compile
+// whose calls-followed attempt failed and was retried with calls as the edge,
+// with the first attempt's reason -- the verdict a head ends with is the
+// retry's, and for a head that is itself a call that is always 3.
 //
 // "Swallowed" means: the head's EIP is an instruction inside some OTHER
 // head's program in arm B, that program keeps an icall/IAT site, and the same
@@ -51,7 +54,7 @@ function load(file) {
   const heads = new Map();
   const H = eip => {
     let h = heads.get(eip);
-    if (!h) heads.set(eip, h = { eip, compiles: 0, installs: 0, traces: 0, insns: 0, declines: {},
+    if (!h) heads.set(eip, h = { eip, compiles: 0, installs: 0, traces: 0, insns: 0, declines: {}, retry: {},
       enters: 0, blocks: 0, work: 0, poor: 0, cw: 0, mega: 0, flushed: 0, liveEnd: 0,
       cuts: 0, exits: new Map(), sites: [], ranges: [], allRanges: [], pendSites: [], pendRanges: [],
       progs: [] });
@@ -74,7 +77,7 @@ function load(file) {
   for (let i = 0; i + 4 < vals.length; i++) {
     if ((vals[i] & 0xFFFF0000) >>> 0 !== 0xC5E50000) continue;
     const k = vals[i] & 0xFFFF;
-    if (k < 1 || k > 16) continue;
+    if (k < 1 || k > 17) continue;
     const [a, b, c, d] = [vals[i + 1], vals[i + 2], vals[i + 3], vals[i + 4]];
     i += 4; n++;
     if (k === 1) {
@@ -104,6 +107,12 @@ function load(file) {
       H(a).pendSites.push({ site: b, target: c, cls: d });
     } else if (k === 15) {
       H(a).pendRanges.push([b, c]);
+    } else if (k === 17) {
+      // the calls-followed attempt failed with reason b and was retried with
+      // calls as the region's edge; the kind-1 verdict that follows is the
+      // retry's, so a call-headed head reads head-unsupported there
+      const h = H(a);
+      h.retry[b] = (h.retry[b] || 0) + 1;
     }
   }
   if (!n) { console.error(`${file}: no census records (thread ${THREAD || 'main'})`); process.exit(1); }
@@ -170,8 +179,13 @@ say(`arm A ${files[0]}  (${A.records} records)\narm B ${files[1]}  (${B.records}
 for (const k of Object.keys(ta)) say(`  ${k.padEnd(10)} A ${String(ta[k]).padStart(12)}   B ${String(tb[k]).padStart(12)}   ` +
   `delta ${String(tb[k] - ta[k]).padStart(12)}`);
 
-const kind = h => !h.installs ? (Object.keys(h.declines).length ? `decl:${Object.keys(h.declines).join('/')}` : '-')
+// decl:F<-R = declined with F after the calls-followed attempt failed with R
+const retried = h => Object.keys(h.retry || {}).length ? '<-' + Object.keys(h.retry).join('/') : '';
+const kind = h => !h.installs ? (Object.keys(h.declines).length ? `decl:${Object.keys(h.declines).join('/')}${retried(h)}` : '-')
   : `${h.traces === h.installs ? 'trace' : h.traces ? 'mixed' : 'loop'}/${h.insns}`;
+// A call-headed head whose calls-followed compile failed: the retry makes its
+// own E8 unsupported, so it can only come back head-unsupported (3).
+const callHeadRetry = r => r.a.installs && !r.b.installs && r.b.declines[3] && Object.keys(r.b.retry || {}).length;
 const who = r => r.swallowers.length ? r.swallowers.map(p => hex(p.eip)).slice(0, 2).join(',')
   : r.newCoverB.length ? '(' + r.newCoverB.map(p => hex(p.eip)).slice(0, 2).join(',') + ')' : '';
 const line = r => `  ${hex(r.eip).padEnd(11)} ${M(r.a.enters).padStart(8)} -> ${M(r.b.enters).padStart(8)}  ` +
@@ -192,6 +206,7 @@ for (const r of rows.filter(r => r.dBlk > 0).sort((x, y) => y.dBlk - x.dBlk).sli
 
 // ---- attribution of the enter and block change ------------------------------
 const cls = r => {
+  if (callHeadRetry(r)) return '0 call head: calls-followed failed, retry declines';
   if (r.swallowers.length) return 'a swallowed (inside an icall caller in B)';
   if (r.b.poor > r.a.poor) return 'b killed poor in B';
   if (r.b.mega > 0) return 'c mega-killed in B';
@@ -211,6 +226,14 @@ for (const [what, key] of [['enters', 'dEnt'], ['blocks', 'dBlk']]) {
   for (const [c, v] of Object.entries(by).sort()) {
     say(`  ${c.padEnd(46)} ${M(v.lost).padStart(9)} /${String(v.nl).padStart(5)}   +${M(v.gained).padStart(8)} /${String(v.ng).padStart(5)}   net ${M(v.lost + v.gained)}`);
   }
+}
+
+// ---- calls-followed failures (07e kind 17), by the first attempt's reason ----
+for (const [name, arm] of [['A', A], ['B', B]]) {
+  const by = {};
+  for (const h of arm.heads.values()) for (const [why, n] of Object.entries(h.retry)) by[why] = (by[why] || 0) + n;
+  say(`${name === 'A' ? '\n' : ''}calls-followed failures retried with calls as the edge, arm ${name} (reason: count): ` +
+    (Object.entries(by).map(([w, n]) => `${w}:${n}`).join(' ') || 'none'));
 }
 
 // ---- icall-bearing programs in B: what they became ---------------------------
@@ -244,6 +267,7 @@ if (flag('json', null)) {
   fs.writeFileSync(flag('json', null), JSON.stringify(rows.map(r => ({
     eip: hex(r.eip), aEnters: r.a.enters, bEnters: r.b.enters, aBlocks: r.a.blocks, bBlocks: r.b.blocks,
     aInstalls: r.a.installs, bInstalls: r.b.installs, aKind: kind(r.a), bKind: kind(r.b), cls: cls(r),
+    aPoor: r.a.poor, bPoor: r.b.poor, bRetry: r.b.retry || {},
     swallowers: r.swallowers.map(p => hex(p.eip)), newCoverB: r.newCoverB.map(p => hex(p.eip)),
   })), null, 1));
 }

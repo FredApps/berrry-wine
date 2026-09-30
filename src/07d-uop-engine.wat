@@ -375,6 +375,8 @@
   ;;  14 call site  head, site EIP, target, class (0 E8, 1 icall, 2 IAT)
   ;;  15 range      head, lo, hi, 0  (a run of consecutive instructions)
   ;;  16 cut        head, landing EIP, 0, 0  (07e $uc_form_trace)
+  ;;  17 retry      head, first reason, calls followed, is-trace  (07e
+  ;;                $uc_lower_head, before the nocall retry)
   (global $uop_census (mut i32) (i32.const 0))
   (func $uop_census_ev (param $k i32) (param $a i32) (param $b i32) (param $c i32) (param $d i32)
     (call $host_log_i32 (i32.or (i32.const 0xC5E50000) (local.get $k)))
