@@ -31,7 +31,8 @@ const extraWat = `
   const { exports: e, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const mem = new Uint8Array(memory.buffer);
 
-  const PATH_GA = 0x04100000, BUF_GA = 0x04100100;
+  // Guest heap addresses (g2w'd below), not WASM region bases.
+  const PATH_GA = 0x04100A40, BUF_GA = 0x04100C00;
   const pathWa = e.test_g2w(PATH_GA);
   const name = 'c:\\get_info.rec\0';
   for (let i = 0; i < name.length; i++) mem[pathWa + i] = name.charCodeAt(i);
