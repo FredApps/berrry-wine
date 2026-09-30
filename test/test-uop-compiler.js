@@ -1243,16 +1243,48 @@ function traceLimitsCase(inst, a, nextCode) {
     [8, 160, 5, false],     // under the minimum
     [4, 160, 5, true],
   ];
+  // With straight-line cut exits (§21.3, the default) the same runs compile:
+  // the trace keeps its first MAX instructions and leaves to the next one.
+  const cutTries = [
+    [8, 160, 200, true],
+    [8, 1000, 450, true],
+    [8, 160, 5, false],
+    [4, 160, 5, true],
+  ];
   e.set_uop(1);
   e.set_uop_trace_heads(1);
   e.set_branch_clock(1);
   try {
+    e.set_uop_trace_cut(0);
     for (const [mn, mx, k, want] of tries) {
       e.set_uop_trace_limits(mn, mx);
       const pc = e.uop_compile(straight(k));
-      if (!!pc !== want) errs.push(`limits ${mn},${mx} K=${k}: ${pc ? 'compiled' : 'declined'}, want ${want ? 'compiled' : 'declined'}`);
+      if (!!pc !== want) errs.push(`no-cut limits ${mn},${mx} K=${k}: ${pc ? 'compiled' : 'declined'}, want ${want ? 'compiled' : 'declined'}`);
+    }
+    e.set_uop_trace_cut(1);
+    for (const [mn, mx, k, want] of cutTries) {
+      e.set_uop_trace_limits(mn, mx);
+      const pc = e.uop_compile(straight(k));
+      if (!!pc !== want) errs.push(`cut limits ${mn},${mx} K=${k}: ${pc ? 'compiled' : 'declined'}, want ${want ? 'compiled' : 'declined'}`);
+    }
+    // Run one: 200 adds under the 160 cap. The first program cuts at add
+    // #161, the head there compiles as the rest, and ebx must come out as
+    // threaded code leaves it. Both programs are entered, and the budget
+    // spent is the one jmp (the cut is free on the branch clock).
+    e.set_uop_trace_limits(8, 160);
+    const at = straight(200);
+    const pc1 = e.uop_compile(at), pc2 = e.uop_compile(at + 2 * 160);
+    if (!pc1 || !pc2) errs.push(`cut chain: ${pc1 ? '' : 'head '}${pc2 ? '' : 'continuation '}declined`);
+    else {
+      e.uop_install(at, pc1); e.uop_install(at + 2 * 160, pc2);
+      const en0 = e.uop_stats(4), bl0 = e.uop_stats(5);
+      if (!callAt(inst, a, at, { ebx: 5, edx: 7 })) errs.push('cut chain did not return');
+      if ((e.get_ebx() >>> 0) !== 5 + 200 * 7) errs.push(`cut chain: ebx ${e.get_ebx() >>> 0}, want ${5 + 200 * 7}`);
+      if (e.uop_stats(4) - en0 !== 2) errs.push(`cut chain: ${e.uop_stats(4) - en0} enters, want 2`);
+      if (e.uop_stats(5) - bl0 !== 1) errs.push(`cut chain: ${e.uop_stats(5) - bl0} blocks spent in programs, want 1`);
     }
   } finally {
+    e.set_uop_trace_cut(1);
     e.set_uop_trace_limits(8, 160);
     e.set_branch_clock(0);
     e.set_uop_trace_heads(0);
