@@ -549,7 +549,8 @@ async function runCase(server, name) {
     wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, stage, seconds, samples, accelerate, traceApiNames, captureFrame, captureMinBlue, glideSource,
     comparisonCaveat: "Original software versus SE Glide uses different editions and supplied tracks (TR03 versus TR04); this is not a renderer-only or same-scene A/B.",
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
-    fixtureSha256: { original: hash(path.join(ROOT,'test/binaries/candidates/need-for-speed-2-demo/game/nfsw.exe')),
+    fixtureSha256: { original: cases.includes('originalsoftware')
+      ? hash(path.join(ROOT,'test/binaries/candidates/need-for-speed-2-demo/game/nfsw.exe')) : null,
       se: seExe ? hash(seExe) : null },
     results: [] };
   try {

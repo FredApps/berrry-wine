@@ -18,6 +18,7 @@ if (process.argv.includes('--help')) {
   console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
   console.log('Glide diagnostics: --glide-lfb-metrics enables the opt-in WAT LFB reason counters (5 reasons x 7 fields), recorded in every snapshot.');
   console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
+  console.log('Readback A/B: --full-readbacks disables bounded D3DIM readback rectangles in the served script only; bounded readbacks remain the default.');
   console.log('Emulation diagnostics: --guest-profile saves guest-main handler/block histograms and startup-to-window uop census logs. Adds overhead; histogram counts are dispatches, not CPU time.');
   console.log('Remote A/B: --wasm=FILE selects an artifact; --source-commit=REV records archive provenance; --swiftshader explicitly permits software WebGL; --no-sandbox is for an isolated Chrome test box.');
   console.log('Usage: node tools/nfs-renderer-bench.js [--cases=glide,d3d,software,glide-software] [--seconds=30] [--samples=2] [--seed=12345] [--out=build/nfs-renderer-bench]\nRequires the original nfs3_demo fixture and a current build. Runs headful Chrome serially. Saves screenshots, hardware-renderer evidence, frame counters, CPU time, and machine load. Seed instrumentation is specific to this demo.');
@@ -33,6 +34,7 @@ const readbackCensus = process.argv.includes('--readback-census');
 const glideLfbMetrics = process.argv.includes('--glide-lfb-metrics');
 const noD3DBatching = process.argv.includes('--no-d3d-batching');
 const noFixedCache = process.argv.includes('--no-fixed-cache');
+const fullReadbacks = process.argv.includes('--full-readbacks');
 const guestProfile = process.argv.includes('--guest-profile');
 const softwareGpu = process.argv.includes('--swiftshader');
 const wasmFile = path.resolve(ROOT,arg('wasm','build/wine-assembly.wasm'));
@@ -85,14 +87,14 @@ if (globalThis.D3DIMGpu) {
 const readbackProbe = `
 if (globalThis.D3DIMGpu) {
   const prototype = globalThis.D3DIMGpu.D3DIMGpu.prototype, fence = prototype.fence;
-  prototype.fence = function() {
+  prototype.fence = function(...args) {
     const ex = this.getExports(), sp = ex.get_esp() >>> 0;
     const key = JSON.stringify({eip:ex.get_eip() >>> 0, ret:ex.guest_read32(sp) >>> 0});
     const census = this.stats.readbackCallers || (this.stats.readbackCallers = {});
     const row = census[key] || (census[key] = {calls:0, syncs:0, syncMs:0, readPixelsMs:0,
       stack:new Error().stack, guestStack:Array.from({length:12}, (_,i)=>ex.guest_read32(sp+i*4)>>>0)});
     const before = {syncs:this.stats.syncs, syncMs:this.stats.syncMs, readPixelsMs:this.stats.readPixelsMs || 0};
-    const result = fence.call(this);
+    const result = fence.apply(this,args);
     row.calls++;
     row.syncs += this.stats.syncs - before.syncs;
     row.syncMs += this.stats.syncMs - before.syncMs;
@@ -402,7 +404,7 @@ async function runCase(server, name) {
         res.end(source.replace(anchor, 'Fixed.compile(draw, vp, guestPS)'));
         return true;
       }
-      if ((profileEnabled || readbackCensus || noD3DBatching) && pathname === '/lib/d3dim-gpu.js') {
+      if ((profileEnabled || readbackCensus || noD3DBatching || fullReadbacks) && pathname === '/lib/d3dim-gpu.js') {
         res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
           'Cross-Origin-Resource-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp'});
         let source = fs.readFileSync(path.join(ROOT,'lib/d3dim-gpu.js'),'utf8');
@@ -411,8 +413,13 @@ async function runCase(server, name) {
           assert.equal(source.split(anchor).length, 2);
           source = source.replace(anchor, 'this.batchDraws = false;');
         }
+        if (fullReadbacks) {
+          const anchor = 'this.boundedReadback = options.boundedReadback !== false;';
+          assert.equal(source.split(anchor).length, 2, 'bounded readback constructor anchor must be unique');
+          source = source.replace(anchor, 'this.boundedReadback = false;');
+        }
         if (readbackCensus) {
-          const read = 'gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, t.readBuf);';
+          const read = 'gl.readPixels(left, height - bottom, readWidth, readHeight, gl.RGBA, gl.UNSIGNED_BYTE, read);';
           assert.equal(source.split(read).length, 2, 'readPixels timing anchor must be unique');
           source = source.replace(read, 'const readStart = now(); ' + read +
             ' this.stats.readPixelsMs = (this.stats.readPixelsMs || 0) + now() - readStart;');
@@ -429,7 +436,7 @@ async function runCase(server, name) {
   const meta = { startedAt: new Date().toISOString(), commit: arg('source-commit',null) || execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
     wasmSha256: hash(wasmFile), wasmFile, softwareGpu, headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
-    fixtureSha256, noD3DBatching, noFixedCache, guestProfile,
+    fixtureSha256, noD3DBatching, noFixedCache, fullReadbacks, boundedReadbacks: !fullReadbacks, guestProfile,
     sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js','lib/d3d9-backend.js','lib/d3d9-fixed.js',
       'lib/guest-worker.js','tools/page-probes/nfs-guest-profile.js'].map(file => [file,hash(path.join(ROOT,file))])),
     results: [] };
