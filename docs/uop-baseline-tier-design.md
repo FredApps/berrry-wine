@@ -684,6 +684,38 @@ reference interpreter. When wasm resumed, it got the key from before the
 every VGA effect after its first iteration. The key is now read on every
 entry into wasm.
 
+### Phase 1, step 6: the tier-up K sweep (2026-09-29, 6fe267f7)
+
+Arms `only-tK` for K = 64, 1k, 10k and 100k, against `only` (allRP) and
+`only-min` (promoteLiveRP). Every run was exact. The box was at load 6-14, so
+treat the timings as rough.
+
+cpu x vs l1 (lower is better):
+
+| run | only | only-min | t64 | t1k | t10k | t100k |
+|---|---|---|---|---|---|---|
+| 10M, 6 programs, geomean | x14.7 | x7.5 | x11.3 | x10.1 | x8.6 | x7.5 |
+| 100M, B-STEEL | x6.5 | x4.3 | | x5.4 | x4.5 | **x4.0** |
+| 100M, CMA_SHRT | x2.6 | **x2.1** | | x2.2 | x3.0 (noisy) | x2.8 |
+| 100M, DTM2 | x8.2 | x5.2 | | x5.8 | x5.4 | **x4.9** |
+
+**Build cost decides the ranking, not code quality.** allRP code is much
+faster once it is built. Net of build time, on B-STEEL it runs 0.09s against
+promoteLiveRP's 0.96s; on DTM2, 0.84s against 1.67s. But a single allRP build
+costs as much as L1's whole 100M run (0.4-2s), which is not enough time to
+pay it back.
+
+- **A larger K is better throughout.** It rebuilds fewer programs: DTM2 tiers
+  up 80 programs at t1k and 11 at t100k.
+- **t100k is about the same as only-min at these lengths.** The default stays
+  promoteLiveRP with K = 100k.
+- **Even allRP execution is slower than L1 on branchy code.** On DTM2 it is
+  0.84s against 0.54s: about 9-12 fast µops per x86 instruction, with a step
+  per instruction.
+
+So, for this arm, the next lever after tiering is build cost and µops per
+instruction, not a better K.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost
