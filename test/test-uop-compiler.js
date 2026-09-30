@@ -92,6 +92,38 @@ const CASES = [
     // the compiled program does not freeze DF from compilation time.
     code:[direction?0xFD:0xFC,L('l'),[0x39,0xFE],0xA5,[0x0F,0x92,0xC0],0x49,J(cc.NZ,'l'),0xFC,0xC3],
   })),
+  // REP MOVS / REP STOS as one COPY / FILL op (07e kind 30, 07d 82/83). The
+  // count is EBX masked, so it runs 0..mask elements (zero included) and the
+  // pointers walk across page seams and window ends; overlap-* put the
+  // destination a few bytes inside the source on the side the copy moves
+  // toward, which only element order gets right (the slow arm). The stos
+  // cases step EAX so dword/word values are mostly not one repeated byte.
+  ...[
+    {name:'rep-movsb',op:[0xF3,0xA4],mask:63},
+    {name:'rep-movsw',op:[0x66,0xF3,0xA5],mask:31},
+    {name:'rep-movsw-f3-66',op:[0xF3,0x66,0xA5],mask:31},
+    {name:'rep-movsd',op:[0xF3,0xA5],mask:31},
+    {name:'rep-movsd-back',op:[0xF3,0xA5],mask:31,df:1,init:a=>({esi:a.buf+0xF000,edi:a.buf+0x1F000})},
+    {name:'rep-movsb-back',op:[0xF3,0xA4],mask:63,df:1,init:a=>({esi:a.buf+0xF000,edi:a.buf+0x1F000})},
+    {name:'rep-movsb-overlap',op:[0xF3,0xA4],mask:63,init:a=>({esi:a.buf+0x100,edi:a.buf+0x103})},
+    {name:'rep-movsd-overlap',op:[0xF3,0xA5],mask:31,init:a=>({esi:a.buf+0x100,edi:a.buf+0x106})},
+    {name:'rep-movsd-overlap-b',op:[0xF3,0xA5],mask:31,df:1,init:a=>({esi:a.buf+0xF000,edi:a.buf+0xEFFA})},
+    {name:'rep-stosb',op:[0xF3,0xAA],mask:63},
+    {name:'rep-stosw',op:[0x66,0xF3,0xAB],mask:31},
+    {name:'rep-stosd',op:[0xF3,0xAB],mask:31},
+    {name:'rep-stosd-back',op:[0xF3,0xAB],mask:31,df:1,init:a=>({edi:a.buf+0x1F000})},
+    {name:'rep-stosd-uniform',op:[0xF3,0xAB],mask:31,step:0,init:()=>({eax:0x3C3C3C3C})},
+  ].map(({name,op,mask,df,init,step=0x01030507})=>({
+    name,regs:{ebp:600},head:'l',init,
+    code:[df?0xFD:0xFC,L('l'),[0x89,0xD9],[0x83,0xE1,mask],op,[0x83,0xC3,0x07],
+          [0x05,...d32(step)],0x4D,J(cc.NZ,'l'),0xFC,0xC3],
+  })),
+  // --no-uop-rep: the same loop declines (and threaded code runs it).
+  {name:'rep-gate-off',regs:{ebp:600},head:'l',declines:true,norep:true,
+   code:[0xFC,L('l'),[0x89,0xD9],[0x83,0xE1,31],[0xF3,0xA5],[0x83,0xC3,0x07],0x4D,J(cc.NZ,'l'),0xC3]},
+  // A segment override or REPNE keeps its threaded semantics: declined.
+  {name:'rep-seg-declines',regs:{ebp:600},head:'l',declines:true,
+   code:[0xFC,L('l'),[0x89,0xD9],[0x83,0xE1,31],[0x26,0xF3,0xA5],[0x83,0xC3,0x07],0x4D,J(cc.NZ,'l'),0xC3]},
   {
     name: 'lut8', regs: { ecx: N },
     code: [L('l'), [0x0F, 0xB6, 0x06], [0x8A, 0x04, 0x03], [0x88, 0x07], 0x46, 0x47, 0x49, J(cc.NZ, 'l'), 0xC3],
@@ -797,6 +829,7 @@ function runCase(inst, c, a, codeAddr, mode) {
   // A known MMX file on entry, the same for every mode.
   if (e.set_mmx) for (let k = 0; k < 8; k++) e.set_mmx(k, BigInt.asIntN(64, 0x0123456789ABCDEFn * BigInt(k + 1)));
   if (c.nommx) e.set_uop_mmx(0);
+  if (c.norep) e.set_uop_rep(0);
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
@@ -805,8 +838,10 @@ function runCase(inst, c, a, codeAddr, mode) {
   const unfeat = () => { for (const f of feats) e['set_uop_' + f](0); };
   const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
   // uop_stats counters, then (negative) uop_cstat ones: sites kept, FF /2 refused
-  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30 };
-  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : e.uop_stats(i));
+  // (100+: uop_bulk_stats -- COPY/FILL slow arms and deopts)
+  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30,
+                bulkSlow: 100, bulkDeopt: 101 };
+  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : i >= 100 ? e.uop_bulk_stats(i - 100) : e.uop_stats(i));
   const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i)]));
   let sp = null;
   if (mode === 'pre') {
@@ -818,6 +853,7 @@ function runCase(inst, c, a, codeAddr, mode) {
     if (!pc) {
       if (c.aggr) e.set_aggressive_stack(0);
       if (c.nommx) e.set_uop_mmx(1);
+      if (c.norep) e.set_uop_rep(1);
       unfeat();
       if (c.trace) e.set_uop_trace_heads(0);
       if (c.lf) e.set_logical_frame(0, 0);
@@ -858,6 +894,7 @@ function runCase(inst, c, a, codeAddr, mode) {
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
   if (c.nommx) e.set_uop_mmx(1);
+  if (c.norep) e.set_uop_rep(1);
   unfeat();
   if (c.trace) e.set_uop_trace_heads(0);
   if (c.lf) e.set_logical_frame(0, 0);
@@ -945,6 +982,148 @@ function movsdCodeCase(inst,a,nextCode){
     callAt(inst,a,target,{ecx:2});
     if((e.get_eax()>>>0)!==0x22222222)errs.push('stale decoded target after MOVSD');
   }finally{e.set_uop(0);}
+  return errs;
+}
+
+// REP MOVS/STOS against an explicit element-by-element model in JS -- not
+// against 05b, which the threaded arm and the COPY/FILL slow arm now share.
+// Each config runs `l: rep op; dec ebp; jnz l` with EBP=2 (so the second
+// rep has ECX=0), once threaded and once entering a program compiled at l.
+const REP_FORMS = [
+  { n: 'movsb', op: [0xF3, 0xA4], w: 1, movs: true }, { n: 'movsw', op: [0x66, 0xF3, 0xA5], w: 2, movs: true },
+  { n: 'movsd', op: [0xF3, 0xA5], w: 4, movs: true }, { n: 'stosb', op: [0xF3, 0xAA], w: 1 },
+  { n: 'stosw', op: [0xF3, 0x66, 0xAB], w: 2 }, { n: 'stosd', op: [0xF3, 0xAB], w: 4 },
+];
+function repModel(m, r, f, df) {
+  // m: bytes of a.buf.., r: {esi,edi,ecx,eax} offsets from a.buf
+  const step = df ? -f.w : f.w;
+  while (r.ecx) {
+    // the whole element is read before any of it is written
+    const el = Array.from({ length: f.w }, (_, b) => (f.movs ? m[r.esi + b] : (r.eax >>> (8 * b)) & 0xFF));
+    for (let b = 0; b < f.w; b++) m[r.edi + b] = el[b];
+    r.edi += step; if (f.movs) r.esi += step; r.ecx--;
+  }
+}
+function repOracleCase(inst, a, nextCode) {
+  const { e, g2w } = inst, errs = [];
+  const mem = () => new Uint8Array(e.memory.buffer);
+  const configs = [];
+  for (const f of REP_FORMS) for (const df of [0, 1]) {
+    // disjoint, destination ahead-overlapping, destination behind-overlapping,
+    // exact alias, a zero count, one element, and a run across a page seam
+    configs.push([f, df, 0x1000, 0x9000, 40], [f, df, 0x2000, 0x2000 + (df ? -3 : 3), 57],
+                 [f, df, 0x3000, 0x3000 + (df ? 5 : -5), 33], [f, df, 0x4000, 0x4000, 9],
+                 [f, df, 0x5000, 0x6000, 0], [f, df, 0x5000, 0x6000, 1], [f, df, 0x7FF0, 0xAFF3, 900]);
+  }
+  e.set_uop_trace_heads(0);
+  // DF is set by a separate call, so the program can be entered at its
+  // head -- the first rep included -- with the direction already in place.
+  const dfCode = nextCode();
+  mem().set([0xFC, 0xC3, 0, 0, 0xFD, 0xC3], g2w(dfCode));
+  for (const [f, df, so, dofs, count] of configs) {
+    const code = nextCode();
+    mem().set(asm([L('l'), f.op, 0x4D, J(cc.NZ, 'l'), 0xFC, 0xC3]), g2w(code));
+    const head = code;
+    const regs = { esi: a.buf + so, edi: a.buf + dofs, ecx: count, eax: 0xA1B2C3D4, ebp: 2 };
+    const fill = () => { const m = mem(), s = g2w(a.buf); for (let k = 0; k < 0x10000; k++) m[s + k] = (k * 29 + 7) & 0xFF; };
+    fill();
+    const model = Uint8Array.from(mem().subarray(g2w(a.buf), g2w(a.buf) + 0x10000));
+    const r = { esi: so, edi: dofs, ecx: count, eax: regs.eax };
+    repModel(model, r, f, df);
+    for (const arm of ['threaded', 'compiled']) {
+      fill();
+      e.set_uop(arm === 'compiled' ? 1 : 0);
+      let enters = 0;
+      if (arm === 'compiled') {
+        const pc = e.uop_compile(head);
+        if (!pc) { errs.push(`${f.n} df=${df} declined`); e.set_uop(0); continue; }
+        e.uop_install(head, pc);
+        enters = e.uop_stats(4);
+      }
+      // Start at the head: the program is entered from the first instruction.
+      callAt(inst, a, dfCode + (df ? 4 : 0), {});
+      if (!callAt(inst, a, head, regs)) errs.push(`${arm} ${f.n} did not return`);
+      const tag = `${arm} ${f.n} df=${df} src+${so.toString(16)} dst+${dofs.toString(16)} n=${count}`;
+      if (arm === 'compiled' && e.uop_stats(4) === enters) errs.push(`${tag}: never entered`);
+      const m = mem(), s = g2w(a.buf);
+      let bad = -1;
+      for (let k = 0; k < 0x10000; k++) if (m[s + k] !== model[k]) { bad = k; break; }
+      if (bad >= 0) errs.push(`${tag}: byte +0x${bad.toString(16)} ${m[s + bad]} vs model ${model[bad]}`);
+      const want = { esi: a.buf + (f.movs ? r.esi : so), edi: a.buf + r.edi, ecx: 0 };
+      for (const [k, v] of Object.entries(want)) if ((e['get_' + k]() >>> 0) !== (v >>> 0)) errs.push(`${tag}: ${k} ${(e['get_' + k]() >>> 0).toString(16)} vs ${(v >>> 0).toString(16)}`);
+      e.set_uop(0);
+    }
+  }
+  return errs;
+}
+
+// Sparse guest pages whose backing is not adjacent: the extent cannot be one
+// window, so COPY/FILL take the slow arm through 05b's per-page translation.
+// Checked against threaded code on the same fixture, both directions.
+function repSparseCase(inst, a, nextCode) {
+  const { e, g2w } = inst, errs = [];
+  const source = 0x26400000, dest = 0x26600000;
+  for (const [i, address] of [source, source + 4096, dest, dest + 4096].entries()) {
+    if ((e.test_virtual_map_commit(address, 4096) >>> 0) !== address) return ['sparse commit failed'];
+    if ((e.test_virtual_map_commit(0x28400000 + i * 0x100000, 4096) >>> 0) !== (0x28400000 + i * 0x100000))
+      return ['filler commit failed'];
+  }
+  if (g2w(source + 4096) === g2w(source) + 4096 || g2w(dest + 4096) === g2w(dest) + 4096)
+    return ['fixture did not create noncontiguous backing'];
+  const mem = () => new Uint8Array(e.memory.buffer);
+  const seed = () => { const m = mem(); for (let i = 0; i < 8192; i++) { m[g2w(source + i)] = (i * 17 + 3) & 255; m[g2w(dest + i)] = 0xCC; } };
+  const bytes = () => { const m = mem(); return Uint8Array.from({ length: 8192 }, (_, i) => m[g2w(dest + i)]); };
+  e.set_uop_trace_heads(0);
+  for (const f of REP_FORMS) for (const backward of [false, true]) {
+    const code = nextCode();
+    // l: mov ecx,ebx ; rep op ; dec ebp ; jnz l
+    mem().set(asm([backward ? 0xFD : 0xFC, L('l'), [0x89, 0xD9], f.op, 0x4D, J(cc.NZ, 'l'), 0xFC, 0xC3]), g2w(code));
+    const offset = backward ? 4105 : 4077;
+    const regs = { esi: source + offset, edi: dest + offset, ebx: 5, ebp: 3, eax: 0x5A6B7C8D };
+    e.set_uop(0); seed();
+    if (!callAt(inst, a, code, regs)) errs.push(`threaded sparse ${f.n} did not return`);
+    const expected = bytes(), er = ['esi', 'edi', 'ecx'].map((r) => e['get_' + r]() >>> 0);
+    e.set_uop(1); seed();
+    const pc = e.uop_compile(code + 1);
+    if (!pc) { errs.push(`sparse ${f.n} declined`); continue; }
+    e.uop_install(code + 1, pc);
+    const enters = e.uop_stats(4), slow = e.uop_bulk_stats(0);
+    if (!callAt(inst, a, code, regs)) errs.push(`compiled sparse ${f.n} did not return`);
+    const tag = `sparse ${f.n}${backward ? ' back' : ''}`;
+    if (e.uop_stats(4) === enters) errs.push(`${tag}: never entered`);
+    if (e.uop_bulk_stats(0) === slow) errs.push(`${tag}: slow arm never ran`);
+    const got = bytes();
+    if (!got.every((v, i) => v === expected[i])) errs.push(`${tag}: bytes differ`);
+    const gr = ['esi', 'edi', 'ecx'].map((r) => e['get_' + r]() >>> 0);
+    if (gr.join() !== er.join()) errs.push(`${tag}: regs ${gr.map((x) => x.toString(16))} vs ${er.map((x) => x.toString(16))}`);
+  }
+  e.set_uop(0);
+  return errs;
+}
+
+// A compiled rep stos over a page holding a compiled program: the store
+// window refuses a code page, so the op leaves to threaded code before
+// writing anything, and threaded rep retires the decoded target.
+function repCodeWriteCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst, errs = [], writer = nextCode(), target = nextCode();
+  mem.set(asm([L('l'), [0xF3, 0xAA], 0x4D, J(cc.NZ, 'l'), 0xC3]), g2w(writer));
+  mem.set(asm([L('l'), [0xB8, ...d32(0x11111111)], 0x49, J(cc.NZ, 'l'), 0xC3]), g2w(target));
+  e.set_uop(1);
+  try {
+    callAt(inst, a, target, { ecx: 2 });
+    const targetPC = e.uop_compile(target); if (!targetPC) return ['rewrite target declined'];
+    e.uop_install(target, targetPC);
+    const pc = e.uop_compile(writer); if (!pc) return ['rep stos writer declined'];
+    e.uop_install(writer, pc);
+    const kills = e.uop_stats(3), enters = e.uop_stats(4), deopts = e.uop_bulk_stats(1);
+    callAt(inst, a, writer, { edi: target + 1, ecx: 4, eax: 0x22, ebp: 1 });
+    if (e.uop_stats(4) === enters) errs.push('writer did not enter compiled path');
+    if (e.uop_bulk_stats(1) === deopts) errs.push('FILL over code did not leave to threaded code');
+    if (e.uop_stats(3) <= kills) errs.push('rep stos did not invalidate target program');
+    if ((e.get_edi() >>> 0) !== target + 5 || (e.get_ecx() >>> 0) !== 0) errs.push('code-write fallback registers wrong');
+    callAt(inst, a, target, { ecx: 2 });
+    if ((e.get_eax() >>> 0) !== 0x22222222) errs.push(`stale decoded target after rep stos (eax=${(e.get_eax() >>> 0).toString(16)})`);
+  } finally { e.set_uop(0); }
   return errs;
 }
 
@@ -1398,7 +1577,8 @@ async function main() {
   }
   }
   e.set_branch_clock(0);
-  for(const [name,run] of [['movsd-sparse',movsdSparseCase],['movsd-code-write',movsdCodeCase]]){
+  for(const [name,run] of [['movsd-sparse',movsdSparseCase],['movsd-code-write',movsdCodeCase],
+                           ['rep-oracle',repOracleCase],['rep-sparse',repSparseCase],['rep-code-write',repCodeWriteCase]]){
     if(!only||only===name){
       const errs=run(inst,a,()=>a.code+0x1000*slot++);
       if(errs.length)fails++;
