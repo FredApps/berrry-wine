@@ -299,7 +299,12 @@ const REGFILE_SEGB = REGFILE_BASE + 32;
 const REGFILE_SIZE = 128;                  // from REGFILE_SEL
 const DEC_END = REGFILE_SEL + REGFILE_SIZE;
 
-const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
+// The µop engines' tail (uop-wasm.js): vreg files, out slots, the one-program
+// code page and the arena where a live run keeps many chained programs at
+// once. Reserved here so the memory's size is one number every module agrees
+// on; nothing in L1 reads it.
+const UOP_TAIL_SIZE = 0x400000;
+const MEM_PAGES = ((DEC_END + UOP_TAIL_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -325,7 +330,7 @@ const EA_A32 = {
 
 module.exports = {
   REG16, REG8, SEG, F, FLAGS_RESERVED, FLAGS_DEFINED, FLAGS_ARITH,
-  GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
+  GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES, UOP_TAIL_SIZE,
   HIST_BASE, HIST_PAIRS, HIST_SLOTS, HIST_SIZE,
   XMS_BASE, XMS_SIZE, LIN_MASK_REAL, LIN_MASK_FLAT,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,

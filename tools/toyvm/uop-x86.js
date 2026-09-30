@@ -267,6 +267,19 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32, benign = null) {
     return done({ kind: 'jmp', target: rel(d) });
   }
   if (op === 0xEB) { const d = s8(); return done({ kind: 'jmp', target: rel(d) }); }
+  // IN from DX or an imm8 port. L1 (decode.js) runs E5/ED as in_16 whatever
+  // the operand size, so a 32-bit one is left to L1 rather than guessed at.
+  if (op === 0xE4 || op === 0xEC) return done({ kind: 'in', w: 8, port: op === 0xE4 ? u8() : -1 });
+  if (op === 0xE5 || op === 0xED) {
+    if (opsize === 32) return bad('in eax');
+    return done({ kind: 'in', w: 16, port: op === 0xE5 ? u8() : -1 });
+  }
+  // OUT to DX or an imm8 port, the same way round.
+  if (op === 0xE6 || op === 0xEE) return done({ kind: 'out', w: 8, port: op === 0xE6 ? u8() : -1 });
+  if (op === 0xE7 || op === 0xEF) {
+    if (opsize === 32) return bad('out eax');
+    return done({ kind: 'out', w: 16, port: op === 0xE7 ? u8() : -1 });
+  }
   if (op === 0xF6 || op === 0xF7) {
     const m = modrm(w0);
     if (m.reg === 0 || m.reg === 1) return done({ kind: 'test', w: w0, dst: m.rm, src: I(imm(w0), w0) });

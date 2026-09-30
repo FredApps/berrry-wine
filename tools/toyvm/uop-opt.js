@@ -207,6 +207,7 @@ class Build {
         // A divide the fast half cannot do leaves the way a memory guard does:
         // the slow block redoes the instruction, and its own DCHK exits to L1.
         if (c.o === 'dchk') c.dx = this.deopt(k);
+        if (c.o === 'pout') c.dx = this.deoptAfter(k);
         f.ops.push(c);
       }
       f.term = this.fastTerm(clone(s.term), t);
@@ -264,6 +265,32 @@ class Build {
       b.term.tx = g.id;
     }
     this.deoptStub.set(k, b.id);
+    return b.id;
+  }
+
+  // Where a port write that cut the slice leaves the fast half: the slow
+  // half at the NEXT instruction, which runs on to L1's next transfer and
+  // stops there. Its own stub every time, because its refund (set in
+  // finalize from the write's adj) is not a node's.
+  deoptAfter(k) {
+    const nodes = this.reg.nodes, n = nodes.get(k);
+    const e = n.succ[0];
+    const inBody = !!(e && this.slowOf.has(e.k));
+    const b = this.block('deopt');
+    b.fast = true;
+    b.nodes = [];
+    b.node = inBody ? e.k : k;
+    b.ip = inBody ? nodes.get(e.k).ip : n.d.next;
+    b.after = true;
+    b.ops.push({ o: 'flush', exitIp: b.ip, node: b.node });
+    // Off the end of the region: where the slow half goes from there.
+    b.term = { o: 'br', t: inBody ? this.slowOf.get(e.k) : this.p.blocks[this.slowOf.get(k)].term.t, tx: -1, st: 0 };
+    if (inBody && this.p.l1Heads && this.p.l1Heads.has(e.k)) {
+      const g = this.block('exit');
+      g.ip = b.ip;
+      g.term = { o: 'exit', kind: 'go', ip: b.ip, why: 'edge' };
+      b.term.tx = g.id;
+    }
     return b.id;
   }
 
@@ -1379,7 +1406,13 @@ function finalize(B) {
   // narrow store), and the one narrow store happens where the region leaves.
   const hold = new Map();        // reg -> temp
   if (resident && B.passes.resident === 'promote') {
-    for (const r of [...written].sort((x, y) => x - y)) if (r < NREG && width(r) !== 32) hold.set(r, B.temp());
+    // ...and one it only READS narrow as well, zero-extended on the way in:
+    // the promoted model's consumers of a narrow register read it clean (its
+    // own reload is a getr at that width), and its resident slot holds the
+    // architectural upper bits. `shld [si],dx,7` shifted edx's upper half
+    // into the result from a straight line that never wrote dx
+    // (test-toyvm-uop-only DSHIFT). Only the written ones merge back.
+    for (const r of [...used].sort((x, y) => x - y)) if (r < NREG && width(r) !== 32) hold.set(r, B.temp());
     const ren = (v) => (hold.has(v) ? hold.get(v) : v);
     for (const [, , op] of B.allOps()) {
       if (op.o === 'flush' || op.o === 'reload') continue;
@@ -1421,10 +1454,14 @@ function finalize(B) {
   const MERGE = { 16: 'merge16', 8: 'merge8l' };
   for (const [b, , op] of [...B.allOps()]) {
     if (resident && op.o === 'reload') {
-      const ops = [...hold].map(([r, t]) => ({ o: 'mov', d: t, a: r }));
+      // Zero-extended to the width it is kept at, as the promoted model's own
+      // reload (getr at that width) does: its consumers read it as a clean
+      // 16/8-bit value. A full copy carried eax's upper half into `add di,ax`'s
+      // CF (a straight line entered at `setz ah`, test-toyvm-uop-only DSHIFT).
+      const ops = [...hold].map(([r, t]) => ({ o: 'andi', d: t, a: r, i: width(r) === 8 ? 0xFF : 0xFFFF, w: 32 }));
       b.ops.splice(b.ops.indexOf(op), 1, ...ops);
     } else if (resident && op.o === 'flush') {
-      const ops = [...hold].map(([r, t]) => ({ o: MERGE[width(r)], d: r, a: r, b: t }));
+      const ops = [...hold].filter(([r]) => written.has(r)).map(([r, t]) => ({ o: MERGE[width(r)], d: r, a: r, b: t }));
       b.ops.splice(b.ops.indexOf(op), 1, ...ops);
     } else if (op.o === 'reload') {
       const ops = [];
@@ -1454,6 +1491,7 @@ function finalize(B) {
       if (b.kind !== 'body') continue;
       for (const op of b.ops) {
         if (op.dx === undefined || op.dx < 0 || p.blocks[op.dx].kind !== 'deopt') continue;
+        if (op.o === 'pout') continue;              // below
         const j = b.nodes.indexOf(op.node);
         if (j < 0) throw new Error(`finalize: deopt site for ${op.node} outside its block`);
         const refund = (B.prepaid.get(b.id) || 0) - j;
@@ -1461,13 +1499,37 @@ function finalize(B) {
         if (refundOf.has(sid) && refundOf.get(sid) !== refund) {
           const c = B.block('deopt');
           const orig = p.blocks[sid];
-          Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: clone(orig.ops), term: clone(orig.term) });
+          Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: clone(orig.ops), term: clone(orig.term), after: orig.after });
           sid = c.id;
           op.dx = sid;
         }
         refundOf.set(sid, refund);
         p.blocks[sid].term.st = -refund;
       }
+    }
+    // A port read hands L1 its clock: the steps charged ahead less those of
+    // the instructions not yet run, the read's own included (L1 charges an
+    // op before its handler runs).
+    for (const b of B.fastBlocks()) {
+      if (b.kind !== 'body') continue;
+      for (const op of b.ops) {
+        if (op.o !== 'pin' && op.o !== 'pout') continue;
+        const j = b.nodes.indexOf(op.node);
+        if (j < 0) throw new Error(`finalize: port access at ${op.node} outside its block`);
+        op.adj = (B.prepaid.get(b.id) || 0) - j - 1;
+      }
+    }
+  }
+  // A cut port write sets $steps to what it handed back less adj, so its
+  // stub adds adj back: the slow half starts at L1's own count. Unclocked,
+  // adj is -1 and the stub charges the write's STEP the deopt skipped.
+  for (const b of B.fastBlocks()) {
+    if (b.kind !== 'body') continue;
+    for (const op of b.ops) {
+      if (op.o !== 'pout' || op.dx === undefined || op.dx < 0) continue;
+      const d = p.blocks[op.dx];
+      if (!d.after) throw new Error('finalize: port write deopt is not its own stub');
+      d.term.st = -op.adj;
     }
   }
   // Machine guards at every FASTENTER: fail straight into the slow block.
@@ -1918,7 +1980,7 @@ function sinkDeoptDefs(B) {
       for (const x of sites) {
         const orig = p.blocks[x.dx];
         const c = B.block(orig.kind);
-        Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: [clone(G), ...clone(orig.ops)], term: clone(orig.term) });
+        Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: [clone(G), ...clone(orig.ops)], term: clone(orig.term), after: orig.after });
         x.dx = c.id;
       }
       i--;

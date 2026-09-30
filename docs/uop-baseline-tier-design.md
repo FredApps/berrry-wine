@@ -393,6 +393,57 @@ x3.80 / x4.01 / x3.86. Verdict: `allRP` matches the promoted model on loops,
 and it is a single register model that a baseline tier can share. Tests:
 test-toyvm-uop (2904 differential runs) and test-toyvm-uop-live under `allRP`.
 
+### Phase 1, step 1: the arena and links (2026-09-29, not yet committed)
+
+The mechanism §4 needs now exists (`uop-wasm.js` `E1Arena`, `uop-live.js`
+`chain`, CLI `--uop-chain`):
+
+- Many resident programs live in the engine at once, in a 3.7 MB arena
+  behind the one-program page. `isa.UOP_TAIL_SIZE` reserves it, which is 64
+  more pages of memory.
+- Temporaries are shared, since they are dead at an exit. Each program's
+  constants sit in a pool behind its own code.
+- Block ids handed back to JS (`bail`, `ldf`/`stf`) are arena-wide handles.
+- A static exit lowers to `link`: a patchable target word plus the target's
+  program id, both 0 when unlinked. When the budget is not spent and no code
+  was written, the link is taken inside the engine, as L1's GO goes through
+  its jump table. Otherwise it is exactly `exit`.
+- `setHead` and `dropHead` patch and unpatch links. At each entry, the chain's
+  closure is guarded as one unit and checked against its bytes; a program
+  whose bytes changed is unlinked until its own head rebuilds it.
+- The live suite runs a fourth time in this mode and is exact: frames,
+  registers, RAM and dispatch counts, including PATCH's rebuilds and WRAPS's
+  54 handle bails.
+
+**It links nothing, and that is the finding.** Six demos were run for 60M
+dispatches with `--uop-chain` and an exit census (`exitsAt`):
+
+| program | early exits / all exits | where the early ones go |
+|---|---|---|
+| RUNME2ND | 87 / 2707 | a 1-instruction line |
+| DREAM | 100 / 1683 | 1-instruction lines |
+| NM2 | 64 / 2578 | a 6-instruction line |
+| AUTUMN | 1 / 1563 | a 1-instruction line |
+
+96-99.9% of loop-program exits are the **end of the slice** (budget spent).
+They are not a transfer a chain could continue. Chaining between loop
+programs has nothing to gain, for a structural reason: discovery explores
+everything reachable from a head. So a loop program's static exits land only
+where exploration was cut, at an unsupported instruction or the node cap, and
+never at another program's head.
+
+The time the loop tier misses (DREAM 44%, AUTUMN 45%) is in heads it
+**declines**: functions ending in `ret`, straight lines, `in al,dx`. The
+reason is that a non-loop head costs a JS round trip per entry. That is
+§4's argument, now measured from the other side: the links pay off only once
+there are per-block programs to link to. The next steps are:
+
+1. Lazy link fill: a miss returns to the arena loop, not the session, which
+   builds the target and patches the word.
+2. An L1 fallback that hands back after the unsupported instruction. Phase 0's
+   12% "cut" share (`movs`, `leave`, `out`, far `call`) goes through it on
+   every execution.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

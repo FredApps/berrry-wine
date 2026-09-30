@@ -6229,6 +6229,19 @@ ${EXTRA_GLOBALS}
 (func (export "get_vga_reads") (result i32) (global.get $vga_reads))
 (func (export "set_vga_reads") (param $v i32) (global.set $vga_reads (local.get $v)))
 (func (export "vga_status") (result i32) (call $vga_status))
+;; The micro-op engines' port read (uop-wasm.js PIN): exactly what in_8/in_16
+;; answer, at the clock the caller says L1 would be at. $slice_budget is the
+;; caller's too (set_slice_budget), so 3DAh reads the same frame position.
+(func (export "io_in") (param $port i32) (param $w i32) (param $st i32) (result i32)
+  (global.set $steps (local.get $st))
+  (if (result i32) (i32.and (i32.eq (local.get $w) (i32.const 8)) (i32.eq (local.get $port) (i32.const 0x3DA)))
+    (then (call $vga_status))
+    (else (call $port_in (local.get $port) (local.get $w)))))
+(func (export "io_out") (param $port i32) (param $v i32) (param $w i32) (param $st i32) (result i32)
+  (global.set $steps (local.get $st))
+  (call $port_out (local.get $port) (local.get $v) (local.get $w))
+  (global.get $steps))
+(func (export "set_slice_budget") (param $v i32) (global.set $slice_budget (local.get $v)))
 ;; The planar byte accessors themselves, for the micro-op tier's reference
 ;; interpreter (uop-ref.js): a slow-half access that lands in the VGA window
 ;; goes through exactly the code L1's $rd8/$wr8 call, latches and all.

@@ -55,7 +55,12 @@ const OUT = VBASE + 4 * MAXV;                // steps, flags, ip / block id
 const KMAX = 16;
 const SLOTHOME = OUT + 16;                   // per local slot: the vreg address it stands for
 const CODE = SLOTHOME + 4 * KMAX;
-const CODE_END = TOP;
+const CODE_END = CODE + 0x40000;             // the one-program page (makeEnter, e1Enter)
+// The live arena (E1Arena): many resident programs at once. LASTP is the id
+// of the program a chained run is in, written by `link` as it takes a chain.
+const LASTP = CODE_END;
+const ARENA = CODE_END + 16;
+const ARENA_END = TOP;
 
 const CCS = ['nz', 'z', 'eq', 'ne', 'ltu', 'leu', 'gtu', 'geu', 'lt', 'le', 'gt', 'ge', 's', 'ns', 'p', 'np'];
 // Condition cc on operands a, b already shifted left by 32-w: an unsigned or
@@ -303,6 +308,26 @@ def('wflags', 'ivvvvvv', ({ V, I }) => `(local.set $F (i32.or (i32.and (local.ge
   + ` (i32.or (i32.shl (i32.and ${V(3)} (i32.const 1)) (i32.const 4)) (i32.shl (i32.and ${V(4)} (i32.const 1)) (i32.const 6))))`
   + ` (i32.or (i32.shl (i32.and ${V(5)} (i32.const 1)) (i32.const 7)) (i32.shl (i32.and ${V(6)} (i32.const 1)) (i32.const 11)))))))`);
 
+// A port read (uop-ir.js 'in'): L1's io_in at L1's clock -- operand 2 is the
+// width, operand 3 the distance from this engine's $steps to L1's.
+def('pin', 'vvii', ({ V, I, SET }) => SET(0,
+  `(call $io_in (i32.and ${V(1)} (i32.const 65535)) ${I(2)} (i32.add (local.get $steps) ${I(3)}))`));
+
+// A port write (uop-ir.js 'out'): L1's io_out at L1's clock, which hands
+// back L1's $steps -- -1 when the write cut the slice. Then $steps becomes
+// that less the distance, and POUTX leaves by its target (uop-opt.js
+// deoptAfter); POUT, the slow half's, runs on to its own tests.
+{
+  const call = ({ V, I }) => `(local.set $x (i32.add (local.get $steps) ${I(3)}))`
+    + `(local.set $y (call $io_out (i32.and ${V(0)} (i32.const 65535)) ${V(1)} ${I(2)} (local.get $x)))`
+    // A write to the sequencer or graphics controller can turn planar mode
+    // on or off, and $vk is what every plain access tests against.
+    + `(local.set $vk (i32.load (i32.const ${isa.VGA_CTL_KEY})))`;
+  const cut = ({ I }) => `(local.set $steps (i32.sub (local.get $y) ${I(3)}))`;
+  def('pout', 'vvii', (a) => `${call(a)}(if (i32.ne (local.get $y) (local.get $x)) (then ${cut(a)}))`);
+  def('poutx', 'vviit', (a) => `${call(a)}(if (i32.ne (local.get $y) (local.get $x)) (then ${cut(a)} ${a.GOTO(4)}))`);
+}
+
 // The clock and the guards.
 def('step', 'i', ({ I }) => `(local.set $steps (i32.sub (local.get $steps) ${I(0)}))`);
 def('check', 'it', ({ I, GOTO }) => `(if (i32.or (i32.lt_s (local.get $steps) ${I(0)}) (local.get $smc)) (then ${GOTO(1)}))`);
@@ -334,6 +359,17 @@ for (const cc of CCS) {
 // exit: adj, ip vreg (zero slot when static), static ip
 def('exit', 'ivi', ({ V, I }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
   + `(i32.store (i32.const ${OUT + 8}) (i32.add ${V(1)} ${I(2)}))`
+  + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
+  + '(return (i32.const 0))');
+// link: an exit to a static ip that another program in the arena may start
+// at. adj, ip, target (patched: 0 = none, else that program's entry address),
+// the target's program id. Taken like L1's GO through the jump table -- only
+// when the budget is not spent and no code was written -- and otherwise it
+// is exactly `exit` at that ip.
+def('link', 'iiii', ({ I, GOTO }) => `(local.set $steps (i32.add (local.get $steps) ${I(0)}))`
+  + `(if (i32.and (i32.ne ${I(2)} (i32.const 0)) (i32.eqz ${due}))`
+  + ` (then (i32.store (i32.const ${LASTP}) ${I(3)}) ${GOTO(2)}))`
+  + `(i32.store (i32.const ${OUT + 8}) ${I(1)})`
   + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
   + '(return (i32.const 0))');
 // bail: block id; the reference interpreter runs it
@@ -370,7 +406,7 @@ const dwStore = (e, at, x) => (!e.full ? `(${DWST[e.dw]} ${at} ${x})`
     + ` (i32.store (local.get $z) (i32.or (i32.and (i32.load (local.get $z)) (i32.const ${DWKEEP[e.dw]})) ${dwPut(e.dw, '(local.get $y)')}))`);
 
 const EOP = new Map(EOPS.map((e, i) => [e.name, { ...e, id: i }]));
-const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|bail)/.test(name);
+const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|link|bail)/.test(name);
 // Ops whose effect outlives the vreg they define: after one of these, a block
 // can no longer be handed to the reference interpreter from its start (ldf/stf).
 // A shift (callh) is not one, although it writes flags: every flag bit it
@@ -378,7 +414,7 @@ const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|bail)/.test(name);
 // so running it twice from the same operands leaves the flags it left once.
 // That is what lets `shl [mem],cl` store after its flags are out.
 const EFFECT = new Set(['st', 'putr', 'puts', 'putsel', 'rec', 'wrec', 'wflags', 'step',
-  'fvset', 'check', 'dchk', 'guard']);
+  'fvset', 'check', 'dchk', 'guard', 'pin', 'pout']);
 
 // ---------------------------------------------------------------------------
 // Lowering: µop program -> per block, a list of { name, args } where an arg is
@@ -386,7 +422,7 @@ const EFFECT = new Set(['st', 'putr', 'puts', 'putsel', 'rec', 'wrec', 'wflags',
 // ---------------------------------------------------------------------------
 class Unsupported extends Error {}
 
-function lowerProgram(p) {
+function lowerProgram(p, lo = {}) {
   const nv = p.nv;
   const resident = !!p.resident;
   const F = p.resident === 'full' ? 'f' : '';
@@ -402,6 +438,9 @@ function lowerProgram(p) {
   const vr = (x) => ({ v: x });
   const im = (x) => ({ i: x | 0 });
   const tg = (x) => ({ t: x });
+  // A block id the engine hands back to JS (bail, ldf/stf): an arena encodes
+  // it as a handle, the program's own id range plus the id.
+  const bidArg = (x) => ({ i: x | 0, bid: true });
   const opt = (x) => (x !== undefined && x >= 0 ? vr(x) : K(0));
   const mask = (w) => (w === 32 ? -1 : (1 << w) - 1);
 
@@ -482,7 +521,7 @@ function lowerProgram(p) {
         const first = op.o === 'ld' ? vr(op.d) : vr(op.b);
         const addrArgs = general ? [opt(op.a), vr(op.c), im(op.sc | 0), im(op.i | 0), im(am)] : [opt(op.a), im(op.i | 0), im(am)];
         const name = `${op.o}${full ? 'f' : guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
-        return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [im(curBlock)] : []));
+        return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [bidArg(curBlock)] : []));
       }
       case 'callh':
         if (!op.sh || !EOP.has(`shv_${op.sh}${op.w}`)) throw new Unsupported(`callh ${op.fn}`);
@@ -503,6 +542,9 @@ function lowerProgram(p) {
       }
       case 'shift': return lowerShift(op, E);
       case 'step': return E('step', im(op.i));
+      case 'pin': return E('pin', vr(op.d), vr(op.a), im(op.w), im(op.adj));
+      case 'pout': return op.dx >= 0 ? E('poutx', vr(op.a), vr(op.b), im(op.w), im(op.adj), tg(op.dx))
+        : E('pout', vr(op.a), vr(op.b), im(op.w), im(op.adj));
       case 'guard': {
         const g = { spm: 'spm', shmask: 'shm', df: 'df', smc: 'smc' }[op.g];
         if (!g) throw new Unsupported(`guard ${op.g}`);
@@ -688,6 +730,8 @@ function lowerProgram(p) {
         tg(t.t), tg(t.f), tg(t.tx >= 0 ? t.tx : t.t), tg(t.fx >= 0 ? t.fx : t.f));
     }
     if (t.o === 'exit') {
+      // A static exit in an arena program can chain to the program at its ip.
+      if (lo.link && !(t.ipv !== undefined && t.ipv >= 0)) return E('link', im(t.adj | 0), im(t.ip), { i: 0, link: t.ip }, im(0));
       return E('exit', im(t.adj | 0), t.ipv !== undefined && t.ipv >= 0 ? vr(t.ipv) : K(0),
         im(t.ipv !== undefined && t.ipv >= 0 ? 0 : t.ip));
     }
@@ -712,7 +756,7 @@ function lowerProgram(p) {
     } catch (e) {
       if (!(e instanceof Unsupported)) throw e;
       why.set(e.message, (why.get(e.message) || 0) + 1);
-      blocks.set(b.id, { native: false, why: e.message, ops: [{ name: 'bail', args: [im(b.id)] }] });
+      blocks.set(b.id, { native: false, why: e.message, ops: [{ name: 'bail', args: [bidArg(b.id)] }] });
     }
   }
   return { blocks, nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
@@ -827,7 +871,11 @@ function variantBody(key, K, mode) {
   let body = e.body(A);
   if (!isTerm(name)) body += ` ${next(`(i32.add (local.get $pc) (i32.const ${len}))`)}`;
   if (K) body = body.split('(return (i32.const').join(`${flushSlots(K)} (return (i32.const`);
-  if (mode !== 'loop') for (const g of MACHINE) body = body.split(`(local.get $${g})`).join(`(global.get $${g})`);
+  if (mode !== 'loop') {
+    for (const g of MACHINE) {
+      body = body.split(`(local.get $${g})`).join(`(global.get $${g})`).split(`(local.set $${g} `).join(`(global.set $${g} `);
+    }
+  }
   return body;
 }
 
@@ -840,6 +888,7 @@ function loopWat(keys, K) {
   const slotLocals = slotRange(K).map(j => `(local $r${j} i32)`).join(' ');
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
+${IO_IMPORT}
 (func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32) ${slotLocals}
 ${loadSlots(K)}
 ${text}
@@ -852,6 +901,7 @@ function threadWat(keys, K) {
   const hParams = `(param $pc i32) (param $steps i32) (param $F i32) ${sp.map(j => `(param $r${j} i32)`).join(' ')}`;
   let s = `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
+${IO_IMPORT}
 (type $h (func (param i32 i32 i32 ${sp.map(() => 'i32').join(' ')}) (result i32)))
 ${MACHINE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n')}
 (table $tb ${keys.length} funcref)
@@ -909,12 +959,23 @@ function straightWat(low) {
   text = text.replace(/\(return \(i32\.const ([01])\)\)/g, `(block ${flush.join(' ')}) (return (i32.const $1))`);
   return { wat: `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
+${IO_IMPORT}
 (func $run (export "run") ${PARAMS} ${LOCALS} ${locals.join(' ')}
 ${init.join('\n')}
 ${text}
 )
 )`, index: idx };
 }
+
+// The engines' imports: the vm's memory, and L1's port read for PIN (a vm
+// built without it -- a unit harness -- fails the first PIN, never silently).
+const IO_IMPORT = '(import "host" "io_in" (func $io_in (param i32 i32 i32) (result i32)))'
+  + '\n(import "host" "io_out" (func $io_out (param i32 i32 i32 i32) (result i32)))';
+const hostOf = (vm) => ({
+  memory: vm.memory,
+  io_in: vm.exports.io_in || (() => { throw new Error('uop-wasm: this vm has no io_in'); }),
+  io_out: vm.exports.io_out || (() => { throw new Error('uop-wasm: this vm has no io_out'); }),
+});
 
 const LOCALS = '(local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32)';
 
@@ -958,7 +1019,7 @@ async function interpEngine(vm, low, p, kind, K) {
   }
   const wat = kind === 'e3' ? threadWat(keys, K) : loopWat(keys, K);
   const mod = await engineModule(`uop-${kind}`, wat);
-  const inst = await WebAssembly.instantiate(mod, { host: { memory: vm.memory } });
+  const inst = await WebAssembly.instantiate(mod, { host: hostOf(vm) });
   const { words, addr } = encode(low, (o) => index.get(variantKey(o, slots)));
   const homes = new Int32Array(KMAX).fill(OUT + 12);
   for (const [v, j] of slots) homes[j] = low.vbase + 4 * v;
@@ -992,7 +1053,7 @@ async function makeEnter(vm, p, kind = 'e1', stats = null, o = {}) {
     if (stats) stats.info = eng.info;
   } else if (kind === 'straight') {
     const { wat, index } = straightWat(low);
-    const inst = await WebAssembly.instantiate(await engineModule('uop-straight', wat), { host: { memory: vm.memory } });
+    const inst = await WebAssembly.instantiate(await engineModule('uop-straight', wat), { host: hostOf(vm) });
     install = () => {
       const vf = new Int32Array(vm.memory.buffer, low.vbase, low.nvTotal);
       for (const [x, v] of low.consts) vf[v] = x;
@@ -1009,7 +1070,7 @@ async function makeEnter(vm, p, kind = 'e1', stats = null, o = {}) {
 // installing one more is asynchronous or generates wasm.
 async function e1Runner(vm) {
   const mod = await engineModule('uop-e1', e1Wat());
-  return (await WebAssembly.instantiate(mod, { host: { memory: vm.memory } })).exports.run;
+  return (await WebAssembly.instantiate(mod, { host: hostOf(vm) })).exports.run;
 }
 function e1Enter(vm, p, run, stats = null) {
   const low = lowerProgram(p);
@@ -1066,4 +1127,201 @@ function enterOver(vm, p, low, { run, target, install }, stats) {
   };
 }
 
-module.exports = { EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE };
+// ---------------------------------------------------------------------------
+// E1 arena: many resident programs in the engine at once, chained.
+// ---------------------------------------------------------------------------
+// The one-program page (e1Enter) is written again every time a live run
+// enters a different head, and every program exit goes back through JS and
+// the session before the next program can start. The arena keeps every
+// installed program's code at its own address for as long as it lives, and
+// lowers a program's static exits as `link`s: a word that names the program
+// installed at that ip, patched when one is (setHead) or goes away (dropHead).
+// A chain is taken inside the engine, as L1 takes a GO through its jump table.
+//
+// Resident programs only: a chain carries no vreg state but the guest's
+// registers, and those are L1's register file itself. Temporaries are shared
+// (dead across an exit, which is the only place a chain happens); a program's
+// constants go in a pool behind its code, so no program overwrites another's.
+// The reference interpreter reads constants from the vreg file, so a bail
+// writes the bailing program's there first.
+//
+// Block ids handed back to JS (bail, ldf/stf) are handles: each program owns
+// the range [base, base + blocks) and `owner` maps a handle back to it.
+class E1Arena {
+  constructor(vm, run) {
+    this.vm = vm;
+    this.run = run;
+    this.at = ARENA;
+    this.progs = [];
+    this.nextHandle = 1;
+    this.owner = [];
+    this.heads = new Map();      // link key -> program installed there
+    this.inbound = new Map();    // link key -> [{ from, t, id }]
+    this.epoch = 0;              // bumped whenever a link word changes
+    this.w = new Int32Array(vm.memory.buffer);
+    this.outv = new Int32Array(vm.memory.buffer, OUT, 4);
+    this.dv = new DataView(vm.memory.buffer);
+    this.chains = 0;
+    this.last = null;
+    this.dueExits = 0;
+    this.exits = new Map();      // `${program id}:${gip}` -> times a run left there
+    // uop-live reads `exits` to find its next head; uop-only never does, and
+    // the string key per exit is a real share of a µop-only run.
+    this.noteExits = true;
+  }
+
+  // Only an exit with budget left and no code written is a place a run could
+  // have gone on; the rest end the slice wherever they are.
+  noteExit(rec, gip, steps) {
+    if (steps < 0 || (this.vm.exports.get_smc() | 0)) { this.dueExits++; return; }
+    const k = `${rec.id}:${gip}`;
+    this.exits.set(k, (this.exits.get(k) || 0) + 1);
+  }
+
+  room() { return ARENA_END - this.at; }
+
+  // Lower and encode p (resident, built for `key` -- a head key with its
+  // linear mask) into the arena. Throws when it does not fit.
+  add(p, key, stats = null) {
+    const low = lowerProgram(p, { link: true });
+    if (!low.resident) throw new Error('uop-wasm: an arena program is resident');
+    if (low.nvTotal > MAXV - 1) throw new Error(`uop-wasm: ${low.nvTotal} vregs > ${MAXV - 1}`);
+    const constOf = new Map([...low.consts].map(([x, v]) => [v, x]));
+    const addr = new Map();
+    let at = this.at, nb = 0;
+    for (const [id, b] of low.blocks) {
+      addr.set(id, at);
+      nb = Math.max(nb, id + 1);
+      for (const o of b.ops) at += 4 * (1 + o.args.length);
+    }
+    const pool = at;
+    const poolAt = new Map();
+    for (const v of constOf.keys()) { poolAt.set(v, at); at += 4; }
+    if (at > ARENA_END) throw new Error(`uop-wasm: arena full (${at - ARENA} bytes)`);
+    const id = this.progs.length, base = this.nextHandle;
+    const rec = { id, p, low, key, base, addr, native: new Set(), links: [], live: true, stats,
+      entry: 0, codeFrom: this.at, codeTo: at, h: null };
+    const w = this.w;
+    let k = this.at >> 2;
+    for (const [bid, b] of low.blocks) {
+      if (b.native) rec.native.add(bid);
+      for (const o of b.ops) {
+        w[k++] = EOP.get(o.name).id;
+        for (const a of o.args) {
+          if (a.v !== undefined) w[k++] = constOf.has(a.v) ? poolAt.get(a.v) : VFILE + 4 * a.v;
+          else if (a.t !== undefined) {
+            if (!addr.has(a.t)) throw new Error(`uop-wasm: target B${a.t} not lowered`);
+            w[k++] = addr.get(a.t);
+          } else if (a.link !== undefined) {
+            rec.links.push({ from: rec, lk: `${key}:${a.link}`, t: k, id: k + 1 });
+            w[k++] = 0;
+          } else w[k++] = a.bid ? base + a.i : a.i;
+        }
+      }
+    }
+    for (const [v, x] of constOf) w[poolAt.get(v) >> 2] = x;
+    this.at = (at + 15) & ~15;
+    this.nextHandle += nb;
+    for (let hd = base; hd < base + nb; hd++) this.owner[hd] = id;
+    this.progs.push(rec);
+    rec.entry = rec.native.has(low.entry) ? addr.get(low.entry) : 0;
+    for (const L of rec.links) {
+      let list = this.inbound.get(L.lk);
+      if (!list) this.inbound.set(L.lk, list = []);
+      list.push(L);
+      const to = this.heads.get(L.lk);
+      if (to) this.patch(L, to);
+    }
+    if (stats) { stats.low = low; stats.prog = p; stats.native = rec.native; stats.bails = 0; stats.bailAt = new Map(); }
+    return rec;
+  }
+
+  patch(L, to) {
+    const t = to && to.live && to.entry ? to.entry : 0;
+    if (this.w[L.t] === t) return;
+    this.w[L.t] = t;
+    this.w[L.id] = t ? to.id : 0;
+    this.epoch++;
+  }
+
+  // rec is the program at its head ip: every link to that ip now goes there.
+  setHead(rec, ip) {
+    const lk = `${rec.key}:${ip}`;
+    this.heads.set(lk, rec);
+    for (const L of this.inbound.get(lk) || []) if (L.from.live) this.patch(L, rec);
+  }
+
+  // The program at this head is gone (demoted, rebuilt, bytes changed): no
+  // link may enter it. Its own code stays where it is, unreachable, and its
+  // outbound links leave the index.
+  dropHead(rec, ip, dead = true) {
+    const lk = `${rec.key}:${ip}`;
+    if (this.heads.get(lk) === rec) this.heads.delete(lk);
+    for (const L of this.inbound.get(lk) || []) if (this.w[L.t] === rec.entry) this.patch(L, null);
+    if (!dead) return;
+    rec.live = false;
+    for (const L of rec.links) {
+      const list = this.inbound.get(L.lk);
+      if (list) this.inbound.set(L.lk, list.filter((x) => x.from !== rec));
+    }
+  }
+
+  // Every program a run entered at rec can reach through taken links.
+  closure(rec) {
+    if (rec.closureAt === this.epoch) return rec.closureSet;
+    const seen = new Set([rec]), st = [rec];
+    while (st.length) {
+      const r = st.pop();
+      for (const L of r.links) {
+        if (!this.w[L.t]) continue;
+        const to = this.progs[this.w[L.id]];
+        if (!seen.has(to)) { seen.add(to); st.push(to); }
+      }
+    }
+    rec.closureAt = this.epoch;
+    rec.closureSet = [...seen];
+    return rec.closureSet;
+  }
+
+  // Run the slice from rec's entry. Returns the steps left, like enterOver;
+  // this.last is the program the run left from.
+  enter(rec, left) {
+    const vm = this.vm, ex = vm.exports, w = this.w, outv = this.outv;
+    ex.set_steps(left);
+    let steps = left | 0;
+    let F = ex.get_flags() >>> 0;
+    const lm = ex.mget_linmask() | 0, vk = this.dv.getInt32(isa.VGA_CTL_KEY, true);
+    const spm = ex.mget_spm() | 0, shm = ex.mget_shmask() | 0;
+    let cur = rec, pc = rec.entry, handle = rec.base + rec.low.entry;
+    for (;;) {
+      if (pc) {
+        w[LASTP >> 2] = cur.id;
+        const code = this.run(pc, steps, F, lm, vk, spm, shm, ex.get_smc() | 0);
+        steps = outv[0]; F = outv[1] >>> 0;
+        const lastId = w[LASTP >> 2];
+        if (lastId !== cur.id) { this.chains++; cur = this.progs[lastId]; }
+        if (code === 0) {
+          ex.set_steps(steps);
+          ex.set_flags(F);
+          ex.set_gip(outv[2] >>> 0);
+          this.last = cur;
+          if (this.noteExits) this.noteExit(cur, outv[2] >>> 0, steps);
+          return steps;
+        }
+        handle = outv[2];
+      }
+      cur = this.progs[this.owner[handle]];
+      const bid = handle - cur.base;
+      const st = cur.stats;
+      if (st) { st.bails++; st.bailAt.set(bid, (st.bailAt.get(bid) || 0) + 1); }
+      const vfile = new Int32Array(vm.memory.buffer, VFILE, cur.low.nvTotal);
+      for (const [x, v] of cur.low.consts) vfile[v] = x;
+      const r = runRef(vm, cur.p, { start: bid, v: vfile, steps, flags: F, stopAt: cur.native });
+      if (r.exit === 'go') { this.last = cur; if (this.noteExits) this.noteExit(cur, r.ip, r.steps); return r.steps; }
+      pc = cur.addr.get(r.bid); steps = r.steps; F = r.flags >>> 0;
+    }
+  }
+}
+
+
+module.exports = { EOPS, lowerProgram, encode, encodeE1, e1Runner, e1Enter, e1Wat, loopWat, threadWat, assignSlots, straightWat, makeEnter, VBASE, CODE, E1Arena };

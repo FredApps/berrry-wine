@@ -43,7 +43,7 @@ function envFromKey(key, mask) {
 class UopLive {
   constructor({ session, vm, sampleAfter = 0, profileFor = 2e6, top = 4, minShare = 0.03,
     maxRebuilds = 16, every = 0, maxHeads = 16, judgeAfter = 256, minPerEntry = 200, bailEvery = 64,
-    minBailSteps = 20000, passes = null, resume = true, log = () => {} }) {
+    minBailSteps = 20000, passes = null, resume = true, chain = false, log = () => {} }) {
     this.session = session;
     this.vm = vm;
     this.cache = session.cache;
@@ -54,6 +54,11 @@ class UopLive {
     this.maxRebuilds = maxRebuilds;
     this.passes = passes;
     this.resumeExits = resume;
+    // chain: every program lives in one E1 arena (uop-wasm.js E1Arena), with
+    // its registers resident, and a static exit onto another installed head
+    // goes straight on into that program inside the engine.
+    this.chain = chain;
+    this.arenaE = null;
     this.log = log;
     // Profile windows: the first at sampleAfter, then one every `every`
     // dispatches (0: ten windows' length) while there is room for heads.
@@ -76,7 +81,11 @@ class UopLive {
     session.uop = this;
   }
 
-  async init() { this.run = await W.e1Runner(this.vm); return this; }
+  async init() {
+    this.run = await W.e1Runner(this.vm);
+    if (this.chain) this.arenaE = new W.E1Arena(this.vm, this.run);
+    return this;
+  }
 
   // Once per slice. A slice a program ran is not a sample: $ip is the arena
   // address the compiled code last stood at, not where the guest is -- and
@@ -202,10 +211,17 @@ class UopLive {
       // A straight line is entered, runs a few instructions and hands back:
       // it costs a host round trip and saves nothing. Loops only.
       if (!reg.cyclic) { h.why = `not a loop: ${this.cutOf(reg)}`; return false; }
-      const passes = this.passes || OPT.ablationConfigs().find(([n]) => n === 'all')[1];
+      const passes = this.passes || OPT.ablationConfigs().find(([n]) => n === (this.chain ? 'allRP' : 'all'))[1];
       const prog = OPT.build(reg, { passes, env: h.env, vm });
       const st = {};
-      h.enter = W.e1Enter(vm, prog, this.run, st);
+      if (this.chain) {
+        if (h.rec) this.arenaE.dropHead(h.rec, h.ip);
+        h.rec = null;
+        const rec = this.arenaE.add(prog, `${h.key}|${h.env.mask}`, st);
+        rec.h = h;
+        h.rec = rec;
+        h.enter = (vm2, left) => this.arenaE.enter(rec, left);
+      } else h.enter = W.e1Enter(vm, prog, this.run, st);
       h.st = st;
       const covered = [];
       for (const k of reg.body) {
@@ -223,7 +239,7 @@ class UopLive {
       // Left to L1, which is exact. Seen at build with the segment bases of
       // the moment: a fixed-address store names one byte range per base.
       const selfStore = this.patchesItself(reg, covered);
-      if (selfStore) { h.why = `patches its own code at ${selfStore}`; return false; }
+      if (selfStore) { h.why = `patches its own code at ${selfStore}`; return this.unbuilt(h); }
       h.snap = this.snapshot(covered);
       h.shape = this.shapeOf(reg, h.st);
       // A BLOCK IN THE LOOP'S BODY THE ENGINE CANNOT RUN is a hand-off to the
@@ -234,12 +250,19 @@ class UopLive {
       // a winner's 0.05, for x1.35 (v8) / x1.81 (sm) over the whole program.
       // A bail somewhere off the loop -- a deopt arm, an exit -- is fine and
       // is not counted here; this is the body alone.
-      if (h.shape.bail) { h.why = `bail block(s) in the loop body (${h.shape.bail})`; return false; }
+      if (h.shape.bail) { h.why = `bail block(s) in the loop body (${h.shape.bail})`; return this.unbuilt(h); }
+      if (h.rec) this.arenaE.setHead(h.rec, h.ip);
       return true;
     } catch (e) {
       h.why = String(e && e.message || e).slice(0, 80);
-      return false;
+      return this.unbuilt(h);
     }
+  }
+
+  // A build that did not end installed leaves nothing in the arena to link to.
+  unbuilt(h) {
+    if (h.rec) { this.arenaE.dropHead(h.rec, h.ip); h.rec = null; }
+    return false;
   }
 
   // WHAT A HEAD IS, BEFORE IT HAS RUN ONCE. Three numbers, all of them free
@@ -283,6 +306,7 @@ class UopLive {
   }
 
   demote(h, why) {
+    if (h.rec) { this.arenaE.dropHead(h.rec, h.ip); h.rec = null; }
     this.heads.delete(h.hk);
     this.refused.add(h.hk);
     this.cache.uopHeads.delete(h.hk);
@@ -437,6 +461,7 @@ class UopLive {
       // The guest wrote into the program's bytes since it was built. Rebuild
       // from the new bytes, or give the head back to the compiler.
       if (++h.rebuilds > this.maxRebuilds || !this.build(h)) {
+        if (h.rec) { this.arenaE.dropHead(h.rec, h.ip); h.rec = null; }
         this.heads.delete(h.hk);
         // Refused, not merely dropped: code rewritten this often is not a
         // loop to hold. Reinstalled, BARTI.COM's 0xb5b gave up a second
@@ -450,16 +475,27 @@ class UopLive {
       }
       this.stats.rebuilds++;
     }
+    // Every program a chain from here can reach runs on bytes it was built
+    // from, or is unlinked: it rebuilds when the guest next stands at its own
+    // head, and its links come back with it. A program whose bytes came back
+    // is linked again here.
+    let reach = null;
+    if (h.rec) {
+      const A = this.arenaE;
+      if (A.heads.get(`${h.rec.key}:${h.ip}`) !== h.rec) A.setHead(h.rec, h.ip);
+      for (const r of A.closure(h.rec)) if (r !== h.rec && r.h && !this.current(r.h)) A.dropHead(r, r.h.ip, false);
+      reach = A.closure(h.rec).map((r) => r.h);
+    }
     const self = this;
     return (vm, left) => {
       self.stats.entries++;
       h.entries = (h.entries || 0) + 1;
       self.ranUop = true;
       const b0 = h.st.bails;
-      const added = self.guard(h);
+      const added = reach ? self.guardAll(reach) : self.guard(h);
       const out = h.enter(vm, left);
       if (added.length) self.unguard(added);
-      self.exit = { h, gip: vm.get('gip') >>> 0 };
+      self.exit = { h: reach && self.arenaE.last && self.arenaE.last.h ? self.arenaE.last.h : h, gip: vm.get('gip') >>> 0 };
       self.stats.steps += left - out;
       self.stats.bails += h.st.bails - b0;
       h.steps = (h.steps || 0) + left - out;
@@ -517,9 +553,12 @@ class UopLive {
   // break that only the µop tier's bits caused, or a bit that outlived the
   // compiled code it would have shadowed, moved L1's dispatch count with no
   // program even entered (cw2.com: -1 over 44M).
-  guard(h) {
+  guard(h) { return this.guardAll([h]); }
+
+  // A chained run's bytes are every program it can reach.
+  guardAll(hs) {
     const bits = this.cache.codeBits, added = [];
-    for (const [from, to] of h.prog.covered) {
+    for (const h of hs) for (const [from, to] of h.prog.covered) {
       for (let l = from; l < to; l++) {
         const m = 1 << (l & 7);
         if (!(bits[l >>> 3] & m)) { bits[l >>> 3] |= m; added.push(l); }
@@ -570,6 +609,31 @@ class UopLive {
     return 'no-hot-head';
   }
 
+  // Where chained runs left the arena, most frequent first, and what stands
+  // at each exit: an installed head (the link was not taken: budget or SMC),
+  // an instruction the µop tier has no form for (L1's, by design), or code a
+  // program could be built at -- which is what linking cannot reach yet.
+  exitCensus(top = 8) {
+    const A = this.arenaE, mask = this.vm.exports.get_linmask() >>> 0;
+    let total = 0;
+    for (const n of A.exits.values()) total += n;
+    const head = `early ${total} of ${total + A.dueExits}`;
+    return [head, ...[...A.exits].sort((a, b) => b[1] - a[1]).slice(0, top).map(([k, n]) => {
+      const [id, gip] = k.split(':').map(Number);
+      const rec = A.progs[id], h = rec.h;
+      let what;
+      if (!h) what = 'orphan';
+      else if (A.heads.has(`${rec.key}:${gip}`)) what = 'head';
+      else {
+        try {
+          const reg = IR.discover((lin) => this.vm.mem[lin], envFromKey(h.key, mask), gip, { benign: this.cache.benign });
+          what = !reg.body.size ? `unsupported ${reg.nodes.get(reg.headKey).unsupported}` : reg.cyclic ? 'loop' : `line ${reg.body.size}i`;
+        } catch (e) { what = `? ${String(e.message).slice(0, 30)}`; }
+      }
+      return `${(100 * n / total).toFixed(1)}% ${h ? h.hk : id}->${gip} ${what}`;
+    })];
+  }
+
   report() {
     const log = this.stats.windowLog;
     return { phase: this.phase, outcome: this.outcome(), windows: this.windows,
@@ -577,6 +641,7 @@ class UopLive {
       heads: [...this.heads.values()].map((h) => ({ head: h.hk, share: h.share, rebuilds: h.rebuilds, entries: h.entries || 0, steps: h.steps || 0, bails: h.bails || 0, shape: h.shape,
       bailAt: [...h.st.bailAt].sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([bid, n]) => `${n}x B${bid} ${h.st.prog.blocks[bid].kind} ${h.st.low.blocks.get(bid).why || 'native'}`) })),
+      chains: this.arenaE ? this.arenaE.chains : 0, exitsAt: this.arenaE ? this.exitCensus() : [], arenaBytes: this.arenaE ? this.arenaE.at - this.arenaE.progs[0]?.codeFrom || 0 : 0,
       ...this.stats };
   }
 }

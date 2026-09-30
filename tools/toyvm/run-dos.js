@@ -199,6 +199,10 @@ async function runDos(o) {
     // blocks and runs them on the E1 engine from then on. `true` for the
     // defaults, or an options object.
     uop = null,
+    // `--uop-only`: the µop-only arm (tools/toyvm/uop-only.js). Every
+    // instruction runs in a micro-op program on the E1 engine; L1 runs one
+    // instruction at a time where the µop set has no form. OFF by default.
+    uopOnly = null,
     // `--tree-fold`: the decode-time expression-tree fold
     // (tools/toyvm/tree-fold.js). OFF by default. `true` for the defaults, or
     // an options object. Like the region JIT it installs into the running
@@ -491,6 +495,10 @@ async function runDos(o) {
   }
 
   const t0 = process.hrtime.bigint();
+  // The whole run's CPU (user + system): what an arm costs with its handbacks,
+  // builds and host work included, on a meter the box's load cannot move.
+  // (Null where the host has no cpuUsage: the browser bundle's process shim.)
+  const runCpu0 = typeof process.cpuUsage === 'function' ? process.cpuUsage() : null;
   let guestNs = 0n;
   let uopBuildNs = 0n;
   let guestCpuUs = 0;
@@ -784,7 +792,9 @@ async function runDos(o) {
   const uopInitT0 = process.hrtime.bigint();
   const uopLive = uop
     ? await new (require('./uop-live').UopLive)({ session, vm, log, ...(uop === true ? {} : uop) }).init()
-    : null;
+    : uopOnly
+      ? await new (require('./uop-only').UopOnly)({ session, vm, log, ...(uopOnly === true ? {} : uopOnly) }).init()
+      : null;
   const uopInitNs = process.hrtime.bigint() - uopInitT0;
   let sliceT0 = 0n;
   let sliceCpu0 = null;
@@ -917,6 +927,7 @@ async function runDos(o) {
         isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2)) : null,
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
+    cpuSecs: runCpu0 ? (({ user, system }) => (user + system) / 1e6)(process.cpuUsage(runCpu0)) : null,
     // Inside `secs`: the µop engine's one-per-process compile (paid even when
     // nothing installs). A harness comparing runs subtracts it.
     uopInitSecs: Number(uopInitNs) / 1e9,
@@ -1147,7 +1158,20 @@ async function main() {
       sampleAfter: count(arg('uop-after'), 2e6),
       profileFor: count(arg('uop-window'), 2e6),
       top: Number(arg('uop-top', 4)),
+      chain: flag('uop-chain'),
       log: flag('uop-verbose') ? console.log : (() => {}),
+    } : null,
+    uopOnly: flag('uop-only') ? {
+      passes: arg('uop-only-passes', 'allRP'),
+      linePasses: arg('uop-only-line-passes', null),
+      shape: arg('uop-only-shape', 'loop'),
+      // `--uop-only-stay=0` hands back after every exit and fallback, as the
+      // arm first did: the A/B for the drive loop.
+      stay: arg('uop-only-stay', '1') !== '0',
+      // `--uop-only-io=0` leaves `in` to the L1 fallback.
+      io: arg('uop-only-io', '1') !== '0',
+      // `--uop-only-max-line=N`: the longest straight line built (uop-only.js build).
+      maxLine: Number(arg('uop-only-max-line', '32')),
     } : null,
     // `--tree-fold` folds a block's straight-line arithmetic into one generated
     // handler (tools/toyvm/tree-fold.js). OFF by default. `--tree-fold-min=N`
@@ -1475,7 +1499,17 @@ async function main() {
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`
     + (r.uopInitSecs ? ` (uop engine init ${(1000 * r.uopInitSecs).toFixed(0)}ms,`
       + ` build ${(1000 * r.uopBuildSecs).toFixed(0)}ms)` : ''));
-  if (r.uop) {
+  if (r.uop && r.uop.fallbacks) {
+    const u = r.uop;
+    console.log(`  uop-only: ${u.passes}/${u.shape} ${(100 * u.uopShare).toFixed(1)}% of steps in µop programs`
+      + `  programs=${u.builds} (loop ${u.shapes.loop}, line ${u.shapes.line}) entries=${u.entries} chains=${u.chains}`
+      + `  fallback sites=${u.fbSites} entries=${u.fbEntries} steps=${u.fbSteps}`
+      + `  invalidated=${u.invalidated} flushes=${u.flushes} arenaResets=${u.arenaResets}`
+      + `  stays=${u.stays}/${u.calls} calls (back: ${Object.entries(u.why || {}).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(', ')})${u.ioCuts ? `  IO CUTS=${u.ioCuts}` : ''}`
+      + (u.fbExitWhy && u.fbExitWhy.length ? `\n  uop-only: fallback handbacks ${u.fbExitWhy.map(([k, v]) => `${k}:${v}`).join(' ')}` : '')
+      + `  build ${(1000 * u.buildSecs).toFixed(0)}ms arena ${(u.arenaBytes / 1024).toFixed(0)}KB`);
+    console.log(`  fallback: ${u.fallbacks.slice(0, 10).map((f) => `${f.why} ${f.entries}e/${f.sites}s/${f.steps}st`).join(' | ')}`);
+  } else if (r.uop) {
     const u = r.uop;
     console.log(`  uop: ${u.phase} ${u.outcome} (windows=${u.windows} samples=${u.samples}`
       + ` best=${(100 * u.bestShare).toFixed(1)}%)  ${u.installs} head(s) [${u.heads.map((h) => `${h.head} e=${h.entries} s=${h.steps} b=${h.bails}`
@@ -1485,6 +1519,7 @@ async function main() {
       + `  bails=${u.bails} rebuilds=${u.rebuilds} gaveUp=${u.gaveUp}`
       + (u.declined.length ? `  declined: ${u.declined.join('; ')}` : '')
       + (u.demoted.length ? `  demoted: ${u.demoted.join('; ')}` : ''));
+    if (u.exitsAt && u.exitsAt.length) console.log(`  uop chains=${u.chains}  exits: ${u.exitsAt.join(' | ')}`);
   }
   // The live JIT's verdict, in one line: where it got to, what it installed and
   // what each stage cost. A run with `--region-jit` that says `declined` did

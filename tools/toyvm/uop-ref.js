@@ -222,7 +222,7 @@ function runRef(vm, p, opts = {}) {
   const linmask = ex.mget_linmask();
   const shmask = ex.mget_shmask();
   const spm = ex.mget_spm();
-  const vgaKey = dv.getInt32(isa.VGA_CTL_KEY, true);
+  let vgaKey = dv.getInt32(isa.VGA_CTL_KEY, true);
   const RF = isa.REGFILE_BASE, SB = isa.REGFILE_SEGB, SL = isa.REGFILE_SEL;
   // A wasm engine hands a run over mid-program (opts.start, with its vreg
   // file, budget and materialized flags word) and takes it back at the first
@@ -342,7 +342,12 @@ function runRef(vm, p, opts = {}) {
 
   for (;;) {
     if (stopAt && bid !== first && stopAt.has(bid)) {
-      if (smc !== (ex.get_smc() | 0)) { ex.set_smc(smc); ex.set_smclo(smclo); ex.set_smchi(smchi); }
+      // All three, always: a second bail into the reference within one run
+      // widens a range that is already 2 -- CMA_SHRT.EXE's extender stores
+      // the far pointer of its real-mode `call far` thunk one bail after the
+      // byte beside it, and the range that came back named only the byte,
+      // so the program over the pointer stood and called the old vector.
+      ex.set_smc(smc); ex.set_smclo(smclo); ex.set_smchi(smchi);
       return { exit: 'bail', bid, steps, flags: fl.word(), n: nops, blocks, heads };
     }
     const b = p.blocks[bid];
@@ -446,6 +451,16 @@ function runRef(vm, p, opts = {}) {
           break;
         }
         case 'shift': v[op.d] = shiftHelper(new LazyFlags(0, 0), op.sh, op.w, v[op.a], op.i, 0xFFFFFFFF); break;
+        // A port read, answered by L1 at L1's clock: $steps as L1 would have
+        // it at this instruction's handler (uop-ir.js 'in').
+        case 'pin': v[op.d] = ex.io_in(v[op.a] & 0xFFFF, op.w, (steps + op.adj) | 0); break;
+        case 'pout': {
+          const st = (steps + op.adj) | 0;
+          const r = ex.io_out(v[op.a] & 0xFFFF, v[op.b], op.w, st) | 0;
+          vgaKey = dv.getInt32(isa.VGA_CTL_KEY, true);
+          if (r !== st) { steps = (r - op.adj) | 0; if (op.dx >= 0) next = op.dx; }
+          break;
+        }
         case 'callh': {
           if (!op.sh) throw new Error(`callh ${op.fn}`);
           v[op.d] = shiftHelper(fl, op.sh, op.w, v[op.a], v[op.b], shmask);

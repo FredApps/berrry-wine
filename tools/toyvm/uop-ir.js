@@ -81,6 +81,9 @@ function discover(rd, env, headIp, opts = {}) {
     const n = queue.shift();
     const d = n.d;
     if (!supported(d)) { n.unsupported = d.why || d.kind; continue; }
+    // Port reads are a call into L1 at the instruction's own clock (PIN), and
+    // only the µop-only arm asks for them: anything else keeps them in L1.
+    if ((d.kind === 'in' || d.kind === 'out') && !opts.io) { n.unsupported = d.kind; continue; }
     const s = successors(d);
     const out = [];
     if (!s) out.push(['fall', d.next, n.ctx]);
@@ -757,6 +760,30 @@ class Lowerer {
         }
         return;
       }
+      // A port read: L1's own `in` (emit.js io_in) at the dispatch count this
+      // instruction runs at -- PIN's `adj` says how far $steps is from it
+      // (-1 here: this instruction's STEP is still to come; uop-opt.js
+      // finalize resets it where the clock pass charged ahead).
+      case 'in': {
+        const port = d.port >= 0 ? L.movi(d.port) : L.getReg(2, 16);
+        const v = L.t();
+        L.op({ o: 'pin', d: v, a: port, w: d.w, adj: -1 });
+        L.putReg(0, d.w, L.imm('andi', v, MASK[d.w]));
+        break;
+      }
+      // A port write: L1's own `out` (emit.js io_out) at L1's clock, as PIN.
+      // The write may CUT the slice (Machine.endSlice: $steps to -1), and
+      // then L1 runs on to its next transfer and stops there. POUT hands
+      // back what $steps became; here, in the slow half, that is all it
+      // takes -- this instruction's STEP and the transfer tests are where
+      // L1's are. The fast half has charged ahead and tests elsewhere, so
+      // there a cut leaves (dx, uop-opt.js deoptAfter) into this half at
+      // the next instruction.
+      case 'out': {
+        const port = d.port >= 0 ? L.movi(d.port) : L.getReg(2, 16);
+        L.op({ o: 'pout', a: port, b: L.getReg(0, d.w), w: d.w, adj: -1, dx: -1 });
+        break;
+      }
       case 'jmp': L.step(); return;
       case 'call': {
         L.push(L.movi(d.next), d.w);
@@ -806,7 +833,7 @@ function def(op) {
   return (op.d !== undefined && op.d >= 0) ? op.d : -1;
 }
 // Ops with an effect beyond their destination.
-const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld',
+const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld', 'pin', 'pout',
   'getcc', 'getf', 'fvset', 'check', 'dchk', 'divq', 'divr', 'puts', 'putsel', 'getsel']);
 function pure(op) { return !SIDE.has(op.o); }
 
