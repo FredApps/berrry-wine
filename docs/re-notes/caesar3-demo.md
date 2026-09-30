@@ -67,8 +67,8 @@ not a sampling error.
 
 ## The unrolled tile blit and the uop tier (2026-09-29)
 
-`exe+0x41ceb0` is the function that runs the RECT_RUN fold (H427, switch
-`--no-fold=rect-run`). It is wrapped in `pushad` (`exe+0x41ced7`) and `popad`
+`exe+0x41ceb0` is the function that ran the RECT_RUN fold (H427, retired
+2026-09-30, see the update below). It is wrapped in `pushad` (`exe+0x41ced7`) and `popad`
 (`exe+0x41e085`), and its body is two fully unrolled copies with no loop:
 
 - **Top half: `exe+0x41cf0f`..`exe+0x41d799`.** About 467 straight
@@ -146,3 +146,41 @@ larger cap recovers about 4% of that 37%: 6.11 s at max 400, which is the one
 program at `0x41d002` running before it is retired, plus the rest of the
 program mix. Full table: §20 of
 [uop-tier-design.md](../uop-tier-design.md).
+
+**Update 2026-09-30: the uop tier takes the blit and RECT_RUN is retired**
+(4a9dc294; details in §21 of [uop-tier-design.md](../uop-tier-design.md)).
+
+- **How the tier takes it.** The three prerequisites above landed, but in a
+  different form:
+  - pushad/popad became micro-op kind 31;
+  - the poor rule now credits x86 work (op 84);
+  - the cap stayed at 160. Instead of a bigger cap, a trace ends in a cut
+    exit, so each half runs as a chain of 160-instruction traces.
+- **Supporting fixes.**
+  - MCOPY coalesces the `mov r,[S+d] / mov [D+d'],r` rows.
+  - DIB pages no longer alias `.text` in the code-page bitmap.
+  - Hot-table slots are sticky, so the tail at `0x41de07` reaches its
+    threshold.
+  - Cut landings end threaded blocks, which fixed a Diablo regression the
+    cut exits had caused.
+- **Result.** On box2, with `--branch-clock` and 3 interleaved reps:
+  - fold on: 4.548 s, band 1.3%;
+  - fold off: 4.590 s (+0.9%);
+  - the retired build: 4.58 / 4.61 / 4.58;
+  - frames md5-identical throughout.
+
+Per-site census, fold off:
+
+| head | status |
+|---|---|
+| `0x41ceb0` | trace, 36 insns |
+| `0x41cef6` | head-unsupported, dead |
+| `0x41cf0f`, `0x41d1b6`, `0x41d4ca`, `0x41d7a0`, `0x41d7db`, `0x41dab9`, `0x41daf3` | traces, 160 insns |
+| `0x41ddcd` | trace, 149 insns |
+| `0x41de07` | trace, 137 insns, through `popad` |
+| `0x41e007` | trace, 32 insns |
+| `0x41e085` (`popad`/`ret`) | declined, no back edge |
+| `0x41e08a` | declined |
+
+The fold's slot 427 is now `$th_retired_fold`. `--no-fold=rect-run` and
+`--no-rect-run` no longer exist.

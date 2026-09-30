@@ -2148,7 +2148,7 @@ route unless noted.
 | LUT_SPAN (431), incl. Jazz 2 lighting mode 2 | `lut-span` | Diablo II `d2gfx`, Jazz 2 | jazz2g 641,572 → 765 | retired, 0cc038f1 |
 | COPY32 counted (419 `0x80000004`) | `copy32-counted` | Diablo (app profile) | H419 22.0M → 111K | retired, cb514459 |
 | RLE_RUN (429) | `rle-run` | Caesar III | 4.76M → 1,074 | **kept** |
-| RECT_RUN (427) | `rect-run` | Caesar III | 577K → 482K (uop does not take it) | **kept** |
+| RECT_RUN (427) | `rect-run` | Caesar III | 577K → 482K (uop did not take it then) | kept then; **retired** in 4a9dc294 (§21) |
 | PCX_RUN (462) | `pcx-run` (removed) | Quake II | 9,918 → 1,318 | kept, then **retired** once uop lowered `rep stos` (section 19) |
 | AoE span prefix (438) | `aoe-span` | Age of Empires I/II | 2.17M → 1,020 | **kept** |
 | AoE grid fill (437) | `aoe-fill` | Age of Empires I/II | 0 / 0 on aoe1 | **kept** (not reached) |
@@ -2177,7 +2177,7 @@ User CPU in seconds. Whole run unless a gameplay phase (the last
 | SimGolf, four CK folds | 20.09-20.66 (7 runs) | 20.14-20.49 (7 runs) | — | identical, also to fold-off threaded | retired |
 | Caesar III, CASE_CHAIN | 4.79, 4.77 | 4.77, 4.78 | — | identical | retired |
 | Caesar III, RLE_RUN | 4.79, 4.77 | 4.83, 4.89 (+1.3%) | — | — | kept |
-| Caesar III, RECT_RUN | 4.79, 4.77 | 6.40, 6.42 (+34%) | — | — | kept |
+| Caesar III, RECT_RUN | 4.79, 4.77 | 6.40, 6.42 (+34%) | — | — | kept; retired later (§21: +0.9% once uop takes the blit) |
 | Quake II, PCX_RUN | 6.78, 6.88 | 6.96, 7.17 (+3%) | off 8.31, fold off 8.47 | identical | kept; retired in section 19 (fold off with COPY/FILL: −0.5%) |
 | MW3, all three blits | 322.31, 323.33 | 308.22, 319.71 (−4.4%; gameplay −1.8%) | off 326.85 | identical | retired |
 | Jazz 2 level (jazz2g), mask copy | 14.25, 14.08, 14.12 | 14.02, 13.99, 14.69 | off 28.54, fold off 28.43 | see below | retired |
@@ -2218,7 +2218,8 @@ User CPU in seconds. Whole run unless a gameplay phase (the last
   retirement here without a direct measurement.
 - **What is left is either measured or unreachable.**
   - RECT_RUN (+34%), PCX_RUN (+3%) and RLE_RUN (+1.3%) still pay. RECT_RUN is
-    straight-line unrolled rows, not a loop, so uop does not take it.
+    straight-line unrolled rows, not a loop, so uop did not take it. Section
+    21 makes the tier take it as straight-line traces and retires the fold.
     PCX_RUN's margin was the two `rep stos` the tier could not lower; section
     19 lowers them and retires it.
   - The AoE folds, XLAT/STOSB, COLORKEY8 and the UE1 MMX folds stay until a
@@ -2374,7 +2375,8 @@ Taking this function would need all of:
 
 At the default cap the fold does not change a single uop counter: fold on and
 off give the same 828 installs and the same 8,040,181 enters. It only changes
-what the threaded fallback runs. RECT_RUN stays.
+what the threaded fallback runs. RECT_RUN stays -- until section 21, which
+makes the tier take the blit and retires the fold.
 
 ### 20.3 Sweep
 
@@ -2472,3 +2474,211 @@ slow first run widened.
   - So if a larger cap is ever tried again, keep the x86 cap and add a second
     guard in uops, or in arena share per program, rather than switch units.
     It is the arena, not the per-trace length, that Diablo runs out of.
+
+## 21. Straight-line traces take Caesar III's tile blit (RECT_RUN retired)
+
+Question: can the tier run Caesar III's fully unrolled tile blit
+(`exe+0x41ceb0`) as ordinary straight-line code, well enough that the
+one-app fold RECT_RUN (H427) has nothing left to earn? It can. The fold was
+retired in 4a9dc294. What follows is the order the pieces landed in, and what
+each one did. All numbers come from box2, with `--branch-clock`, fixed work,
+user CPU in seconds and 3 interleaved reps, via `tools/uop-game-ab.js`.
+
+### 21.1 Poor rule credits work, not loop iterations (b25d5a47)
+
+- **Old rule.** The poor-program rule killed a program whose entries retired
+  too few blocks per enter.
+- **Why that was wrong here.** A straight-line trace of 160 x86 instructions
+  retires only one or two blocks per enter, yet it is exactly the program we
+  want.
+- **New rule.** Op 84 (`WORK`) credits a trace its x86 instruction count.
+  - `$UOP_POOR_WORK` (16) is the per-enter work floor.
+  - `--uop-poor-work=N` tunes it. A huge N restores the old behaviour.
+
+### 21.2 pushad/popad as micro-ops (af219050)
+
+- **Change.** Kind 31 lowers `pushad`/`popad` to eight stores or loads plus
+  the ESP adjust. Previously they were a head-unsupported decline.
+- **Why it matters.** The blit opens with `pushad` and closes with `popad`,
+  so every trace through either end was declined before this.
+
+### 21.3 Trace cut exits (bc395325, `--no-uop-trace-cut`)
+
+- **Change.** At the x86 cap, a trace now ends in a cut exit to the next
+  instruction instead of declining the whole head.
+- **Why.** The blit halves are ~470 instructions each, far over the cap, so
+  they become chains of 160-instruction traces.
+- **Accounting.**
+  - A cut is not a branch. `$th_block_end` refunds it, so the branch-clock
+    charge is identical.
+  - The cap is still counted in x86 instructions.
+
+### 21.4 MCOPY: coalesced load/store pairs (ae4ad127, `--no-uop-mcopy`)
+
+- **Change.** Within one compiler block, a run of k >= 2 pairs becomes LEA,
+  LEA and one op 85 (`$uc_try_mcopy`). A pair is
+  `mov r,[S+ds+4i] / mov [D+dd+4i],r`, with one `r`, and `r` in neither
+  address form.
+- **What it preserves.**
+  - **Final registers.** Every member is a `mov`, so no flag and no address
+    register moves inside the run. `r` is left holding the last dword
+    written, which is what the last load read.
+  - **Order under aliasing.**
+    - Semantics are k dwords copied forward, element by element, in x86
+      order.
+    - The fast arm is one `memory.copy`, taken only when both extents sit
+      inside their windows and do not overlap, so the order cannot show.
+    - Otherwise `$uop_mcopy_slow` copies element by element through
+      `$gl32`/`$gs32`.
+  - **Page safety and code-write invalidation.**
+    - If a page is unmapped, or a destination page needs a store barrier,
+      nothing has been written yet.
+    - The run then exits to its first load's deopt stub, and threaded code
+      runs every pair.
+  - **Branch clock and cap.** Both are unchanged: the run stays inside one
+    block, and the cap counts the member instructions.
+  - **Cut boundaries.**
+    - Only the first member may be a seam.
+    - The run ends before the block's last instruction, so exit handling
+      stays with the ordinary path.
+    - No member may be an aggressive-stack forward.
+- **Bug found on the way.** The COPY/FILL store window was being recorded
+  read-only instead of read-write. It is fixed in the same commit.
+
+### 21.5 Sticky hot-table slots (943c97b9, `--no-uop-hot-sticky`)
+
+- **Problem.** The bottom-half tail (`exe+0x41de07`) never reached its
+  install threshold. Its hot-table slot was evicted by a foreign EIP between
+  visits, and the count restarted at zero every time.
+- **Change.** In `$bx_hot_bump`, a foreign EIP now decrements a nonzero count
+  (counted by `uop_hot_decays`) instead of evicting it.
+- **Effect.**
+  - Before sticky, c3's gameplay window was 25.96M ops with H421 at 1.68M
+    (fold on) and 33.8M ops with H421 at 9.36M (fold off).
+  - After it, the window is 22.13M ops with H421 693K (fold on) and 22.11M
+    ops with H421 900K (fold off).
+- **Known cost: compile churn.** The old reset acted as a time decay, and
+  sticky counts let more lukewarm heads install:
+
+  | game | installs sticky / old | kills | flushes |
+  |---|---|---|---|
+  | c3 | 1488 / 900 | 40 / 33 | 9 / 5 |
+  | sc | 5972 / 833 | 2473 / 110 | 24 / 3 |
+  | h3 | 1874 / 739 | 113 / 46 | 10 / 3 |
+
+  It is time-neutral on every guard (21.8), so it stays on. A faster decay
+  or periodic halving is the obvious knob if the churn ever shows up in time.
+
+### 21.6 Cut landings are block boundaries (013ad3cf)
+
+- **Symptom.** With cut exits on, Diablo regressed.
+- **Mechanism.**
+  - The cut exits land mid-way through threaded blocks in Smacker-generated
+    blitter code (heap memory past smackw32, `0xac9xxx`).
+  - The threaded path then publishes a block at the landing, which retires
+    the covering block (one owner per byte, `$page_retire_at`).
+  - The next entry from the head re-decodes the covering block, and the two
+    keep retiring each other.
+  - Result: 99,556 overlap retirements against 1,914 without cuts, and full
+    clears rose from 9 to 16.
+- **Fix.**
+  - `$uc_form_trace` records each cut landing in a 256-entry table in the
+    arena (`$uop_cut_note`), when trace cuts and the branch clock are on.
+  - `$fuse_stop` consults it (`$uop_cut_probe`), so the threaded decoder ends
+    a block at a cut landing instead of running through it.
+  - `$uop_flush_all` clears the table.
+- **Effect.** Retirements fall to 4,928 and full clears to 2. Diablo moves
+  from +1.4% slower than the old configuration to 2.4% faster (21.8).
+
+### 21.7 Code-page slot fold (97dda357; census refusals in a3aa6b14)
+
+- **Problem.** The code-page bitmap slot dropped address bit 30, so DIB pages
+  (guest `0x50000000`) aliased `.text`.
+- **Consequence.** Every blit store into the DIB looked like a code write,
+  and the census refused windows for it.
+- **Fix.** Bit 30 is folded into slot bit 15.
+- **Effect.** This single fix took the c3 fold-off penalty from +30% to
+  +6.5% (21.8).
+
+### 21.8 A/B
+
+**c3, fold on vs fold off, by build**
+
+| build | fold on | fold off | fold off cost |
+|---|---|---|---|
+| before (section 20) | 4.63 | 6.35 | +37% |
+| ae4ad127 | ~5.71 | ~7.45 | +30% |
+| 97dda357 | ~4.47 | ~4.76 | +6.5% |
+| 013ad3cf | 4.548 | 4.590 | **+0.9%** |
+
+**c3 on 013ad3cf, per rep**
+
+| arm | reps | mean | vs uop |
+|---|---|---|---|
+| uop | 4.54 4.57 4.52 | 4.548 (with the uop2 reps) | 0 |
+| uop2 (null) | 4.55 4.53 4.58 | same | band 1.3% |
+| nf (`--no-fold=rect-run`) | 4.60 4.59 4.58 | 4.590 | +0.9% |
+| nfns (fold off, no sticky) | 4.72 4.68 4.68 | 4.693 | +3.2% |
+| retired build 4a9dc294 | 4.58 4.61 4.58 | 4.590 | same as nf |
+
+- Frames are identical in every arm and rep, 3 shots each.
+- On the retired build, the md5 of all three shots matches nf, and so does
+  the census.
+
+**Guards on 013ad3cf.** `old` means all four changes off: no trace cut,
+poor-work at 1073741824, no mcopy, no hot sticky.
+
+| game | uop | old | delta |
+|---|---|---|---|
+| Diablo | 90.55, 92.42 | 94.39, 93.17 | -2.4% (band 1.3%) |
+| StarCraft | 16.01, 16.23 | 15.86, 16.34 | +0.1% |
+| Heroes III | 53.17, 52.61 | 53.08, 52.55 | +0.1% |
+
+- Diablo's boot phase is 21.2 / 21.4 (uop) against 23.4 / 23.0 (old).
+- All guard frames are identical.
+
+**Counters on 013ad3cf**
+
+| game | arm | installs | kills (poor) | flushes | enters | blocks/enter |
+|---|---|---|---|---|---|---|
+| c3 | uop | 1488 | 40 (40) | 9 | 8.91M | 28.2 |
+| c3 | nf | 1524 | 38 (38) | 9 | 8.94M | 28.2 |
+| Diablo | uop | 10805 | 7763 (95) | 34 | 219.9M | 6.36 |
+| Diablo | old | 2809 | 1911 (58) | 11 | 215.5M | 6.32 |
+| sc | uop | 5972 | 2473 (171) | 24 | 8.42M | 21.3 |
+| h3 | uop | 1874 | 113 (113) | 10 | 62.2M | 10.4 |
+
+### 21.9 Per-site census of the blit (fold off, 013ad3cf)
+
+| head | status |
+|---|---|
+| `41ceb0` | trace, 36 insns, x5 |
+| `41cef6` | head-unsupported, dead (sig `0x400f7`) |
+| `41cf0f`, `41d1b6`, `41d4ca` | traces, 160 insns, x5 |
+| `41d7a0` | trace, 160, x5 |
+| `41d7db`, `41daf3` | traces, 160, x5 |
+| `41dab9` | trace, 160, x4 |
+| `41ddcd` | trace, 149, x5 |
+| `41de07` | trace, 137, x5 (runs through `popad`) |
+| `41e007` | trace, 32, x1 |
+| `41e085` (`popad`/`ret`) | declined, why 4 (no back edge), marked dead |
+| `41e08a` | declined, why 3 |
+
+- Every trace listed is a live program at exit.
+- The fold-on arm has the same list, plus `41d793` and `41da8d`/`41dda1`.
+  Those are the pair-fold boundaries the fold leaves behind.
+
+### 21.10 Verdict
+
+- **RECT_RUN is retired** (4a9dc294). Fold off sits inside the band of fold
+  on (+0.9% against a 1.3% band) and the frames match.
+  - Slot 427 is `$th_retired_fold`.
+  - The handler, `$sprite_scan`, `$try_emit_rect_run`, `set_rect_run` and
+    `--no-rect-run` / `--no-fold=rect-run` are gone.
+- **All four mechanisms stay on by default.** No guard regressed outside its
+  band. Each keeps its A/B flag:
+  - `--uop-poor-work`;
+  - `--no-uop-trace-cut`;
+  - `--no-uop-mcopy`;
+  - `--no-uop-hot-sticky`.
+- **Left open:** the compile churn from sticky slots (21.5).
