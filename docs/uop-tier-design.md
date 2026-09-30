@@ -2149,7 +2149,7 @@ route unless noted.
 | COPY32 counted (419 `0x80000004`) | `copy32-counted` | Diablo (app profile) | H419 22.0M → 111K | retired, cb514459 |
 | RLE_RUN (429) | `rle-run` | Caesar III | 4.76M → 1,074 | **kept** |
 | RECT_RUN (427) | `rect-run` | Caesar III | 577K → 482K (uop does not take it) | **kept** |
-| PCX_RUN (462) | `pcx-run` | Quake II | 9,918 → 1,318 | **kept** |
+| PCX_RUN (462) | `pcx-run` (removed) | Quake II | 9,918 → 1,318 | kept, then **retired** once uop lowered `rep stos` (section 19) |
 | AoE span prefix (438) | `aoe-span` | Age of Empires I/II | 2.17M → 1,020 | **kept** |
 | AoE grid fill (437) | `aoe-fill` | Age of Empires I/II | 0 / 0 on aoe1 | **kept** (not reached) |
 | XLAT/STOSB (418 form) | `xlat-stosb` | Diablo | not reached on the route | **kept** (not reached) |
@@ -2178,7 +2178,7 @@ User CPU in seconds. Whole run unless a gameplay phase (the last
 | Caesar III, CASE_CHAIN | 4.79, 4.77 | 4.77, 4.78 | — | identical | retired |
 | Caesar III, RLE_RUN | 4.79, 4.77 | 4.83, 4.89 (+1.3%) | — | — | kept |
 | Caesar III, RECT_RUN | 4.79, 4.77 | 6.40, 6.42 (+34%) | — | — | kept |
-| Quake II, PCX_RUN | 6.78, 6.88 | 6.96, 7.17 (+3%) | off 8.31, fold off 8.47 | identical | kept |
+| Quake II, PCX_RUN | 6.78, 6.88 | 6.96, 7.17 (+3%) | off 8.31, fold off 8.47 | identical | kept; retired in section 19 (fold off with COPY/FILL: −0.5%) |
 | MW3, all three blits | 322.31, 323.33 | 308.22, 319.71 (−4.4%; gameplay −1.8%) | off 326.85 | identical | retired |
 | Jazz 2 level (jazz2g), mask copy | 14.25, 14.08, 14.12 | 14.02, 13.99, 14.69 | off 28.54, fold off 28.43 | see below | retired |
 | Jazz 2 level (jazz2g), LUT_SPAN | 14.25, 14.08, 14.12 | 14.30, 14.16, 14.06 | fold off 28.39 | identical | retired |
@@ -2219,5 +2219,79 @@ User CPU in seconds. Whole run unless a gameplay phase (the last
 - **What is left is either measured or unreachable.**
   - RECT_RUN (+34%), PCX_RUN (+3%) and RLE_RUN (+1.3%) still pay. RECT_RUN is
     straight-line unrolled rows, not a loop, so uop does not take it.
+    PCX_RUN's margin was the two `rep stos` the tier could not lower; section
+    19 lowers them and retires it.
   - The AoE folds, XLAT/STOSB, COLORKEY8 and the UE1 MMX folds stay until a
     route that reaches them exists.
+
+## 19. Bulk memory: COPY/FILL and `rep movs`/`rep stos` (2026-09-29)
+
+Before this, any `rep` prefix declined the instruction, so a loop that
+contained one compiled only up to it: the program side-exited at every rep and
+re-entered after the threaded block ran it. Quake II's PCX expander (two
+`rep stos` per token) is the case that kept PCX_RUN alive in section 18.
+
+- **Engine: op 82 `COPY d s n w wd ws x` (32 bytes) and op 83 `FILL d v n w wd
+  x` (28 bytes).** `d`/`s`/`n` are the EDI/ESI/ECX slots, `w` the element width
+  (1/2/4, and 8 for an MMX FILL whose `v` is an MMX cell), `wd`/`ws` the
+  destination/source windows and `x` the side-exit stub.
+  - *Fast arm, in `$uop_fast`.* A count of 0 is a no-op. The whole extent,
+    DF-adjusted to its low end, must lie inside the (re-guarded) window, and a
+    count above 1M elements goes to the slow arm. FILL is `memory.fill` for a value of one
+    repeated byte, else one element stored and doubled with `memory.copy`.
+    COPY is one `memory.copy`, and only when the two *wasm* ranges do not
+    overlap at all -- any overlap goes to the slow arm, which keeps element
+    order.
+  - *Slow arm, `$uop_bulk_slow` via `$uop_run`.* Re-guards the windows, then
+    walks every page of both extents: each must be mapped, and a destination
+    page must not need a store barrier (code or watched page). A failing page
+    side-exits to `x` *before anything is written*, so the threaded rep runs
+    the instruction and does its own code-write invalidation. Otherwise it runs
+    05b's shared core and updates the registers.
+  - Both arms leave ECX 0 and ESI/EDI moved by ±count·w with DF, exactly as
+    the instruction does. Clock charge is 0: a rep is one instruction of its
+    threaded block, and the threaded handler charges nothing extra.
+  - Counters: `uop_bulk_stats(0)` slow-arm runs, `(1)` deopts to threaded.
+- **05b core, shared.** `$rep_movs_mem`/`$rep_stos_mem` replaced the four
+  per-width rep bodies: invalidate the destination extent, then an element
+  loop when the guest ranges overlap in the copy direction or either range is
+  not contiguous in wasm memory, else `memory.copy`/`memory.fill`. The threaded
+  handlers, 07c's region executor and the uop slow arm all run this one code.
+- **Compiler: kind 30.** `F3 A4/A5/AA/AB`, with `66` for the word forms, 32-bit
+  addressing, no segment override; `F2`, 16-bit addressing, segment overrides,
+  `cmps`/`scas`/`lods`/`ins`/`outs` all stay unsupported. `--no-uop-rep`,
+  `set_uop_rep(0)` or `uopRep: false` turns the lowering off; the setter is
+  inherited by worker instances.
+- **Tests (`test/test-uop-compiler.js`).** Sixteen table cases (every width,
+  both directions, overlapping, uniform fill, the gate off, a segment-prefixed
+  decline) under both clocks; `rep-oracle`, an element-by-element JS model
+  over six forms × DF × seven layouts (disjoint, hazardous and benign overlap,
+  exact alias, zero, one, a 900-element run across a page seam) checked in
+  both the threaded and the compiled arm; `rep-sparse`, non-contiguous sparse
+  pages that must take the slow arm; `rep-code-write`, a FILL over a compiled
+  program that must deopt and kill it; and `pcx-body`, ref_soft's 108-byte PCX
+  loop verbatim against threaded code, with the rep lowering on and off.
+
+### 19.1 Quake II A/B, and PCX_RUN retired
+
+Box2 (5.39.74.209), `tools/uop-game-ab.js --games=q2`, branch clock, fixed
+work (1400 batches), user CPU, arms interleaved, three runs each:
+
+| arm | runs (s) | mean | vs uop |
+|---|---|---|---|
+| uop (fold on, rep lowering on) | 6.83, 6.90, 6.87 | 6.87 | — |
+| fold off, rep lowering on | 6.89, 6.95, 6.66 | 6.83 | −0.5% |
+| fold off, rep lowering off (section 18's fold-off arm) | 7.05, 7.18, 7.19 | 7.14 | +4.0% |
+| fold on, rep lowering off (section 18's uop arm) | 6.82, 7.14, 7.29 | 7.08 | +3.1% |
+| threaded (`--no-uop`) | 8.18 | — | +19% |
+
+All 13 final frames are one md5. With the fold off, uop enters fall from
+10.59M to 8.82M once the fills stay inside the program. Fold off with COPY/FILL
+is not slower than fold on, so PCX_RUN is retired: slot 462 is
+`$th_retired_fold`, and its matcher, handler, counters, exports, `--no-pcx-run`
+/ `--no-fold=pcx-run` switch, worker setter and `test-stream-fold.js` are gone
+(the loop itself lives on as the `pcx-body` exactness case).
+
+Not done: collapsing counted load/store loops (UE1's MMX copy64/fill64, AoE's
+grid fill) into COPY/FILL. Those folds have no route on the boxes that reaches
+them (section 18.2), so a retirement could not be measured, and they stay.

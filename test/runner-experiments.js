@@ -219,12 +219,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const NO_RECT_RUN = hasFlag('no-rect-run');
   const NO_JUMP_TABLE = hasFlag('no-jump-table');
   const NO_RLE_RUN = hasFlag('no-rle-run');
-  // The stream-idiom fold (docs/loop-idiom-superops-design.md §20; its
-  // SMK_TREE sibling is retired, docs/uop-tier-design.md section 18). On by
-  // default; the off switch exists for the same reason the ones above do: a
-  // same-binary A/B of the fold against the threaded blocks it replaced. It
-  // is decode-time, so the two arms have to be separate runs.
-  const NO_PCX_RUN = hasFlag('no-pcx-run');
   // Prototype folds under measurement, both off unless asked for.
   const ALU8_SIB = hasFlag('alu8-sib');
   const IMPLODE_CMP_RUN = hasFlag('implode-cmp-run');
@@ -235,7 +229,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // a typo would otherwise be an A/B of a build against itself.
   const FOLD_SETTERS = {
     'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
-    'pcx-run': 'set_pcx_run',
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
   };
@@ -335,7 +328,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
     if (NO_JUMP_TABLE) inheritWasm('set_jump_table', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
-    if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
     if (ALU8_SIB) inheritWasm('set_alu8_sib', 1);
     if (IMPLODE_CMP_RUN) inheritWasm('set_implode_cmp_run', 1);
     for (const s of FOLD_OFF_SETTERS) inheritWasm(s, 0);
@@ -500,9 +492,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_RLE_RUN && instance.exports.set_rle_run) {
       instance.exports.set_rle_run(0);
-    }
-    if (NO_PCX_RUN && instance.exports.set_pcx_run) {
-      instance.exports.set_pcx_run(0);
     }
     if (ALU8_SIB && instance.exports.set_alu8_sib) instance.exports.set_alu8_sib(1);
     if (IMPLODE_CMP_RUN && instance.exports.set_implode_cmp_run) instance.exports.set_implode_cmp_run(1);

@@ -49,7 +49,7 @@ for (const setter of [
   'set_rle_run', 'set_tree_fold', 'set_region_fold',
   // --no-fold=NAME (docs/uop-tier-design.md section 18): every fold switch
   // must reach guest-thread instances, or a fold-off arm is half on.
-  'set_pcx_run', 'set_fold_off_mask',
+  'set_fold_off_mask',
   'set_block_exec', 'set_block_exec_min_uops', 'set_block_exec_regions',
   'set_block_exec_walk_k', 'set_block_exec_walk_budget', 'set_block_exec_split',
   // host.js and run.js record these three; before they were in the table the

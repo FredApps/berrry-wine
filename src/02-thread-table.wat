@@ -531,7 +531,7 @@
     $th_bx_resume             ;; 459: the fallback resume trampoline (empty)
     $th_retired_fold          ;; 460: retired (was CK_COPY8, SimGolf keyed 8bpp row; uop runs it)
     $th_retired_fold          ;; 461: retired (was SMK_TREE, Smacker Huffman descent; uop runs it)
-    $th_pcx_run               ;; 462: a whole Quake II PCX/WAL run expansion
+    $th_retired_fold          ;; 462: retired (was PCX_RUN, Quake II PCX/WAL run expander; uop runs it with FILL)
     $th_block_exec_leaf       ;; 463: a ONE-block descriptor, no region machinery
     $th_block_exec_leaf_fb    ;; 464: the same leaf, but it may fall back
     $th_alu_m8_r_sib          ;; 465: [base+index*scale+disp] OP= r8, SIB fused
