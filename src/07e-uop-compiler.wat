@@ -45,6 +45,9 @@
   ;;   28 table jump (jmp [disp + r*4], $uc_jt_targets: +140 table length,
   ;;   +160 distinct targets, +224 their count).
   ;;   29 movsd (unprefixed): O0=[EDI], O1=[ESI], runtime DF step.
+  ;;   31 pushad / popad (32-bit forms only; +12 0 pushad, 1 popad): O1 the
+  ;;   lowest slot, [esp-32] / [esp]; the lowering walks its disp over the
+  ;;   eight slots.
   ;; ALU op: 0 add 1 or 2 adc 3 sbb 4 and 5 sub 6 xor 7 cmp; shift op:
   ;;   0 shl 1 shr 2 sar 3 rol 4 ror (rol/ror only by immediate, kind 11).
   ;; flags: 1 in loop, 2 leader, 4 seam, 8 flags live in, 16 cut, 32 back.
@@ -891,6 +894,15 @@
                 (i32.store offset=16 (local.get $R) (i32.const 32))
                 (call $uc_fin (local.get $R) (i32.const 21) (i32.add (local.get $p) (i32.const 1)))
                 (return)))
+        ;; PUSHAD / POPAD (60 / 61; with a 66 prefix they are PUSHA / POPA
+        ;; and stay unsupported). Kind 31, +12 0 / 1.
+        (if (i32.or (i32.eq (local.get $b) (i32.const 0x60)) (i32.eq (local.get $b) (i32.const 0x61)))
+          (then (call $uc_stack_slot (local.get $O1)
+                  (select (i32.const -32) (i32.const 0) (i32.eq (local.get $b) (i32.const 0x60))))
+                (i32.store offset=12 (local.get $R) (i32.eq (local.get $b) (i32.const 0x61)))
+                (i32.store offset=16 (local.get $R) (i32.const 32))
+                (call $uc_fin (local.get $R) (i32.const 31) (local.get $p))
+                (return)))
         ;; POP ESP is left to the threaded code
         (if (i32.and (i32.and (i32.ge_u (local.get $b) (i32.const 0x58)) (i32.le_u (local.get $b) (i32.const 0x5F)))
                      (i32.ne (local.get $b) (i32.const 0x5C)))
@@ -1017,6 +1029,9 @@
     (local $k i32)
     (local.set $k (call $uc_kind (local.get $R)))
     (if (i32.eq (local.get $k) (i32.const 29)) (then (return (i32.const 192))))
+    ;; pushad moves ESP; popad writes all eight (ESP by the release)
+    (if (i32.eq (local.get $k) (i32.const 31))
+      (then (return (select (i32.const 0xFF) (i32.const 16) (i32.load offset=12 (local.get $R))))))
     ;; rep movs: ECX ESI EDI; rep stos: ECX EDI
     (if (i32.eq (local.get $k) (i32.const 30))
       (then (return (select (i32.const 130) (i32.const 194) (i32.load offset=12 (local.get $R))))))
@@ -1073,7 +1088,8 @@
     (if (i32.or (i32.eq (local.get $k) (i32.const 18))
                 (i32.or (i32.eq (local.get $k) (i32.const 19)) (i32.eq (local.get $k) (i32.const 20))))
       (then (return (i32.const 1))))
-    (if (i32.and (i32.ge_u (local.get $k) (i32.const 21)) (i32.le_u (local.get $k) (i32.const 24)))
+    (if (i32.or (i32.and (i32.ge_u (local.get $k) (i32.const 21)) (i32.le_u (local.get $k) (i32.const 24)))
+                (i32.eq (local.get $k) (i32.const 31)))
       (then (return (i32.const 1))))
     ;; a table jump loads its entry and exits on any it did not expect
     (if (i32.eq (local.get $k) (i32.const 28)) (then (return (i32.const 1))))
@@ -2586,6 +2602,48 @@
             (call $uc_load (local.get $O1) (i32.const 32) (i32.const 0) (call $uc_aR (i32.load offset=4 (local.get $O0))))))
         (call $uc_o3 (i32.const 8) (call $uc_aR (i32.const 4)) (call $uc_aR (i32.const 4)) (call $uc_aN (i32.const 4)))
         (return (i32.const 0))))
+    ;; pushad: the eight stores first -- EAX ECX EDX EBX, ESP as it was,
+    ;; EBP ESI EDI, from [esp-4] down -- then ESP -= 32, so a deopt at any
+    ;; store re-executes the whole pushad over the same bytes (all below ESP).
+    ;; popad: all seven loads into temps first (the ESP slot is skipped), and
+    ;; only then the registers and ESP += 32, so a deopt at any load leaves
+    ;; every register as it was. O1's disp is walked and put back: the
+    ;; instruction is lowered once per copy.
+    (if (i32.eq (local.get $k) (i32.const 31))
+      (then
+        (if (global.get $uc_fwd_kind) (then (return (i32.const 22))))
+        (local.set $n (i32.load offset=16 (local.get $O1)))
+        (if (i32.eqz (i32.load offset=12 (local.get $R)))
+          (then
+            (local.set $r32 (i32.const 0))
+            (block $pd (loop $pl
+              (br_if $pd (i32.ge_u (local.get $r32) (i32.const 8)))
+              (i32.store offset=16 (local.get $O1) (i32.sub (i32.const -4) (i32.shl (local.get $r32) (i32.const 2))))
+              (call $uc_store (local.get $O1) (i32.const 32) (call $uc_aR (local.get $r32)))
+              (local.set $r32 (i32.add (local.get $r32) (i32.const 1)))
+              (br $pl)))
+            (i32.store offset=16 (local.get $O1) (local.get $n))
+            (call $uc_o3 (i32.const 8) (call $uc_aR (i32.const 4)) (call $uc_aR (i32.const 4)) (call $uc_aN (i32.const -32)))
+            (return (i32.const 0))))
+        (local.set $r32 (i32.const 0))
+        (block $qd (loop $ql
+          (br_if $qd (i32.ge_u (local.get $r32) (i32.const 8)))
+          (if (i32.ne (local.get $r32) (i32.const 4))
+            (then
+              (i32.store offset=16 (local.get $O1) (i32.sub (i32.const 28) (i32.shl (local.get $r32) (i32.const 2))))
+              (call $uc_load (local.get $O1) (i32.const 32) (i32.const 0) (call $uc_aT (i32.const 21) (local.get $r32)))))
+          (local.set $r32 (i32.add (local.get $r32) (i32.const 1)))
+          (br $ql)))
+        (i32.store offset=16 (local.get $O1) (local.get $n))
+        (local.set $r32 (i32.const 0))
+        (block $md (loop $ml
+          (br_if $md (i32.ge_u (local.get $r32) (i32.const 8)))
+          (if (i32.ne (local.get $r32) (i32.const 4))
+            (then (call $uc_o2 (i32.const 2) (call $uc_aR (local.get $r32)) (call $uc_aT (i32.const 21) (local.get $r32)))))
+          (local.set $r32 (i32.add (local.get $r32) (i32.const 1)))
+          (br $ml)))
+        (call $uc_o3 (i32.const 8) (call $uc_aR (i32.const 4)) (call $uc_aR (i32.const 4)) (call $uc_aN (i32.const 32)))
+        (return (i32.const 0))))
     (if (i32.eq (local.get $k) (i32.const 5))
       (then
         (if (i32.and (call $uc_is_mem (local.get $O1)) (call $uc_ref_is_reg32 (local.get $O0)))
@@ -4021,6 +4079,13 @@
         (if (i32.or (i32.eq (local.get $k) (i32.const 23)) (i32.eq (local.get $k) (i32.const 24)))
           (then (call $uc_sp_kill_all (local.get $n) (i32.const 6))
                 (local.set $n (i32.const 0))
+                (br $next)))
+        ;; pushad / popad: eight slots at once; not tracked, start over
+        (if (i32.eq (local.get $k) (i32.const 31))
+          (then (call $uc_sp_kill_all (local.get $n) (i32.const 4))
+                (local.set $n (i32.const 0))
+                (local.set $esp (i32.const 0))
+                (local.set $ebpk (i32.const 0))
                 (br $next)))
         ;; memory operands
         (if (i32.and (i32.ne (local.get $k) (i32.const 6)) (i32.ne (local.get $k) (i32.const 7)))
