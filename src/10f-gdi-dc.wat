@@ -910,6 +910,18 @@
         (i32.store offset=8 (local.get $dest) (load.field.memarg GdiBrush hatch (local.get $record)))))
     (local.get $required))
 
+  ;; DC handles are numbered 0x00310001..0x0040FFFF and the counter wraps
+  ;; inside that band. The band's top is where GDI object handles begin
+  ;; ($gdi_next_object_handle, 0x00410001), and a DC must never carry a
+  ;; number some live pen, brush or font already answers to: $gdi_object_record
+  ;; and $gdi_dc_state_entry would both claim it, and a Win16 task's handle map
+  ;; hands the DC the font's own 16-bit handle and drops it again at
+  ;; ReleaseDC. Civilization II asks for 1-3 DCs per batch, so an unwrapped
+  ;; counter walked into its startup fonts after about a million DCs and every
+  ;; dialog from then on drew its caption empty in the system font. Reuse is
+  ;; safe because the scan below still skips a number whose DC is live.
+  (global $GDI_DC_HANDLE_FIRST i32 (i32.const 0x00310001))
+  (global $GDI_DC_HANDLE_LIMIT i32 (i32.const 0x00410000))
   (func $gdi_dc_alloc (result i32)
     (local $handle i32) (local $attempts i32)
     ;; DC records are process-shared as well. A worker's stale counter must not
@@ -918,6 +930,9 @@
       (if (i32.ge_u (local.get $attempts) (global.get $GDI_DC_STATE_COUNT))
         (then (return (i32.const 0))))
       (local.set $handle (global.get $gdi_next_dc_handle))
+      (if (i32.or (i32.lt_u (local.get $handle) (global.get $GDI_DC_HANDLE_FIRST))
+                  (i32.ge_u (local.get $handle) (global.get $GDI_DC_HANDLE_LIMIT)))
+        (then (local.set $handle (global.get $GDI_DC_HANDLE_FIRST))))
       (global.set $gdi_next_dc_handle
         (i32.add (local.get $handle) (i32.const 1)))
       (if (i32.eqz (call $gdi_dc_state_entry (local.get $handle) (i32.const 0)))

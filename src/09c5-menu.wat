@@ -2176,9 +2176,19 @@
       (if (local.get $hwnd)
         (then
           (local.set $blob (call $menu_blob_w (local.get $hwnd)))
-          (if (local.get $blob)
+          ;; Every window's bar is visited, so the dropdown and the position
+          ;; must both exist in THIS bar before a child record is addressed:
+          ;; $child_item_w trusts its indices, and a bar with fewer dropdowns
+          ;; than $tidx would hand it an offset read from past the bar table.
+          (if (i32.and (i32.ne (local.get $blob) (i32.const 0))
+                (i32.lt_u (local.get $tidx) (i32.load (local.get $blob))))
             (then
-              (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $pos)))
+              (local.set $it (call $child_hdr_w (local.get $blob) (local.get $tidx)))
+              (if (i32.and (i32.ne (local.get $it) (i32.const 0))
+                    (i32.lt_u (local.get $pos) (i32.load (local.get $it))))
+                (then (local.set $it (call $child_item_w
+                  (local.get $blob) (local.get $tidx) (local.get $pos))))
+                (else (local.set $it (i32.const 0))))
               (if (local.get $it)
                 (then
                   (local.set $flags (i32.load offset=16 (local.get $it)))
@@ -4860,7 +4870,30 @@
   ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable). MF_BYPOSITION is 0x400 and
   ;; has to be honoured: it is how MFC addresses items while walking a popup,
   ;; and treating a position as a command id put the state on the wrong item.
+  ;;
+  ;; A CreateMenu/CreatePopupMenu handle is a guest heap pointer, and it has to
+  ;; be recognised before the encoded-submenu paths below read its high word
+  ;; as a bar index. Civilization II builds every popup this way and greys
+  ;; items by position: 0x7EF0xxxx read as dropdown 0x7EEF sent
+  ;; $menu_enable_position_global half a megabyte past the bar blob for a
+  ;; child offset, and wrote a flags word wherever that pointed -- nothing in
+  ;; a fresh session, where the far heap is still zero, and a trap or quiet
+  ;; corruption once a long session had filled it.
   (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dynamic i32)
+    (local.set $dynamic (local.get $arg0))
+    (if (i32.eqz (call $dynamic_menu_state_w (local.get $dynamic)))
+      (then
+        (local.set $dynamic (i32.const 0))
+        (if (i32.eqz (call $menu_hwnd_from_handle (local.get $arg0)))
+          (then (local.set $dynamic (call $menu_detached_handle (local.get $arg0)))))))
+    (if (local.get $dynamic)
+      (then
+        (i32.store (global.get $reg_base) (call $dynamic_menu_enable
+          (local.get $dynamic) (local.get $arg1) (local.get $arg2)))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
         (then (call $menu_enable_position_global
           (local.get $arg0) (local.get $arg1)
@@ -4912,6 +4945,47 @@
       (if (i32.and (local.get $old) (i32.const 0x10))
         (then
           (local.set $r (call $dynamic_menu_check
+            (i32.load offset=12 (local.get $rec)) (local.get $item) (local.get $flags)))
+          (if (i32.ne (local.get $r) (i32.const -1))
+            (then (return (local.get $r))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; EnableMenuItem on a dynamic menu: set MF_GRAYED|MF_DISABLED (0x3) of the
+  ;; item named by position (MF_BYPOSITION 0x400) or by command id, searching
+  ;; popups by id as dynamic_menu_check does. Answers the previous state bits,
+  ;; or -1 when there is no such item.
+  (func $dynamic_menu_enable
+        (param $hmenu i32) (param $item i32) (param $flags i32) (result i32)
+    (local $sw i32) (local $count i32) (local $i i32) (local $rec i32)
+    (local $old i32) (local $r i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (if (i32.and (local.get $flags) (i32.const 0x400))
+      (then
+        (if (i32.ge_u (local.get $item) (local.get $count))
+          (then (return (i32.const -1))))
+        (local.set $i (local.get $item))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $dmb_item_w (local.get $sw) (local.get $i)))
+      (local.set $old (i32.load (local.get $rec)))
+      (if (i32.or
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0))
+            (i32.and
+              (i32.eqz (i32.and (local.get $old) (i32.const 0x10)))
+              (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $item))))
+        (then
+          (i32.store (local.get $rec)
+            (i32.or (i32.and (local.get $old) (i32.const -4))
+              (i32.and (local.get $flags) (i32.const 3))))
+          (call $resource_submenu_binding_refresh (local.get $hmenu))
+          (return (i32.and (local.get $old) (i32.const 3)))))
+      (if (i32.and (local.get $old) (i32.const 0x10))
+        (then
+          (local.set $r (call $dynamic_menu_enable
             (i32.load offset=12 (local.get $rec)) (local.get $item) (local.get $flags)))
           (if (i32.ne (local.get $r) (i32.const -1))
             (then (return (local.get $r))))))

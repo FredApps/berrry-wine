@@ -103,13 +103,36 @@
     (i32.add (call $win16_res_handle_table)
              (i32.mul (local.get $index) (i32.const 16))))
 
+  ;; An HRSRC names a resource of a loaded module, so asking for the same one
+  ;; twice answers the same handle, as Win16's (a NAMEINFO entry) does. A new
+  ;; descriptor per call filled all 1024 with repeats: Civilization II finds
+  ;; the same advisor picture every time the window opens, and a long
+  ;; campaign ended in "ERR_RESOURCENOTFOUND" from PORT.CPP. A descriptor
+  ;; whose module was freed has key 0 ($win16_res_forget_module) and is taken
+  ;; before the table grows.
   (func $win16_res_handle_alloc (param $key i32) (param $module i32)
         (param $rid i32) (result i32)
-    (local $index i32) (local $p i32)
-    (if (i32.ge_u (call $win16_res_handle_next_get) (global.get $WIN16_RES_HANDLE_MAX))
-      (then (return (i32.const 0))))
-    (local.set $index (i32.add (call $win16_res_handle_next_get) (i32.const 1)))
-    (call $win16_res_handle_next_set (local.get $index))
+    (local $index i32) (local $p i32) (local $free i32)
+    (local.set $index (i32.const 1))
+    (block $scanned (loop $scan
+      (br_if $scanned (i32.gt_u (local.get $index) (call $win16_res_handle_next_get)))
+      (local.set $p (call $win16_res_desc (local.get $index)))
+      (if (i32.and (i32.eq (i32.load (local.get $p)) (local.get $key))
+            (i32.and (i32.eq (i32.load offset=4 (local.get $p)) (local.get $module))
+                     (i32.eq (i32.load offset=12 (local.get $p)) (local.get $rid))))
+        (then (return (call $win16_h16
+          (i32.or (i32.const 0x00E10000) (local.get $index))))))
+      (if (i32.and (i32.eqz (local.get $free)) (i32.eqz (i32.load (local.get $p))))
+        (then (local.set $free (local.get $index))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (local.set $index (local.get $free))
+    (if (i32.eqz (local.get $index))
+      (then
+        (if (i32.ge_u (call $win16_res_handle_next_get) (global.get $WIN16_RES_HANDLE_MAX))
+          (then (return (i32.const 0))))
+        (local.set $index (i32.add (call $win16_res_handle_next_get) (i32.const 1)))
+        (call $win16_res_handle_next_set (local.get $index))))
     (local.set $p (call $win16_res_desc (local.get $index)))
     (i32.store (local.get $p) (local.get $key))
     (i32.store offset=4 (local.get $p) (local.get $module))
@@ -122,6 +145,24 @@
   ;; not ours to keep; one created from an integer id carries zero and is found
   ;; the ordinary way. Leaves $win16_res_len and $win16_res_file_off set, which
   ;; is what every caller here actually wants.
+  ;; A freed module's resources go with it: its descriptors would otherwise
+  ;; keep matching a module id the next LoadLibrary reuses for another DLL,
+  ;; and keep the selectors their LoadResource filled.
+  (func $win16_res_forget_module (param $module i32)
+    (local $index i32) (local $p i32) (local $sel i32)
+    (local.set $index (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $index) (call $win16_res_handle_next_get)))
+      (local.set $p (call $win16_res_desc (local.get $index)))
+      (if (i32.and (i32.ne (i32.load (local.get $p)) (i32.const 0))
+                   (i32.eq (i32.load offset=4 (local.get $p)) (local.get $module)))
+        (then
+          (local.set $sel (i32.and (i32.load offset=8 (local.get $p)) (i32.const 0xFFFF)))
+          (if (local.get $sel) (then (call $win16_global_free (local.get $sel))))
+          (call $zero_memory (local.get $p) (i32.const 16))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan))))
+
   (func $win16_res_desc_find (param $desc i32) (result i32)
     (local $key i32) (local $rid i32)
     ;; Callers reach this through an i32.and beside their own null check, and
@@ -2638,8 +2679,16 @@
     (local $path i32) (local $h i32) (local $read i32)
     (if (local.get $desc)
       (then
-        (local.set $sel (i32.load offset=8 (local.get $desc)))
-        (if (local.get $sel) (then (return (local.get $sel))))
+        ;; +8 is the selector in its low half and how many LoadResource
+        ;; calls hold it in the high half: one HRSRC is shared by everyone
+        ;; who found that resource, so the first FreeResource must not free
+        ;; a block a second holder is still drawing from.
+        (local.set $sel (i32.and (i32.load offset=8 (local.get $desc)) (i32.const 0xFFFF)))
+        (if (local.get $sel)
+          (then
+            (i32.store offset=8 (local.get $desc)
+              (i32.add (i32.load offset=8 (local.get $desc)) (i32.const 0x10000)))
+            (return (local.get $sel))))
         (local.set $key (i32.load (local.get $desc)))
         (local.set $module (i32.load offset=4 (local.get $desc)))
         (global.set $win16_res_module_id (local.get $module))
@@ -2678,7 +2727,8 @@
                     (call $memcpy (call $g2w (local.get $buf)) (local.get $data) (local.get $len))
                     (local.set $read (local.get $len))))
                 (if (i32.eq (local.get $read) (local.get $len))
-                  (then (i32.store offset=8 (local.get $desc) (local.get $sel)))
+                  (then (i32.store offset=8 (local.get $desc)
+                    (i32.or (local.get $sel) (i32.const 0x10000))))
                   (else
                     (call $win16_global_free (local.get $sel))
                     (local.set $sel (i32.const 0))))))))))
@@ -2698,18 +2748,25 @@
   ;; KERNEL.63 FreeResource(hResData). Release the global block and forget it
   ;; in the descriptor that loaded it, which stays valid for another
   ;; LoadResource. A handle no descriptor owns was never a resource.
+  ;; Only the last holder's FreeResource releases the block (see the count
+  ;; $win16_res_load keeps in the high half of +8).
   (func $win16_FreeResource
-    (local $sel i32) (local $index i32) (local $desc i32)
+    (local $sel i32) (local $index i32) (local $desc i32) (local $word i32)
     (local.set $sel (call $win16_arg16 (i32.const 0)))
     (local.set $index (i32.const 1))
     (block $done (loop $scan
       (br_if $done (i32.eqz (local.get $sel)))
       (br_if $done (i32.gt_u (local.get $index) (call $win16_res_handle_next_get)))
       (local.set $desc (call $win16_res_desc (local.get $index)))
-      (if (i32.eq (i32.load offset=8 (local.get $desc)) (local.get $sel))
+      (local.set $word (i32.load offset=8 (local.get $desc)))
+      (if (i32.eq (i32.and (local.get $word) (i32.const 0xFFFF)) (local.get $sel))
         (then
-          (call $win16_global_free (local.get $sel))
-          (i32.store offset=8 (local.get $desc) (i32.const 0))
+          (if (i32.gt_u (local.get $word) (i32.const 0x1FFFF))
+            (then (i32.store offset=8 (local.get $desc)
+              (i32.sub (local.get $word) (i32.const 0x10000))))
+            (else
+              (call $win16_global_free (local.get $sel))
+              (i32.store offset=8 (local.get $desc) (i32.const 0))))
           (br $done)))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
@@ -6286,6 +6343,8 @@
                 (i32.store (call $win16_dll_refs_ptr (local.get $id))
                   (i32.sub (local.get $refs) (i32.const 1))))
               (else
+                (call $win16_res_forget_module
+                  (i32.or (i32.const 0x10000) (local.get $id)))
                 (call $win16_dll_unload (local.get $id))
                 (call $win16_dynamic_module_release (local.get $id))))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))

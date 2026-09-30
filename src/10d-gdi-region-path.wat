@@ -4129,6 +4129,12 @@
     (i32.store offset=20 (local.get $empty) (local.get $flags))
     (local.get $handle))
 
+  ;; Object handles are numbered 0x00410001..0x004FFFFF and the counter wraps
+  ;; inside that band: 0x0050xxxx is region handles ($gdi_rgn_record), and
+  ;; an object that walked into it would answer to both tables. Reuse after a
+  ;; wrap is safe because the scan below skips any number still live.
+  (global $GDI_OBJECT_HANDLE_FIRST i32 (i32.const 0x00410001))
+  (global $GDI_OBJECT_HANDLE_LIMIT i32 (i32.const 0x00500000))
   (func $gdi_object_alloc (param $type i32) (param $a i32) (param $b i32)
         (param $c i32) (param $d i32) (result i32)
     (local $handle i32) (local $attempts i32)
@@ -4140,6 +4146,9 @@
       (if (i32.ge_u (local.get $attempts) (global.get $GDI_OBJECT_COUNT))
         (then (return (i32.const 0))))
       (local.set $handle (global.get $gdi_next_object_handle))
+      (if (i32.or (i32.lt_u (local.get $handle) (global.get $GDI_OBJECT_HANDLE_FIRST))
+                  (i32.ge_u (local.get $handle) (global.get $GDI_OBJECT_HANDLE_LIMIT)))
+        (then (local.set $handle (global.get $GDI_OBJECT_HANDLE_FIRST))))
       (global.set $gdi_next_object_handle
         (i32.add (local.get $handle) (i32.const 1)))
       (if (i32.eqz (call $gdi_object_record (local.get $handle)))
