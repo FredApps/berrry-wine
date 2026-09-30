@@ -1468,6 +1468,38 @@ function finalize(B) {
     for (const b of B.fastBlocks()) mapTermUses(b.term, ren);
     B.stats.held = hold.size;
   }
+  // resident: true (and 'full') -- no hold, so a narrow register's reads see
+  // its slot, architectural upper bits and all, where every pass assumed the
+  // promoted model's clean zero-extended value: ACCIDENT.EXE's `add dl,cl /
+  // adc dh,al`, in a program that keeps ecx at 8 bits, took its carry from
+  // bit 8 of dl + ecx -- ch's -- and left for DOS at 1.2M dispatches. Each
+  // read is of a zero-extended copy instead, made once per block and made
+  // again after the register is written.
+  if (resident && B.passes.resident !== 'promote') {
+    const narrowReg = (v) => v >= 0 && v < NREG && width(v) !== 32;
+    let masks = 0;
+    for (const b of B.fastBlocks()) {
+      const clean = new Map(), out = [];
+      const cleanOf = (r) => {
+        if (!clean.has(r)) {
+          const t = B.temp();
+          out.push({ o: 'andi', d: t, a: r, i: width(r) === 8 ? 0xFF : 0xFFFF, w: 32 });
+          clean.set(r, t);
+          masks++;
+        }
+        return clean.get(r);
+      };
+      for (const op of b.ops) {
+        if (op.o === 'reload') clean.clear();
+        else if (op.o !== 'flush') mapUses(op, (v) => (narrowReg(v) ? cleanOf(v) : v));
+        out.push(op);
+        clean.delete(opDef(op));
+      }
+      mapTermUses(b.term, (v) => (narrowReg(v) ? cleanOf(v) : v));
+      b.ops = out;
+    }
+    B.stats.narrowMasks = masks;
+  }
   if (resident) {
     for (const [, , op] of B.allOps()) {
       const d = opDef(op);

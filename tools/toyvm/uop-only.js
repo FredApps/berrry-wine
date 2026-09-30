@@ -58,17 +58,18 @@ class UopOnly {
     this.cache = session.cache;
     this.passName = passes;
     this.passes = typeof passes === 'string' ? OPT.ablationConfigs().find(([n]) => n === passes)[1] : passes;
-    // Only the promote model: with `resident: true` programs compute wrong
-    // values here -- ACCIDENT.EXE exits to DOS at 1.2M dispatches, on E1 and
-    // on the JS reference alike, so the program and not its lowering.
-    if (!this.passes || this.passes.resident !== 'promote') throw new Error(`uop-only: passes ${passes} are not resident: 'promote'`);
+    // Resident registers only (any model: 'promote', true, 'full'): a chain
+    // carries no vreg state but L1's register file. resident: true once left
+    // ACCIDENT.EXE for DOS at 1.2M dispatches -- a narrow register's reads saw
+    // its slot's upper bits (uop-opt.js finalize now masks them).
+    if (!this.passes || !this.passes.resident) throw new Error(`uop-only: passes ${passes} are not resident`);
     // A straight line is cold by construction -- it runs until it reaches a
     // loop head or leaves -- so it may be built with a cheaper pass set: the
     // optimizer's fixed cost per program is most of this arm's build time.
     this.linePassName = linePasses || passes;
     this.linePasses = !linePasses ? this.passes
       : typeof linePasses === 'string' ? (OPT.ablationConfigs().find(([n]) => n === linePasses) || [])[1] : linePasses;
-    if (!this.linePasses || this.linePasses.resident !== 'promote') throw new Error(`uop-only: passes ${linePasses} are not resident: 'promote'`);
+    if (!this.linePasses || !this.linePasses.resident) throw new Error(`uop-only: passes ${linePasses} are not resident`);
     this.shape = shape;
     // The longest straight line built (see build).
     this.maxLine = maxLine;
@@ -118,7 +119,7 @@ class UopOnly {
     // come back to JS, so their entries are counted in wasm, not here.
     this.tier = tier ? { ...tier, cfg: typeof tier.passes === 'string'
       ? OPT.ablationConfigs().find(([n]) => n === tier.passes)[1] : tier.passes } : null;
-    if (this.tier && (!this.tier.cfg || this.tier.cfg.resident !== 'promote')) throw new Error(`uop-only: tier passes ${tier.passes} are not resident: 'promote'`);
+    if (this.tier && (!this.tier.cfg || !this.tier.cfg.resident)) throw new Error(`uop-only: tier passes ${tier.passes} are not resident`);
     this.cold = [];             // sites on the cold tier, counting
     this.progCacheSize = 0;
     this.tooBig = new Set();

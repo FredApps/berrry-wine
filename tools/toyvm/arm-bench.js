@@ -15,6 +15,8 @@
 //   only-bl    only, with straight lines built on the baseline passes
 //   only-min   only, every program built with promote + flaglive (promoteLiveRP)
 //   only-base  only, every program built on the baseline passes (baselineRP)
+//   only-R     only, on resident: true (narrow registers stored in place, allR)
+//   only-RF    only, on resident: 'full' (allRF)
 //   only-tK    tier-up: built on promoteLiveRP, rebuilt on allRP once its loop
 //              headers have counted K (only-t64, only-t1k, ...)
 //
@@ -55,6 +57,10 @@ const ARMS = {
   'only-bl': () => ({ uopOnly: { shape: 'loop', linePasses: 'baselineRP' } }),
   'only-min': () => ({ uopOnly: { shape: 'loop', passes: 'promoteLiveRP', linePasses: 'promoteLiveRP' } }),
   'only-base': () => ({ uopOnly: { shape: 'loop', passes: 'baselineRP', linePasses: 'baselineRP' } }),
+  // only, on the other two resident models: narrow registers stored in place
+  // (allR) and the same with read-modify-write narrow stores (allRF)
+  'only-R': () => ({ uopOnly: { shape: 'loop', passes: 'allR', linePasses: 'allR' } }),
+  'only-RF': () => ({ uopOnly: { shape: 'loop', passes: 'allRF', linePasses: 'allRF' } }),
 };
 
 const armOf = (a) => {

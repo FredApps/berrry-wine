@@ -503,6 +503,8 @@ once built; building everything is what costs.
    at 1.2M dispatches, on E1 and on the reference alike, so the program is
    wrong, not its lowering. The arm now refuses anything but `'promote'`.
    `baselineRP` (baseline passes, promote) is exact and is arm `only-bl`.
+   (Fixed in step 7 below: narrow reads now see the slot's upper bits
+   masked off; arms `only-R` and `only-RF`.)
 
 **BRW still disagrees, and it is a retiming, not a wrong computation.** L1
 marks code bits over everything `compileProgram` compiled, i.e. the whole
@@ -715,6 +717,52 @@ pay it back.
 
 So, for this arm, the next lever after tiering is build cost and µops per
 instruction, not a better K.
+
+### Phase 1, step 7: resident: true fixed; arms only-R and only-RF (2026-09-30)
+
+**The bug.** It was in the program, not the lowering. `promote` lets
+mergesink keep a register narrow: 8 bits if a program touches only cl, 16 if
+it touches only cx. The passes then assume the promoted model, in which the
+register's vreg holds a clean, zero-extended value.
+
+- **allRP keeps that promise.** It gives each narrow register a zero-extended
+  temp for the region's lifetime (step 3's hold).
+- **resident: true and 'full' did not.** Their vreg *is* the register-file
+  slot, so every read also saw the architectural upper bits.
+- **The failing case.** In ACCIDENT, a program at 0xEDC keeps ecx at 8 bits
+  (it only reads cl), while ch is nonzero. Its `add dl,cl` / `adc dh,al`
+  forwards the carry as bit 8 of `dl + ecx`, which is ch's low bit. ACCIDENT
+  left for DOS at 1.2M dispatches.
+
+**How it was found.** Three steps, with scratch probes:
+
+1. Bisect program start ips: the ip-0 programs.
+2. Keep masks for one consumer kind at a time: only `add` needed them.
+3. Bisect `add` sites: one site, head 0xEDC.
+
+**The fix.** In finalize, for resident true and 'full' only, each narrow
+register read is of a zero-extended copy (`andi`). The copy is made once per
+block and made again after the register is written. Writes were already
+narrow stores (`dw`). On the wraps loop this is +4 µops per iteration (allR
+43 against allRP's 39).
+
+**Tests.** `test-toyvm-uop-only.js` NARROWHI is ch=1 set by an earlier
+program, then a cl-only loop of `add dl,cl` / `adc bh,0`. Without the masks,
+allR gives bx=2C00h; L1 gives 0. NARROWHI, DSHIFT, SHIFTS and FLAGS now also
+run on allR and allRF. uop-only accepts any resident model.
+
+**Results.** arm-bench arms `only-R` (allR) and `only-RF` (allRF): all 12
+programs are exact at 10M, ACCIDENT included. The three resident models are
+within noise of each other at load 12-19:
+
+| 10M geomean | only (allRP) | only-R | only-RF |
+|---|---|---|---|
+| programs 1-6 | x14.5 | x14.0 | x13.8 |
+| programs 7-12 | x10.3 | x9.9 | x10.1 |
+
+The 10M runs are build-bound (step 6), so this says nothing about the three
+models' execution speed. That question stays with the resident-registers
+section above.
 
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 

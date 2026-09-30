@@ -65,6 +65,28 @@ function shrDecProgram() {
   ]);
 }
 
+// A narrow register with its upper bits set, read by ops that expect it
+// clean. The loop reads only cl, so the program keeps ecx at 8 bits, but ch is
+// 1 (set by an earlier program; pushf/popf split them). On resident: true
+// (allR) the add read ecx's whole slot, and the carry `adc` takes came from
+// bit 8 of the sum -- ch's. ACCIDENT.EXE's `add dl,cl / adc dh,al` left for
+// DOS at 1.2M dispatches that way.
+function narrowHiProgram() {
+  return Buffer.from([
+    0xB9, 0x00, 0x01,             // 100 mov cx,0100h
+    0x9C,                         // 103 pushf
+    0x9D,                         // 104 popf
+    0xBE, 0x2C, 0x01,             // 105 mov si,300
+    0x31, 0xDB,                   // 108 xor bx,bx
+    0xB2, 0xFF,                   // 10A top: mov dl,0FFh
+    0x00, 0xCA,                   // 10C add dl,cl       (CF=0: cl is 0)
+    0x80, 0xD7, 0x00,             // 10E adc bh,0
+    0x4E,                         // 111 dec si
+    0x75, 0xF6,                   // 112 jnz top
+    0xCD, 0x20,                   // 114 int 20h
+  ]);
+}
+
 // Two stores into two other programs' code, one bail apart: a byte of Z,
 // then the imm16 of Y's `mov ax, imm`. The first store's guard fails into
 // the reference interpreter and sets $smc; the second is a second bail that
@@ -283,8 +305,18 @@ async function main() {
     await same('VGAPLANAR', vgaPlanarProgram(), shape);
     assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape.label || shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
     tierUps += rt.tierUps || 0;
+    await same('NARROWHI', narrowHiProgram(), shape);
   }
   assert.ok(tierUps >= 1, 'tier: no program was ever tiered up');
+  // The other two resident models (narrow registers stored in place), on the
+  // programs that read a narrow register with its upper half set.
+  for (const passes of ['allR', 'allRF']) {
+    const cfg = { label: passes, shape: 'loop', passes, linePasses: passes };
+    await same('NARROWHI', narrowHiProgram(), cfg);
+    await same('DSHIFT', dshift(255).com, cfg);
+    await same('SHIFTS', shifts(40).com, cfg);
+    await same('FLAGS', flagsProgram(), cfg);
+  }
   console.log('test-toyvm-uop-only: ok');
 }
 
