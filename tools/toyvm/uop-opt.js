@@ -2209,9 +2209,60 @@ function naiveResident(reg, opts = {}) {
     else if (state[s] === 0) { state[s] = 1; st.push([s, IR.succOf(p.blocks[s]), 0]); }
   }
   p.blocks[p.blocks[p.entry].term.t].header = true;
+  if (opts.fwdGetr !== false) forwardFullGets(p);
   p.resident = true;
   p.stats = { naive: true };
   return p;
+}
+
+// In a resident program vregs 0..13 ARE L1's registers and segment bases, so
+// a full-width `getr`/`gets` is a copy of one vreg into another -- 17.8% of
+// the µops a naiveR program runs (TOYVM_E1HIST, four corpus programs). Each
+// use of the copy that comes before anything writes the register again in the
+// same block reads the register itself instead, and a copy none of whose uses
+// is left is deleted. One linear walk; the build cost naiveR exists for stays.
+function forwardFullGets(p) {
+  const nDef = new Map(), nUse = new Map();
+  const bump = (m, v) => m.set(v, (m.get(v) || 0) + 1);
+  for (const b of p.blocks) {
+    if (b.kind === 'dead') continue;
+    for (const op of b.ops) {
+      for (const v of opUses(op)) bump(nUse, v);
+      const d = opDef(op);
+      if (d >= 0) bump(nDef, d);
+    }
+    for (const v of termUses(b.term)) bump(nUse, v);
+  }
+  const done = new Map();          // copy vreg -> uses rewritten
+  for (const b of p.blocks) {
+    if (b.kind === 'dead') continue;
+    const alias = new Map();       // copy vreg -> register vreg
+    const to = (v) => {
+      const r = alias.get(v);
+      if (r === undefined) return v;
+      done.set(v, (done.get(v) || 0) + 1);
+      return r;
+    };
+    const kill = (r) => { for (const [v, x] of alias) if (x === r) alias.delete(v); };
+    for (const op of b.ops) {
+      mapUses(op, to);
+      if (op.o === 'reload') alias.clear();
+      if (op.o === 'putr' && op.r < NREG) kill(op.r);
+      if (op.o === 'puts') kill(SEGV + op.s);
+      const d = opDef(op);
+      if (d >= 0) { kill(d); alias.delete(d); }
+      if (d >= FIRST_TEMP && nDef.get(d) === 1) {
+        if (op.o === 'getr' && op.w === 32) alias.set(d, op.r);
+        else if (op.o === 'gets') alias.set(d, SEGV + op.s);
+      }
+    }
+    mapTermUses(b.term, to);
+  }
+  for (const b of p.blocks) {
+    if (b.kind === 'dead') continue;
+    b.ops = b.ops.filter((op) => !((op.o === 'getr' || op.o === 'gets') && done.has(op.d)
+      && done.get(op.d) === nUse.get(op.d)));
+  }
 }
 
 // A full-checked access (ldf/stf) hands its block to the reference
