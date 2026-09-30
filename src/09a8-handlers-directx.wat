@@ -12325,24 +12325,22 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IMalloc_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and
-          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.sub
-          (call $heap_block_size_unchecked (local.get $arg1))
-          (i32.const 4))))
-      (else
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0xFFFFFFFF))))
+    ;; Ownership is the arena's, not "below this instance's bump pointer": once
+    ;; the allocator moves to another chunk every older live block used to
+    ;; answer -1, and msvbvm60 does memset(p, 0, GetSize(p)) straight after
+    ;; Alloc -- a 4 GB rep stosd that wiped the register file (JigSawedME).
+    ;; HeapSize had the same bug; both now share $heap_block_size_checked.
+    (local $size i32)
+    (local.set $size (call $heap_block_size_checked (local.get $arg1)))
+    (i32.store offset=0 (global.get $reg_base)
+      (if (result i32) (local.get $size)
+        (then (i32.sub (local.get $size) (i32.const 4)))
+        (else (i32.const 0xFFFFFFFF))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IMalloc_DidAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (select
-        (i32.const 1)
-        (i32.const 0)
-        (i32.and
-          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))))
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.ne (call $heap_block_size_checked (local.get $arg1)) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IMalloc_HeapMinimize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
