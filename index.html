@@ -1590,6 +1590,7 @@
         <span id="threads-status" style="color:#606060"></span>
       </span>
       <span class="debug-profile">
+        <label title="Delay Direct3D surface readback until pixels are accessed. Applies to running apps using shared WebGL. Disable if a game shows stale graphics."><input id="lazy-sync-toggle" type="checkbox" checked onchange="setLazySync(this.checked)">Lazy sync</label>
         <label title="Freeze the emulator: no slices run, no frames are drawn and the guest clock stops until somebody steps it. The browser twin of the headless CLI — an agent screenshots, clicks, steps, screenshots again, and the picture cannot change in between. Uncheck to go back to live; the guest sees no time jump either way."><input id="frozen-toggle" type="checkbox" onchange="setFrozenMode(this.checked)">Frozen</label>
         <button id="frozen-step-btn" onclick="frozenStepOnce(event)" title="Run one step's worth of guest work and stop again. Shift-click for 100 steps.">Step</button>
         <span id="frozen-status"></span>
@@ -2426,8 +2427,22 @@ Resource-aware Win98 emulator
     function setD3DRenderer(value) {
       const mode = D3D_MODES[value];
       if (!mode) return;
+      window.WINE_D3DIM_LAZY_SYNC = !q.has('no-lazy-sync');
+      document.getElementById('lazy-sync-toggle').checked = window.WINE_D3DIM_LAZY_SYNC;
       window.WineD3D.renderer = mode.renderer;
       window.WINE_D3DIM_GPU = mode.d3dim;
+    async function setLazySync(on) {
+      window.WINE_D3DIM_LAZY_SYNC = !!on;
+      document.getElementById('lazy-sync-toggle').checked = !!on;
+      try {
+        await Promise.all(runningApps.filter(app => app?.wine?.setLazySync)
+          .map(app => app.wine.setLazySync(!!on)));
+        appendDebugLog(`[gpu] lazy surface sync ${on ? 'on' : 'off'}; later launches follow`);
+      } catch (error) {
+        appendDebugLog(`[gpu] lazy surface sync change failed: ${error.message}`);
+        throw error;
+      }
+    }
       syncD3DSelect();
       appendDebugLog(`[gpu] Glide and D3D8/9 on ${mode.renderer === 'software' ? 'the software backend' : 'WebGL'}, ` +
         `DX2-7 on ${mode.d3dim ? 'WebGL' : 'the WAT software rasterizer'}` +

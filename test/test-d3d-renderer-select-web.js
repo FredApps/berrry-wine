@@ -18,7 +18,8 @@ const { compileSrcWasm } = require('./compile-src');
 const root = path.join(__dirname, '..');
 
 (async () => {
-  const wasm = compileSrcWasm();
+  const wasm = compileSrcWasm((file, source) => file === '13-exports.wat'
+    ? source + '\n(func (export "test_lazy_enabled") (result i32) (global.get $d3dim_lazy_on))\n' : source);
   const server = await startStaticServer({ root, cacheControl: 'no-cache', crossOriginIsolated: true,
     allowedRealRoots: ['test/binaries', 'fonts'].map(dir => path.join(root, dir)),
     rewritePath: pathname => pathname.startsWith('/binaries/') ? '/test' + pathname : pathname,
@@ -86,6 +87,11 @@ const root = path.join(__dirname, '..');
     });
     assert.deepStrictEqual(bridge, { backend: 'software', asyncSoftware: true },
       'Software selects the CPU bridge on the shared render worker');
+    assert.strictEqual(await plain.page.evaluate(() => runningApps[0].wine.guestWorker.callExport('test_lazy_enabled')), 0,
+      'software worker remains eager');
+    await plain.page.evaluate(() => setLazySync(true));
+    assert.strictEqual(await plain.page.evaluate(() => runningApps[0].wine.guestWorker.callExport('test_lazy_enabled')), 0,
+      'live toggle cannot enable lazy synchronization for software');
     assert.deepStrictEqual(plain.errors, [], 'no page errors');
     await plain.page.close();
 
@@ -93,6 +99,24 @@ const root = path.join(__dirname, '..');
     assert.deepStrictEqual(await selected(seeded.page), { select: 'software', renderer: 'software' },
       '?d3d9-renderer seeds the select');
     await seeded.page.close();
+
+    for (const disabled of [false, true]) {
+      const lazyPage = await open('?debug' + (disabled ? '&no-lazy-sync' : ''));
+      assert.strictEqual(await lazyPage.page.$eval('#lazy-sync-toggle', e => e.checked), !disabled);
+      await lazyPage.page.evaluate(async () => {
+        await setThreads(true);
+        document.getElementById('app-select').value = 'calc';
+        await launchApp();
+      });
+      const enabled = () => lazyPage.page.evaluate(() => runningApps[0].wine.guestWorker.callExport('test_lazy_enabled'));
+      assert.strictEqual(await enabled(), disabled ? 0 : 1, 'shared WebGL honors default and URL opt-out');
+      await lazyPage.page.evaluate(() => setLazySync(false));
+      assert.strictEqual(await enabled(), 0, 'live opt-out reaches guest instance');
+      await lazyPage.page.evaluate(() => setLazySync(true));
+      assert.strictEqual(await enabled(), 1, 'live re-enable reaches guest instance');
+      assert.deepStrictEqual(lazyPage.errors, []);
+      await lazyPage.page.close();
+    }
 
     for (const [query, expected] of [
       ['?debug&d3dim-gpu', 'webgl'],

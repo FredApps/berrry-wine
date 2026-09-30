@@ -163,3 +163,10 @@ a thread-safety proof.
    aliases, lifetime and reentrant consumers still need further coverage.
 4. Any default promotion must account for these limitations; documenting them
    alone does not make unrestricted enablement safe.
+
+2026-09-30 rollout decision: shared-WebGL guest workers now default to lazy
+synchronization, with the retained-pointer limitation explicitly accepted.
+The debug toolbar's **Lazy sync** checkbox switches live workers and future
+threads; `?no-lazy-sync` opts out at startup. Software/cooperative/private
+executors remain eager. This does not fix or claim coverage for the unsupported
+access patterns above. See [game measurements and rollout checks](lazy-sync-game-results.md).

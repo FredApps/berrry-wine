@@ -1,5 +1,35 @@
 # Shared lazy synchronization: real-game measurements
 
+## Current default (2026-09-30)
+
+Lazy synchronization is now enabled by default for guest workers using the
+shared WebGL renderer. Software, cooperative execution and private executors
+retain eager synchronization. This rollout supersedes the conservative opt-in
+decision recorded below; the retained-GDI-pointer limitation is accepted and
+remains documented, rather than blocking the supported path's default.
+
+Uncheck **Lazy sync** in the debug toolbar to disable it for running apps and
+future launches. `?no-lazy-sync` starts with it disabled. Existing guest threads
+receive the live change; threads starting during a change reconcile the setting
+before execution, and future threads inherit it. Disabling uses the existing
+fenced setter, so a pending surface is synchronized before the worker returns.
+Retained GDI/native pointers can still bypass first-touch tracking and produce
+stale or overwritten pixels; use the opt-out for those applications.
+
+`tools/bench-lazy-games.js --shipped-default` exercises the real startup setting
+without forcing the WASM export. Add `--no-lazy-sync` to test the URL opt-out.
+The original forced OFF/ON benchmark modes remain available.
+
+Rollout validation: the browser selector regression passes for default-on,
+URL opt-out, live disable/re-enable and software remaining eager. The thread
+lifecycle test checks opt-out during spawn, inheritance by later threads and
+private-executor fallback. Hardware game smoke runs using `--shipped-default`
+(no forced export setting) reach MW3's cockpit and GTA2 gameplay with one
+readback/frame; MW3 with `--no-lazy-sync` arms no lazy Locks and restores three
+readbacks/frame. All three runs report zero GPU errors. These 10-second windows
+validate the setting, not an FPS improvement. Artifacts:
+`build/lazy-games/default-{mw3,gta2_demo,mw3-optout}/`.
+
 2026-09-29 session, shared synchronization commit `1730589d`. All runs use one
 frozen runtime and host source set in `/home/user/mw3-watch-ab` on box8, Ryzen
 9950X with hardware ANGLE / Intel UHD 620. The frozen renderer includes the
@@ -107,9 +137,9 @@ Reproduce with `--app=gta2_demo` and the same OFF/ON/ON/OFF sequence above.
 Artifacts: `build/lazy-games/gta2-{off1,on1,on2,off2}/`; aggregate values for
 both games are in `build/lazy-games/summary.json`.
 
-## Default decision
+## Initial default decision (before rollout)
 
-Keep global lazy synchronization opt-in. MW3 consistently avoids two readbacks
+The initial decision was to keep global lazy synchronization opt-in. MW3 consistently avoids two readbacks
 per frame and is a candidate for app-specific enablement. GTA2 has unchanged
 readback count and essentially unchanged FPS, with an additional backend fence call and
 higher observed process CPU cost. These measurements do not justify enabling
@@ -180,7 +210,8 @@ fails the six lazy arms for the three documented retained-GDI-pointer cases
 (`gdi-retained`, `gdi-retained-write`, `gdi-blit-retained`). The strict run of
 the 13 supported cases passes **52/52**, including real-Worker read/write,
 write-only, thread lifetime, x87 overlap, backing replacement and release.
-These limitations are still present; global lazy sync remains opt-in.
+These limitations are still present; that measurement preceded the default
+rollout described at the top of this report.
 
 Artifacts: `build/lazy-games/fence-{gta2_demo,mw3}-{before1,after1,after2,before2}/`,
 `fence-summary.json`, `gta2-fence-trace/`, `fence-synthetic/` and

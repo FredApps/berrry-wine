@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { WorkerLink } = require('../lib/guest-thread-host');
+const { WorkerLink, GuestThreadHost } = require('../lib/guest-thread-host');
 const sandbox = { console, URLSearchParams, setTimeout, clearTimeout };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8') +
   '\n;globalThis.WineAssembly = WineAssembly;', sandbox);
@@ -13,6 +13,36 @@ const deferred = () => {
 };
 
 (async () => {
+  const original = Object.fromEntries(['start', 'initGuestThread', 'callExport'].map(k => [k, WorkerLink.prototype[k]]));
+  const initializing = deferred(), initGate = deferred(), settings = [];
+  try {
+    WorkerLink.prototype.start = async function () { this.enabled = this.d3dimLazySync; };
+    WorkerLink.prototype.initGuestThread = async function () {
+      if (this.slot === 1) { initializing.resolve(); await initGate.promise; }
+      return {};
+    };
+    WorkerLink.prototype.callExport = async function (name, value) {
+      assert.equal(name, 'd3dim_lazy_enable'); this.enabled = !!value; settings.push([this.slot, value]);
+    };
+    const host = new GuestThreadHost({ sharedRenderWorker: true, d3dimGpu: true });
+    assert.equal(host.d3dimLazySync, true);
+    const spawning = host.spawnThread({ tid: 1 });
+    await initializing.promise;
+    await host.setLazySync(false);
+    initGate.resolve();
+    const first = await spawning;
+    assert.equal(first.enabled, false, 'opt-out during spawn is applied before the thread can run');
+    const second = await host.spawnThread({ tid: 2 });
+    assert.equal(second.enabled, false, 'future threads inherit opt-out');
+    await host.setLazySync(true);
+    assert(first.enabled && second.enabled, 'live switch reaches every existing guest thread');
+    host.d3dimGpu = false;
+    await host.setLazySync(true);
+    assert(!first.enabled && !second.enabled, 'software remains eager');
+    host.d3dimGpu = true; host.sharedRenderWorker = false;
+    await host.setLazySync(true);
+    assert(!first.enabled && !second.enabled, 'private executors remain eager');
+  } finally { Object.assign(WorkerLink.prototype, original); }
   const portReady = deferred(), events = [];
   const endpoint = { ready: Promise.resolve(), addEventListener() {},
     postMessage(message) { events.push(message.t); },

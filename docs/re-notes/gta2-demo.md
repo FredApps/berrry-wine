@@ -88,4 +88,6 @@ confirmed only one guest fence request per frame: the other backend call is
 inside queued-flip replay. Publication adds its own wait, measured separately.
 The helper recorded no lazy
 surface touches, so this is coexistence coverage, not a real-game test of
-foreign-thread pixel access. Global lazy synchronization remains opt-in.
+foreign-thread pixel access. This initially remained opt-in; the subsequent
+shared-WebGL default rollout provides `?no-lazy-sync` and the live **Lazy sync**
+debug checkbox as opt-outs. The retained-GDI-pointer limitation still applies.

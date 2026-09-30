@@ -10,9 +10,13 @@ const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 const opt = (n, d) => process.argv.find(a => a.startsWith(`--${n}=`))?.slice(n.length + 3) ?? d;
 const app = opt('app', 'mw3'), lazy = process.argv.includes('--lazy-sync');
+const shippedDefault = process.argv.includes('--shipped-default');
+const noLazySync = process.argv.includes('--no-lazy-sync');
+assert(!shippedDefault || !lazy, 'shipped default must not force the WASM option');
+assert(!noLazySync || shippedDefault, '--no-lazy-sync requires --shipped-default');
 const traceFences = process.argv.includes('--trace-fences');
 const seconds = Number(opt('seconds', '20')), samples = Number(opt('samples', '2'));
-const output = path.resolve(opt('out', `build/lazy-games/${app}-${lazy ? 'on' : 'off'}`));
+const output = path.resolve(opt('out', `build/lazy-games/${app}-${shippedDefault ? (noLazySync ? 'optout' : 'default') : (lazy ? 'on' : 'off')}`));
 assert(['mw3', 'gta2_demo'].includes(app));
 assert(seconds > 0 && samples > 0 && Number.isInteger(samples));
 assert(!fs.existsSync(path.join(output, 'result.json')), 'Use a fresh output directory');
@@ -24,6 +28,7 @@ const originalWorker = fs.readFileSync(path.join(ROOT, 'lib/guest-worker.js'), '
 const seam = '      const result = await WebAssembly.instantiate(msg.module, built.imports);';
 assert.equal(originalWorker.split(seam).length, 2, 'guest worker instrumentation seam changed');
 const workerSource = originalWorker.replace(seam, `
+      ${shippedDefault ? '' : `msg.d3dimLazySync = ${lazy};`}
       const lazyBenchTimes = [];
       const lazyBenchFences = {};
       ${traceFences ? `
@@ -46,7 +51,7 @@ const workerSource = originalWorker.replace(seam, `
       };
       ${seam.trim()}
       const lazyBenchExports = (result.exports ? result : result.instance).exports;
-      lazyBenchExports.d3dim_lazy_enable(${lazy ? 1 : 0});
+      ${shippedDefault ? '' : `lazyBenchExports.d3dim_lazy_enable(${lazy ? 1 : 0});`}
       globalThis.__lazyGameSnapshot = () => ({
         times: lazyBenchTimes.slice(), tid: lazyBenchExports.get_current_thread_id?.(),
         fenceTrace: lazyBenchFences,
@@ -56,11 +61,12 @@ const workerSource = originalWorker.replace(seam, `
         d3d: d3dCommands?.snapshot() || null
       });`);
 fs.writeFileSync(path.join(output, 'guest-worker.js'), workerSource);
-const report = { app, lazy, traceFences, seconds, samples, started: new Date().toISOString(),
+const report = { app, lazy: shippedDefault ? !noLazySync : lazy, shippedDefault, traceFences, seconds, samples, started: new Date().toISOString(),
   wasmSha256: hash(wasm), workerSha256: hash(originalWorker), servedWorkerSha256: hash(workerSource),
   sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js', 'lib/d3d-command-stream.js',
     'lib/d3d-render-worker.js', 'lib/d3dim-render-worker.js', 'lib/region-map.generated.js',
-    'host.js', 'lib/thread-manager.js', 'tools/mw3-gameplay-route.js'].map(f => [f, hash(fs.readFileSync(path.join(ROOT, f)))])),
+    'host.js', 'index.html', 'lib/guest-thread-host.js', 'lib/thread-manager.js',
+    'tools/mw3-gameplay-route.js'].map(f => [f, hash(fs.readFileSync(path.join(ROOT, f)))])),
   cpu: os.cpus()[0].model, loadAtLaunch: os.loadavg(), results: [], errors: [],
   note: 'Independent launches simulate different geometry. All guest producers are recorded. No polling, screenshots or profiler in measured windows. Timings are guest presents/flips, not browser rAF.' };
 let browser, page, server;
@@ -134,7 +140,7 @@ function totals(s) {
       if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) report.errors.push(line);
     });
     page.on('pageerror', e => report.errors.push(String(e)));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?debug&threads&d3d-renderer=webgl`, { waitUntil: 'networkidle2', timeout: 90000 });
+    await page.goto(`http://127.0.0.1:${server.address().port}/?debug&threads&d3d-renderer=webgl${noLazySync ? '&no-lazy-sync' : ''}`, { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     await page.evaluate(async app => {
       window.__lazyThreadEvents = [];
@@ -148,7 +154,7 @@ function totals(s) {
       if (document.getElementById('app-select').value !== app) throw Error('App missing: ' + app);
       await launchApp(); setRuntimeLogging(false);
     }, app);
-    console.log('Launched', app, lazy ? 'lazy ON' : 'lazy OFF');
+    console.log('Launched', app, report.lazy ? 'lazy ON' : 'lazy OFF', shippedDefault ? '(shipped setting)' : '(forced)');
     await pause(app === 'mw3' ? 30000 : 15000);
     await page.screenshot({ path: path.join(output, 'menu.png') });
     if (app === 'mw3') await require('./mw3-gameplay-route')(page, output);
