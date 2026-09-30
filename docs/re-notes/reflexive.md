@@ -140,6 +140,36 @@ toy-VM browser bundles. Those files were left to their owner. The canonical
 WAT compiler is run separately to refresh native and compatibility artifacts;
 this does not turn the failed full-build check into a pass.
 
+Crash fix: the failing instruction is `40145f` (`call [eax]`) in a lock guard,
+not a critical-section return. The shared object at `7ef083d0` lost its vtable
+(`4883b4`); both rendering and background workers subsequently called through
+freed/corrupted storage. Its AddRef/Release methods (`401270`/`401280`) call
+InterlockedIncrement/Decrement **before** taking the object's lock. Those
+emulator handlers used separate loads and stores, allowing lost reference
+updates across real Workers. The same object corruption also reproduced with
+the micro-op tier disabled, excluding an optimizer-specific failure.
+
+The four DWORD Interlocked handlers now use atomic WASM read-modify-write
+instructions on aligned guest pointers. Return values, stdcall cleanup,
+code invalidation and page-watch notifications are preserved; unaligned and
+discontiguous page-crossing compatibility paths retain their previous behavior.
+`node test/test-wat-locks.js` passes all 19 checks, including new two-Worker
+increment/decrement/compare-exchange/exchange races. Replacing only those
+handlers with the old versions makes all four race checks fail.
+
+Two fixed real-browser runs each survived 180 gameplay clicks with all live
+workers intact and the object's vtable/reference count valid. The second
+reached level 2, score 27,405. Artifacts are in
+`/private/tmp/reflexive-probe/collapse-atomic-{fixed,final}/`; the matched
+source closure and before/after modules are `interlocked-*` in the parent
+directory. This is crash acceptance, not a claim of improved frame rate.
+The matched old-handler browser control survived 120 clicks on this attempt;
+the race is timing-dependent, so one surviving old run is not a negative
+control for crash absence. The reproducible negative control is the four
+concurrent API tests above; earlier old-build gameplay crashed with either
+micro-op setting. Both fixed runs finished with the object's reference count
+back at one, while this old control's final sample was four.
+
 The runner warns that shell32.dll and ole32.dll are missing locally. Do not
 confuse those environment warnings with the concrete blockers above.
 Use `--no-close` for these probes; the runner otherwise injects WM_CLOSE on

@@ -1245,11 +1245,54 @@ nW — STUB: unimplemented
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
   )
 
+  ;; One indivisible DWORD operation across guest WASM instances. Interlocked
+  ;; refcounts are often acquired BEFORE an object's critical section, so a
+  ;; load followed by a store can free an object while another thread uses it.
+  ;; op 0 = add, 1 = exchange, 2 = compare/exchange; return the OLD value.
+  (func $interlocked_rmw32
+      (param $ga i32) (param $value i32) (param $compare i32) (param $op i32)
+      (result i32)
+    (local $wa i32) (local $old i32)
+    ;; An aligned DWORD cannot straddle a guest page. Translation preserves
+    ;; alignment for all normal mappings; check the result too for the sink.
+    (if (i32.eqz (i32.and (local.get $ga) (i32.const 3)))
+      (then
+        (local.set $wa (call $g2w (local.get $ga)))
+        (if (i32.eqz (i32.and (local.get $wa) (i32.const 3)))
+          (then
+            ;; Keep gs32's executable-page invalidation before publishing the
+            ;; write. A failed compare/exchange conservatively invalidates too,
+            ;; but does not report a write to page watchers.
+            (if (call $code_page_test (local.get $ga))
+              (then (call $code_write_hit (local.get $ga) (i32.const 4))))
+            (if (i32.eqz (local.get $op))
+              (then (local.set $old (i32.atomic.rmw.add
+                (local.get $wa) (local.get $value))))
+              (else (if (i32.eq (local.get $op) (i32.const 1))
+                (then (local.set $old (i32.atomic.rmw.xchg
+                  (local.get $wa) (local.get $value))))
+                (else (local.set $old (i32.atomic.rmw.cmpxchg
+                  (local.get $wa) (local.get $compare) (local.get $value)))))))
+            (if (i32.or (i32.ne (local.get $op) (i32.const 2))
+                  (i32.eq (local.get $old) (local.get $compare)))
+              (then (call $page_watch_write_one (local.get $wa))))
+            (return (local.get $old))))))
+    ;; Win32's interlocked atomicity contract requires DWORD alignment. Keep
+    ;; legacy unaligned callers working without a WASM atomic-alignment trap;
+    ;; gl32/gs32 also gather/scatter noncontiguous sparse page boundaries.
+    (local.set $old (call $gl32 (local.get $ga)))
+    (if (i32.eqz (local.get $op))
+      (then (call $gs32 (local.get $ga) (i32.add (local.get $old) (local.get $value))))
+      (else (if (i32.or (i32.eq (local.get $op) (i32.const 1))
+                  (i32.eq (local.get $old) (local.get $compare)))
+        (then (call $gs32 (local.get $ga) (local.get $value))))))
+    (local.get $old))
+
   ;; 340: InterlockedIncrement(ptr)
   (func $handle_InterlockedIncrement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
-    (local.set $tmp (i32.add (call $gl32 (local.get $arg0)) (i32.const 1)))
-    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (local.set $tmp (i32.add (call $interlocked_rmw32
+      (local.get $arg0) (i32.const 1) (i32.const 0) (i32.const 0)) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))) (return)
   )
@@ -1257,26 +1300,25 @@ nW — STUB: unimplemented
   ;; 341: InterlockedDecrement(ptr)
   (func $handle_InterlockedDecrement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
-    (local.set $tmp (i32.sub (call $gl32 (local.get $arg0)) (i32.const 1)))
-    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (local.set $tmp (i32.sub (call $interlocked_rmw32
+      (local.get $arg0) (i32.const -1) (i32.const 0) (i32.const 0)) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))) (return)
   )
 
   ;; 342: InterlockedExchange(ptr, value)
   (func $handle_InterlockedExchange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $gl32 (local.get $arg0)))
-    (call $gs32 (local.get $arg0) (local.get $arg1))
+    (i32.store offset=0 (global.get $reg_base) (call $interlocked_rmw32
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))) (return)
   )
 
   ;; InterlockedCompareExchange(ptr, newVal, comparand) → original
-  ;; Atomic (single-threaded emu, so just sequential): if *ptr == comparand, *ptr = newVal.
+  ;; Atomically replace only when *ptr == comparand; return the prior value.
   (func $handle_InterlockedCompareExchange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $orig i32)
-    (local.set $orig (call $gl32 (local.get $arg0)))
+    (local.set $orig (call $interlocked_rmw32
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 2)))
     (i32.store offset=0 (global.get $reg_base) (local.get $orig))
-    (if (i32.eq (local.get $orig) (local.get $arg2))
-      (then (call $gs32 (local.get $arg0) (local.get $arg1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )

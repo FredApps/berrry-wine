@@ -40,6 +40,31 @@ const IMAGE_BASE = 0x400000;
 // hand-picked holes.
 const BUMP_CELL = RegionMap.BASE.TEST_SCRATCH + 0;
 const BARRIER = RegionMap.BASE.TEST_SCRATCH + 4;
+const INTERLOCKED_CELL = 0x500000;
+const EXTRA_WAT = `
+  (func (export "test_interlocked_call")
+      (param $op i32) (param $ptr i32) (param $value i32) (param $compare i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x900000))
+    (if (i32.eqz (local.get $op))
+      (then (call $handle_InterlockedIncrement (local.get $ptr)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 1))
+      (then (call $handle_InterlockedDecrement (local.get $ptr)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 2))
+      (then (call $handle_InterlockedExchange (local.get $ptr) (local.get $value)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 3))
+      (then (call $handle_InterlockedCompareExchange (local.get $ptr) (local.get $value)
+        (local.get $compare) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_interlocked_sp") (result i32)
+    (i32.load offset=16 (global.get $reg_base)))
+  (func (export "test_interlocked_wa") (param i32) (result i32)
+    (call $g2w (local.get 0)))
+  (func (export "test_interlocked_watch_version") (param i32) (result i64)
+    (i64.load offset=8 (call $page_watch_cell (local.get 0))))
+`;
 
 // One instance per OS thread, all over the same memory. createHostImports needs
 // a context; nothing here draws, so the stubs are enough.
@@ -91,6 +116,21 @@ if (!isMainThread) {
       for (let i = 0; i < iterations; i++) out.push(ex.test_virtual_reserve_down(0x10000) >>> 0);
     } else if (job === 'reentrant') {
       out.push(ex.test_lock_reentrant(ex.test_lock_addr(1)) | 0);
+    } else if (job === 'interlocked') {
+      let sum = 0, xor = 0;
+      for (let i = 0; i < iterations; i++) {
+        ex.test_interlocked_call(0, INTERLOCKED_CELL, 0, 0);
+        ex.test_interlocked_call(1, INTERLOCKED_CELL + 4, 0, 0);
+        let seen;
+        do {
+          seen = ex.guest_read32(INTERLOCKED_CELL + 8);
+        } while (ex.test_interlocked_call(3, INTERLOCKED_CELL + 8, seen + 1, seen) !== seen);
+        const token = (tid - 1) * iterations + i + 1;
+        const old = ex.test_interlocked_call(2, INTERLOCKED_CELL + 12, token, 0);
+        sum += old;
+        xor ^= old;
+      }
+      out.push({ sum, xor });
     }
     parentPort.postMessage({ tid, out });
   })().catch(err => parentPort.postMessage({ error: String(err && err.stack || err) }));
@@ -134,7 +174,77 @@ function duplicates(values) {
   console.log('WAT cross-instance locks, two OS threads\n');
   const { compileSrcWasm } = require('./compile-src');
   const SRC = path.join(__dirname, '..', 'src');
-  const wasmBytes = compileSrcWasm();
+  const wasmBytes = compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? source + EXTRA_WAT : source);
+
+  {
+    const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+    const ex = (await bootInstance(wasmBytes, memory, 0)).exports;
+    const addresses = [INTERLOCKED_CELL, INTERLOCKED_CELL + 1,
+      INTERLOCKED_CELL + 2, INTERLOCKED_CELL + 3];
+    // Interleave another commit: neighboring guest pages must not happen to
+    // have neighboring backing, or a raw unaligned atomic could pass the test.
+    ex.test_virtual_map_commit(0x30000000, 0x1000);
+    ex.test_virtual_map_commit(0x28000000, 0x3000);
+    ex.test_virtual_map_commit(0x30001000, 0x1000);
+    check(ex.test_interlocked_wa(0x30000fff) + 1 !== ex.test_interlocked_wa(0x30001000),
+      'Interlocked sparse-boundary fixture has discontiguous backing');
+    addresses.push(0x30000ffc, 0x30000ffd, 0x30000ffe, 0x30000fff);
+    let valuesOK = true, stackOK = true;
+    for (const ptr of addresses) {
+      ex.guest_write32(ptr, 0x7fffffff);
+      valuesOK &&= ex.test_interlocked_call(0, ptr, 0, 0) === -2147483648;
+      valuesOK &&= (ex.guest_read32(ptr) >>> 0) === 0x80000000;
+      stackOK &&= ex.test_interlocked_sp() === 0x900008;
+      valuesOK &&= ex.test_interlocked_call(1, ptr, 0, 0) === 2147483647;
+      stackOK &&= ex.test_interlocked_sp() === 0x900008;
+      valuesOK &&= ex.test_interlocked_call(2, ptr, 23, 0) === 2147483647;
+      stackOK &&= ex.test_interlocked_sp() === 0x90000c;
+      valuesOK &&= ex.test_interlocked_call(3, ptr, 61, 99) === 23;
+      valuesOK &&= ex.guest_read32(ptr) === 23;
+      valuesOK &&= ex.test_interlocked_call(3, ptr, 61, 23) === 23;
+      valuesOK &&= ex.guest_read32(ptr) === 61;
+      stackOK &&= ex.test_interlocked_sp() === 0x900010;
+    }
+    check(valuesOK, 'all Interlocked return/value semantics, overflow and unaligned sparse edges');
+    check(stackOK, 'all four Interlocked handlers retain stdcall stack cleanup');
+
+    const ptr = INTERLOCKED_CELL, wa = ex.test_interlocked_wa(ptr);
+    ex.guest_write32(ptr, 7);
+    ex.page_watch_acquire(wa, 4);
+    const before = ex.test_interlocked_watch_version(wa);
+    ex.test_interlocked_call(3, ptr, 19, 99);
+    check(ex.test_interlocked_watch_version(wa) === before,
+      'failed compare/exchange does not publish a watched-page write');
+    ex.test_interlocked_call(3, ptr, 19, 7);
+    check(ex.test_interlocked_watch_version(wa) === before + 1n,
+      'successful compare/exchange publishes exactly one watched-page write');
+    ex.page_watch_release(wa, 4);
+  }
+
+  {
+    const iterations = 100000, workers = 2, total = iterations * workers;
+    const { memory, results } = await runJob(wasmBytes, 'interlocked', iterations, workers);
+    const ex = (await bootInstance(wasmBytes, memory, 0)).exports;
+    check(ex.guest_read32(INTERLOCKED_CELL) === total,
+      'InterlockedIncrement loses no updates across two real Workers');
+    check((ex.guest_read32(INTERLOCKED_CELL + 4) | 0) === -total,
+      'InterlockedDecrement loses no updates across two real Workers');
+    check(ex.guest_read32(INTERLOCKED_CELL + 8) === total,
+      'InterlockedCompareExchange implements a contended compare/exchange counter');
+    const final = ex.guest_read32(INTERLOCKED_CELL + 12);
+    const sum = results.reduce((n, r) => n + r.out[0].sum, final);
+    const xor = results.reduce((n, r) => n ^ r.out[0].xor, final);
+    let expectedXor = 0;
+    for (let i = 1; i <= total; i++) expectedXor ^= i;
+    check(sum === total * (total + 1) / 2 && xor === expectedXor,
+      'InterlockedExchange returns each contended token exactly once');
+  }
+
+  if (process.argv.includes('--interlocked-only')) {
+    console.log(`\n${passed} passed, ${failed} failed`);
+    process.exit(failed ? 1 : 0);
+  }
 
   {
     // Long enough to swamp the barrier's wake skew. At 20,000 iterations each
