@@ -270,6 +270,52 @@
     (if (i32.eq (local.get $m) (i32.const 1)) (then (global.set $uop_icf_e1 (local.get $eip)) (global.set $uop_icf_n1 (i32.const 1)) (return)))
     (if (i32.eq (local.get $m) (i32.const 2)) (then (global.set $uop_icf_e2 (local.get $eip)) (global.set $uop_icf_n2 (i32.const 1)) (return)))
     (global.set $uop_icf_e3 (local.get $eip)) (global.set $uop_icf_n3 (i32.const 1)))
+  ;; Megamorphic sites (docs/uop-tier-design.md section 23). A guard that
+  ;; keeps failing leaves its program at the call on every trip, so the
+  ;; program is worth less than the threaded code it replaced (Heroes III:
+  ;; one polymorphic site, 298K fails). Every fail counts against its call
+  ;; EIP in a 256-entry direct-mapped table {eip, fails} in the windows
+  ;; area's free 0x3400..0x3C00 (the cut table ends at 0x3400); a program
+  ;; that fails at a site past $uop_icg_mega is killed on its way out
+  ;; ($th_uop_enter) -- a kill, not a poor retirement, so the head can
+  ;; recompile -- and 07e's FF /2 lowering refuses the site from then on,
+  ;; leaving the call to the threaded code as without --uop-icall. A stale
+  ;; or aliased entry only costs an inline cache, never a wrong answer.
+  ;; 0 turns the rule off. Cleared with the verdicts ($uop_flush_all).
+  (global $uop_icg_mega (mut i32) (i32.const 32))
+  (global $uop_icg_retire (mut i32) (i32.const 0))
+  (global $uop_icg_megas (mut i32) (i32.const 0))
+  (global $uop_icg_mkills (mut i32) (i32.const 0))
+  (func $uop_icg_slot (param $eip i32) (result i32)
+    (i32.add (i32.add (global.get $uop_arena) (global.get $uop_wins_off))
+      (i32.add (i32.const 0x3400)
+        (i32.shl
+          (i32.and (i32.xor (local.get $eip) (i32.shr_u (local.get $eip) (i32.const 8)))
+                   (i32.const 255))
+          (i32.const 3)))))
+  (func $uop_icg_count (param $eip i32)
+    (local $s i32) (local $n i32)
+    (if (i32.eqz (global.get $uop_icg_mega)) (then (return)))
+    (local.set $s (call $uop_icg_slot (local.get $eip)))
+    (if (i32.ne (i32.load (local.get $s)) (local.get $eip))
+      (then (i32.store (local.get $s) (local.get $eip))
+            (i32.store offset=4 (local.get $s) (i32.const 0))))
+    (local.set $n (i32.add (i32.load offset=4 (local.get $s)) (i32.const 1)))
+    (i32.store offset=4 (local.get $s) (local.get $n))
+    (if (i32.eq (local.get $n) (global.get $uop_icg_mega))
+      (then (global.set $uop_icg_megas (i32.add (global.get $uop_icg_megas) (i32.const 1)))))
+    (if (i32.ge_u (local.get $n) (global.get $uop_icg_mega))
+      (then (global.set $uop_icg_retire (i32.const 1)))))
+  ;; 07e: may an FF /2 at eip still get an inline cache?
+  (func $uop_icg_is_mega (param $eip i32) (result i32)
+    (local $s i32)
+    (if (i32.eqz (global.get $uop_icg_mega)) (then (return (i32.const 0))))
+    (local.set $s (call $uop_icg_slot (local.get $eip)))
+    (i32.and (i32.eq (i32.load (local.get $s)) (local.get $eip))
+             (i32.ge_u (i32.load offset=4 (local.get $s)) (global.get $uop_icg_mega))))
+  (func (export "set_uop_icg_mega") (param $n i32)
+    (global.set $uop_icg_mega (select (local.get $n) (i32.const 0) (i32.gt_s (local.get $n) (i32.const 0)))))
+  (func (export "get_uop_icg_mega") (result i32) (global.get $uop_icg_mega))
   ;; uop_icg_site(i): the i-th worst-failing site (0-3, unsorted), i+4 its fails
   (func (export "uop_icg_site") (param $i i32) (result i32)
     (if (i32.eqz (local.get $i)) (then (return (global.get $uop_icf_e0))))
@@ -957,6 +1003,7 @@
             (then (global.set $uop_icg_fail1 (i32.add (global.get $uop_icg_fail1) (i32.const 1))))
             (else (global.set $uop_icg_fail0 (i32.add (global.get $uop_icg_fail0) (i32.const 1)))))
           (call $uop_icg_note (i32.load offset=16 (local.get $pc)))
+          (call $uop_icg_count (i32.load offset=16 (local.get $pc)))
           (local.set $pc (i32.load offset=20 (local.get $pc))) (br $L)))
       ;; 82 COPY / 83 FILL: everything the fast arm would not take
       (if (i32.or (i32.eq (local.get $op) (i32.const 82)) (i32.eq (local.get $op) (i32.const 83)))
@@ -2280,7 +2327,9 @@
     (call $uop_flush)
     (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_map_off))
                  (i32.const 0) (i32.const 0x8000))
-    (memory.fill (call $uop_cut_slot (i32.const 0)) (i32.const 0) (i32.const 1024)))
+    (memory.fill (call $uop_cut_slot (i32.const 0)) (i32.const 0) (i32.const 1024))
+    (memory.fill (call $uop_icg_slot (i32.const 0)) (i32.const 0) (i32.const 2048))
+    (global.set $uop_icg_retire (i32.const 0)))
 
   ;; Cut-exit landings (docs/uop-tier-design.md section 21.6). A trace's
   ;; straight-line cut EXITs to an address in the middle of the threaded
@@ -2376,6 +2425,17 @@
             (i32.store offset=32 (local.get $op)
               (select (i32.const 0x40000000) (local.get $ep) (i32.gt_u (local.get $ep) (i32.const 0x40000000))))
             (global.set $uop_xwork (i32.const 0))))
+        ;; It left through a megamorphic site's guard ($uop_icg_count): kill
+        ;; it so the head recompiles without that inline cache. Its enters
+        ;; are zeroed so neither poor test below can mark the head.
+        (if (global.get $uop_icg_retire)
+          (then
+            (global.set $uop_icg_retire (i32.const 0))
+            (global.set $uop_icg_mkills (i32.add (global.get $uop_icg_mkills) (i32.const 1)))
+            (call $uop_kill (local.get $op))
+            (call $uop_drop_ranges (local.get $op))
+            (i32.store offset=16 (local.get $op) (i32.const 0))
+            (local.set $n (i32.const 0))))
         ;; EXITB: the batch is over, at the transfer target, as in threaded.
         (if (global.get $uop_bexit)
           (then
@@ -2432,8 +2492,12 @@
 
   (func $uop_arena_addr (export "uop_arena") (result i32) (global.get $uop_arena))
   (func (export "uop_reg_base") (result i32) (global.get $reg_base))
+  ;; A test's direct run has no enter op to act on a megamorphic exit.
   (func (export "uop_run") (param $pc i32) (param $budget i32) (result i32)
-    (call $uop_run (local.get $pc) (local.get $budget)))
+    (local $r i32)
+    (local.set $r (call $uop_run (local.get $pc) (local.get $budget)))
+    (global.set $uop_icg_retire (i32.const 0))
+    (local.get $r))
   ;; CF | ZF<<1 | SF<<2 | OF<<3 | PF<<4, so a test can compare two arms'
   ;; flags whatever lazy representation each left behind.
   (func (export "uop_flags") (result i32)
@@ -2466,6 +2530,9 @@
     (if (i32.eq (local.get $which) (i32.const 18)) (then (return (global.get $uop_icg_fail0))))
     (if (i32.eq (local.get $which) (i32.const 19)) (then (return (global.get $uop_icg_pass1))))
     (if (i32.eq (local.get $which) (i32.const 20)) (then (return (global.get $uop_icg_fail1))))
+    ;; 21 sites found megamorphic, 22 programs killed for one (section 23)
+    (if (i32.eq (local.get $which) (i32.const 21)) (then (return (global.get $uop_icg_megas))))
+    (if (i32.eq (local.get $which) (i32.const 22)) (then (return (global.get $uop_icg_mkills))))
     (i32.const 0))
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.

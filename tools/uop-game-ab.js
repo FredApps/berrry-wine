@@ -228,6 +228,24 @@ const GAMES = {
       '3002:keypress:69', '5000:keydown:13', '5002:keyup:13', '8200:click:190:455', '23000:click:560:465',
       '25700:click:105:150'],
   },
+  blobby: {
+    // Blobby Volley (Delphi/VCL): test-blobby-volley.js's route into a match,
+    // then a rally -- the window docs/uop-tier-design.md section 15.1 measured
+    // at 7.2% of block entries ending at a guest vtable / method-pointer call.
+    app: 'blobby_volley', split: 700,
+    args: ['--batch-size=200000', '--max-batches=1100'],
+    input: ['500:mousemove:400:222', '520:mousemove:401:223', '560:mousedown:401:223', '600:mouseup:401:223'],
+  },
+  rodent: {
+    // Rodent's Revenge 2000 (VB6 native): Game > New Game, then level 1
+    // (docs/re-notes/rodent2000.md). Section 15.1's census window 3000..4400:
+    // 3.7% of entries end at a guest indirect call, mostly COM AddRef/Release.
+    app: 'rodent2000', split: 3000,
+    args: ['--batch-size=2000', '--max-batches=4400'],
+    input: ['2500:mousedown:155:38', '2501:mouseup:155:38', '2700:mousedown:165:58', '2701:mouseup:165:58',
+      '3200:keydown:39', '3260:keyup:39', '3400:keydown:40', '3460:keyup:40',
+      '3600:keydown:37', '3660:keyup:37', '3800:keydown:38', '3860:keyup:38'],
+  },
   c3: {
     // Caesar III demo: test-caesar3-gameplay.js's retry-driven route to the
     // city, then 2000 batches of it simulating -- the RLE sprite blit (H429)
@@ -375,6 +393,10 @@ async function main() {
   // the same configuration; notrace is the arm without them.
   ARMS.trace = [...ARMS.uop, '--uop-trace-heads'];
   ARMS.notrace = [...ARMS.uop, '--no-uop-trace-heads'];
+  // noage: sticky hot slots without the time decay (section 22), i.e. the
+  // section-21.5 gate; nosticky: the pre-21.5 reset-on-sight gate.
+  ARMS.noage = [...ARMS.uop, '--uop-hot-age=0'];
+  ARMS.nosticky = [...ARMS.uop, '--no-uop-hot-sticky'];
   const armFor = (a) => {
     const k = /^(uop|trace|off)k(\d+)(?:x\d+)?$/.exec(a);
     if (k) return [...ARMS[k[1]], `--block-exec-walk-k=${k[2]}`];
@@ -388,6 +410,9 @@ async function main() {
   // Their partner is uop.
   ARMS.muldiv = [...ARMS.uop, '--uop-muldiv'];
   ARMS.icall = [...ARMS.uop, '--uop-icall'];
+  // icallpoly: icall with the megamorphic-site rule off (07d $uop_icg_mega,
+  // docs/uop-tier-design.md section 23) -- every guard kept however it fails.
+  ARMS.icallpoly = [...ARMS.icall, '--uop-icg-mega=0'];
   ARMS.iat = [...ARMS.uop, '--uop-iat'];
   ARMS.widen = [...ARMS.uop, '--uop-muldiv', '--uop-icall', '--uop-iat'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another

@@ -114,6 +114,13 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // --no-uop-hot-sticky: a foreign head resets a hot-table slot on sight again
   // instead of wearing its count down (07c $bx_hot_sticky; §21.5).
   const NO_UOP_HOT_STICKY = hasFlag('no-uop-hot-sticky');
+  // --uop-hot-age=N: halve every sticky hot count each N hot-table bumps
+  // (07c $bx_hot_age; 0 = never, the section-21.5 behaviour; §22).
+  const UOP_HOT_AGE = getArg('uop-hot-age', null);
+  // --uop-icg-mega=N: an --uop-icall/--uop-iat site whose guard has failed N
+  // times is megamorphic: programs failing there are killed and recompiled
+  // without its inline cache (07d $uop_icg_mega, default 32; 0 = never; §23).
+  const UOP_ICG_MEGA = getArg('uop-icg-mega', null);
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -376,6 +383,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_UOP_TRACE_CUT) inheritWasm('set_uop_trace_cut', 0);
     if (NO_UOP_MCOPY) inheritWasm('set_uop_mcopy', 0);
     if (NO_UOP_HOT_STICKY) inheritWasm('set_uop_hot_sticky', 0);
+    if (UOP_HOT_AGE !== null) inheritWasm('set_uop_hot_age', Number(UOP_HOT_AGE) | 0);
+    if (UOP_ICG_MEGA !== null) inheritWasm('set_uop_icg_mega', Number(UOP_ICG_MEGA) | 0);
     if (UOP_REGUARD_SPAN !== null) inheritWasm('set_uop_reguard_span', Number(UOP_REGUARD_SPAN) | 0);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -400,6 +409,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (NO_UOP_TRACE_CUT && instance.exports.set_uop_trace_cut) instance.exports.set_uop_trace_cut(0);
       if (NO_UOP_MCOPY && instance.exports.set_uop_mcopy) instance.exports.set_uop_mcopy(0);
       if (NO_UOP_HOT_STICKY && instance.exports.set_uop_hot_sticky) instance.exports.set_uop_hot_sticky(0);
+      if (UOP_HOT_AGE !== null && instance.exports.set_uop_hot_age) instance.exports.set_uop_hot_age(Number(UOP_HOT_AGE) | 0);
+      if (UOP_ICG_MEGA !== null && instance.exports.set_uop_icg_mega) instance.exports.set_uop_icg_mega(Number(UOP_ICG_MEGA) | 0);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       for (const [setter, wanted] of WIDEN) if (wanted() && instance.exports[setter]) instance.exports[setter](1);
       if (instance.exports.set_uop_trace_heads) instance.exports.set_uop_trace_heads(traceWanted() ? 1 : 0);
@@ -564,9 +575,12 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
         const sites = [0, 1, 2, 3].map((k) => [x.uop_icg_site(k) >>> 0, x.uop_icg_site(4 + k) >>> 0])
           .filter(([, n]) => n).map(([a, n]) => `0x${a.toString(16)}=${n}`).join(' ');
         log(`uop widen: muldiv-insns=${cs(27)} div-exits=${st(16)} | icall-sites=${cs(28)} pass=${st(17)} fail=${st(18)} | ` +
-          `iat-sites=${cs(29)} pass=${st(19)} fail=${st(20)} | rejected=${cs(30)}` + (sites ? `\n  guard-fail sites: ${sites}` : ''));
+          `iat-sites=${cs(29)} pass=${st(19)} fail=${st(20)} | rejected=${cs(30)} | ` +
+          `mega-sites=${st(21)} mega-kills=${st(22)} mega-refused=${cs(31)}` + (sites ? `\n  guard-fail sites: ${sites}` : ''));
       }
       if (x.get_uop_nobump_skips) log(`uop nobump: skips=${x.get_uop_nobump_skips() >>> 0}`);
+      if (x.uop_hot_decays) log(`uop hot: decays=${x.uop_hot_decays() >>> 0}` +
+        (x.uop_hot_halvings ? ` halvings=${x.uop_hot_halvings() >>> 0}` : ''));
       if (UOP_WIN_CENSUS) require('./runner-win-census').reportWinCensus(instance, log);
       if (aggrWanted()) {
         // $uop_cstat 6..25: the aggressive-stack counters of every program
