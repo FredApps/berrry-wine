@@ -363,6 +363,18 @@
   ;;   9 unsup      head, opcode signature (07e $uc_sig), its address, reason
   ;;                (before the kind-1 record of a scan-limit, head-unsupported
   ;;                or no-backedge decline: each unsupported insn the scan hit)
+  ;; Program lifetimes (so a head's enters sum over every program it had, not
+  ;; just the one live at exit; docs/uop-tier-design.md §23.7):
+  ;;  10 flushed    head, enters, blocks, work   (each live program, at a flush)
+  ;;  11 live       head, enters, blocks, work   (each live program in the arena
+  ;;                at exit, including ones a map way no longer names)
+  ;;  12 mega kill  head, enters, blocks, work   (killed at a megamorphic ICG)
+  ;;  13 exits      head, dominant exit EIP (Misra-Gries), its net count, exits
+  ;;                to a cut landing; follows every 2, 3, 10, 11 and 12
+  ;; and what a program was built from (07e, at install, before its kind 1):
+  ;;  14 call site  head, site EIP, target, class (0 E8, 1 icall, 2 IAT)
+  ;;  15 range      head, lo, hi, 0  (a run of consecutive instructions)
+  ;;  16 cut        head, landing EIP, 0, 0  (07e $uc_form_trace)
   (global $uop_census (mut i32) (i32.const 0))
   (func $uop_census_ev (param $k i32) (param $a i32) (param $b i32) (param $c i32) (param $d i32)
     (call $host_log_i32 (i32.or (i32.const 0xC5E50000) (local.get $k)))
@@ -372,10 +384,59 @@
     (call $host_log_i32 (local.get $d)))
   (func (export "set_uop_census") (param $on i32)
     (global.set $uop_census (i32.ne (local.get $on) (i32.const 0))))
+  ;; Census only: where each entry of a program left. Header +36/+40 hold a
+  ;; Misra-Gries majority candidate for the exit EIP and its net count, +44
+  ;; the exits to a trace cut landing (both unused otherwise, zeroed at
+  ;; placement). An exit back to the head is +24's already.
+  (func $uop_census_exit (param $op i32)
+    (local $e i32)
+    (local.set $e (global.get $eip))
+    (if (i32.eq (local.get $e) (i32.load offset=4 (local.get $op))) (then (return)))
+    (if (call $uop_cut_probe (local.get $e))
+      (then (i32.store offset=44 (local.get $op) (i32.add (i32.load offset=44 (local.get $op)) (i32.const 1)))))
+    (if (i32.eq (i32.load offset=36 (local.get $op)) (local.get $e))
+      (then (i32.store offset=40 (local.get $op) (i32.add (i32.load offset=40 (local.get $op)) (i32.const 1))) (return)))
+    (if (i32.eqz (i32.load offset=40 (local.get $op)))
+      (then (i32.store offset=36 (local.get $op) (local.get $e))
+            (i32.store offset=40 (local.get $op) (i32.const 1)) (return)))
+    (i32.store offset=40 (local.get $op) (i32.sub (i32.load offset=40 (local.get $op)) (i32.const 1))))
+  (func $uop_census_exits (param $pc i32)
+    (call $uop_census_ev (i32.const 13) (i32.load offset=4 (local.get $pc))
+      (i32.load offset=36 (local.get $pc)) (i32.load offset=40 (local.get $pc))
+      (i32.load offset=44 (local.get $pc))))
+  (func $uop_census_prog (param $k i32) (param $pc i32)
+    (call $uop_census_ev (local.get $k) (i32.load offset=4 (local.get $pc))
+      (i32.load offset=16 (local.get $pc)) (i32.load offset=20 (local.get $pc))
+      (i32.load offset=32 (local.get $pc)))
+    (call $uop_census_exits (local.get $pc)))
+  ;; Every live program of this generation, by the start bitmap: a program
+  ;; whose map way was taken over is still entered through its enter op.
+  (func $uop_census_arena (param $k i32)
+    (local $i i32) (local $b i32) (local $j i32) (local $pc i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (global.get $UOP_STARTS_BYTES)))
+      (local.set $b (i32.load8_u (i32.add (i32.add (global.get $uop_arena) (global.get $uop_starts_off))
+                                          (local.get $i))))
+      (if (local.get $b)
+        (then
+          (local.set $j (i32.const 0))
+          (block $bd (loop $bl
+            (br_if $bd (i32.ge_u (local.get $j) (i32.const 8)))
+            (if (i32.and (local.get $b) (i32.shl (i32.const 1) (local.get $j)))
+              (then
+                (local.set $pc (i32.add (global.get $uop_arena)
+                  (i32.shl (i32.add (i32.shl (local.get $i) (i32.const 3)) (local.get $j)) (i32.const 4))))
+                (if (call $uop_live (local.get $pc))
+                  (then (call $uop_census_prog (local.get $k) (local.get $pc))))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $bl)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l))))
   (func (export "uop_census_dump")
     (local $i i32) (local $s i32) (local $pc i32)
     (call $uop_census_ev (i32.const 8) (global.get $bx_hot_evicts)
       (global.get $bx_hot_evicts_warm) (global.get $bx_walk_hot_probes) (i32.const 0))
+    (call $uop_census_arena (i32.const 11))
     (block $d (loop $l
       (br_if $d (i32.ge_u (local.get $i) (i32.const 4096)))
       (local.set $s (i32.add (i32.add (global.get $uop_arena) (global.get $uop_map_off))
@@ -2268,7 +2329,8 @@
                   (if (i32.load (local.get $last)) (then
                   (call $uop_census_ev (i32.const 3) (i32.load offset=4 (local.get $last))
                     (i32.load offset=16 (local.get $last)) (i32.load offset=20 (local.get $last))
-                    (local.get $ga))))))
+                    (local.get $ga))
+                  (call $uop_census_exits (local.get $last))))))
           (call $uop_kill (i32.load offset=8 (local.get $e)))
           ;; swap-remove, and look at slot $i again
           (global.set $uop_nranges (i32.sub (global.get $uop_nranges) (i32.const 1)))
@@ -2305,7 +2367,8 @@
   ;; everything was lowered from can no longer be trusted.
   (func $uop_flush
     (if (global.get $uop_census)
-      (then (call $uop_census_ev (i32.const 4) (global.get $uop_gen) (global.get $uop_alloc)
+      (then (call $uop_census_arena (i32.const 10))
+            (call $uop_census_ev (i32.const 4) (global.get $uop_gen) (global.get $uop_alloc)
               (global.get $uop_nranges) (i32.const 0))))
     (global.set $uop_gen (i32.add (global.get $uop_gen) (i32.const 1)))
     (if (i32.eqz (global.get $uop_gen)) (then (global.set $uop_gen (i32.const 1))))
@@ -2425,11 +2488,13 @@
             (i32.store offset=32 (local.get $op)
               (select (i32.const 0x40000000) (local.get $ep) (i32.gt_u (local.get $ep) (i32.const 0x40000000))))
             (global.set $uop_xwork (i32.const 0))))
+        (if (global.get $uop_census) (then (call $uop_census_exit (local.get $op))))
         ;; It left through a megamorphic site's guard ($uop_icg_count): kill
         ;; it so the head recompiles without that inline cache. Its enters
         ;; are zeroed so neither poor test below can mark the head.
         (if (global.get $uop_icg_retire)
           (then
+            (if (global.get $uop_census) (then (call $uop_census_prog (i32.const 12) (local.get $op))))
             (global.set $uop_icg_retire (i32.const 0))
             (global.set $uop_icg_mkills (i32.add (global.get $uop_icg_mkills) (i32.const 1)))
             (call $uop_kill (local.get $op))
@@ -2487,7 +2552,8 @@
         (if (global.get $uop_census)
           (then (call $uop_census_ev (i32.const 2) (i32.load offset=4 (local.get $op))
                   (i32.load offset=16 (local.get $op)) (i32.load offset=20 (local.get $op))
-                  (global.get $eip))))
+                  (global.get $eip))
+                (call $uop_census_exits (local.get $op))))
         (call $uop_retire_poor (local.get $op)))))
 
   (func $uop_arena_addr (export "uop_arena") (result i32) (global.get $uop_arena))

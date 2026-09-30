@@ -1882,6 +1882,9 @@ async function main() {
   const a = bench.layout(inst.imageBase, 0x20000);
   a.thunk = e.get_thunk_base() >>> 0;   // an API thunk, for the thunk-zone refusal
   if (process.env.UOP_NOFOLD) for (const f of process.env.UOP_NOFOLD.split(",")) e["set_" + f + "_emit"](0);
+  // UOP_CENSUS=1 BENCH_TRACE_LOOP=1: print the --uop-census records these
+  // cases produce (a smoke test for tools/uop-census.js / uop-census-diff.js).
+  if (process.env.UOP_CENSUS) e.set_uop_census(1);
   let slot = 0;
   let fails = 0;
   const only = process.env.UOP_CASE;
@@ -2008,6 +2011,7 @@ async function main() {
   }
   const cs = (k) => e.uop_cstat(k);
   const why = WAT_REASONS.map((n, k) => [n, k && e.uop_decline_count(k)]).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ');
+  if (process.env.UOP_CENSUS) e.uop_census_dump();
   console.log(`uop compiler: compiled=${cs(0)} declined=${cs(1)} insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}${why ? '\n  declines: ' + why : ''}`);
   console.log(`reguards=${e.uop_stats(1)} guard-fails=${e.uop_stats(0)} kills=${e.uop_stats(3)}`);
   if (fails) { console.log(`FAIL: ${fails}`); process.exit(1); }

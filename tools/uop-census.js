@@ -128,7 +128,8 @@ const recs = [];
 for (let i = 0; i + 4 < vals.length; i++) {
   if ((vals[i] & 0xFFFF0000) >>> 0 !== 0xC5E50000) continue;
   const k = vals[i] & 0xFFFF;
-  if (k < 1 || k > 9) continue;
+  // 10-16 (program lifetimes, exits, shape) are read by tools/uop-census-diff.js
+  if (k < 1 || k > 16) continue;
   recs.push({ k, a: vals[i + 1], b: vals[i + 2], c: vals[i + 3], d: vals[i + 4] });
   i += 4;
 }
