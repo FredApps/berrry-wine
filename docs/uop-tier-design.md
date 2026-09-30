@@ -2909,3 +2909,61 @@ the branch clock: registers, flags, memory hash and every batch stop.
   - or keeping the callee's own loop program and calling into it.
 
   Either is a trace-formation change, not an inline-cache one.
+
+### 23.7 Per-head census for the swallowing hypothesis (instrumented, not yet measured)
+
+§23.6's mechanism is a hypothesis: callee heads stop being entered because
+their code now runs inside a caller's trace that grew through an icall. The
+census that tests it per head is in place; the runs are not (the bench boxes
+were unreachable from the session that added it, and app routes do not run
+on the laptop).
+
+**Records added to `--uop-census`** (07d header comment has the layout). All
+are behind `$uop_census`; the only cost with it off is one global test per
+program entry.
+
+- **Lifetimes.** Kinds 10 (live at a flush), 11 (live at exit, from the
+  program-start bitmap, so a program whose map way was taken over still
+  counts) and 12 (killed at a megamorphic ICG). With kinds 2 and 3 they give
+  every program's final enters, blocks and work. So a head's enters sum over
+  all its programs, not just the one alive at exit. Before this, a program
+  lost to a flush or a mega kill left no count.
+- **Exits.** Kind 13 follows each of those. It carries a Misra-Gries
+  dominant exit EIP with its net count, and the number of exits that landed
+  on a trace cut (`$uop_cut_probe`). These live in header +36/+40/+44, which
+  were unused.
+- **Shape.** Kinds 14, 15 and 16 are emitted at install:
+  - 14: every call a program kept (E8, icall or IAT) with its target;
+  - 15: the program's instructions as runs of consecutive addresses;
+  - 16: every cut landing.
+
+**`tools/uop-census-diff.js A.log B.log`** joins two arms by head EIP.
+
+- It ranks heads by lost and gained enters and blocks.
+- It marks a head **swallowed** when all three hold:
+  - its EIP is an instruction inside another head's arm-B program;
+  - that program keeps an icall or IAT site;
+  - the other head's arm-A programs did not cover that EIP.
+- It splits the enter and block change into classes:
+  - (a) swallowed;
+  - (b) killed poor in B;
+  - (c) mega-killed;
+  - (d) lost install;
+  - (e) inside another program with no icall site;
+  - (f) new in B;
+  - (g) same program set.
+- It prices option A (end the trace at a guarded call to a hot head) as the
+  swallowed heads' and their callers' A-arm counts.
+
+`UOP_CENSUS=1 BENCH_TRACE_LOOP=1 node test/test-uop-compiler.js` prints the
+records for the unit cases, and all cases still pass with the census on.
+
+**To run** (bench box, same build, fixed work):
+
+```
+node tools/uop-game-ab.js --games=h3,rodent --arms=uop,icall --jobs=2 --out=OUT --extra='--uop-census'
+node tools/uop-census-diff.js OUT/h3-uop.log OUT/h3-icall.log --top=20 --json=OUT/h3-diff.json
+node tools/uop-census-diff.js OUT/rodent-uop.log OUT/rodent-icall.log --top=20
+```
+
+The census arms are for counts only; §23.5's timings stay the CPU numbers.

@@ -1823,6 +1823,9 @@
           (if (i32.ge_s (local.get $S) (i32.const 0))
             (then (br_if $nl (call $uc_flag (local.get $S) (i32.const 1)))))
           (call $uop_cut_note (call $uc_succ (local.get $R) (i32.const 0)))
+          (if (global.get $uop_census)
+            (then (call $uop_census_ev (i32.const 16) (local.get $head)
+                    (call $uc_succ (local.get $R) (i32.const 0)) (i32.const 0) (i32.const 0))))
           (br $nl)))))
     (i32.const 0))
 
@@ -4808,6 +4811,7 @@
             (then (global.set $uc_n_iat (i32.add (global.get $uc_n_iat) (i32.const 1)))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br $nl)))
+    (if (global.get $uop_census) (then (call $uc_census_shape)))
     ;; the aggressive-stack census of the program kept
     (local.set $k (i32.const 0))
     (block $sd (loop $sl
@@ -4819,6 +4823,33 @@
       (local.set $k (i32.add (local.get $k) (i32.const 4)))
       (br $sl)))
     (local.get $pc))
+
+  ;; --uop-census only (07d kinds 14 and 15): what the program just placed
+  ;; was built from -- every call it kept (E8, icall, IAT) with its target,
+  ;; and its instructions as runs of consecutive addresses, so a census can
+  ;; say which heads' code now runs inside another head's program.
+  (func $uc_census_shape
+    (local $k i32) (local $R i32) (local $lo i32) (local $hi i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $k) (global.get $uc_nloop)))
+      (local.set $R (call $uc_loop_insn (local.get $k)))
+      (if (i32.eq (call $uc_kind (local.get $R)) (i32.const 23))
+        (then (call $uop_census_ev (i32.const 14) (global.get $uc_head) (i32.load (local.get $R))
+                (if (result i32) (i32.load offset=12 (local.get $R))
+                  (then (i32.load offset=24 (local.get $R)))
+                  (else (call $uc_succ (local.get $R) (i32.const 0))))
+                (i32.load offset=12 (local.get $R)))))
+      (if (i32.and (i32.ne (local.get $k) (i32.const 0)) (i32.eq (local.get $hi) (i32.load (local.get $R))))
+        (then (local.set $hi (i32.load offset=4 (local.get $R))))
+        (else
+          (if (local.get $k)
+            (then (call $uop_census_ev (i32.const 15) (global.get $uc_head) (local.get $lo) (local.get $hi) (i32.const 0))))
+          (local.set $lo (i32.load (local.get $R)))
+          (local.set $hi (i32.load offset=4 (local.get $R)))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $l)))
+    (if (local.get $k)
+      (then (call $uop_census_ev (i32.const 15) (global.get $uc_head) (local.get $lo) (local.get $hi) (i32.const 0)))))
 
   ;; 0 compiled 1 declined 2 insns 3 uops 4 flushes 5 words; 6+i the
   ;; aggressive-stack counter i ($uc_sp_cnt), summed over installed programs
