@@ -72,7 +72,7 @@ const inheritedFlags = [
   '--no-mmx', '--fault-null', '--trace-callstack',
   '--trace-eip-range=ffffffff-ffffffff', '--count=ffffffff',
   '--no-loop-superops', '--no-lut-superops', '--no-copy-superops',
-  '--no-aoe-fill', '--no-aoe-span', '--no-sib-fusion', '--no-rect-run',
+  '--no-aoe-fill', '--no-aoe-span', '--no-sib-fusion',
   '--no-rle-run',
 ];
 const worker = run('worker', ['--threads', ...inheritedFlags]);
@@ -104,7 +104,7 @@ const checks = [
       'set_cpu_mmx', 'set_fault_unmapped', 'set_callstack_enabled',
       'set_trace_eip_range', 'set_count', 'set_loop_emit',
       'set_loop_lut_emit', 'set_loop_copy_emit', 'set_loop_aoe_fill_emit',
-      'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_rect_run',
+      'set_loop_aoe_span_emit', 'set_sib_fusion',
       'set_rle_run',
     ].every(setter => inheritedSetters.has(setter))],
   ['the scheduler reports the worker backend',

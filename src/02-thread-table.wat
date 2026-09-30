@@ -489,7 +489,7 @@
     $th_mmx_mr                ;; 424: m64, mm     operand = sub<<8 | src<<4 ; addr word follows
     $th_mmx_ri                ;; 425: mm, imm8    operand = sub<<12 | dst<<8 | imm8
     $th_rdtsc                 ;; 426: RDTSC -> EDX:EAX
-    $th_rect_run              ;; 427: a whole unrolled rows x cols dword rect copy
+    $th_retired_fold          ;; 427: retired (was RECT_RUN, Caesar III unrolled tile blit; uop runs it)
     $th_retired_fold          ;; 428: retired (was CASE_CHAIN, cmp al,imm8 / jz switch ladder; uop runs it)
     $th_rle_run               ;; 429: a whole run-length sprite blit row
     $th_load_far_ptr32        ;; 430: LES/LDS r32, m16:32 in a flat task

@@ -2335,7 +2335,6 @@ const TOGGLES = {
   lut_superops: 'set_loop_lut_emit',
   mmx_fill: 'set_loop_mmx_fill_emit',
   rle_run: 'set_rle_run',
-  rect_run: 'set_rect_run',
   // ck_lut16/ck_blend16/ck_shadow16 were the SimGolf keyed-blit folds, retired
   // to the uop tier (docs/uop-tier-design.md section 18); their shapes stay.
   block_exec: 'set_block_exec',
