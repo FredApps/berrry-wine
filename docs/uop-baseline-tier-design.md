@@ -616,6 +616,38 @@ fallbacks and every program entry a JS round trip. What's next:
 - VGA prediction in the fast half;
 - only then a K sweep that means something.
 
+### Phase 1, step 4: far call and return as µops, linked across segments (2026-09-29)
+
+In real and V86 mode, `call ptr16:16`, `retf` and `retf imm16` now decode
+(`uop-x86.js` kinds `callf`/`retf`), with L1's exact semantics. `call_far`
+reads its immediates from the code again when it runs, as L1's handler does:
+FARCALL patches its own selector from the straight line that contains the
+call. The 32-bit and protected-mode forms stay in L1.
+
+- **The program ends at the far transfer.** Its exit carries the target
+  segment's code base (`cb`). The arena link key becomes `${cb}|mask:ip`
+  instead of the program's own key, so a chain crosses segments inside wasm.
+- **Exits are only as static as their immediates.** A far call takes the
+  static link only while the re-read immediates equal the decoded ones.
+  Otherwise it leaves through the dynamic exit.
+- **Far exits count as dynamic for flag liveness.** This applies both in the
+  `flush` and in `liveFlagsAt`. The next code is in another segment, so the
+  walk cannot see it.
+- **`drive()` always re-reads CS.** It used to assume only a fallback could
+  change it.
+
+Every run agreed with l1 on dispatches and frame:
+
+| run | only (allRP) | only-min | only-t1k | only-t10k |
+|---|---|---|---|---|
+| 10M, 12 programs | x11.7 (was x12.3) | x6.4 (x6.6) | x8.1 (x8.9) | |
+| 100M, DTM2 | x6.9 | x4.7 | | x4.8 |
+
+DTM2's fallback entries at 100M fell from ~600K to 8,278. The top fallback is
+now `spin`, 40.9M of its 100M steps: its retrace wait runs in L1, and L1
+folds it cheaply. The remaining fallbacks are `pushf`/`popf`, `cli`/`sti`,
+and `movs`/`stos` with `rep`.
+
 ## 7. Open questions, each with how phase 0 or phase 1 answers it
 
 1. **Local flags without liveness.** Materializing a `rec` at every block exit may cost

@@ -268,6 +268,17 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32, benign = null) {
   }
   if (op === 0xC3) return done({ kind: 'ret', w: opsize, pop: 0 });
   if (op === 0xC2) return done({ kind: 'ret', w: opsize, pop: u16() });
+  // Far CALL ptr16:16 and RETF, in real and V86 mode only: there a selector is
+  // a paragraph, so the new CS base is the selector times sixteen and nothing
+  // can fault (L1's call_far / retf / retf_imm through $sset). The program
+  // ends at either one, and its exit names the other segment's key. The
+  // 32-bit forms are how an extender changes worlds, and stay in L1.
+  if (op === 0x9A || op === 0xCA || op === 0xCB) {
+    if (ip32) return bad('far transfer in protected mode');
+    if (opsize === 32) return bad('far transfer o32');
+    if (op === 0x9A) { const off = u16(); return done({ kind: 'callf', off, sel: u16() }); }
+    return done({ kind: 'retf', pop: op === 0xCA ? u16() : 0 });
+  }
   if (op === 0xE2) { const d = s8(); return done({ kind: 'loop', target: rel(d), a32: asize === 32 }); }
   if (op === 0xE3) { const d = s8(); return done({ kind: 'jcxz', target: rel(d), a32: asize === 32 }); }
   if (op === 0xE9) {
@@ -358,6 +369,8 @@ function successors(d) {
     case 'jmp': return { taken: d.target, fall: null };
     case 'call': return { taken: d.target, fall: null, call: true };
     case 'ret': return { taken: null, fall: null, ret: true };
+    // ...somewhere in another code segment: an exit, never an edge.
+    case 'callf': case 'retf': return { taken: null, fall: null, far: true };
     default: return null;
   }
 }

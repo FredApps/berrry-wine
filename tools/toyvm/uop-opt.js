@@ -246,7 +246,7 @@ class Build {
     b.fast = true;
     b.nodes = [];
     b.ip = slowTerm.ip;
-    b.ops.push({ o: 'flush', exitIp: slowTerm.ip, dyn: slowTerm.ipv !== undefined });
+    b.ops.push({ o: 'flush', exitIp: slowTerm.ip, dyn: slowTerm.ipv !== undefined || !!slowTerm.far });
     b.term = { ...slowTerm };
     if (slowTerm.ipv !== undefined) b.term.ipv = t(slowTerm.ipv);
     return b.id;
@@ -927,7 +927,7 @@ function callhReads(op) { return CALLH_READS_C.has(op.sh) ? ['c'] : []; }
 
 // Which flags each flush point needs, by where it goes.
 function flushFlags(B, op) {
-  if (op.dyn) return new Set(ALL6);          // a return to an unknown address
+  if (op.dyn) return new Set(ALL6);          // a return to an unknown address, or a far exit
   return B.liveAt(op.exitIp);
 }
 

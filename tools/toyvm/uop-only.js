@@ -256,7 +256,9 @@ class UopOnly {
       // selector is a paragraph and there is no descriptor for it to check
       // (dos-loop.js step's bad-selector guard) -- so do that here. The stub
       // segment is an interrupt to service, not code.
-      const ncs = s.rec ? cs : vm.get('cs');
+      // A µop program's far call or return is the same thing, and a chain of
+      // links may have crossed several segments before this exit.
+      const ncs = vm.get('cs');
       if (ncs !== cs) {
         if (ncs === STUB_SEG || d32 || (cr0 & 1 && !v86)) { st.why.mode++; return left; }
         cs = ncs; csb = ex.get_csb();

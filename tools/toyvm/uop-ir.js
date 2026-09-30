@@ -191,7 +191,10 @@ function liveFlagsAt(rd, env, ip, { depth = 24, shmask = 0x1F, memo = new Map() 
       for (const f of e.reads) if (need.has(f)) live.add(f);
       for (const f of e.writes) need.delete(f);
       if (need.size === 0) return live;
-      if (d.kind === 'unsupported' || d.kind === 'ret') { for (const f of need) live.add(f); return live; }
+      if (d.kind === 'unsupported' || d.kind === 'ret' || d.kind === 'callf' || d.kind === 'retf') {
+        for (const f of need) live.add(f);
+        return live;
+      }
       const s = successors(d);
       if (!s) { at = d.next; continue; }
       const outs = [s.taken, s.fall].filter(x => x !== null && x !== undefined);
@@ -319,6 +322,23 @@ function lower(region, opts = {}) {
       b.term = e && body.has(e.k)
         ? { o: 'br', t: nb.get(e.k).id, tx: -1 }
         : { o: 'br', t: goStub(d.next, 'edge'), tx: -1 };
+      continue;
+    }
+    // A far transfer leaves under the other segment's code base: the exit
+    // names it (cb), so a link can find the program built there, and its
+    // flags are live whatever runs next (it is not in this segment to read).
+    // A far call goes there only while its immediates still say what they
+    // said when it was decoded; otherwise to wherever they say now.
+    if (s.far) {
+      const dyn = p.block('exit');
+      dyn.term = { o: 'exit', kind: 'go', ipv: L.retv, far: true, why: 'far' };
+      if (d.kind === 'callf') {
+        const x = p.block('exit');
+        x.ip = d.off;
+        x.term = { o: 'exit', kind: 'go', ip: d.off, cb: (d.sel & 0xFFFF) << 4, far: true, why: 'far' };
+        b.term = { o: 'bcc', cc: 'eq', w: 32, a: L.farx, b: -1, i: ((d.sel << 16) | d.off) | 0,
+          t: x.id, tx: -1, f: dyn.id, fx: -1 };
+      } else b.term = { o: 'br', t: dyn.id, tx: -1 };
       continue;
     }
     if (s.call || d.kind === 'jmp') {
@@ -806,6 +826,32 @@ class Lowerer {
       case 'jmp': L.step(); return;
       case 'call': {
         L.push(L.movi(d.next), d.w);
+        L.step();
+        return;
+      }
+      // L1's call_far: the immediates read again from the code (a depacker
+      // patches its own far call's selector in the block that runs it), then
+      // the old CS, the return offset, and CS.
+      case 'callf': {
+        const cs = L.seg(1);
+        const off = L.load(16, { s: cs, off: L.movi((d.next - 4) & 0xFFFF) });
+        const sel = L.load(16, { s: cs, off: L.movi((d.next - 2) & 0xFFFF) });
+        L.push(L.getSel(1), 16);
+        L.push(L.movi(d.next), 16);
+        L.setSeg(1, sel);
+        L.retv = off;
+        L.farx = L.bin('or', L.imm('shli', sel, 16), off);
+        L.step();
+        return;
+      }
+      // L1's retf / retf_imm: IP, then CS, then the immediate off SP.
+      case 'retf': {
+        L.retv = L.pop(16);
+        L.setSeg(1, L.pop(16));
+        if (d.pop) {
+          const sp = L.getReg(4, 32);
+          L.putReg(4, 32, L.bin('and', L.imm('addi', sp, d.pop), L.getm('spm')));
+        }
         L.step();
         return;
       }

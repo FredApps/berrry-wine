@@ -792,7 +792,7 @@ function lowerProgram(p, lo = {}) {
     }
     if (t.o === 'exit') {
       // A static exit in an arena program can chain to the program at its ip.
-      if (lo.link && !(t.ipv !== undefined && t.ipv >= 0)) return E('link', im(t.adj | 0), im(t.ip), { i: 0, link: t.ip }, im(0));
+      if (lo.link && !(t.ipv !== undefined && t.ipv >= 0)) return E('link', im(t.adj | 0), im(t.ip), { i: 0, link: t.ip, cb: t.cb }, im(0));
       return E('exit', im(t.adj | 0), t.ipv !== undefined && t.ipv >= 0 ? vr(t.ipv) : K(0),
         im(t.ipv !== undefined && t.ipv >= 0 ? 0 : t.ip));
     }
@@ -1285,7 +1285,10 @@ class E1Arena {
             if (!addr.has(a.t)) throw new Error(`uop-wasm: target B${a.t} not lowered`);
             w[k++] = addr.get(a.t);
           } else if (a.link !== undefined) {
-            rec.links.push({ from: rec, lk: `${key}:${a.link}`, t: k, id: k + 1 });
+            // A far exit's link names the other segment's key: its code base
+            // under this one's mask (real/V86 keys are `base|mask`).
+            const lk = a.cb === undefined ? `${key}:${a.link}` : `${a.cb}${key.slice(key.indexOf('|'))}:${a.link}`;
+            rec.links.push({ from: rec, lk, t: k, id: k + 1 });
             w[k++] = 0;
           } else w[k++] = a.bid ? base + a.i : a.i;
         }

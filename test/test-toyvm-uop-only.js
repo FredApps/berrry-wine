@@ -152,6 +152,51 @@ function pmEntryProgram() {
   return Buffer.from(b);
 }
 
+// Far calls into another code segment and back, as µops (uop-x86.js callf /
+// retf): a loop that `call far`s two routines a few paragraphs up, one
+// returning with RETF and one with RETF 2 off an argument it was pushed, both
+// reading CS. The selectors are patched in before the loop from the COM's own
+// CS, which is also a store into code before anything runs it.
+function farCallProgram() {
+  const b = [];
+  const w = (...x) => b.push(...x);
+  const at = () => 0x100 + b.length;
+  const put16 = (i, v) => { b[i] = v & 0xFF; b[i + 1] = (v >> 8) & 0xFF; };
+  w(0x8C, 0xC8);                           // mov ax,cs
+  const paraAt = b.length + 1; w(0x05, 0, 0);               // add ax,<para of far seg>
+  const s1 = b.length + 1; w(0xA3, 0, 0);                   // mov [<call 1 sel>],ax
+  const s2 = b.length + 1; w(0xA3, 0, 0);                   // mov [<call 2 sel>],ax
+  w(0xB9, 0xF4, 0x01);                     // mov cx,500
+  w(0x31, 0xDB);                           // xor bx,bx
+  const top = at();
+  const c1 = b.length + 1; w(0x9A, 0, 0, 0, 0);             // call far F
+  w(0x01, 0xC3);                           // add bx,ax
+  w(0x51);                                 // push cx
+  const c2 = b.length + 1; w(0x9A, 0, 0, 0, 0);             // call far G (retf 2 pops cx)
+  w(0x31, 0xC3);                           // xor bx,ax
+  w(0x49);                                 // dec cx
+  w(0x75, (top - (at() + 2)) & 0xFF);      // jnz top
+  w(0xCD, 0x20);                           // int 20h
+  while ((at() & 15) !== 0) w(0xCC);
+  const seg = at();
+  const f = at() - seg;
+  w(0x89, 0xC8);                           // F: mov ax,cx
+  w(0x8C, 0xCA);                           //    mov dx,cs
+  w(0x01, 0xD0);                           //    add ax,dx
+  w(0xCB);                                 //    retf
+  const g = at() - seg;
+  w(0x89, 0xE5);                           // G: mov bp,sp
+  w(0x8B, 0x46, 0x04);                     //    mov ax,[bp+4]
+  w(0xD1, 0xE0);                           //    shl ax,1
+  w(0x8C, 0xCA);                           //    mov dx,cs
+  w(0x31, 0xD0);                           //    xor ax,dx
+  w(0xCA, 0x02, 0x00);                     //    retf 2
+  put16(paraAt, (seg - 0x100 + 0x100) >> 4);
+  put16(s1, 0x100 + c1 + 2); put16(s2, 0x100 + c2 + 2);
+  put16(c1, f); put16(c2, g);
+  return Buffer.from(b);
+}
+
 async function run(com, uopOnly, budget = 60e6) {
   const r = await runDos({ exe: com, budget, slice: 5e4, log: () => {}, uopOnly });
   const regs = r.vm.getAll();
@@ -207,6 +252,8 @@ async function main() {
     const rt = await same('RETRACE', retraceProgram(), shape);
     await same('PMENTRY', pmEntryProgram(), shape, 2e6);
     await same('TWOSTORE', twoStoreProgram(), shape);
+    const fc = await same('FARCALL', farCallProgram(), shape);
+    assert.ok(fc.fbEntries <= 3, `FARCALL (${shape.label || shape}): ${fc.fbEntries} fallbacks -- far call/retf should be µops`);
     assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape.label || shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
     tierUps += rt.tierUps || 0;
   }
@@ -214,4 +261,5 @@ async function main() {
   console.log('test-toyvm-uop-only: ok');
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+module.exports = { farCallProgram, retraceProgram, twoStoreProgram, pmEntryProgram, shrDecProgram };
+if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
