@@ -1484,7 +1484,15 @@ const CMP_FLAGS = (w, a, b) => (w === 32
   ? `(call ${FL('sub32')} ${a} ${b} (i32.const 0) (i32.sub ${a} ${b}))`
   : `(call ${FL('sub')} ${a} ${b} (i32.sub ${a} ${b}) (i32.const ${w}))`);
 
+// The REP MOVS/STOS runs again as plain functions, for the micro-op tiers
+// (uop-wasm.js REP): the handler's own body with the source segment index as
+// a parameter instead of an operand word, and no dispatch. Index k is
+// uopRepIndex(kind, w, a32); the export uop_rep picks one.
+const UOP_REP = [];
+const uopRepIndex = (kind, w, a32) => (kind === 'stos' ? 6 : 0) + { 8: 0, 16: 2, 32: 4 }[w] + (a32 ? 1 : 0);
+
 function genStrings() {
+  UOP_REP.length = 0;
   const DELTA = (sz) => `(select (i32.const ${-sz}) (i32.const ${sz}) ${bit(F.DF)})`;
 
   // Everything below is generated twice, once per ADDRESS size. That is the
@@ -1607,6 +1615,16 @@ function genStrings() {
     (global.set $rep_runs (i32.add (global.get $rep_runs) (i32.const 1)))
     (global.set $rep_bytes (i32.add (global.get $rep_bytes) (local.get $t2)))
     (global.set $steps (i32.sub (global.get $steps) (local.get $t1))))`;
+        if (name === 'movs' || name === 'stos') {
+          UOP_REP[uopRepIndex(name, w, a === 32)] = `${fast}
+  (block $done
+    (loop $l
+      (br_if $done (i32.eqz (call ${count})))
+      ${body(w, sz)}
+      (drop (call ${dec}))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (br $l)))`;
+        }
         for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
           const zWant = rep === 'rep' ? 1 : 0;
           h(`${rep}_${name}${suffix}${asfx}`, 1, `
@@ -6261,6 +6279,25 @@ ${EXTRA_GLOBALS}
 ;; goes through exactly the code L1's $rd8/$wr8 call, latches and all.
 (func (export "uop_vga_rd8") (param $l i32) (result i32) (call $vga_rd8 (local.get $l)))
 (func (export "uop_vga_wr8") (param $l i32) (param $v i32) (call $vga_wr8 (local.get $l) (local.get $v)))
+;; A REP MOVS/STOS for the micro-op engines (uop-wasm.js REP): exactly the
+;; handler's run, on the registers in the register file, DF taken from the
+;; caller's flags word (restored after: the caller owns the flags), at the
+;; clock the caller says L1 would be at. Hands back L1's $steps after it.
+${UOP_REP.map((body, k) => `(func $uop_rep${k} (param $t0 i32) (local $t1 i32) (local $t2 i32) (local $t3 i32)
+  (local $t4 i32) (local $t5 i32) (local $t6 i32) (local $t7 i32)
+${body})`).join('\n')}
+(func (export "uop_rep") (param $k i32) (param $seg i32) (param $F i32) (param $st i32) (result i32)
+  (local $f i32)
+  (local.set $f (global.get $flags))
+  (global.set $flags (i32.or (i32.and (local.get $f) (i32.const ${~(1 << isa.F.DF)}))
+                             (i32.and (local.get $F) (i32.const ${1 << isa.F.DF}))))
+  (global.set $steps (local.get $st))
+  ;; innermost block first closed: $k0's arm follows the br_table.
+  (block $b ${UOP_REP.map((_, k) => `(block $k${UOP_REP.length - 1 - k}`).join(' ')}
+    (br_table ${UOP_REP.map((_, k) => `$k${k}`).join(' ')} $b (local.get $k))
+  ${UOP_REP.map((_, k) => `) (call $uop_rep${k} (local.get $seg)) (br $b)`).join('\n  ')})
+  (global.set $flags (local.get $f))
+  (global.get $steps))
 ;; The widened REP MOVS/STOS (see $rep_span_ok); --no-rep-fast is the A/B arm.
 (func (export "set_rep_fast") (param $v i32) (global.set $rep_fast (local.get $v)))
 ;; A hardware IRQ, delivered the same way the CPU delivers everything else.

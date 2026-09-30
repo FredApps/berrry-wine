@@ -77,7 +77,7 @@ class UopLive {
     this.heads = new Map();        // `key:ip` -> head record
     this.refused = new Set();      // heads a build declined: not retried
     this.run = null;
-    this.stats = { installs: 0, declined: [], entries: 0, steps: 0, rebuilds: 0, gaveUp: 0, bails: 0, demoted: [], windowLog: [], refusedHeads: [], demotedHeads: [] };
+    this.stats = { installs: 0, buildMs: 0, declined: [], entries: 0, steps: 0, rebuilds: 0, gaveUp: 0, bails: 0, demoted: [], windowLog: [], refusedHeads: [], demotedHeads: [] };
     session.uop = this;
   }
 
@@ -204,6 +204,12 @@ class UopLive {
   // Discover, optimize, lower and encode the program at a head from the bytes
   // there now. False (with h.why) when the region or the engine declines it.
   build(h) {
+    // The arm's build cost (tools/toyvm/arm-bench.js), apart from its running.
+    const t0 = performance.now();
+    try { return this.buildOne(h); } finally { this.stats.buildMs += performance.now() - t0; }
+  }
+
+  buildOne(h) {
     try {
       const vm = this.vm;
       const reg = IR.discover((lin) => vm.mem[lin], h.env, h.ip, { benign: this.cache.benign });

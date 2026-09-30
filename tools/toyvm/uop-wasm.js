@@ -444,6 +444,15 @@ def('pin', 'vvii', ({ V, I, SET }) => SET(0,
   def('poutx', 'vviit', (a) => `${call(a)}(if (i32.ne (local.get $y) (local.get $x)) (then ${cut(a)} ${a.GOTO(4)}))`);
 }
 
+// A REP MOVS/STOS (uop-ir.js 'rep'): L1's run (emit.js uop_rep) on the
+// register file, DF from $F, at L1's clock -- operand 0 the variant, 1 the
+// source segment index, 2 the distance from this engine's $steps to L1's.
+// L1 charges the elements; a store onto code raises L1's $smc, which the
+// next check reads here.
+def('rep', 'iii', ({ I }) => `(local.set $steps (i32.sub (call $uop_rep ${I(0)} ${I(1)} (local.get $F)`
+  + ` (i32.add (local.get $steps) ${I(2)})) ${I(2)}))`
+  + '(local.set $smc (call $get_smc))');
+
 // The clock and the guards.
 def('step', 'i', ({ I }) => `(local.set $steps (i32.sub (local.get $steps) ${I(0)}))`);
 def('check', 'it', ({ I, GOTO }) => `(if (i32.or (i32.lt_s (local.get $steps) ${I(0)}) (local.get $smc)) (then ${GOTO(1)}))`);
@@ -555,7 +564,7 @@ const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|link|bail)/.test(name)
 // run once, so it is an effect like any other.
 const CF_READERS = new Set(['rcl', 'rcr', 'cmc']);
 const EFFECT = new Set(['st', 'putr', 'puts', 'putsel', 'rec', 'wrec', 'wflags', 'step',
-  'fvset', 'check', 'dchk', 'guard', 'pin', 'pout']);
+  'fvset', 'check', 'dchk', 'guard', 'pin', 'pout', 'rep']);
 
 // ---------------------------------------------------------------------------
 // Lowering: µop program -> per block, a list of { name, args } where an arg is
@@ -686,6 +695,7 @@ function lowerProgram(p, lo = {}) {
       }
       case 'shift': return lowerShift(op, E);
       case 'step': return E('step', im(op.i));
+      case 'rep': return E('rep', im(uopRepIndex(op.kind, op.w, op.a32)), im(op.seg), im(op.adj));
       case 'pin': return E('pin', vr(op.d), vr(op.a), im(op.w), im(op.adj));
       case 'pout': return op.dx >= 0 ? E('poutx', vr(op.a), vr(op.b), im(op.w), im(op.adj), tg(op.dx))
         : E('pout', vr(op.a), vr(op.b), im(op.w), im(op.adj));
@@ -1299,7 +1309,11 @@ ${text}
 const IO_IMPORT = '(import "host" "io_in" (func $io_in (param i32 i32 i32) (result i32)))'
   + '\n(import "host" "io_out" (func $io_out (param i32 i32 i32 i32) (result i32)))'
   + '\n(import "host" "vga_rd8" (func $vga_rd8 (param i32) (result i32)))'
-  + '\n(import "host" "vga_wr8" (func $vga_wr8 (param i32 i32)))';
+  + '\n(import "host" "vga_wr8" (func $vga_wr8 (param i32 i32)))'
+  + '\n(import "host" "uop_rep" (func $uop_rep (param i32 i32 i32 i32) (result i32)))'
+  + '\n(import "host" "get_smc" (func $get_smc (result i32)))';
+// emit.js uopRepIndex: which of L1's twelve REP runs.
+const uopRepIndex = (kind, w, a32) => (kind === 'stos' ? 6 : 0) + { 8: 0, 16: 2, 32: 4 }[w] + (a32 ? 1 : 0);
 // TOYVM_E1HIST=1: a DYNAMIC µop census. Every loop engine calls `hist` with
 // the op it is about to dispatch, and e1Hist() returns how often each op and
 // each op->op pair ran: the fusion candidates, weighted by execution rather
@@ -1329,6 +1343,8 @@ const hostOf = (vm) => ({
   io_out: vm.exports.io_out || (() => { throw new Error('uop-wasm: this vm has no io_out'); }),
   vga_rd8: vm.exports.uop_vga_rd8 || (() => { throw new Error('uop-wasm: this vm has no uop_vga_rd8'); }),
   vga_wr8: vm.exports.uop_vga_wr8 || (() => { throw new Error('uop-wasm: this vm has no uop_vga_wr8'); }),
+  uop_rep: vm.exports.uop_rep || (() => { throw new Error('uop-wasm: this vm has no uop_rep'); }),
+  get_smc: vm.exports.get_smc || (() => { throw new Error('uop-wasm: this vm has no get_smc'); }),
 });
 
 const LOCALS = '(local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32)';

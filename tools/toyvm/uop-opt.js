@@ -2107,6 +2107,13 @@ function build(reg, opts = {}) {
   const passes = opts.passes;
   if (!passes) return IR.lower(reg);
   if (passes.naive) return naiveResident(reg, opts);
+  // A REP (uop-ir.js) reads and writes registers in L1's register file behind
+  // every pass's back: only a naive resident program has them there when it
+  // runs. Refused here, so a tier-up of such a program stays on the cold tier.
+  for (const k of reg.body) {
+    const d = reg.nodes.get(k).d;
+    if (d.rep && (d.kind === 'movs' || d.kind === 'stos')) throw new Error('rep needs naiveR');
+  }
   const B = new Build(reg, { ...opts, passes });
   // opts.timing (a Map) collects ms per pass: where a slow build goes.
   const T = opts.timing;
@@ -2252,7 +2259,8 @@ function forwardFullGets(p) {
     if (b.kind === 'dead') continue;
     for (const op of b.ops) {
       if (live.length) mapUses(op, to);
-      if (op.o === 'reload') for (const v of live) alias[v] = 0;
+      // REP moves SI/DI/CX in the register file itself: no copy survives it.
+      if (op.o === 'reload' || op.o === 'rep') for (const v of live) alias[v] = 0;
       if (op.o === 'putr' && op.r < NREG) kill(op.r);
       if (op.o === 'puts') kill(SEGV + op.s);
       const d = opDef(op);

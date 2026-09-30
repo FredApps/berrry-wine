@@ -80,7 +80,7 @@ function discover(rd, env, headIp, opts = {}) {
   while (queue.length) {
     const n = queue.shift();
     const d = n.d;
-    if (!supported(d)) { n.unsupported = d.why || d.kind; continue; }
+    if (!supported(d, opts)) { n.unsupported = d.why || d.kind; continue; }
     // Port reads are a call into L1 at the instruction's own clock (PIN), and
     // only the µop-only arm asks for them: anything else keeps them in L1.
     if ((d.kind === 'in' || d.kind === 'out') && !opts.io) { n.unsupported = d.kind; continue; }
@@ -130,10 +130,14 @@ function discover(rd, env, headIp, opts = {}) {
 
 // What the lowering handles. Everything else ends the program at that
 // instruction with an exit to L1.
-function supported(d) {
+function supported(d, opts = {}) {
   switch (d.kind) {
     case 'unsupported': return false;
-    case 'movs': case 'stos': case 'lods': return !d.rep;
+    // A repeated MOVS/STOS is L1's own run, called from the program (REP), and
+    // only where the registers it reads are L1's at that point: the µop-only
+    // arm's naive programs (opts.rep). Everything else keeps it in L1.
+    case 'movs': case 'stos': return !d.rep || !!opts.rep;
+    case 'lods': return !d.rep;
     case 'shift':
       return !(d.count.t === 'r' && (d.sh === 'rol' || d.sh === 'ror') && d.w !== 32);
     default: return true;
@@ -762,6 +766,13 @@ class Lowerer {
         break;
       }
       case 'movs': case 'stos': case 'lods': {
+        // REP MOVS/STOS: L1's run in one call (emit.js uop_rep), on the
+        // registers and segment bases in the register file, at L1's clock --
+        // `adj` as PIN's: this instruction's STEP is still to come.
+        if (d.rep) {
+          L.op({ o: 'rep', kind: d.kind, w: d.w, a32: d.a32 ? 1 : 0, seg: d.seg, adj: -1 });
+          break;
+        }
         const w = d.w, n = w / 8;
         const ar = d.a32 ? 32 : 16;
         const si = (d.kind !== 'stos') ? L.getReg(6, ar) : -1;
@@ -901,7 +912,7 @@ function def(op) {
   return (op.d !== undefined && op.d >= 0) ? op.d : -1;
 }
 // Ops with an effect beyond their destination.
-const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld', 'pin', 'pout',
+const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld', 'pin', 'pout', 'rep',
   'getcc', 'getf', 'fvset', 'check', 'dchk', 'divq', 'divr', 'puts', 'putsel', 'getsel']);
 function pure(op) { return !SIDE.has(op.o); }
 

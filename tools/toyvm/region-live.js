@@ -200,6 +200,7 @@ class LiveJit {
     this.rtopRepaired = 0;
     this.rtopCut = 0;
     this.ms = {};                    // per-stage cost, milliseconds
+    this.buildMs = 0;                // every run() summed
     this.samples = new Map();        // arena address -> hits
     this.sampleLog = [];             // flat [dispatched, arena address, ...]
     this.dispatched = 0;
@@ -332,7 +333,15 @@ class LiveJit {
     return this.phase;
   }
 
+  // The whole pipeline's time, every time it runs: the arm's build cost
+  // (tools/toyvm/arm-bench.js). Headless, run-dos.js awaits it between slices,
+  // so the guest is not running meanwhile and wall time is what it cost.
   async run() {
+    const t = now();
+    try { return await this.runPipeline(); } finally { this.buildMs += now() - t; }
+  }
+
+  async runPipeline() {
     const t0 = now();
     const bundle = this.makeBundle();
     this.ms.bundle = now() - t0;
@@ -617,7 +626,7 @@ class LiveJit {
       phase: this.phase, declined: this.declined, installs: this.installs,
       drops: this.drops, share: this.share, gate: this.gateRatio,
       rtopRepaired: this.rtopRepaired, rtopCut: this.rtopCut,
-      at: this.installedAt, ms: { ...this.ms }, backend: this.backend.name,
+      at: this.installedAt, ms: { ...this.ms }, buildMs: this.buildMs, backend: this.backend.name,
       samples: this.samples.size,
     };
   }

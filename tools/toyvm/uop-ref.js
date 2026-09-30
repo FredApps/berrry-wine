@@ -470,6 +470,14 @@ function runRef(vm, p, opts = {}) {
           if (r !== st) { steps = (r - op.adj) | 0; if (op.dx >= 0) next = op.dx; }
           break;
         }
+        // A REP MOVS/STOS: L1's run on the register file (emit.js uop_rep).
+        case 'rep': {
+          const k = (op.kind === 'stos' ? 6 : 0) + { 8: 0, 16: 2, 32: 4 }[op.w] + (op.a32 ? 1 : 0);
+          ex.set_smc(smc); ex.set_smclo(smclo); ex.set_smchi(smchi);
+          steps = ((ex.uop_rep(k, op.seg, fl.word() | 0, (steps + op.adj) | 0) | 0) - op.adj) | 0;
+          smc = ex.get_smc() | 0; smclo = ex.get_smclo() >>> 0; smchi = ex.get_smchi() >>> 0;
+          break;
+        }
         case 'callh': {
           if (!op.sh) throw new Error(`callh ${op.fn}`);
           v[op.d] = shiftHelper(fl, op.sh, op.w, v[op.a], v[op.b], shmask);

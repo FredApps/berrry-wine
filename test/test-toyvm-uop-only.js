@@ -245,6 +245,48 @@ function vgaPlanarProgram() {
   ]);
 }
 
+// REP MOVS/STOS inside a loop (uop-ir.js REP, the naive arm's call into L1's
+// run): a copy whose count changes every pass, a word fill, a backward copy
+// under STD, the one-ahead overlap that is a memset, `rep stosd`, a zero
+// count, and a 32-bit-address `rep movsb` through ESI/EDI/ECX -- with SI and
+// DI summed into BX after each pass, so a count or a pointer one off shows.
+function repProgram() {
+  return Buffer.from([
+    0xBD, 0x28, 0x00,             // 100 mov bp,40
+    0xBE, 0x00, 0x04,             // 103 top: mov si,400h
+    0xBF, 0x00, 0x08,             //     mov di,800h
+    0x89, 0xE9,                   //     mov cx,bp
+    0xF3, 0xA4,                   //     rep movsb
+    0x89, 0xE8,                   //     mov ax,bp
+    0xBF, 0x00, 0x09,             //     mov di,900h
+    0xB9, 0x07, 0x00,             //     mov cx,7
+    0xF3, 0xAB,                   //     rep stosw
+    0xFD,                         //     std
+    0xBE, 0x80, 0x04,             //     mov si,480h
+    0xBF, 0x80, 0x0A,             //     mov di,0A80h
+    0xB9, 0x05, 0x00,             //     mov cx,5
+    0xF3, 0xA5,                   //     rep movsw
+    0xFC,                         //     cld
+    0xBE, 0x00, 0x0B,             //     mov si,0B00h
+    0xBF, 0x01, 0x0B,             //     mov di,0B01h
+    0xB9, 0x14, 0x00,             //     mov cx,20
+    0xF3, 0xA4,                   //     rep movsb      (one ahead: a fill)
+    0xB9, 0x03, 0x00,             //     mov cx,3
+    0x66, 0xF3, 0xAB,             //     rep stosd
+    0x31, 0xC9,                   //     xor cx,cx
+    0xF3, 0xA4,                   //     rep movsb      (count 0)
+    0x66, 0xBE, 0x00, 0x0C, 0, 0, //     mov esi,0C00h
+    0x66, 0xBF, 0x00, 0x0D, 0, 0, //     mov edi,0D00h
+    0x66, 0xB9, 0x10, 0, 0, 0,    //     mov ecx,16
+    0x67, 0xF3, 0xA4,             //     rep movsb      (ESI/EDI/ECX)
+    0x01, 0xF3,                   //     add bx,si
+    0x01, 0xFB,                   //     add bx,di
+    0x4D,                         //     dec bp
+    0x75, 0xAE,                   //     jnz top
+    0xCD, 0x20,                   //     int 20h
+  ]);
+}
+
 async function run(com, uopOnly, budget = 60e6) {
   const r = await runDos({ exe: com, budget, slice: 5e4, log: () => {}, uopOnly });
   const regs = r.vm.getAll();
@@ -310,6 +352,12 @@ async function main() {
     assert.strictEqual(rt.fbEntries, 1, `RETRACE (${shape.label || shape}): ${rt.fbEntries} fallbacks -- \`in\` should be µops (only int 20h is not)`);
     tierUps += rt.tierUps || 0;
     await same('NARROWHI', narrowHiProgram(), shape);
+    // REP MOVS/STOS are µops only on naive programs; elsewhere they fall back.
+    if (shape === NAIVE || shape === NAIVE_TIER) {
+      const rp = await same('REP', repProgram(), shape);
+      const str = rp.fallbacks.filter((f) => f.why === 'movs' || f.why === 'stos');
+      assert.strictEqual(str.length, 0, `REP (${shape.label}): ${JSON.stringify(str)} -- rep movs/stos should be µops`);
+    }
   }
   assert.ok(tierUps >= 1, 'tier: no program was ever tiered up');
   // The other two resident models (narrow registers stored in place), on the
@@ -324,5 +372,5 @@ async function main() {
   console.log('test-toyvm-uop-only: ok');
 }
 
-module.exports = { farCallProgram, retraceProgram, twoStoreProgram, pmEntryProgram, shrDecProgram };
+module.exports = { farCallProgram, retraceProgram, twoStoreProgram, pmEntryProgram, shrDecProgram, repProgram, same };
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

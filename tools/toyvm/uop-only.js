@@ -86,6 +86,12 @@ class UopOnly {
     this.stay = stay;
     // Port reads (`in`) as µops (uop-ir.js PIN), not L1 fallbacks.
     this.io = io;
+    // REP MOVS/STOS as a call into L1's run (uop-ir.js REP), where every
+    // program is naive and resident (a tier-up of one is refused and it stays
+    // cold). TOYVM_UOPREP=0 is the A/B arm: the old L1 fallback.
+    this.rep = !!(this.passes.naive && this.linePasses.naive)
+      && globalThis.TOYVM_UOPREP !== '0'
+      && (typeof process === 'undefined' || !process.env || process.env.TOYVM_UOPREP !== '0');
     this.log = log;
     this.run = null;
     this.A = null;
@@ -352,18 +358,18 @@ class UopOnly {
     const cap = this.lineCap.get(lk);
     if (cap !== undefined) {
       try {
-        const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, maxNodes: cap });
+        const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, rep: this.rep, maxNodes: cap });
         if (line.body.size) return this.program(lk, key, ip, env, line);
       } catch (e) { /* the full path below says why */ }
     }
     try {
       const straight = this.shape === 'straight' || this.inLoop.has(lk) || this.tooBig.has(lk);
-      reg = IR.discover(rd, env, ip, { benign: this.cache.benign, straight, io: this.io });
+      reg = IR.discover(rd, env, ip, { benign: this.cache.benign, straight, io: this.io, rep: this.rep });
       // The optimizer's cost grows faster than a region does (a 100-insn
       // line built in ~200ms, a 10-insn one in ~1ms), and a line gains
       // nothing from being long: it links straight on into the next.
       if (!reg.cyclic && reg.body.size > this.maxLine) {
-        reg = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, maxNodes: this.maxLine });
+        reg = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, rep: this.rep, maxNodes: this.maxLine });
       }
       if (!reg.body.size) why = reg.nodes.get(reg.headKey).unsupported || 'empty';
     } catch (e) { why = `discover: ${String(e && e.message || e).slice(0, 60)}`; }
@@ -386,7 +392,7 @@ class UopOnly {
         for (const maxNodes of [this.maxLine, 8]) {
           this.stats.lineRetries++;
           try {
-            const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, maxNodes });
+            const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, rep: this.rep, maxNodes });
             if (line.body.size) {
               const r = this.program(lk, key, ip, env, line);
               this.lineCap.set(lk, maxNodes);

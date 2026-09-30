@@ -26,7 +26,9 @@
 // Any arm name + `@spill` (only-naive@spill) runs it on the E1 engine as it
 // was before uop-wasm.js callSafe: the A/B for that change. `@nofuse` runs it
 // without the fused `X_s` step µops (TOYVM_STEPFUSE=0), `@nomask` without the
-// fused narrow masks (TOYVM_MASKFUSE=0). They stack: only-naive@spill@nofuse.
+// fused narrow masks (TOYVM_MASKFUSE=0), `@norep` with REP MOVS/STOS on the
+// L1 fallback instead of the REP µop (TOYVM_UOPREP=0). They stack:
+// only-naive@spill@nofuse.
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -34,8 +36,16 @@
 // One node process per run, arm order rotated per program. The number quoted
 // is the whole run's CPU time (runDos `cpuSecs`: user + system over the run
 // loop, builds and handbacks included) -- wall clock on this box measures the
-// other agents -- beside the slice-only wasm time (`guestSecs`). Every arm
-// must retire the same dispatch count and draw the same frame as l1, or its
+// other agents -- beside the slice-only wasm time (`guestSecs`).
+//
+// `run` is that CPU time less what the arm spent building, against L1's CPU;
+// `build` is that spend as a share of the arm's own CPU. Build time is wall
+// time with the guest stopped: µop-only's program builds and tier-ups,
+// uop-live's programs, the JIT's whole pipeline (run-dos awaits it between
+// slices, so its wait on V8's off-thread compile is in it). On a quiet box
+// that is CPU; on a loaded one, a build waiting for a core reads long.
+//
+// Every arm must retire the same dispatch count and draw the same frame as l1, or its
 // row is marked and left out of the summary, never averaged.
 
 const fs = require('fs');
@@ -76,7 +86,7 @@ const ARMS = {
 // (TOYVM_CALLSAFE=0): Ion keeps $pc and the machine params on the stack.
 // `ARM@nofuse` runs it without step fusion (TOYVM_STEPFUSE=0), `ARM@nomask`
 // without mask fusion (TOYVM_MASKFUSE=0).
-const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE', '@nomask': 'TOYVM_MASKFUSE' };
+const KNOBS = { '@spill': 'TOYVM_CALLSAFE', '@nofuse': 'TOYVM_STEPFUSE', '@nomask': 'TOYVM_MASKFUSE', '@norep': 'TOYVM_UOPREP' };
 const armOf = (a) => {
   for (const k of Object.keys(KNOBS)) if (a.endsWith(k)) return armOf(a.slice(0, -k.length));
   const t = /^only-t(\d+[km]?)$/i.exec(a);
@@ -101,6 +111,10 @@ async function child(spec) {
   const u = r.uop;
   console.log('ARMBENCH ' + JSON.stringify({
     secs: r.secs, cpuSecs: r.cpuSecs, guestSecs: r.guestSecs, dispatched: r.dispatched, frame: r.frame,
+    // What the arm spent building (µop programs, tier-ups, the JIT pipeline),
+    // on the main thread; the rest of cpuSecs is running (buildOf).
+    buildSecs: u && u.fallbacks ? u.buildSecs + (u.tierSecs || 0)
+      : u ? (u.buildMs || 0) / 1000 : r.jit ? (r.jit.buildMs || 0) / 1000 : 0,
     handbacks: r.session ? r.session.handbacks : undefined,
     only: u && u.fallbacks ? { share: u.uopShare, builds: u.builds, fbSites: u.fbSites, fbEntries: u.fbEntries,
       fbSteps: u.fbSteps, entries: u.entries, chains: u.chains, buildSecs: u.buildSecs, invalidated: u.invalidated,
@@ -175,7 +189,9 @@ async function main() {
       const r = row.arms[l];
       if (!r.ok) return `${l} FAIL(${r.reason.slice(0, 50)})`;
       const x = ref.ok ? ` x${(r.cpuSecs / ref.cpuSecs).toFixed(2)}` : '';
-      return `${l} ${r.cpuSecs.toFixed(2)}s${x}`
+      const eb = ref.ok && r.buildSecs ? ` (run x${((r.cpuSecs - r.buildSecs) / ref.cpuSecs).toFixed(2)}`
+        + ` + build ${r.buildSecs.toFixed(2)}s)` : '';
+      return `${l} ${r.cpuSecs.toFixed(2)}s${x}${eb}`
         + (r.only ? ` [${(100 * r.only.share).toFixed(0)}% µop, fb ${r.only.fbEntries}, build ${r.only.buildSecs.toFixed(2)}s`
           + (r.only.tierUps !== undefined && (r.only.tierUps || r.only.tierFails.length) ? `, up ${r.only.tierUps} ${r.only.tierSecs.toFixed(2)}s` : '') + ']' : '');
     };
@@ -195,8 +211,13 @@ async function main() {
     const cpu = clean.map((r) => r.arms[l].cpuSecs / r.arms.l1.cpuSecs).sort((a, b) => a - b);
     const g = clean.map((r) => r.arms[l].guestSecs / r.arms.l1.guestSecs);
     const q = (f) => cpu[Math.min(cpu.length - 1, Math.floor(f * cpu.length))];
+    // The same CPU time split: running (cpu less build) against L1's, and the
+    // share of the arm's own CPU its builds took.
+    const run = clean.map((r) => (r.arms[l].cpuSecs - (r.arms[l].buildSecs || 0)) / r.arms.l1.cpuSecs);
+    const bshare = clean.reduce((s, r) => s + (r.arms[l].buildSecs || 0) / r.arms[l].cpuSecs, 0) / clean.length;
     console.log(`  ${l.padEnd(10)} cpu vs l1: geomean x${geomean(cpu).toFixed(3)}  p10 x${q(0.1).toFixed(2)}`
-      + `  p50 x${q(0.5).toFixed(2)}  p90 x${q(0.9).toFixed(2)}  | slice time geomean x${geomean(g).toFixed(3)}`);
+      + `  p50 x${q(0.5).toFixed(2)}  p90 x${q(0.9).toFixed(2)}  | run x${geomean(run).toFixed(3)}`
+      + `  build ${(100 * bshare).toFixed(1)}% of its cpu  | slice time geomean x${geomean(g).toFixed(3)}`);
   }
   for (const r of rows) {
     if (r.failed.length) console.log(`  FAIL ${r.name}: ${r.failed.map((l) => `${l}: ${r.arms[l].reason}`).join('; ')}`);
