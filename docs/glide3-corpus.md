@@ -12,8 +12,8 @@ Paths below are relative to `test/binaries/candidates/`.
 | Priority | Launch executable | Original Glide consumer | Static import count | Preparation |
 | --- | --- | --- | ---: | --- |
 | 1 | `diablo-2-demo-installer/installed-extracted/diablo ii.exe` | Same directory, `d2glide.dll` | 36 | Existing `diablo2_demo` app mounts installed data and renderer; override renderer selection only in the test launch. |
-| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | English launch tree assembled from original components, with `DrawDll Render3DFX.dll`; runtime validation pending. |
-| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | English Glide install assembled from original `ubi.ins`, with Windows Ubi.ini; runtime validation pending. |
+| 2 | `hitman-codename-47-demo/launch-game/Hitman.Exe` | Same directory, `Render3DFX.dll` | 47 | Initial remote CLI smoke stopped at `XML_ParserCreate`; original parser DLL now explicitly seeded, rerun pending. No Glide gameplay claim. |
+| 3 | `hype-time-quest-demo/launch-game/MaiDFXvr_bleu.exe` | The executable itself | 50 | Remote CLI smoke stopped at startup `DebugBreak`; assertion cause unresolved. No Glide gameplay claim. |
 
 The counts come from actual import descriptors/thunks, re-read with
 `node tools/pe-imports.js <consumer> --dll=glide3x.dll`. They are not counts
@@ -22,6 +22,24 @@ Hitman and Hype have complete original archives and `provenance.json` files
 in their respective fixture directories. Explicit entries are now
 `diablo2_glide_demo`, `hitman_glide_demo`, and `hype_glide_demo`; the latter
 two are labeled experimental pending gameplay validation.
+
+Remote CLI startup smoke on 2026-09-29 established blockers before gameplay:
+Hitman initially stopped at `XML_ParserCreate`; Hype stopped at `DebugBreak`. Static
+inspection identifies Hitman's original `xmlparse.dll` as the provider:
+`XML_ParserCreate` is export ordinal 15, VA `0x20001006`. `EngineData.dll`
+and `Locale.dll` import that symbol; the parser itself imports only four
+KERNEL32 heap functions. The file was already in the launch tree and VFS
+manifest, but absent from the explicit initial PE seeds. The Hitman app now
+seeds this original DLL alongside `Globals.dll` so runtime-loaded engine
+modules can bind its exports. The remote rerun passed that import and reached
+the original renderer's error, “3DFX: Unable to run Glide on this card.”
+`Render3DFX.dll` at preferred VA `0x0fb978f3` queries `GR_NUM_TMU` (`0x13`)
+and at `0x0fb978fd` explicitly rejects a result of one. Later initialization
+requests `grCoordinateSpace(1)` (clip coordinates) and TMU1 operations.
+Real two-TMU rendering and clipping are required; changing the reported
+capability would only hide the incompatibility. Hype's break may indicate an assertion, but its cause is not
+yet established; bypassing `DebugBreak` would conceal the failure. Neither
+smoke establishes gameplay support.
 
 ## Diablo II: shortest route to real gameplay
 
