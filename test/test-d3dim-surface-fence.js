@@ -83,6 +83,11 @@ async function main() {
           (i32.add (i32.add (global.get $DIB_BACKING_BASE) (i32.const 4096)) (local.get $offset))))
       (func (export "test_lazy_unlock") (param $this i32) (result i32)
         (call $d3dim_lazy_unlock (call $dx_from_this (local.get $this))))
+      (func (export "test_lazy_scope") (param $this i32) (param $gpu i32) (result i32)
+        (global.set $d3dim_gpu_on (local.get $gpu))
+        (global.set $d3dim_worker_pending (i32.const 1))
+        (call $d3dim_surface_fence (call $dx_from_this (local.get $this)))
+        (global.get $d3dim_worker_pending))
       (func (export "test_lazy_access") (param $wa i32) (param $kind i32) (result i32)
         (local $ga i32)
         (local.set $ga (call $w2g (local.get $wa)))
@@ -177,6 +182,25 @@ async function main() {
   assert.equal(ex.test_lazy_unlock(lazy), 1, 'untouched Unlock drops only the access barrier');
   assert(lazyTarget.dirty, 'GPU contents remain authoritative');
   assert.deepStrictEqual(calls, [], 'untouched lock cycle has no readback');
+  // Two GPU targets: a scoped readback may return 2 even though this surface
+  // is fully synchronized. Do not issue the identical producer barrier twice.
+  const unrelatedTarget = { ...b, dib: lazyDib + 4096, dirty: true };
+  executor.targets.set(4, unrelatedTarget);
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(ex.test_lazy_scope(lazy, 1), 1, 'other target keeps pending state');
+  assert.equal(calls.length, 1, 'shared scoped readback is not repeated by producer');
+  assert(!lazyTarget.dirty && unrelatedTarget.dirty, 'only requested surface synchronized');
+  calls.length = 0; lazyTarget.dirty = true;
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(other.test_lazy_scope(lazy, 1), 1);
+  assert.equal(calls.length, 1, 'foreign producer also avoids the duplicate scoped barrier');
+  calls.length = 0; lazyTarget.dirty = true;
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(ex.test_lazy_scope(lazy, 0), 0, 'software path still completes its global barrier');
+  assert(!lazyTarget.dirty && !unrelatedTarget.dirty);
+  assert(calls.some(call => call[1] === 0 && call[2] === 0), 'software fallback synchronizes all targets');
+  executor.targets.delete(4);
+  calls.length = 0; lazyTarget.dirty = true;
   ex.test_lazy_arm(lazy, 1);
   ex.test_lazy_access(lazyDib + 4096, 0);
   assert.deepStrictEqual(calls, [], 'unrelated DIB read does not synchronize');

@@ -1526,5 +1526,11 @@ measured 21.29 FPS OFF / 22.64 ON, with GPU readbacks dropping from 3.016 to
 1.011 per frame. ON submitted about 10% fewer triangles, so the FPS difference
 is not an isolated speedup measurement. Each launch created a helper that
 exited before measurement; persistent thread history catches this startup
-activity. Global enablement remains deferred based on GTA2's extra fence with
+activity. Global enablement remains deferred based on GTA2's extra backend fence call with
 no readback reduction, and the documented retained GDI/native-pointer limit.
+
+The subsequent scoped-barrier correction removes one duplicate guest fence
+per cockpit frame: **4.00 → 3.00**, retaining one readback. Matched lazy-ON
+before/after runs measured 22.41 / 22.97 FPS, but geometry and host load vary;
+this establishes a request-count saving, not an isolated FPS improvement.
+Publication waits remain about 1 ms/frame. See the same report for artifacts.

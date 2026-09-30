@@ -83,6 +83,9 @@ The [hardware browser benchmark](../lazy-sync-game-results.md) reached gameplay
 with two live guest workers throughout measurement. Lazy OFF / ON measured
 29.86 / 29.79 FPS and about one readback per frame in both modes. ON leaves
 one armed Lock untouched per frame, but presentation still needs its readback
-and transport fences increase from one to two. The helper recorded no lazy
+and GPU backend fence calls increase from one to two. A later call-stack trace
+confirmed only one guest fence request per frame: the other backend call is
+inside queued-flip replay. Publication adds its own wait, measured separately.
+The helper recorded no lazy
 surface touches, so this is coexistence coverage, not a real-game test of
 foreign-thread pixel access. Global lazy synchronization remains opt-in.

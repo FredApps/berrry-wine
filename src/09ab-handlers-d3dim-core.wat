@@ -83,7 +83,7 @@
 
   (func $d3dim_worker_fence
     (local $front i32)
-    (call $d3dim_lazy_fence (i32.const 0) (i32.const 0))
+    (drop (call $d3dim_lazy_fence (i32.const 0) (i32.const 0)))
     (if (global.get $d3dim_worker_pending) (then
       (global.set $d3dim_worker_pending (i32.const 0))
       (drop (call $host_gpu_gl_call (i32.const 0x20001) (i32.const 0) (i32.const 0)))))
@@ -97,13 +97,16 @@
   ;; set for other dirty targets; result 1 says all targets are synchronized.
   ;; The software render Worker and deferred presentation retain global ordering.
   (func $d3dim_surface_fence (param $entry i32)
-    (local $dib i32) (local $length i32)
+    (local $dib i32) (local $length i32) (local $synchronized i32)
     (if (local.get $entry) (then
-      (call $d3dim_lazy_fence (load.field DxObject misc1 (local.get $entry))
+      (local.set $synchronized (call $d3dim_lazy_fence (load.field DxObject misc1 (local.get $entry))
         (i32.mul (load.field DxObject pitch (local.get $entry))
-                 (load.field DxObject height (local.get $entry))))))
+                 (load.field DxObject height (local.get $entry)))))))
     (if (i32.and (global.get $d3dim_gpu_on)
                 (i32.eqz (global.get $d3dim_present_pending))) (then
+      ;; The shared barrier already submitted this producer and synchronized
+      ;; this exact span. Result 2 only means OTHER targets remain dirty.
+      (if (local.get $synchronized) (then (return)))
       (if (i32.eqz (global.get $d3dim_worker_pending)) (then (return)))
       (if (local.get $entry) (then
         (local.set $dib (load.field DxObject misc1 (local.get $entry)))
@@ -337,13 +340,16 @@
           (i32.load (region.addr $D3DIM_LAZY_SHARED 8)) (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 4))))
         (i64.gt_u (i64.add (i64.extend_i32_u (local.get $wa)) (i64.extend_i32_u (local.get $len)))
           (i64.extend_i32_u (i32.load (region.addr $D3DIM_LAZY_SHARED 8)))))))
-  (func $d3dim_lazy_fence (param $wa i32) (param $len i32)
-    (if (global.get $d3dim_lazy_bypass) (then (return)))
-    (if (i32.eqz (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 16))) (then (return)))
+  (func $d3dim_lazy_fence (param $wa i32) (param $len i32) (result i32)
+    (local $synchronized i32)
+    (if (global.get $d3dim_lazy_bypass) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 16))) (then (return (i32.const 0))))
     (call $d3dim_lazy_enter)
     (if (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 16)) (then
-      (call $d3dim_lazy_materialize (local.get $wa) (local.get $len))))
-    (call $d3dim_lazy_leave))
+      (call $d3dim_lazy_materialize (local.get $wa) (local.get $len))
+      (local.set $synchronized (i32.const 1))))
+    (call $d3dim_lazy_leave)
+    (local.get $synchronized))
   (func (export "d3dim_lazy_enable") (param $on i32)
     (call $d3dim_worker_fence)
     (global.set $d3dim_lazy_on (i32.ne (local.get $on) (i32.const 0))))

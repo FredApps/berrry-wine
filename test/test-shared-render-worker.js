@@ -103,6 +103,7 @@ function encoderScopedFence(){
   assert.strictEqual(encoder.call(0x20001,0,0),1,'empty global barrier still reaches consumer');
   assert(messages.at(-1).seq>scopedSequence);
   assert.deepStrictEqual([messages.at(-1).address,messages.at(-1).length],[0,0]);
+  assert.strictEqual(encoder.snapshot().transportFences,2);
   encoder.stop();
   messages.length=0;
   const shared=new Stream.Encoder({workerFactory:()=>worker,memory,module:{},
@@ -115,6 +116,9 @@ function encoderScopedFence(){
   assert.strictEqual(shared.call(0x20007,0,0),1);
   assert.deepStrictEqual(messages.map(m=>m.t),['init','batch','batch'],
     'lazy publication consumes both buffered batches without requesting readback');
+  assert.strictEqual(shared.snapshot().publications,2);
+  assert.strictEqual(shared.snapshot().transportFences,0);
+  assert.strictEqual(shared.snapshot().publicationWaitMs,0,'already completed publication does not wait');
   assert.strictEqual(encoder.call(0x20007,0,0),0,'private encoder declines shared lazy synchronization');
   shared.stop();
 }

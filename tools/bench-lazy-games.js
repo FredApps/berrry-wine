@@ -10,6 +10,7 @@ const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 const opt = (n, d) => process.argv.find(a => a.startsWith(`--${n}=`))?.slice(n.length + 3) ?? d;
 const app = opt('app', 'mw3'), lazy = process.argv.includes('--lazy-sync');
+const traceFences = process.argv.includes('--trace-fences');
 const seconds = Number(opt('seconds', '20')), samples = Number(opt('samples', '2'));
 const output = path.resolve(opt('out', `build/lazy-games/${app}-${lazy ? 'on' : 'off'}`));
 assert(['mw3', 'gta2_demo'].includes(app));
@@ -24,6 +25,17 @@ const seam = '      const result = await WebAssembly.instantiate(msg.module, bui
 assert.equal(originalWorker.split(seam).length, 2, 'guest worker instrumentation seam changed');
 const workerSource = originalWorker.replace(seam, `
       const lazyBenchTimes = [];
+      const lazyBenchFences = {};
+      ${traceFences ? `
+      const lazyBenchGpu = built.imports.host.gpu_gl_call;
+      built.imports.host.gpu_gl_call = (...args) => {
+        const result = lazyBenchGpu(...args);
+        if (args[0] === 0x20001 || args[0] === 0x20007) {
+          const key = JSON.stringify([args, result, new Error().stack]);
+          lazyBenchFences[key] = (lazyBenchFences[key] || 0) + 1;
+        }
+        return result;
+      };` : ''}
       const lazyBenchTrace = built.imports.host.dx_trace;
       built.imports.host.dx_trace = (...args) => {
         if (args[0] === ${app === 'mw3' ? 5 : 6}) {
@@ -37,13 +49,14 @@ const workerSource = originalWorker.replace(seam, `
       lazyBenchExports.d3dim_lazy_enable(${lazy ? 1 : 0});
       globalThis.__lazyGameSnapshot = () => ({
         times: lazyBenchTimes.slice(), tid: lazyBenchExports.get_current_thread_id?.(),
+        fenceTrace: lazyBenchFences,
         armed: lazyBenchExports.get_d3dim_lazy_armed(),
         touched: lazyBenchExports.get_d3dim_lazy_touched(),
         untouched: lazyBenchExports.get_d3dim_lazy_untouched(),
         d3d: d3dCommands?.snapshot() || null
       });`);
 fs.writeFileSync(path.join(output, 'guest-worker.js'), workerSource);
-const report = { app, lazy, seconds, samples, started: new Date().toISOString(),
+const report = { app, lazy, traceFences, seconds, samples, started: new Date().toISOString(),
   wasmSha256: hash(wasm), workerSha256: hash(originalWorker), servedWorkerSha256: hash(workerSource),
   sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js', 'lib/d3d-command-stream.js',
     'lib/d3d-render-worker.js', 'lib/d3dim-render-worker.js', 'lib/region-map.generated.js',
