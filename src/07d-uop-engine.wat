@@ -570,6 +570,9 @@
   ;;   64.. bulk $g2w_affine_span sparse fallbacks outside the uop tier:
   ;;   64 calls, 65 ok, 66 first page unmapped, 67 wrap, 68 later page
   ;;   unmapped, 69 NON-ADJACENT, 70 non-adjacent bytes asked, 71 ok bytes.
+  ;;   72 + kind: code-page refusals (+9 of either ctx) by the memory they hit
+  ;;   (1 direct, 2 DIB, 3 sparse); 76 how many; 80..95 the last sixteen
+  ;;   refused pages, a ring indexed by 76.
   ;; Shadow at +1024: 256 entries x 32 bytes {w, kind, first page, last page,
   ;; affine lo, affine hi, committed lo, committed hi}, keyed by slot address.
   (global $uwc_on (mut i32) (i32.const 0))
@@ -685,7 +688,14 @@
           (else
             (if (i32.ne (call $g2w_affine_span (local.get $lo) (local.get $len))
                         (global.get $NULL_SENTINEL))
-              (then (call $uwc_inc (i32.add (local.get $c) (i32.const 9))))
+              (then (call $uwc_inc (i32.add (local.get $c) (i32.const 9)))
+                    (call $uwc_inc (i32.add (i32.const 72) (local.get $k)))
+                    (i64.store (i32.add (call $uwc_base)
+                                 (i32.shl (i32.add (i32.const 80)
+                                   (i32.and (i32.wrap_i64 (i64.load offset=608 (call $uwc_base))) (i32.const 15)))
+                                   (i32.const 3)))
+                               (i64.extend_i32_u (i32.and (local.get $lo) (i32.const 0xFFFFF000))))
+                    (call $uwc_inc (i32.const 76)))
               (else
                 (if (i32.eq (local.get $k) (i32.const 3))
                   (then (call $uwc_inc (i32.add (local.get $c)
