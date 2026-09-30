@@ -33,6 +33,70 @@
   ;; Handlers that leave the live chain untouched use the ordinary saved link.
   (global $delphi_seh_head_before (mut i32) (i32.const 0))
 
+  ;; An exception no frame claimed. On Win98 the default UnhandledException
+  ;; filter puts up "This program has performed an illegal operation" and the
+  ;; process is terminated -- whichever thread faulted. So stop this instance
+  ;; exactly the way ExitProcess/exit() do: report the code, then EIP 0 (the
+  ;; run loop halts on it), no quantum left, the block abandoned rather than
+  ;; parked in $resume_ip, and yield reason 2 so a guest-thread instance is
+  ;; reaped by the ThreadManager instead of being rescheduled.
+  ;;
+  ;; Calling host_exit alone is NOT enough, and was the bug: host_exit only
+  ;; tells JS, which acts between batches. The faulting EIP stayed put, the
+  ;; batch ran on, re-entered the same faulting block and raised again --
+  ;; forever, inside one wasm call, where --max-seconds and SIGTERM cannot
+  ;; reach (JigSawedME, 15 hours in one batch).
+  ;;
+  ;; Process-wide scope from a guest thread: the thread instance stops here,
+  ;; but a worker instance's host "exit" import is a no-op (as it already is
+  ;; for ExitProcess called on a guest thread), so the main thread is not torn
+  ;; down with it. Win98 would end the whole process.
+  (func $seh_terminate_unhandled (param $exit_code i32)
+    (call $host_log_i32 (i32.const 0xCAE8C0DE))   ;; unhandled -> terminate
+    (call $host_log_i32 (local.get $exit_code))
+    (call $host_exit (local.get $exit_code))
+    (global.set $eip (i32.const 0))
+    (global.set $eip_redirected (i32.const 1))
+    (global.set $resume_ip (i32.const 0))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $yield_reason (i32.const 2)))
+
+  ;; Raise-storm guard. A handler that "continues execution" without fixing
+  ;; the cause re-faults at the same instruction on the same address, and that
+  ;; cycle never leaves the batch on its own. Count consecutive identical
+  ;; raises (code, EIP, fault address); every 64th one asks $run to return to
+  ;; the host, so a harness deadline can still act. The log is kept to the
+  ;; first few of a run plus one marker per 64K, since the repeats say nothing
+  ;; new. Only the raise path pays for any of this.
+  (global $raise_last_code (mut i32) (i32.const 0))
+  (global $raise_last_eip (mut i32) (i32.const 0))
+  (global $raise_last_addr (mut i32) (i32.const 0))
+  (global $raise_repeat (mut i32) (i32.const 0))
+  (func $raise_storm_note (param $code i32) (result i32)
+    (if (i32.and
+          (i32.eq (local.get $code) (global.get $raise_last_code))
+          (i32.and
+            (i32.eq (global.get $eip) (global.get $raise_last_eip))
+            (i32.eq (global.get $fault_address) (global.get $raise_last_addr))))
+      (then
+        (global.set $raise_repeat (i32.add (global.get $raise_repeat) (i32.const 1))))
+      (else
+        (global.set $raise_last_code (local.get $code))
+        (global.set $raise_last_eip (global.get $eip))
+        (global.set $raise_last_addr (global.get $fault_address))
+        (global.set $raise_repeat (i32.const 0))))
+    (if (i32.eq (i32.and (global.get $raise_repeat) (i32.const 63)) (i32.const 63))
+      (then (global.set $yield_flag (i32.const 1))))
+    (if (i32.eq (i32.and (global.get $raise_repeat) (i32.const 0xFFFF)) (i32.const 0xFFFF))
+      (then
+        (call $host_log_i32 (i32.const 0xCAE8C0FF))   ;; raise storm
+        (call $host_log_i32 (local.get $code))
+        (call $host_log_i32 (global.get $eip))
+        (call $host_log_i32 (global.get $raise_repeat))))
+    ;; 1 = worth logging this raise individually.
+    (i32.lt_u (global.get $raise_repeat) (i32.const 8)))
+
   (func $delphi_seh_continue_search
     (local $live_head i32)
     ;; We are leaving an unwind/finally handler and returning to the search
@@ -84,7 +148,7 @@
           (return)))
       (global.set $delphi_seh_rec (call $gl32 (global.get $delphi_seh_rec)))
       (br $walk)))
-    (call $host_exit (i32.or (i32.const 0xDE00)
+    (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00)
       (call $gl32 (global.get $delphi_exception_record)))))
 
   (func $raise_delphi_exception (param $code i32) (param $flags i32) (param $nargs i32) (param $args_ptr i32)
@@ -102,7 +166,7 @@
           (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF))
           (i32.eqz (local.get $seh_rec)))
       (then
-        (call $host_exit (i32.or (i32.const 0xDE00) (local.get $code)))
+        (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00) (local.get $code)))
         (return)))
     (local.set $rec (call $heap_alloc (i32.const 80)))
     ;; EXCEPTION_RECORD:
@@ -136,9 +200,11 @@
   (func $raise_exception (param $code i32)
     ;; A CPU fault is rare and, once a guest __except has swallowed it, leaves
     ;; no other trace: name the code and the faulting block.
-    (call $host_log_i32 (i32.const 0xCAE8C000))
-    (call $host_log_i32 (local.get $code))
-    (call $host_log_i32 (global.get $eip))
+    (if (call $raise_storm_note (local.get $code))
+      (then
+        (call $host_log_i32 (i32.const 0xCAE8C000))
+        (call $host_log_i32 (local.get $code))
+        (call $host_log_i32 (global.get $eip))))
     (global.set $fault_raising (i32.const 1))
     (call $raise_exception_walk (local.get $code))
     (global.set $fault_raising (i32.const 0)))
@@ -247,7 +313,7 @@
         (call $seh_walk_from (call $gl32 (local.get $rec)) (call $gl32 (local.get $frame)))
         (global.set $fault_raising (i32.const 0))
         (return)))
-    (call $host_exit (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
+    (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
 
   ;; ============================================================
   ;; Dispatcher registration node
@@ -456,7 +522,7 @@
       (then
         (call $host_log_i32 (i32.const 0xCAE8C039))
         (call $host_log_i32 (local.get $s))
-        (call $host_exit (i32.const 0xDE39))
+        (call $seh_terminate_unhandled (i32.const 0xDE39))
         (return)))
     (local.set $cur (call $gl32 (i32.add (local.get $s) (i32.const 20))))
     (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 3))
@@ -611,5 +677,5 @@
       ;; No matching scope in this frame → try next SEH record
       (local.set $seh_rec (call $gl32 (local.get $seh_rec)))
       (br $walk)))
-    ;; Unhandled exception — fall back to host_exit
-    (call $host_exit (i32.or (i32.const 0xDE00) (local.get $code))))
+    ;; Unhandled exception: the process ends here.
+    (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00) (local.get $code))))

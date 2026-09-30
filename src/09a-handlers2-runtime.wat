@@ -1201,9 +1201,15 @@
   )
 
   ;; 268: _purecall
+  ;; msvcrt's _purecall is _amsg_exit(_RT_PURECALL): R6025 and the process
+  ;; ends. It must not return into the caller -- that caller has just called
+  ;; through a NULL-ish vtable slot and would run on in a broken object.
   (func $handle__purecall (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $host_exit (i32.const 3))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
+    (global.set $eip (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)) (return)
   )
 
   ;; 269: _onexit(func) — cdecl; shares the CRT's LIFO atexit registry.
