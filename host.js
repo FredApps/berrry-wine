@@ -2746,6 +2746,7 @@ class WineAssembly {
           !(window.__waTraceHostNames && [...window.__waTraceHostNames].includes('dx_trace')),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         d3dimGpu: window.WINE_D3DIM_GPU === true,
+        d3dimLazySync: window.WINE_D3DIM_LAZY_SYNC !== false,
         sharedRenderWorker: true,
         createRenderEndpoint: options => self._createRenderWorkerEndpoint(options),
         // ?rpc-census: count every host import a guest thread hands back to
@@ -2760,12 +2761,15 @@ class WineAssembly {
         },
       });
       await worker.start();
+      // The toolbar can change while the main worker is instantiating too.
+      while (worker.d3dimLazySync !== (window.WINE_D3DIM_LAZY_SYNC !== false)) {
+        await worker.setLazySync(window.WINE_D3DIM_LAZY_SYNC !== false);
+      }
       this.guestWorker = worker;
       // Renderer windows still retain the browser-side WebAssembly.Instance
       // as their ownership token. Mark that token so keyboard handling queues
       // messages for slot 0 instead of calling exports on the idle instance.
       if (!this.renderer._guestWorkerWasms) this.renderer._guestWorkerWasms = new WeakSet();
-        d3dimLazySync: window.WINE_D3DIM_LAZY_SYNC !== false,
       this.renderer._guestWorkerWasms.add(this.instance);
       // Guest threads now run beside the page rather than inside its steps, so
       // a DirectSound ring is kept full on its own and the AudioWorklet may
@@ -2780,10 +2784,6 @@ class WineAssembly {
 
   // `opts.win16Modules` names NE DLLs the task loads by name at runtime rather
   // than importing — see the win16StageModule host import.
-      // The toolbar can change while the main worker is instantiating too.
-      while (worker.d3dimLazySync !== (window.WINE_D3DIM_LAZY_SYNC !== false)) {
-        await worker.setLazySync(window.WINE_D3DIM_LAZY_SYNC !== false);
-      }
   // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
   // (lib/apps.js), applied right after load_pe.
   async loadExe(url, opts = {}) {
