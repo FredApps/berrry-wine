@@ -161,6 +161,17 @@
   ;; handlers run -- or leaves to x when a page is unmapped or would need a
   ;; store barrier. Neither charges a block: a rep is one instruction inside
   ;; its threaded block too.
+  ;; Appended by the straight-line work (docs/uop-tier-design.md section 21):
+  ;;   84 WORK n                              the x86 instructions this exit
+  ;;                                          retired, for the poor rule
+  ;;   85 MCOPY d s n v wd ws x               a run of `mov r,[s+4i];
+  ;;                                          mov [d+4i],r` pairs (07e
+  ;;                                          $uc_try_mcopy): n dwords
+  ;;                                          forward, d/s are address temps
+  ;;                                          it leaves alone, n inline, then
+  ;;                                          v = the last dword written. The
+  ;;                                          window arg at 4 is a store
+  ;;                                          window, as COPY's and FILL's.
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -820,6 +831,39 @@
     (i32.store (i32.load offset=12 (local.get $pc)) (i32.const 0))
     (i32.add (local.get $pc) (select (i32.const 32) (i32.const 28) (local.get $copy))))
 
+  ;; MCOPY's slow half: re-guard both windows at the extents' low ends so
+  ;; the next run can be the fast arm; then, when every page is mapped and no
+  ;; destination page needs a store barrier, copy element by element in x86
+  ;; order through $gl32/$gs32 (a page-straddling or overlapping run lands
+  ;; here) and set v. Otherwise nothing has been written: exit to x, the
+  ;; stub of the run's first load, and threaded code runs every pair.
+  (global $uop_mcopy_slow_n  (mut i32) (i32.const 0))
+  (global $uop_mcopy_deopt_n (mut i32) (i32.const 0))
+  (func (export "uop_mcopy_stats") (param $k i32) (result i32)
+    (select (global.get $uop_mcopy_deopt_n) (global.get $uop_mcopy_slow_n) (local.get $k)))
+  (func $uop_mcopy_slow (param $pc i32) (result i32)
+    (local $n i32) (local $bw i32) (local $d i32) (local $s i32) (local $i i32)
+    (global.set $uop_mcopy_slow_n (i32.add (global.get $uop_mcopy_slow_n) (i32.const 1)))
+    (local.set $n (i32.load offset=12 (local.get $pc)))
+    (local.set $bw (i32.shl (local.get $n) (i32.const 2)))
+    (local.set $d (i32.load (i32.load offset=4 (local.get $pc))))
+    (local.set $s (i32.load (i32.load offset=8 (local.get $pc))))
+    (drop (call $uop_reguard (i32.load offset=20 (local.get $pc)) (local.get $d) (i32.const 4)))
+    (drop (call $uop_reguard (i32.load offset=24 (local.get $pc)) (local.get $s) (i32.const 4)))
+    (if (i32.or (i32.eqz (call $uop_bulk_span_ok (local.get $d) (local.get $bw) (i32.const 1)))
+                (i32.eqz (call $uop_bulk_span_ok (local.get $s) (local.get $bw) (i32.const 0))))
+      (then
+        (global.set $uop_mcopy_deopt_n (i32.add (global.get $uop_mcopy_deopt_n) (i32.const 1)))
+        (return (i32.load offset=28 (local.get $pc)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $bw)))
+      (call $gs32 (i32.add (local.get $d) (local.get $i)) (call $gl32 (i32.add (local.get $s) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $copy)))
+    (i32.store (i32.load offset=16 (local.get $pc))
+      (call $gl32 (i32.sub (i32.add (local.get $d) (local.get $bw)) (i32.const 4))))
+    (i32.add (local.get $pc) (i32.const 32)))
+
   (global $uop_io_kind   (mut i32) (i32.const 0)) ;; 0 exited, 1 service op at pc, 2 window miss
   (global $uop_io_budget (mut i32) (i32.const 0))
   (global $uop_io_ga     (mut i32) (i32.const 0))
@@ -906,6 +950,9 @@
       ;; 82 COPY / 83 FILL: everything the fast arm would not take
       (if (i32.or (i32.eq (local.get $op) (i32.const 82)) (i32.eq (local.get $op) (i32.const 83)))
         (then (local.set $pc (call $uop_bulk_slow (local.get $pc))) (br $L)))
+      ;; 85 MCOPY: likewise
+      (if (i32.eq (local.get $op) (i32.const 85))
+        (then (local.set $pc (call $uop_mcopy_slow (local.get $pc))) (br $L)))
       ;; 57 BCC cc t
       (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
       (local.set $pc
@@ -920,7 +967,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c84 (block $c83 (block $c82 (block $c81 (block $c78
+      (block $c85 (block $c84 (block $c83 (block $c82 (block $c81 (block $c78
       (block $c77 (block $c76 (block $mxcore (block $c75 (block $c74 (block $c73 (block $c72
       (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
@@ -943,7 +990,7 @@
                   $c78
                   ;; 79-80 are not emitted
                   $c0 $c0
-                  $c81 $c82 $c83 $c84
+                  $c81 $c82 $c83 $c84 $c85
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -1803,6 +1850,31 @@
         ;; poor test. No block, no state.
         (global.set $uop_xwork (i32.load offset=4 (local.get $pc)))
         (local.set $pc (i32.add (local.get $pc) (i32.const 8))) (br $L))
+        ;; 85 MCOPY d s n v wd ws x: n dwords from [s] to [d], forward,
+        ;; element by element in x86 order, registers d and s left alone,
+        ;; then v = the last dword written (07e $uc_try_mcopy). The fast arm
+        ;; needs both extents inside their windows and no overlap -- then the
+        ;; order cannot show and it is one memory.copy -- else $uop_mcopy_slow.
+        (local.set $n (i32.load offset=12 (local.get $pc)))
+        (local.set $bw (i32.shl (local.get $n) (i32.const 2)))
+        (local.set $ga (i32.load (i32.load offset=4 (local.get $pc))))
+        (local.set $w (i32.load offset=20 (local.get $pc)))
+        (br_if $svc (i32.or (i32.gt_u (local.get $bw) (i32.load offset=4 (local.get $w)))
+                            (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                                      (i32.sub (i32.load offset=4 (local.get $w)) (local.get $bw)))))
+        (local.set $dw (i32.add (local.get $ga) (i32.load offset=8 (local.get $w))))
+        (local.set $ga (i32.load (i32.load offset=8 (local.get $pc))))
+        (local.set $w (i32.load offset=24 (local.get $pc)))
+        (br_if $svc (i32.or (i32.gt_u (local.get $bw) (i32.load offset=4 (local.get $w)))
+                            (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                                      (i32.sub (i32.load offset=4 (local.get $w)) (local.get $bw)))))
+        (local.set $sw (i32.add (local.get $ga) (i32.load offset=8 (local.get $w))))
+        (br_if $svc (i32.and (i32.lt_u (local.get $dw) (i32.add (local.get $sw) (local.get $bw)))
+                             (i32.lt_u (local.get $sw) (i32.add (local.get $dw) (local.get $bw)))))
+        (memory.copy (local.get $dw) (local.get $sw) (local.get $bw))
+        (i32.store (i32.load offset=16 (local.get $pc))
+          (i32.load (i32.sub (i32.add (local.get $dw) (local.get $bw)) (i32.const 4))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))

@@ -311,6 +311,44 @@ const CASES = [
            [0x8B, 0x7C, 0x24, 0x00], [0x01, 0x7C, 0x24, 0x08], 0x61,
            [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
   },
+  // ---- mov-pair runs as one MCOPY (07e $uc_try_mcopy, 07d 85; §21.4) ----
+  ...[
+    {
+      // Caesar III's tile-blit rows: mov eax,[esi+k] / mov [edi+edx+d],eax,
+      // k and d stepping by 4, add edx,ecx between rows. EAX must come out
+      // holding the last dword of the row, as the last load leaves it.
+      name: 'mcopy-rows', regs: { ebp: 600, ecx: 16 },
+      code: [L('l'), ...[0, 4, 8].map((k) => [[0x8B, 0x46, k], [0x89, 0x44, 0x17, 0x08 + k]]).flat(),
+             [0x01, 0xCA], ...[12, 16, 20, 24, 28].map((k) => [[0x8B, 0x46, k], [0x89, 0x44, 0x17, 0x20 + k]]).flat(),
+             [0x83, 0xC6, 0x20], 0x4D, J(cc.NZ, 'l'), 0xC3],
+      want: { mcopyRuns: '>0' },
+    },
+    {
+      // dest one dword above src through one base: only the element order
+      // of the pairs (the slow arm) smears [esi] up the row.
+      name: 'mcopy-overlap', regs: { ebp: 600 },
+      code: [L('l'), [0x8B, 0x06], [0x89, 0x46, 0x04], [0x8B, 0x46, 0x04], [0x89, 0x46, 0x08],
+             [0x8B, 0x46, 0x08], [0x89, 0x46, 0x0C], [0x83, 0xC6, 0x0D], 0x4D, J(cc.NZ, 'l'), 0xC3],
+      want: { mcopyRuns: '>0', mcopySlow: '>0' },
+    },
+    {
+      // unaligned rows walking across page seams on both sides
+      name: 'mcopy-page-seams', regs: { ebp: 600 },
+      init: (a) => ({ esi: a.buf + 4090, edi: a.buf + 0x10000 + 4093 }),
+      code: [L('l'), ...[0, 4, 8, 12, 16, 20, 24, 28].map((k) => [[0x8B, 0x5E, k], [0x89, 0x5F, k]]).flat(),
+             [0x83, 0xC6, 0x20], [0x83, 0xC7, 0x24], 0x4D, J(cc.NZ, 'l'), 0xC3],
+      want: { mcopyRuns: '>0' },
+    },
+    {
+      // not a run: the register is the next source's base, and a pair whose
+      // disps do not step by 4 ends the run (two runs of 2, and singles)
+      name: 'mcopy-breaks', regs: { ebp: 600 },
+      code: [L('l'), [0x8B, 0x06], [0x89, 0x07], [0x8B, 0x46, 0x04], [0x89, 0x47, 0x04],
+             [0x8B, 0x46, 0x0C], [0x89, 0x47, 0x08], [0x8B, 0x46, 0x10], [0x89, 0x47, 0x0C],
+             [0x8B, 0x5E, 0x10], [0x89, 0x5F, 0x14], [0x83, 0xC6, 0x08], [0x83, 0xC7, 0x10], 0x4D, J(cc.NZ, 'l'), 0xC3],
+      want: { mcopyRuns: '>0' },
+    },
+  ],
   {
     // a leaf call with an argument: the callee's ret goes back into the loop.
     name: 'call-leaf', regs: { ecx: N },
@@ -851,8 +889,9 @@ function runCase(inst, c, a, codeAddr, mode) {
   // uop_stats counters, then (negative) uop_cstat ones: sites kept, FF /2 refused
   // (100+: uop_bulk_stats -- COPY/FILL slow arms and deopts)
   const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30,
-                bulkSlow: 100, bulkDeopt: 101 };
-  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : i >= 100 ? e.uop_bulk_stats(i - 100) : e.uop_stats(i));
+                bulkSlow: 100, bulkDeopt: 101, mcopyRuns: 200, mcopySlow: 300, mcopyDeopt: 301 };
+  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : i >= 300 ? e.uop_mcopy_stats(i - 300)
+    : i >= 200 ? e.uop_mcopy_cstat(i - 200) : i >= 100 ? e.uop_bulk_stats(i - 100) : e.uop_stats(i));
   const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i)]));
   let sp = null;
   if (mode === 'pre') {
@@ -992,6 +1031,44 @@ function movsdCodeCase(inst,a,nextCode){
       errs.push('code-write fallback advanced pointers incorrectly');
     callAt(inst,a,target,{ecx:2});
     if((e.get_eax()>>>0)!==0x22222222)errs.push('stale decoded target after MOVSD');
+  }finally{e.set_uop(0);}
+  return errs;
+}
+
+// An MCOPY whose destination turns into decoded code (the MOVSD case above,
+// for 85): its store window was proved over data during the warmup, the page
+// then holds a compiled program, and the next MCOPY there must leave for
+// threaded code before writing, which retires the program it overwrote. This
+// is also what the COPY/FILL/MCOPY store-window marking in $uc_encode_write
+// exists for: proved read-only, the window never asked about code.
+function mcopyCodeCase(inst,a,nextCode){
+  const {e,mem,g2w}=inst,errs=[],copy=nextCode(),target=nextCode();
+  mem.set(asm([L('l'),[0x8B,0x06],[0x89,0x07],[0x8B,0x46,0x04],[0x89,0x47,0x04],0x49,J(cc.NZ,'l'),0xC3]),g2w(copy));
+  const tb=asm([L('l'),[0xB8,...d32(0x11111111)],0x49,J(cc.NZ,'l'),0xC3]);
+  mem.set(tb,g2w(target));
+  const dv=new DataView(mem.buffer);
+  dv.setUint32(g2w(a.buf),0x22222222,true);
+  // the second dword rewrites dec/jnz/ret with themselves
+  dv.setUint32(g2w(a.buf+4),tb[5]|tb[6]<<8|tb[7]<<16|tb[8]<<24,true);
+  e.set_uop(1);
+  try{
+    const r0=e.uop_mcopy_cstat(0);
+    const pc=e.uop_compile(copy);if(!pc)return ['MCOPY writer declined'];e.uop_install(copy,pc);
+    if(e.uop_mcopy_cstat(0)===r0)errs.push('writer not lowered to MCOPY');
+    const warmEnters=e.uop_stats(4);
+    callAt(inst,a,copy,{esi:a.buf,edi:target+0x800,ecx:2});
+    if(e.uop_stats(4)===warmEnters)errs.push('writer warmup did not enter compiled path');
+    callAt(inst,a,target,{ecx:2});
+    if((e.get_eax()>>>0)!==0x11111111)errs.push('initial target result');
+    const targetPC=e.uop_compile(target);if(!targetPC)return ['rewrite target declined'];e.uop_install(target,targetPC);
+    const kills=e.uop_stats(3),enters=e.uop_stats(4),dq=e.uop_mcopy_stats(1);
+    callAt(inst,a,copy,{esi:a.buf,edi:target+1,ecx:1});
+    if(e.uop_stats(4)===enters)errs.push('writer did not enter compiled path');
+    if(e.uop_stats(3)<=kills)errs.push('MCOPY did not invalidate target program');
+    if(e.uop_mcopy_stats(1)===dq)errs.push('MCOPY did not deopt at the code page');
+    if((e.get_eax()>>>0)!==(dv.getUint32(g2w(a.buf+4),true)>>>0))errs.push('code-write fallback left EAX wrong');
+    callAt(inst,a,target,{ecx:2});
+    if((e.get_eax()>>>0)!==0x22222222)errs.push('stale decoded target after MCOPY');
   }finally{e.set_uop(0);}
   return errs;
 }
@@ -1798,7 +1875,7 @@ async function main() {
   e.set_branch_clock(0);
   for(const [name,run] of [['movsd-sparse',movsdSparseCase],['movsd-code-write',movsdCodeCase],
                            ['rep-oracle',repOracleCase],['rep-sparse',repSparseCase],['rep-code-write',repCodeWriteCase],
-                           ['pcx-body',pcxBodyCase]]){
+                           ['pcx-body',pcxBodyCase],['mcopy-code-write',mcopyCodeCase]]){
     if(!only||only===name){
       const errs=run(inst,a,()=>a.code+0x1000*slot++);
       if(errs.length)fails++;

@@ -108,6 +108,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // $uc_trace_cut; docs/uop-tier-design.md §21.3). On by default; it only
   // acts under --branch-clock.
   const NO_UOP_TRACE_CUT = hasFlag('no-uop-trace-cut');
+  // --no-uop-mcopy: runs of dword mov pairs stay one LD/ST per instruction
+  // instead of one MCOPY (07e $uc_mcopy_on; docs/uop-tier-design.md §21.4).
+  const NO_UOP_MCOPY = hasFlag('no-uop-mcopy');
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -370,6 +373,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (UOP_POOR_WORK !== null) inheritWasm('set_uop_poor_work', Number(UOP_POOR_WORK) | 0);
     if (NO_UOP_TRACE_CUT) inheritWasm('set_uop_trace_cut', 0);
+    if (NO_UOP_MCOPY) inheritWasm('set_uop_mcopy', 0);
     if (UOP_REGUARD_SPAN !== null) inheritWasm('set_uop_reguard_span', Number(UOP_REGUARD_SPAN) | 0);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -392,6 +396,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (UOP_REGUARD_SPAN !== null && instance.exports.set_uop_reguard_span) instance.exports.set_uop_reguard_span(Number(UOP_REGUARD_SPAN) | 0);
       if (UOP_POOR_WORK !== null && instance.exports.set_uop_poor_work) instance.exports.set_uop_poor_work(Number(UOP_POOR_WORK) | 0);
       if (NO_UOP_TRACE_CUT && instance.exports.set_uop_trace_cut) instance.exports.set_uop_trace_cut(0);
+      if (NO_UOP_MCOPY && instance.exports.set_uop_mcopy) instance.exports.set_uop_mcopy(0);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       for (const [setter, wanted] of WIDEN) if (wanted() && instance.exports[setter]) instance.exports[setter](1);
       if (instance.exports.set_uop_trace_heads) instance.exports.set_uop_trace_heads(traceWanted() ? 1 : 0);

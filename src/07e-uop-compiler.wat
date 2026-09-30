@@ -3820,6 +3820,12 @@
               (local.set $l (call $uc_aL (i32.add (local.get $pfx) (i32.const 2)) (i32.load (local.get $R))))
               (call $uc_o1 (i32.const 25) (local.get $l))
               (call $uc_label (local.get $l))))
+          ;; a run of dword mov pairs: one MCOPY (§21.4)
+          (local.set $t (call $uc_try_mcopy (local.get $B) (local.get $n)))
+          (if (local.get $t)
+            (then (if (global.get $uc_err) (then (return (global.get $uc_err))))
+                  (local.set $n (i32.add (local.get $n) (local.get $t)))
+                  (br $iloop)))
           (local.set $tgt (i32.load offset=24 (local.get $R)))
           (local.set $nx (i32.load offset=4 (local.get $R)))
           (if (call $uc_is_branch (local.get $R))
@@ -3941,6 +3947,119 @@
     (local $l i64)
     (local.set $l (call $uc_aL (call $uc_lab (local.get $pfx) (local.get $peel) (local.get $t)) (local.get $t)))
     (if (i64.ne (local.get $l) (local.get $next)) (then (call $uc_o1 (i32.const 62) (local.get $l)))))
+
+  ;; ------------------------------------------------ mov-pair runs --
+  ;; docs/uop-tier-design.md §21.4 (--no-uop-mcopy). Within one compiler
+  ;; block, a run of k >= 2 pairs
+  ;;     mov r, [S + ds + 4i]  ;  mov [D + dd + 4i], r        (i = 0..k-1)
+  ;; with one r, one source address form S (base, index, scale) and one
+  ;; destination form D, and r in neither, is lowered to LEA, LEA and one
+  ;; 85 MCOPY: k dwords copied forward, element by element as the pairs do
+  ;; (the engine's fast arm is a memory.copy only when the extents do not
+  ;; overlap), and r left holding the last dword written -- the value the
+  ;; last load read. Every member is a mov, so no flag, no other register
+  ;; and no address register moves inside the run, and its deopt stub is the
+  ;; first load's: a page the run cannot prove leaves before anything is
+  ;; written and threaded code runs every pair. Members after the first may
+  ;; not be seams, the run ends before the block's last instruction (that
+  ;; one's exit handling stays with the ordinary path), and no member may be
+  ;; an aggressive-stack forward. Caesar III's unrolled tile blit is rows of
+  ;; exactly this (docs/re-notes/caesar3-demo.md).
+  (global $uc_mcopy_on (mut i32) (i32.const 1))
+  (global $uc_mcopy_runs (mut i32) (i32.const 0))
+  (global $uc_mcopy_pairs (mut i32) (i32.const 0))
+  (func (export "set_uop_mcopy") (param $on i32)
+    (global.set $uc_mcopy_on (i32.ne (local.get $on) (i32.const 0))))
+  ;; 0 runs lowered, 1 pairs they took (compile-time counts, cumulative)
+  (func (export "uop_mcopy_cstat") (param $k i32) (result i32)
+    (select (global.get $uc_mcopy_pairs) (global.get $uc_mcopy_runs) (local.get $k)))
+
+  ;; Operands a and b are the same address form (base, index, scale).
+  (func $uc_same_form (param $a i32) (param $b i32) (result i32)
+    (i32.and (i32.and (i32.eq (i32.load offset=4 (local.get $a)) (i32.load offset=4 (local.get $b)))
+                      (i32.eq (i32.load offset=8 (local.get $a)) (i32.load offset=8 (local.get $b))))
+             (i32.eq (i32.load offset=12 (local.get $a)) (i32.load offset=12 (local.get $b)))))
+
+  ;; R = mov r, [m32] and S = mov [m32], r, the same full register r, which
+  ;; is in neither address; neither an aggressive-stack forward. Answers r
+  ;; plus one, or 0.
+  (func $uc_mcopy_pair (param $R i32) (param $S i32) (result i32)
+    (local $L i32) (local $M i32) (local $r i32)
+    (if (i32.or (i32.ne (call $uc_kind (local.get $R)) (i32.const 5))
+                (i32.ne (call $uc_kind (local.get $S)) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (i32.load offset=252 (local.get $R)) (i32.const 0))
+                (i32.ne (i32.load offset=252 (local.get $S)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $L (i32.add (local.get $R) (i32.const 80)))
+    (local.set $M (i32.add (local.get $S) (i32.const 56)))
+    (if (i32.eqz (i32.and (call $uc_ref_is_reg32 (i32.add (local.get $R) (i32.const 56)))
+                          (call $uc_ref_is_reg32 (i32.add (local.get $S) (i32.const 80)))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.and (call $uc_is_mem (local.get $L)) (call $uc_is_mem (local.get $M))))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (i32.load offset=20 (local.get $L)) (i32.const 32))
+                (i32.ne (i32.load offset=20 (local.get $M)) (i32.const 32)))
+      (then (return (i32.const 0))))
+    (local.set $r (i32.load offset=60 (local.get $R)))
+    (if (i32.ne (local.get $r) (i32.load offset=84 (local.get $S))) (then (return (i32.const 0))))
+    (if (i32.or (i32.or (i32.eq (local.get $r) (i32.load offset=4 (local.get $L)))
+                        (i32.eq (local.get $r) (i32.load offset=8 (local.get $L))))
+                (i32.or (i32.eq (local.get $r) (i32.load offset=4 (local.get $M)))
+                        (i32.eq (local.get $r) (i32.load offset=8 (local.get $M)))))
+      (then (return (i32.const 0))))
+    (i32.add (local.get $r) (i32.const 1)))
+
+  ;; At position n of block B: lower the run starting there and answer how
+  ;; many instructions it took, or 0 (nothing emitted).
+  (func $uc_try_mcopy (param $B i32) (param $n i32) (result i32)
+    (local $cnt i32) (local $p0 i32) (local $R0 i32) (local $S0 i32) (local $r i32)
+    (local $k i32) (local $R i32) (local $S i32) (local $ts i64) (local $td i64)
+    (if (i32.eqz (global.get $uc_mcopy_on)) (then (return (i32.const 0))))
+    (local.set $cnt (i32.load offset=8 (local.get $B)))
+    ;; room for two pairs before the block's last instruction
+    (if (i32.gt_u (i32.add (local.get $n) (i32.const 5)) (local.get $cnt)) (then (return (i32.const 0))))
+    (local.set $p0 (i32.add (i32.load offset=4 (local.get $B)) (local.get $n)))
+    (local.set $R0 (call $uc_loop_insn (local.get $p0)))
+    (local.set $S0 (call $uc_loop_insn (i32.add (local.get $p0) (i32.const 1))))
+    (local.set $r (call $uc_mcopy_pair (local.get $R0) (local.get $S0)))
+    (if (i32.eqz (local.get $r)) (then (return (i32.const 0))))
+    (if (call $uc_flag (local.get $S0) (i32.const 4)) (then (return (i32.const 0))))
+    (local.set $k (i32.const 1))
+    (block $d (loop $l
+      ;; pair k sits at n+2k, n+2k+1; its store must not be the block's last
+      (br_if $d (i32.ge_u (i32.add (i32.add (local.get $n) (i32.shl (local.get $k) (i32.const 1))) (i32.const 2))
+                          (local.get $cnt)))
+      (local.set $R (call $uc_loop_insn (i32.add (local.get $p0) (i32.shl (local.get $k) (i32.const 1)))))
+      (local.set $S (call $uc_loop_insn (i32.add (i32.add (local.get $p0) (i32.shl (local.get $k) (i32.const 1))) (i32.const 1))))
+      (br_if $d (i32.ne (call $uc_mcopy_pair (local.get $R) (local.get $S)) (local.get $r)))
+      (br_if $d (i32.or (call $uc_flag (local.get $R) (i32.const 4)) (call $uc_flag (local.get $S) (i32.const 4))))
+      (br_if $d (i32.eqz (i32.and (call $uc_same_form (i32.add (local.get $R) (i32.const 80)) (i32.add (local.get $R0) (i32.const 80)))
+                                  (call $uc_same_form (i32.add (local.get $S) (i32.const 56)) (i32.add (local.get $S0) (i32.const 56))))))
+      (br_if $d (i32.ne (i32.load offset=96 (local.get $R))
+                        (i32.add (i32.load offset=96 (local.get $R0)) (i32.shl (local.get $k) (i32.const 2)))))
+      (br_if $d (i32.ne (i32.load offset=72 (local.get $S))
+                        (i32.add (i32.load offset=72 (local.get $S0)) (i32.shl (local.get $k) (i32.const 2)))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $l)))
+    (if (i32.lt_u (local.get $k) (i32.const 2)) (then (return (i32.const 0))))
+    (local.set $ts (call $uc_scratch))
+    (local.set $td (call $uc_scratch))
+    (call $uc_o5 (i32.const 32) (local.get $ts)
+      (call $uc_mbase (i32.add (local.get $R0) (i32.const 80))) (call $uc_midx (i32.add (local.get $R0) (i32.const 80)))
+      (call $uc_aN (i32.load offset=92 (local.get $R0))) (call $uc_aN (i32.load offset=96 (local.get $R0))))
+    (call $uc_o5 (i32.const 32) (local.get $td)
+      (call $uc_mbase (i32.add (local.get $S0) (i32.const 56))) (call $uc_midx (i32.add (local.get $S0) (i32.const 56)))
+      (call $uc_aN (i32.load offset=68 (local.get $S0))) (call $uc_aN (i32.load offset=72 (local.get $S0))))
+    (call $uc_emit (i32.const 85) (i32.const 7)
+      (local.get $td) (local.get $ts) (call $uc_aN (local.get $k))
+      (call $uc_aR (i32.sub (local.get $r) (i32.const 1)))
+      (call $uc_win (i32.add (local.get $S0) (i32.const 56)) (i32.const 1))
+      (call $uc_win (i32.add (local.get $R0) (i32.const 80)) (i32.const 0))
+      (call $uc_xstub))
+    (global.set $uc_mcopy_runs (i32.add (global.get $uc_mcopy_runs) (i32.const 1)))
+    (global.set $uc_mcopy_pairs (i32.add (global.get $uc_mcopy_pairs) (local.get $k)))
+    (i32.shl (local.get $k) (i32.const 1)))
 
   ;; ------------------------------------------------ aggressive stack --
   ;; --aggressive-stack. A push whose slot the same block's pop takes back
@@ -4427,7 +4546,12 @@
                     ;; refuses a page that holds decoded code, so the store
                     ;; exits to threaded code, which invalidates what it hits.
                     ;; ($uc_win keys loads and stores apart: never both.)
-                    (if (call $uc_is_store (i32.load (local.get $p)))
+                    ;; COPY / FILL / MCOPY (82 / 83 / 85): arg 4 is their
+                    ;; store window, and it was proved read-only before.
+                    (if (i32.or (call $uc_is_store (i32.load (local.get $p)))
+                                (i32.and (i32.eq (local.get $j) (i32.const 4))
+                                         (i32.or (i32.eq (i32.load (local.get $p)) (i32.const 85))
+                                                 (i32.lt_u (i32.sub (i32.load (local.get $p)) (i32.const 82)) (i32.const 2)))))
                       (then (i32.store offset=12 (local.get $v) (i32.const 1))))))
             (i32.store (local.get $o) (local.get $v))
             (local.set $o (i32.add (local.get $o) (i32.const 4)))
