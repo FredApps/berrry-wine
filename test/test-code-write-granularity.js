@@ -80,7 +80,7 @@ async function main() {
     return e.get_eax() >>> 0;
   };
   const invals = () => e.get_cache_invals() >>> 0;
-  const slot = ga => ((((ga >>> 12) ^ (ga >>> 28)) & 0xffff) >>> 0);
+  const slot = ga => ((((ga >>> 12) ^ (ga >>> 28) ^ ((ga >>> 30) << 15)) & 0xffff) >>> 0);
 
   // ---- 1. two generated-code islands with a data page between them --------
   // High in the VirtualAlloc arena, where StarCraft's blitters live and where
@@ -174,6 +174,13 @@ async function main() {
   // may, and that aliasing is conservative (a wasted slow path only).
   assert.strictEqual(e.test_cwg_page_test(slot(0xfffe0000) << 12), 1,
     'the low page with the same slot reads as code (conservative alias)');
+  // Section 21: a DIB page is not the low page at its own offset (the exe's
+  // .text) any more, nor a DLL at the usual 0x10000000 base.
+  e.test_cwg_page_mark(0x00501000);
+  e.test_cwg_page_mark(0x10000000);
+  assert.strictEqual(e.test_cwg_page_test(0x50504000), 0, 'DIB page is not c3.exe .text 0x501000');
+  assert.strictEqual(e.test_cwg_page_test(0x50004000), 0, 'DIB page is not a DLL page at 0x10000000 (the old fold put both on slot 1)');
+  assert.strictEqual(slot(0x50504000), 0x8501, 'DIB page shares a slot only with unused 0x08501000');
 
   // ---- 6. the inline test in the store helpers matches $code_page_test ----
   // Deterministic pseudo-random pages in unmapped high memory (their stores go

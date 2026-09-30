@@ -602,10 +602,11 @@
     (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
       (then
-        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28 ^ (ga>>30)<<15) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
-                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
-                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                (i32.and (i32.xor (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                           (i32.shr_u (local.get $ga) (i32.const 31)))
+                                  (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 12)))
                          (i32.const 0x1FFF))))
               (i32.shl (i32.const 1)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
@@ -636,10 +637,11 @@
     (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFF8))
       (then
-        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28 ^ (ga>>30)<<15) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
-                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
-                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                (i32.and (i32.xor (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                           (i32.shr_u (local.get $ga) (i32.const 31)))
+                                  (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 12)))
                          (i32.const 0x1FFF))))
               (i32.shl (i32.const 1)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
@@ -686,10 +688,11 @@
         (local.set $wa (g2w-fast (local.get $ga)))
         ;; Unmapped: the miss is reported, and the write goes nowhere.
         (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL)) (then (return)))
-        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28 ^ (ga>>30)<<15) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
-                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
-                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                (i32.and (i32.xor (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                           (i32.shr_u (local.get $ga) (i32.const 31)))
+                                  (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 12)))
                          (i32.const 0x1FFF))))
               (i32.shl (i32.const 1)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
@@ -707,10 +710,11 @@
     (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
       (then
-        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28 ^ (ga>>30)<<15) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
-                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
-                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                (i32.and (i32.xor (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                           (i32.shr_u (local.get $ga) (i32.const 31)))
+                                  (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 12)))
                          (i32.const 0x1FFF))))
               (i32.shl (i32.const 1)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
@@ -731,10 +735,11 @@
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32) (local $g2w_wa i32)
     (local.set $wa (g2w-fast (local.get $ga)))
-    (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+    (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28 ^ (ga>>30)<<15) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
-                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
-                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                (i32.and (i32.xor (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                           (i32.shr_u (local.get $ga) (i32.const 31)))
+                                  (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 12)))
                          (i32.const 0x1FFF))))
               (i32.shl (i32.const 1)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))

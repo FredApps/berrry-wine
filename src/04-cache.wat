@@ -21,10 +21,24 @@
 
   ;; Page-granular record of where code has actually been decoded from, over
   ;; the WHOLE 4GB guest space, in 8KB: one bit per slot, slot =
-  ;; ((ga >> 12) ^ (ga >> 28)) & 0xFFFF. Below 0x10000000 that is the page
-  ;; number (exact, one bit per page, as it always was); above, the top four
-  ;; address bits fold into the low ones, so pages alias only across 256MB
-  ;; segments and never within one. $CODE_PAGE_BITMAP_PAGES is the slot count.
+  ;; ((ga >> 12) ^ (ga >> 28) ^ ((ga >> 30) << 15)) & 0xFFFF. Below 0x10000000
+  ;; that is the page number (exact, one bit per page, as it always was);
+  ;; above, the top four address bits fold into the low ones and bit 30 into
+  ;; bit 15, so pages alias only across 256MB segments and never within one.
+  ;; $CODE_PAGE_BITMAP_PAGES is the slot count.
+  ;; ga bit 30 also flips slot bit 15 (uop-tier section 21). Without it a
+  ;; page in 0x4xxxxxxx..0x7xxxxxxx aliased the page with the same offset in
+  ;; 0x0xxxxxxx..0x3xxxxxxx, and the DIB arena (0x50000000..0x53F00000) sits
+  ;; at offsets 0..63MB of its segment: its pages landed on the exe's own
+  ;; .text below 0x04000000 and on DLLs at their usual 0x10000000 base. On
+  ;; Caesar III the frame buffer's pages 0x50504000/0x50505000 read as
+  ;; c3.exe's .text pages 0x501000/0x500000, and 1.81M uop store-window
+  ;; proofs (12.6% of all reguards) were refused as "code". With the flip a
+  ;; DIB page shares its slot with 0x08000000..0x0BF00000 -- above every
+  ;; direct guest window and below VIRTUAL_ALLOC_MIN, so nothing lives there
+  ;; -- and with 0x18000000.. / 0x28000000.. / 0x38000000.. in the sparse arena.
+  ;; Pages 0..0x0FFFFFFF keep slot = page number, and within a 256MB segment
+  ;; no two pages share a slot, as before.
   ;;
   ;; It used to cover only guest pages below 0x10000000, with everything above
   ;; falling back to the sparse min..max span -- the coarse filter the bitmap
@@ -36,7 +50,8 @@
   ;; PAGE_DIR walk plus $uop_code_write, and every uop store window over those
   ;; pages declared its head "poor". A 128KB one-bit-per-page map would drop
   ;; the aliasing too, but the direct window has no 128KB left (every shake
-  ;; mode must still place).
+  ;; mode must still place; measured again for section 21: the gap and pad
+  ;; shakes have 0x200 and 0x1E0 bytes to spare, so not even 2KB fits).
   ;;
   ;; A set bit only says "some instance decoded a block from a page with this
   ;; slot"; the exact answer (which bytes) is each instance's own page index,
@@ -50,8 +65,10 @@
   ;; $code_page_test; keep the two in step.
   (func $code_page_slot (param $ga i32) (result i32)
     (i32.and
-      (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
-               (i32.shr_u (local.get $ga) (i32.const 28)))
+      (i32.xor
+        (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                 (i32.shr_u (local.get $ga) (i32.const 28)))
+        (i32.shl (i32.shr_u (local.get $ga) (i32.const 30)) (i32.const 15)))
       (i32.const 0xFFFF)))
 
   (func $code_page_mark (param $ga i32)
