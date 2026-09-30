@@ -2295,3 +2295,180 @@ is not slower than fold on, so PCX_RUN is retired: slot 462 is
 Not done: collapsing counted load/store loops (UE1's MMX copy64/fill64, AoE's
 grid fill) into COPY/FILL. Those folds have no route on the boxes that reaches
 them (section 18.2), so a retirement could not be measured, and they stay.
+
+## 20. Trace instruction limit, and why Caesar's unrolled blit stays threaded (2026-09-29)
+
+Two questions:
+
+- Why does uop not take Caesar III's RECT_RUN blit, which is still worth +37%
+  as a threaded fold (§18.3)?
+- Is 160 the right `$uc_trace_max` (§13)?
+
+### 20.1 The flag
+
+`--uop-trace-heads=MIN,MAX` sets both trace bounds
+(`test/runner-experiments.js`, which calls `set_uop_trace_limits`). The
+setting is inherited by every worker instance through `INHERITED_WASM_GLOBALS`
+in `lib/worker-imports.js`. The flag already existed; no new one was added.
+
+- **The maximum is clamped to `$UC_MAX_LOOP` (400).** Asking for 600 or 1000
+  silently means 400.
+- **Going past 400 needs a rebuild**, and more than one constant has to move:
+  - `$UC_MAX_LOOP` itself;
+  - `$UC_MAX_SCAN` (600): exceeding it halves the span and retries;
+  - the `UC_INSN` scratch: 256 bytes per instruction below `UC_LOOP` at
+    `0x26000`, so about 600 records fit.
+- The sweep's 600 arm is a separate build with `$UC_MAX_LOOP` 600 and nothing
+  else changed.
+- `test/test-uop-compiler.js` now has a `trace-limits` case. It builds heads of
+  K straight instructions and a `jmp`, and checks four things:
+  - the default 160 declines K=200, and 320 compiles it;
+  - 1000 is clamped: K=390 compiles, K=450 does not;
+  - the minimum decides K=5.
+
+  It runs under `--branch-clock`. On the instruction clock, the per-page
+  200-instruction block check in 07e (`long-block`, reason 7) refuses K≥200
+  first.
+
+### 20.2 Caesar III's blit, per site
+
+Full disassembly and table: [re-notes/caesar3-demo.md](re-notes/caesar3-demo.md).
+
+`exe+0x41ceb0` is `pushad`, then two unrolled copies with no loop, then
+`popad`:
+
+- **Top half:** `exe+0x41cf0f`..`exe+0x41d799`, about 467 instructions. Its
+  only branch is the `jnz` at the end.
+- **Bottom half:** `exe+0x41d7a0`, about 470 instructions, falling straight
+  into `popad` at `exe+0x41e085`.
+
+With the fold off, H421 is 67.3% of the gameplay window's threaded dispatches.
+Verdicts with the fold off (`--uop-census`, `--branch-clock`):
+
+- **`exe+0x41cf0f`** declines `no-backedge` at 160, at 400, and in the 600
+  build.
+  - At 160 and 400 the cap cuts a run that has no branch in it, so the trim
+    leaves nothing.
+  - At 600 it still declines, most likely on the scan budget and the
+    halved-span retry.
+- **`exe+0x41d002`** (the threaded decoder's second block of the top half)
+  compiles at 400: 397 instructions.
+  - It is then **retired poor**: 256 enters, 152 blocks, exiting at
+    `exe+0x41d7a0`.
+  - The 600 build gives 160 blocks and the same outcome.
+- **`exe+0x41d7a0`** declines `no-backedge` at every cap: `popad` (op 61) is
+  unsupported and comes before any branch.
+- **`exe+0x41ceb0` and `exe+0x41ced7`**: the entry is retired poor, exiting at
+  `pushad`; `pushad` itself is head-unsupported (op 60).
+
+**The poor rule is structurally wrong for straight-line traces.**
+`$uop_poor_check` wants at least 2 blocks per enter, but a block is a *branch*
+on `--branch-clock`. A trace that runs 397 instructions to one `jnz` scores at
+most 1, so it is retired however much work it does per enter.
+
+Taking this function would need all of:
+
+1. `pushad`/`popad`;
+2. a cap and scan budget above about 470;
+3. a poor rule that counts retired instructions, not blocks.
+
+At the default cap the fold does not change a single uop counter: fold on and
+off give the same 828 installs and the same 8,040,181 enters. It only changes
+what the threaded fallback runs. RECT_RUN stays.
+
+### 20.3 Sweep
+
+**Setup**
+
+- `tools/uop-game-ab.js` on box2 (c3, sc) and box5 (h3, diablo).
+- Arms, each on top of `uop` (`--branch-clock --uop`, trace heads on at
+  8,160):
+  - `tA` = `--uop-trace-heads=8,80`
+  - `tB` = `8,320`
+  - `tC` = `8,400`
+  - `tW` = `8,600` on the `$UC_MAX_LOOP` 600 build
+- Three reps each, interleaved (uop, tA, tB, tC, tW, then again), one run at a
+  time.
+
+**How to read the table**
+
+- User CPU is the mean of three runs, whole run.
+- The band is the arm's own (max−min)/mean.
+- Δ is against `uop`.
+- Every arm's counters were identical across its three reps. Every frame of
+  every arm matched `uop` (c3: 3 shots each; the others: final frame).
+- "blk/enter" = uop blocks ÷ enters.
+
+| game | arm | user s (runs) | band | Δ | installs | kills (poor) | flushes | enters | blk/enter | compiled / traces |
+|---|---|---|---|---|---|---|---|---|---|---|
+| c3, RECT_RUN on | uop (160) | 4.63 (4.62, 4.65, 4.62) | 0.6% | — | 828 | 44 (44) | 5 | 8.04M | 30.3 | 828 / 524 |
+| | tA (80) | 4.82 | 1.0% | +4.2% | 786 | 54 (54) | 4 | 10.77M | 22.5 | 786 / 505 |
+| | tB (320) | 4.57 | 0.9% | −1.3% | 833 | 47 (47) | 6 | 6.77M | 36.2 | 833 / 464 |
+| | tC (400) | 4.52 | 0.9% | **−2.3%** | 766 | 47 (47) | 5 | 6.76M | 36.5 | 766 / 430 |
+| | tW (600) | 4.51 | 0.7% | **−2.6%** | 758 | 47 (47) | 5 | 6.49M | 38.0 | 758 / 424 |
+| c3, `--no-fold=rect-run` | uop (160) | 6.35 (6.51, 6.25, 6.29) | 4.1% | — | 828 | 44 (44) | 5 | 8.04M | 30.3 | 828 / 524 |
+| | tA (80) | 6.49 | 2.8% | +2.3% | 786 | 54 (54) | 4 | 10.77M | 22.5 | 786 / 505 |
+| | tB (320) | 6.19 | 0.8% | −2.5% | 833 | 47 (47) | 6 | 6.77M | 36.2 | 833 / 464 |
+| | tC (400) | 6.11 | 0.2% | −3.8% | 742 | 51 (51) | 5 | 6.72M | 36.7 | 742 / 421 |
+| | tW (600) | 6.10 | 0.5% | −3.9% | 737 | 47 (47) | 5 | 6.45M | 38.2 | 737 / 412 |
+| sc | uop (160) | 15.94 (15.86, 15.94, 16.02) | 1.0% | — | 834 | 117 (48) | 3 | 5.65M | 28.2 | 834 / 362 |
+| | tA (80) | 16.25 | 0.6% | +2.0% | 714 | 92 (50) | 2 | 6.01M | 26.4 | 714 / 316 |
+| | tB (320) | 15.95 | 1.1% | +0.0% | 796 | 125 (44) | 3 | 5.95M | 27.2 | 796 / 376 |
+| | tC (400) | 16.04 | 0.4% | +0.6% | 899 | 187 (43) | 4 | 5.33M | 29.8 | 899 / 441 |
+| | tW (600) | 16.06 | 0.5% | +0.8% | 842 | 151 (47) | 4 | 5.46M | 29.2 | 842 / 401 |
+| h3 | uop (160) | 52.04 (51.80, 52.38, 51.93) | 1.1% | — | 755 | 45 (45) | 3 | 53.36M | 12.0 | 755 / 438 |
+| | tA (80) | 52.16 | 0.2% | +0.2% | 718 | 62 (62) | 2 | 61.91M | 10.3 | 718 / 429 |
+| | tB (320) | 52.14 | 1.6% | +0.2% | 770 | 45 (45) | 4 | 53.10M | 12.1 | 770 / 443 |
+| | tC (400) | 52.19 | 0.7% | +0.3% | 755 | 43 (43) | 4 | 52.93M | 12.1 | 755 / 439 |
+| | tW (600) | 51.97 | 1.3% | −0.1% | 746 | 45 (45) | 4 | 52.87M | 12.2 | 746 / 438 |
+| diablo | uop (160) | 91.21 (91.02, 91.86, 90.75) | 1.2% | — | 2791 | 1943 (53) | 10 | 215.2M | 6.39 | 2791 / 2453 |
+| | tA (80) | 90.99 | 1.0% | −0.2% | 2249 | 1551 (57) | 5 | 217.2M | 6.33 | 2249 / 1967 |
+| | tB (320) | 94.13 | 1.6% | **+3.2%** | 3413 | 2361 (53) | 23 | 188.2M | 6.68 | 3413 / 3023 |
+| | tC (400) | 91.38 | 1.2% | +0.2% | 3829 | 2611 (51) | 30 | 214.5M | 6.44 | 3829 / 3387 |
+| | tW (600) | 94.28 | 2.6% | **+3.4%** | 4201 | 2936 (49) | 42 | 207.0M | 6.47 | 4201 / 3738 |
+
+In the c3 fold-off rows, tC's three runs (6.10-6.11 s) all sit below `uop`'s
+three (6.25-6.51 s). The −3.8% is still inside `uop`'s 4.1% band, which one
+slow first run widened.
+
+### 20.4 Verdict
+
+- **Keep 160. The default does not change.**
+  - A bigger cap wins only on Caesar: −2.3% with RECT_RUN on, outside that
+    arm's 0.6% band.
+  - It is neutral on Heroes III and StarCraft, within their bands, and
+    StarCraft's point estimates go the wrong way (+0.6% to +0.8%).
+  - It **loses on Diablo**: +3.2% at 320 and +3.4% at 600, outside the 1.2%
+    band. 400 comes out at +0.2%, which is not a real minimum: its compile
+    and flush counts sit between 320's and 600's.
+  - Diablo compiles and flushes much more as the cap grows. Emitted uops go
+    520K → 1.14M / 1.47M / 2.04M, and arena flushes 10 → 23 / 30 / 42. So the
+    guest re-pays compilation, and every flush throws away the program mix
+    that was working.
+  - The rule was "wins outside its band everywhere", so the default stays.
+    This change commits only the unit test and these notes.
+- **80 is worse or neutral everywhere.** It costs +0.2% to +4.2% on c3, sc
+  and h3, and comes out at −0.2% on Diablo, inside the band.
+  - It cuts traces short, so there are more enters with fewer blocks each:
+    c3 goes from 30.3 to 22.5 blk/enter, h3 from 12.0 to 10.3.
+  - More of those traces are retired poor (c3 44 → 54, h3 45 → 62).
+- **What a bigger cap buys on Caesar is not the blit.**
+  - The blit program at `0x41d002` is retired within its first 256 enters.
+  - The gain is longer traces elsewhere: 36-38 blk/enter against 30, and 16%
+    fewer enters.
+  - The blit itself needs §20.2's three changes, not a cap.
+- **Keep counting x86 instructions, not emitted uops.**
+  - Every resource the cap protects is sized in x86 instructions: the
+    `UC_INSN` scratch records, `$UC_MAX_SCAN`, and the trim, which walks x86
+    members.
+  - The uop count is only known after lowering, and it varies by app: about
+    3.9-4.5 uops per x86 instruction on c3, sc and h3, and 2.9 on Diablo
+    (520,372 / 180,387).
+  - The arena is the one uop-denominated resource.
+    - Its pressure shows up as flushes, which barely moved on three games
+      (c3 5 → 6, sc 3 → 4, h3 3 → 4).
+    - Diablo's flushes quadrupled, and that is what made the larger caps
+      lose there.
+  - So if a larger cap is ever tried again, keep the x86 cap and add a second
+    guard in uops, or in arena share per program, rather than switch units.
+    It is the arena, not the per-trace length, that Diablo runs out of.
