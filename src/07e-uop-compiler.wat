@@ -84,6 +84,9 @@
   (global $UC_FLOW   i32 (region.addr $UOP_CSCRATCH 0x032000)) ;; 3 x 0xA000
   (global $UC_STUB   i32 (region.addr $UOP_CSCRATCH 0x050000)) ;; 2048 x 32
   (global $UC_CONST  i32 (region.addr $UOP_CSCRATCH 0x068000)) ;; 4096 x 4
+  ;; A trace member's depth: the fewest x86 instructions any path from the
+  ;; head retires before reaching it (by record index; $uc_form_trace).
+  (global $UC_DEPTH  i32 (region.addr $UOP_CSCRATCH 0x060000)) ;; 608 x 4
   (global $UC_MISC   i32 (region.addr $UOP_CSCRATCH 0x06C000))
   (global $UC_CALLT  i32 (region.addr $UOP_CSCRATCH 0x06CE00)) ;; in MISC: call targets met (count, 16)
   (global $UC_ITEMS  i32 (region.addr $UOP_CSCRATCH 0x06D000)) ;; 0x40000
@@ -1690,6 +1693,7 @@
       (br $cl)))
     (local.set $h (call $uc_insn_at (local.get $head)))
     (call $uc_set_flag (local.get $h) (i32.const 1))
+    (i32.store (call $uc_depth_p (local.get $h)) (i32.const 0))
     (i32.store (global.get $UC_WORK) (local.get $h))
     (local.set $qt (i32.const 1))
     (local.set $n (i32.const 1))
@@ -1707,6 +1711,9 @@
         (br_if $sl (call $uc_flag (local.get $S) (i32.const 1)))
         (br_if $sd (i32.ge_u (local.get $n) (global.get $uc_trace_max)))
         (call $uc_set_flag (local.get $S) (i32.const 1))
+        ;; breadth-first, so the first path to reach S is a shortest one
+        (i32.store (call $uc_depth_p (local.get $S))
+                   (i32.add (i32.load (call $uc_depth_p (local.get $R))) (i32.const 1)))
         (i32.store (i32.add (global.get $UC_WORK) (i32.shl (local.get $qt) (i32.const 2))) (local.get $S))
         (local.set $qt (i32.add (local.get $qt) (i32.const 1)))
         (local.set $n (i32.add (local.get $n) (i32.const 1)))
@@ -1761,6 +1768,37 @@
     (global.set $uc_head (local.get $head))
     (global.set $uc_is_trace (i32.const 1))
     (i32.const 0))
+
+  (func $uc_depth_p (param $R i32) (result i32)
+    (i32.add (global.get $UC_DEPTH)
+             (i32.shr_u (i32.sub (local.get $R) (global.get $UC_INSN)) (i32.const 6))))
+
+  ;; The x86 instructions a trace has retired, at the least, when it leaves
+  ;; to eip (docs/uop-tier-design.md §21.1): a member's own depth when eip is
+  ;; in the trace (a deopt stub re-runs that instruction threaded), else one
+  ;; more than the shallowest member whose successor it is. 0 for a loop,
+  ;; whose work is its trips, which the blocks count already.
+  (func $uc_exit_work (param $eip i32) (result i32)
+    (local $r i32) (local $k i32) (local $j i32) (local $R i32) (local $best i32) (local $d i32)
+    (if (i32.eqz (global.get $uc_is_trace)) (then (return (i32.const 0))))
+    (local.set $r (call $uc_in_loop (local.get $eip)))
+    (if (local.get $r) (then (return (i32.load (call $uc_depth_p (local.get $r))))))
+    (local.set $best (i32.const -1))
+    (block $d1 (loop $l1
+      (br_if $d1 (i32.ge_u (local.get $k) (global.get $uc_nloop)))
+      (local.set $R (call $uc_loop_insn (local.get $k)))
+      (local.set $j (i32.const 0))
+      (block $d2 (loop $l2
+        (br_if $d2 (i32.ge_u (local.get $j) (call $uc_nsucc (local.get $R))))
+        (if (i32.eq (call $uc_succ (local.get $R) (local.get $j)) (local.get $eip))
+          (then
+            (local.set $d (i32.add (i32.load (call $uc_depth_p (local.get $R))) (i32.const 1)))
+            (if (i32.lt_u (local.get $d) (local.get $best)) (then (local.set $best (local.get $d))))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br $l2)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $l1)))
+    (select (i32.const 0) (local.get $best) (i32.eq (local.get $best) (i32.const -1))))
 
   ;; ------------------------------------------------------------ blocks --
   ;; Block record (64 bytes, $UC_BLK + k*64): +0 start +4 first loop position
@@ -3514,9 +3552,11 @@
       (global.get $uc_x_m) (global.get $uc_x_md) (global.get $uc_x_c) (global.get $uc_x_cd)))
 
   (func $uc_inline_stub (param $eip i32) (param $m i32) (param $md i32) (param $c i32) (param $cd i32) (result i32)
-    (local $err i32)
+    (local $err i32) (local $w i32)
     (local.set $err (call $uc_rec (local.get $m) (local.get $md) (local.get $c) (local.get $cd)))
     (if (local.get $err) (then (return (local.get $err))))
+    (local.set $w (call $uc_exit_work (local.get $eip)))
+    (if (local.get $w) (then (call $uc_o1 (i32.const 84) (call $uc_aN (local.get $w)))))
     (call $uc_o1 (i32.const 0) (call $uc_aN (local.get $eip)))
     (i32.const 0))
 
