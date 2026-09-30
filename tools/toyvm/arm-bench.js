@@ -48,7 +48,7 @@ const ARMS = {
   only: () => ({ uopOnly: { shape: 'loop' } }),
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes
-  'only-bl': () => ({ uopOnly: { shape: 'loop', linePasses: 'baselineR' } }),
+  'only-bl': () => ({ uopOnly: { shape: 'loop', linePasses: 'baselineRP' } }),
 };
 
 // --child: one run, printed as one JSON line.

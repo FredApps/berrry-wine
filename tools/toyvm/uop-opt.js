@@ -75,7 +75,7 @@ function ablationConfigs(which = PASSES) {
   const out = [['naive', null], ['none', Object.fromEntries(PASSES.map(p => [p, false]))], ['all', all],
     ['baseline', base], ['allR', { ...all, resident: true }], ['baselineR', { ...base, resident: true }],
     ['allRF', { ...all, resident: 'full' }], ['baselineRF', { ...base, resident: 'full' }],
-    ['allRP', { ...all, resident: 'promote' }],
+    ['allRP', { ...all, resident: 'promote' }], ['baselineRP', { ...base, resident: 'promote' }],
     // baselineBF: the baseline passes with a reload/flush at every block
     // boundary (finalize, blockflush) -- the register traffic of a chained
     // per-block tier without resident registers; baselineRF is the same tier
@@ -1996,15 +1996,25 @@ function build(reg, opts = {}) {
   const passes = opts.passes;
   if (!passes) return IR.lower(reg);
   const B = new Build(reg, { ...opts, passes });
+  // opts.timing (a Map) collects ms per pass: where a slow build goes.
+  const T = opts.timing;
+  let t0 = T ? performance.now() : 0;
+  const tick = T ? name => { const t = performance.now(); T.set(name, (T.get(name) || 0) + t - t0); t0 = t; } : () => {};
   B.makeFast();
+  tick('makeFast');
   B.fastHead = B.fastOf.get(reg.headKey);
   // With the clock pass the fast half tests the budget only at headers, so
   // straight-line runs across transfers (calls, returns, jumps) can merge.
   if (B.on('clock')) stripClock(B);
+  tick('stripClock');
   B.cfg();
+  tick('cfg');
   B.mergeStraight();
+  tick('mergeStraight');
   B.findHeaders();
+  tick('findHeaders');
   B.makeEntries();
+  tick('makeEntries');
   // The clock pass's budget CHECK at each header deopts to the header's
   // first instruction. Its edge has to exist from here on, not only from the
   // clock pass: flag forwarding materializes forwarded flags on every deopt
@@ -2019,23 +2029,38 @@ function build(reg, opts = {}) {
     B.cfg();
   }
   if (B.on('guards')) machineGuards(B);
+  tick('machineGuards');
   if (B.on('promote')) promote(B);
+  tick('promote');
   if (B.on('constprop')) constprop(B);
+  tick('constprop');
   if ((B.on('rle') || B.on('stack')) && forwardMemory(B) && B.on('constprop')) constprop(B);
+  tick('forwardMemory');
   if (B.on('flagfwd')) forwardFlags(B);
   else if (B.on('flaglive')) killDeadRecs(B);
+  tick('forwardFlags');
   if (B.on('constprop')) constprop(B);
+  tick('constprop');
   prune(B);
+  tick('prune');
   if (B.on('mergesink')) { sinkDeoptDefs(B); if (B.on('constprop')) constprop(B); }
+  tick('sinkDeoptDefs');
   if (B.on('addrfold')) addrfold(B);
+  tick('addrfold');
   // Again once addrfold has folded [bp+k] into (bp, k): forms the first run
   // could not match by value still match by operand here.
   if (B.on('addrfold') && (B.on('rle') || B.on('stack')) && forwardMemory(B) && B.on('constprop')) constprop(B);
+  tick('forwardMemory');
   if (B.on('fuse')) fuse(B);
+  tick('fuse');
   if (B.on('clock')) clock(B);
+  tick('clock');
   prune(B);
+  tick('prune');
   if (B.on('constprop')) { sinkCold(B); dce(B); }
+  tick('sinkCold');
   finalize(B);
+  tick('finalize');
   B.p.stats = B.stats;
   B.p.build = B;
   B.p.headBlocks = new Set([B.fastHead, B.slowOf.get(reg.headKey)]);

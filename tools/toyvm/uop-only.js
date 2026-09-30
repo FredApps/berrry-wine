@@ -40,6 +40,7 @@
 const IR = require('./uop-ir');
 const OPT = require('./uop-opt');
 const W = require('./uop-wasm');
+const isa = require('./isa');
 const { compileProgram } = require('./compile');
 const { EXIT_WHY } = require('./emit');
 const { STUB_SEG, STUB_BYTE } = require('./dos');
@@ -57,13 +58,16 @@ class UopOnly {
     this.cache = session.cache;
     this.passName = passes;
     this.passes = typeof passes === 'string' ? OPT.ablationConfigs().find(([n]) => n === passes)[1] : passes;
-    if (!this.passes || !this.passes.resident) throw new Error(`uop-only: passes ${passes} are not resident`);
+    // Only the promote model: with `resident: true` programs compute wrong
+    // values here -- ACCIDENT.EXE exits to DOS at 1.2M dispatches, on E1 and
+    // on the JS reference alike, so the program and not its lowering.
+    if (!this.passes || this.passes.resident !== 'promote') throw new Error(`uop-only: passes ${passes} are not resident: 'promote'`);
     // A straight line is cold by construction -- it runs until it reaches a
     // loop head or leaves -- so it may be built with a cheaper pass set: the
     // optimizer's fixed cost per program is most of this arm's build time.
     this.linePassName = linePasses || passes;
     this.linePasses = linePasses ? OPT.ablationConfigs().find(([n]) => n === linePasses)[1] : this.passes;
-    if (!this.linePasses || !this.linePasses.resident) throw new Error(`uop-only: passes ${linePasses} are not resident`);
+    if (!this.linePasses || this.linePasses.resident !== 'promote') throw new Error(`uop-only: passes ${linePasses} are not resident: 'promote'`);
     this.shape = shape;
     // The longest straight line built (see build).
     this.maxLine = maxLine;
@@ -103,10 +107,13 @@ class UopOnly {
     // Ips inside a loop too big to build (more vregs than a program may
     // name): built as straight lines from the start. A hint, never cleared --
     // a line is correct whatever the bytes become.
+    this.lineCap = new Map();   // site -> line length a rebuild goes straight to
+    this.progCache = new Map(); // progKey -> [{ lins, bytes, prog }], newest first
+    this.progCacheSize = 0;
     this.tooBig = new Set();
     this.stats = {
       builds: 0, fbSites: 0, entries: 0, uopSteps: 0, fbEntries: 0, fbSteps: 0,
-      invalidated: 0, flushes: 0, arenaResets: 0, buildNs: 0n, stays: 0, modeStays: 0, calls: 0, ioCuts: 0, farStays: 0, builtStays: 0, lineRetries: 0,
+      invalidated: 0, flushes: 0, arenaResets: 0, buildNs: 0n, stays: 0, modeStays: 0, calls: 0, ioCuts: 0, farStays: 0, builtStays: 0, lineRetries: 0, progHits: 0,
       // why drive handed the slice back to the session
       why: { budget: 0, smc: 0, fbExit: 0, mode: 0, unbuilt: 0 },
       fbExitWhy: new Map(),    // `fallback why>exitwhy` -> handbacks
@@ -271,6 +278,19 @@ class UopOnly {
     const spin = this.spinBlock(key, ip, env);
     if (spin) return this.fallback(lk, key, ip, env, 'spin', spin);
     if (this.only && !this.only.has(ip)) return this.fallback(lk, key, ip, env, 'excluded');
+    // A site that has already failed at full size is rebuilt at the line
+    // length that worked, not tried whole again. BRW.EXE rewrites its code
+    // every frame, so the same sites are invalidated and rebuilt thousands of
+    // times, and each rebuild of one used to pay a ~1s failed build of the
+    // 400-instruction region first (bb7c, reached inside a call, is not one
+    // of the loop's own ips that tooBig marks).
+    const cap = this.lineCap.get(lk);
+    if (cap !== undefined) {
+      try {
+        const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, maxNodes: cap });
+        if (line.body.size) return this.program(lk, key, ip, env, line);
+      } catch (e) { /* the full path below says why */ }
+    }
     try {
       const straight = this.shape === 'straight' || this.inLoop.has(lk) || this.tooBig.has(lk);
       reg = IR.discover(rd, env, ip, { benign: this.cache.benign, straight, io: this.io });
@@ -302,7 +322,11 @@ class UopOnly {
           this.stats.lineRetries++;
           try {
             const line = IR.discover(rd, env, ip, { benign: this.cache.benign, straight: true, io: this.io, maxNodes });
-            if (line.body.size) return this.program(lk, key, ip, env, line);
+            if (line.body.size) {
+              const r = this.program(lk, key, ip, env, line);
+              this.lineCap.set(lk, maxNodes);
+              return r;
+            }
           } catch (e) { /* the first reason stands */ }
         }
       }
@@ -310,8 +334,48 @@ class UopOnly {
     return this.fallback(lk, key, ip, env, why);
   }
 
+  // A program built earlier from the same bytes, or null. BRW.EXE patches the
+  // same code back and forth every frame, so most of its "rebuilds" are of
+  // bytes a program already exists for -- 788 optimizer runs, ~24s, in 15M
+  // dispatches. The key is everything a build reads that is not code: the
+  // site, the discovered shape, the machine snapshot the build specializes
+  // on, and the segment bases segdisj proves disjointness with. The code is
+  // checked byte by byte: every byte discover or the optimizer read (flag
+  // liveness looks past the body, so the covered bytes alone are not enough).
+  progKey(lk, reg, env) {
+    const ex = this.vm.exports, dv = new DataView(this.vm.mem.buffer);
+    const segs = [];
+    for (let s = 0; s < 6; s++) segs.push(dv.getInt32(isa.REGFILE_SEGB + 4 * s, true) >>> 0);
+    return [lk, env.mask, env.codeBase, env.d32, env.ip32, reg.cyclic ? 1 : 0, ex.mget_spm(),
+      (ex.get_flags() >>> 10) & 1, ex.mget_shmask(), ex.mget_linmask() >>> 0, segs.join('.'),
+      [...reg.body].join(',')].join('|');
+  }
+
   program(lk, key, ip, env, reg) {
-    const prog = OPT.build(reg, { passes: reg.cyclic ? this.passes : this.linePasses, env, vm: this.vm });
+    const pk = this.progKey(lk, reg, env);
+    const mem = this.vm.mem;
+    let prog = null;
+    for (const c of this.progCache.get(pk) || []) {
+      let ok = true;
+      for (let i = 0; i < c.lins.length; i++) if (mem[c.lins[i]] !== c.bytes[i]) { ok = false; break; }
+      if (ok) { prog = c.prog; this.stats.progHits++; break; }
+    }
+    if (!prog) {
+      const read = new Set();
+      for (const k of reg.body) {
+        const n = reg.nodes.get(k);
+        const lin = (env.codeBase + n.ip) & env.mask;
+        for (let l = lin; l < lin + n.d.len; l++) read.add(l);
+      }
+      prog = OPT.build(reg, { passes: reg.cyclic ? this.passes : this.linePasses, env, vm: this.vm,
+        rd: (lin) => { read.add(lin); return mem[lin]; } });
+      const lins = Int32Array.from(read);
+      const c = { lins, bytes: Uint8Array.from(lins, (l) => mem[l]), prog };
+      if (this.progCacheSize >= 4096) { this.progCache.clear(); this.progCacheSize = 0; }
+      const list = this.progCache.get(pk);
+      if (list) { list.unshift(c); if (list.length > 8) list.pop(); else this.progCacheSize++; }
+      else { this.progCache.set(pk, [c]); this.progCacheSize++; }
+    }
     const akey = `${key}|${env.mask}`;
     let rec;
     try { rec = this.A.add(prog, akey, {}); } catch (e) {
@@ -515,7 +579,7 @@ class UopOnly {
       uopShare: st.uopSteps / total,
       chains: this.A ? this.A.chains : 0,
       invalidated: st.invalidated, flushes: st.flushes, arenaResets: st.arenaResets,
-      calls: st.calls, stays: st.stays, farStays: st.farStays, builtStays: st.builtStays, modeStays: st.modeStays, lineRetries: st.lineRetries, ioCuts: st.ioCuts, why: st.why, fbExitWhy: [...st.fbExitWhy].sort((a, b) => b[1] - a[1]).slice(0, 12),
+      calls: st.calls, stays: st.stays, farStays: st.farStays, builtStays: st.builtStays, modeStays: st.modeStays, lineRetries: st.lineRetries, progHits: st.progHits, ioCuts: st.ioCuts, why: st.why, fbExitWhy: [...st.fbExitWhy].sort((a, b) => b[1] - a[1]).slice(0, 12),
       buildSecs: Number(st.buildNs) / 1e9,
       sitesList: [...this.sites.values()].filter((s) => s.rec).map((s) => s.ip),
       arenaBytes: this.A ? this.A.at - (this.A.progs[0] ? this.A.progs[0].codeFrom : this.A.at) : 0,
