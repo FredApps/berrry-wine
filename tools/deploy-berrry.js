@@ -588,7 +588,13 @@ function fileByteSize(file) {
 // Shared by deploy and rollback so both stay under the same request ceiling.
 // Leave headroom for multipart framing while taking advantage of Berry's new
 // 20MiB file support. A larger single file still occupies a batch by itself.
-const BATCH_LIMIT = 19 * 1024 * 1024;
+// --batch-mb=N lowers it: berrry keeps file contents in a 256MB Postgres, and
+// on 2026-10-01 three ~19MB batches in a row crashed that database (and every
+// berrry app with it). --batch-pause=SEC gives it time between batches.
+const BATCH_MB_ARG = process.argv.find(a => a.startsWith('--batch-mb='));
+const BATCH_LIMIT = (BATCH_MB_ARG ? Number(BATCH_MB_ARG.split('=')[1]) : 19) * 1024 * 1024;
+const PAUSE_ARG = process.argv.find(a => a.startsWith('--batch-pause='));
+const BATCH_PAUSE_MS = (PAUSE_ARG ? Number(PAUSE_ARG.split('=')[1]) : 0) * 1000;
 
 // Two halves by byte size, not by count: one 15MiB file beside twenty small
 // ones splits usefully only if the split follows the bytes. Both halves are
@@ -885,6 +891,7 @@ async function deploy() {
 
   // First batch: create or update with metadata
   for (let i = 0; i < batches.length; i++) {
+    if (i > 0 && BATCH_PAUSE_MS) await new Promise(resolve => setTimeout(resolve, BATCH_PAUSE_MS));
     const isFirst = i === 0;
     const body = isFirst
       ? { ...appMeta, files: batches[i] }
@@ -898,8 +905,25 @@ async function deploy() {
       if (r.status >= 400) return;
     } else {
       console.log('Updating (batch ' + (i + 1) + '/' + batches.length + ', ' + batches[i].length + ' files, ' + transport + ')...');
-      let r = await api('PUT', '/apps/' + SUBDOMAIN, body);
+      let r;
+      try { r = await api('PUT', '/apps/' + SUBDOMAIN, body); }
+      catch (error) {
+        // api() already retried. A batch the server keeps dropping mid-upload
+        // (EPIPE) is treated like one it answers 5xx: split it below.
+        if (batches[i].length <= 1) throw error;
+        console.log('  ' + (error.cause?.code || error.message) + ' after retries');
+        r = { status: 599 };
+      }
       console.log('Result:', r.status);
+      // A 5xx that survives api()'s retries is NOT split and retried: on
+      // 2026-10-01 those 500s were berrry's database crashing under the
+      // upload, and hammering it again takes the whole site down with it.
+      // Stop; re-run later with a smaller --batch-mb.
+      if (r.status >= 500) {
+        throw new Error(`batch ${i + 1}/${batches.length} failed with HTTP ${r.status}`
+          + ` — the server may be overloaded; batches 1..${i} are live. Wait, then`
+          + ` re-run with a smaller --batch-mb and a --batch-pause`);
+      }
       // 413 means the batch, not the deploy, is too big: the request ceiling
       // sits below BATCH_LIMIT for this payload. Halving and retrying costs one
       // wasted request and finds the real ceiling by itself, which beats
