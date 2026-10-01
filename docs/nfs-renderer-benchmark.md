@@ -384,3 +384,26 @@ the public demo source and archive hash. The harness sets the game's supported
 environment override `THRASH_DRIVER=1` to select Glide. Without it, automatic
 selection chooses the unavailable PowerVR/SGL route and exits before racing.
 The benchmark does not patch the guest executable.
+
+## Release 2026-09-30 rerun
+
+Base `0a972f06` (release/2026-09-30), headful Chrome, serial, threads on, two
+30-second samples per case, load average 6-12 throughout (provisional, like
+every number above). All screenshots were checked to be mid-race.
+
+| Demo | Renderer | Sample fps | CPU ms/frame |
+| --- | --- | --- | --- |
+| NFS III (`nfs-renderer-bench.js`, seed 12345) | Glide (`voodooa.dll`) | 22.6, 22.3 | 88, 94 |
+| | D3D (`d3da.dll`) | 23.7, 24.6 | 95, 98 |
+| | software (`softtria.dll`) | 5.9, 8.1 | 364, 261 |
+| NFS II (`nfs2-renderer-bench.js`) | original software demo (TR03) | 69.5, 63.3 | 30, 33 |
+| | SE Glide demo (TR04, post W-buffer fix) | 17.2, 18.4 | 134, 125 |
+
+NFS III: Glide and D3D are level within this box's noise (the 09-29 rerun had
+Glide ahead, 13.98 vs 10.53, before the D3D batching work), and both are about
+3x software. The desktop `nfs3_demo` entry sets no `Thrash Driver`, so it
+starts on `softtria.dll`, the slowest renderer.
+
+NFS II: the original software demo runs about 3.6x the SE Glide demo's frame
+rate. These are different editions and tracks, so the ratio is the cost of
+the complete workloads, not of the renderer alone.
