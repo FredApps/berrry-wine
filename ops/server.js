@@ -1,0 +1,78 @@
+#!/usr/bin/env node
+'use strict';
+
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createReader, safeFile } = require('./readers');
+
+function createServer(options = {}) {
+  const reader = createReader(options);
+  let cached, refreshedAt = 0, pending;
+  async function snapshot() {
+    if (cached && Date.now() - refreshedAt < 5000) return cached;
+    if (!pending) pending = reader.snapshot().then(value => { cached = value; refreshedAt = Date.now(); return value; }).finally(() => { pending = null; });
+    return pending;
+  }
+  const server = http.createServer(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    const fail = (status, message) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(message); };
+    const host = req.headers.host || '';
+    if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return fail(403, 'Loopback host required');
+    if (req.headers.origin && req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin requests only');
+    if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Read-only dashboard');
+    try {
+      const url = new URL(req.url, `http://${host}`);
+      if (url.pathname === '/api/state') {
+        const data = await snapshot();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        return res.end(req.method === 'HEAD' ? undefined : JSON.stringify(data));
+      }
+      let file, type = 'text/plain; charset=utf-8';
+      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+      if (statics[url.pathname]) {
+        const [name, mime] = statics[url.pathname]; file = path.join(__dirname, name); type = mime;
+      } else if (url.pathname === '/artifact') {
+        await snapshot(); file = await reader.artifact(url.searchParams.get('key'));
+        const extension = path.extname(file || '').toLowerCase();
+        type = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' })[extension] || type;
+      } else if (url.pathname === '/source') {
+        const relative = url.searchParams.get('path') || '';
+        if (relative === 'TODOS.md' || relative === 'test/candidate-corpus/manifest.json' || /^docs\/re-notes\/[\w.-]+\.md$/.test(relative)) file = await safeFile(reader.root, relative);
+      }
+      if (!file) return fail(404, 'Not found');
+      const stream = fs.createReadStream(file);
+      stream.once('error', () => { if (!res.headersSent) fail(404, 'Not found'); else res.destroy(); });
+      stream.once('open', () => {
+        res.writeHead(200, { 'Content-Type': type });
+        if (req.method === 'HEAD') { stream.destroy(); res.end(); } else stream.pipe(res);
+      });
+    } catch (e) { console.error('ops:', e.message); if (!res.headersSent) fail(500, 'Could not read dashboard sources'); else res.destroy(); }
+  });
+  return server;
+}
+
+if (require.main === module) {
+  const opts = {};
+  let port = 8098;
+  for (const arg of process.argv.slice(2)) {
+    if (arg === '--help') {
+      console.log('node ops/server.js [--port=8098] [--root=PATH] [--codex-root=PATH] [--claude-root=PATH] [--no-agents]'); process.exit(0);
+    }
+    else if (arg.startsWith('--port=')) port = Number(arg.slice(7));
+    else if (arg.startsWith('--root=')) opts.root = path.resolve(arg.slice(7));
+    else if (arg.startsWith('--codex-root=')) opts.codexRoot = path.resolve(arg.slice(13));
+    else if (arg.startsWith('--claude-root=')) opts.claudeRoot = path.resolve(arg.slice(14));
+    else if (arg === '--no-agents') opts.codexRoot = opts.claudeRoot = false;
+    else { console.error(`Unknown option: ${arg}`); process.exit(1); }
+  }
+  if (!Number.isInteger(port) || port < 0 || port > 65535) { console.error('Invalid port'); process.exit(1); }
+  const server = createServer(opts);
+  server.on('error', error => { console.error(error.message); process.exitCode = 1; });
+  server.listen(port, '127.0.0.1', () => console.log(`Wine / Ops: http://127.0.0.1:${server.address().port}`));
+}
+
+module.exports = { createServer };

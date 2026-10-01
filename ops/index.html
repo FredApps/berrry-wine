@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wine / Ops</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside>
+    <a class="brand" href="#overview"><span class="brand-mark">W_</span><span>WINE <b>/ OPS</b></span></a>
+    <div class="nav-label">// COMMAND DIRECTORY</div>
+    <nav aria-label="Main navigation">
+      <a href="#overview" data-view="overview"><span>01</span> Overview</a>
+      <a href="#tasks" data-view="tasks"><span>02</span> Tasks <small id="task-count"></small></a>
+      <a href="#corpus" data-view="corpus"><span>03</span> EXE corpus <small id="corpus-count"></small></a>
+      <a href="#agents" data-view="agents"><span>04</span> Agents</a>
+      <a href="#activity" data-view="activity"><span>05</span> Activity</a>
+    </nav>
+    <div class="side-schematic" aria-hidden="true"><div class="schematic-title">FILE SYSTEM / TOPOLOGY</div><pre>┌─ REPOSITORY
+│  ├─ tasks
+│  ├─ corpus
+│  └─ evidence
+│
+├─ CODEX ───┐
+├─ CLAUDE ──┤
+│          ↓
+└─ OBSERVER / OPS</pre><div class="signal-bars">▂ ▃ ▆ ▄ ▂ ▅ ▇ ▃ ▄ ▆ ▂ ▃</div></div>
+    <div class="aside-foot"><span class="file-dot"></span> LOCAL FILE OBSERVER<br><small>READ ONLY / NO DATABASE</small></div>
+  </aside>
+  <div class="workspace">
+    <header><div class="breadcrumb">wine-assembly <span>/</span> <b>OPS CONSOLE</b></div><label class="search"><span>&gt;_</span><input id="search" type="search" placeholder="Search this view…" aria-label="Search this view"></label><span id="connection" role="status">Connecting…</span><button id="refresh" title="Refresh data">↻</button></header>
+    <main id="main" tabindex="-1"><div class="empty">Reading project files…</div></main>
+    <footer><span id="updated">Waiting for sources</span><span>Edit the source files to update this dashboard.</span></footer>
+  </div>
+  <dialog id="detail"><div class="dialog-top"><span id="detail-label">Details</span><button id="close-detail" aria-label="Close details">✕</button></div><div id="detail-body"></div></dialog>
+</body>
+</html>
