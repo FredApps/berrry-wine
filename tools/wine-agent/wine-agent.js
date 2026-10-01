@@ -74,6 +74,14 @@ function originOf(text) {
   return m ? m[1] : null;
 }
 const ORIGIN = (flag('origin') || originOf(pasted) || DEFAULT_ORIGIN).replace(/\/$/, '');
+// nomcp registration lives on berrry itself, not on each app: an app
+// subdomain's /api/* is that app's backend and answers /api/nomcp with
+// "API endpoint not found". The dev server mirrors both on one origin.
+function nomcpOriginOf(origin) {
+  const u = new URL(origin);
+  return /(^|\.)berrry\.app$/.test(u.hostname) ? `${u.protocol}//berrry.app` : origin;
+}
+const NOMCP_ORIGIN = (flag('nomcp-origin') || nomcpOriginOf(ORIGIN)).replace(/\/$/, '');
 const CONFIG_DIR = flag('config-dir') || process.env.WINE_AGENT_HOME
   || path.join(os.homedir(), '.config', 'wine-agent');
 const RUNS_AS = flag('runs-as') || process.env.WINE_AGENT_RUNS_AS || '';
@@ -114,23 +122,24 @@ const signHex = (message) => pair.hex(nacl.sign.detached(new TextEncoder().encod
 async function api(method, url, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(ORIGIN + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const base = url.startsWith('/api/nomcp/') ? NOMCP_ORIGIN : ORIGIN;
+  const res = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   let json = null;
   try { json = await res.json(); } catch (_) {}
   return { status: res.status, body: json };
 }
 
-// Session tokens are per berrry origin (the dev server and production are
-// separate registries), and last 24h.
+// Session tokens are per nomcp registry (the dev server and production are
+// separate ones), and last 24h.
 function cachedSession() {
   const all = readJson(sessionFile) || {};
-  const s = all[ORIGIN];
+  const s = all[NOMCP_ORIGIN];
   return s && Date.parse(s.expires_at) > Date.now() + 60000 ? s.token : null;
 }
 
 function saveSession(result) {
   const all = readJson(sessionFile) || {};
-  all[ORIGIN] = { token: result.token, expires_at: result.expires_at };
+  all[NOMCP_ORIGIN] = { token: result.token, expires_at: result.expires_at };
   writeJson(sessionFile, all);
   if (result.username && result.username !== identity.username) {
     identity.username = result.username;
