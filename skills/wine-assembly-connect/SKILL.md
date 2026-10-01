@@ -78,9 +78,11 @@ try again. Later runs on the same machine skip this step.
     curl -s -H "$K" $B/status
 
 `state` walks through `starting`, then `publishing`, then `asking`, then `connected`.
-While it is `asking`, the person sees "*yourname* wants to connect" in their game and
-has to click **Allow**. Tell them to click Allow, then poll `/status` every few
-seconds. `next` in the reply always says what to do.
+`asking` means the answer was published; the bridge cannot yet tell whether the
+page has displayed the request or the person clicked **Allow**. Tell them to click
+Allow when the request appears, then poll `/status` every few seconds. If they
+already allowed it and it remains `asking`, inspect the page's connection message
+rather than repeatedly asking for approval. `next` in the reply says what to do.
 
 - `connected`: go to step 5.
 - `closed` or `failed`: read `error`. The usual causes are that the person denied

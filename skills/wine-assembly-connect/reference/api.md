@@ -33,6 +33,10 @@ Request bodies are JSON. Replies are JSON unless noted:
 `state` is one of `starting`, `needs-register`, `publishing`, `asking`, `connected`,
 `closed` or `failed`. `next` is a sentence saying what to do in that state.
 
+`asking` means the answer was published, not that the bridge knows the dialog is
+still awaiting a click. Until the channel opens, browser-side approval or failure
+is not visible to it. If Allow was already clicked, check the browser's message.
+
 `lastEvent` is the newest thing the page told you, unprompted:
 
 | `type` | When |

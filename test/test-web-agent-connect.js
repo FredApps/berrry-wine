@@ -106,6 +106,13 @@ let bridgeOut = '';
 
   browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    const NativePC = window.RTCPeerConnection;
+    window.__consentPeers = [];
+    window.RTCPeerConnection = class extends NativePC {
+      constructor(...args) { super(...args); window.__consentPeers.push(this); }
+    };
+  });
   await page.setViewport({ width: 1024, height: 700 });
   fs.mkdirSync(SHOTS, { recursive: true });
   const shot = name => page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
@@ -170,6 +177,26 @@ let bridgeOut = '';
 
   const before = await request(base, 'GET', '/snapshot', { key });
   check('nothing is reachable before the player allows it', before.status === 409, `${before.status} ${JSON.stringify(before.json)}`);
+
+  // Safari failed after ~47s when the bridge probed before Allow. Wait
+  // longer than that real deadline, checking ICE itself rather than just
+  // the dialog label, then require the SAME invitation to connect below.
+  console.log('INFO  holding consent for 65 seconds to cover early ICE expiry');
+  for (let i = 0; i < 13; i++) {
+    await sleep(5000);
+    const idle = await page.evaluate(() => ({
+      phase: window.__pairing.state.phase,
+      ice: window.__consentPeers[0].iceConnectionState,
+      remote: !!window.__consentPeers[0].remoteDescription,
+    }));
+    if (idle.phase !== 'asking' || idle.ice !== 'new' || idle.remote) {
+      throw new Error(`ICE started before consent: ${JSON.stringify(idle)}`);
+    }
+  }
+  check('ICE remains new throughout a 65-second consent delay', true);
+  const waiting = await request(base, 'GET', '/status', { key });
+  check('bridge remains available without an early failure',
+    waiting.json.state === 'asking' && waiting.json.error === null, JSON.stringify(waiting.json));
 
   const recordKey = await page.evaluate(() => window.AgentPair.recordKey(window.AgentPair.readToken(window.__pairing.state.token).id));
   const pubBefore = await request(`http://127.0.0.1:${PORT}`, 'GET', `/api/public-data/users/${encodeURIComponent(recordKey)}`);

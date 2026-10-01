@@ -262,7 +262,19 @@ async function connect() {
     if (s === 'closed') closed('the connection closed');
   });
 
-  await pc.setRemoteDescription({ type: 'offer', sdp: pair.minimalSdp(pairing.offer, 'offer') });
+  // Do not probe the browser while its consent dialog is open. A browser
+  // starts its ICE failure timer on an incoming check, even before it has
+  // applied our answer. Keep remote trickle gathering open and let the
+  // browser initiate checks after Allow; werift learns the peer-reflexive
+  // candidate from that request and performs the normal triggered check.
+  // Local gathering (including STUN) still runs, so the answer carries our
+  // reachable addresses. Do not signal end-of-candidates here: an empty,
+  // completed checklist would fail before the browser can approve.
+  const passiveOffer = pair.minimalSdp(pairing.offer, 'offer')
+    .split('\r\n').filter(line => !line.startsWith('a=candidate:')
+      && line !== 'a=end-of-candidates').join('\r\n');
+  state.pc = pc;
+  await pc.setRemoteDescription({ type: 'offer', sdp: passiveOffer });
   await pc.setLocalDescription(await pc.createAnswer());
   await gathered(pc);
 
@@ -272,19 +284,25 @@ async function connect() {
   if (put.status !== 200) {
     throw new Error(`could not publish the answer to ${ORIGIN} (${put.status}): ${JSON.stringify(put.body)}`);
   }
+  // Publication and ICE callbacks race. Never resurrect a terminal state
+  // (or overwrite connected) just because the HTTP write finished later.
+  if (state.phase !== 'publishing') return;
   state.phase = 'asking';
-  say('ASKING', `the player now sees "${identity.username} wants to connect"; waiting for Allow`);
+  say('ASKING', 'answer published; waiting for the browser to approve and connect');
 
   // The page stops polling for an answer when the link expires, so an agent
   // still waiting past that point will never be let in.
   const deadline = pairing.expires * 1000 + 30000;
   const timer = setInterval(() => {
+    if (['connected', 'closed', 'failed'].includes(state.phase)) {
+      clearInterval(timer);
+      return;
+    }
     if (state.phase === 'asking' && Date.now() > deadline) {
       clearInterval(timer);
-      closed('the player did not allow the connection before the link expired');
+      closed('the browser did not connect before the invitation deadline');
     }
   }, 5000);
-  state.pc = pc;
 }
 
 function closed(why) {
@@ -456,7 +474,7 @@ function statusBody() {
       'starting': 'wait a moment, then GET /status again',
       'needs-register': 'GET /register, solve the puzzle, POST /register',
       'publishing': 'wait a moment, then GET /status again',
-      'asking': 'the player has to click Allow in the game; poll GET /status every few seconds',
+      'asking': 'answer published; waiting for browser approval or connection; poll GET /status',
       'connected': 'GET /screenshot.png, then act (POST /click, /key, /type ...)',
       'closed': 'start again with a new link from the player',
       'failed': 'read "error"; start again with a new link from the player',

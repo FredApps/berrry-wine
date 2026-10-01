@@ -544,6 +544,34 @@ Decisions made while building, which the sections above don't show:
 - **Chrome ⇄ werift interop works with Chrome's mDNS host candidates** on one machine.
   Across two machines on different networks it's still unmeasured (open question 1).
 
+### Consent must not consume the ICE timeout (2026-09-30)
+
+Live Safari tracing found ICE entering `checking` on the bridge's first incoming
+STUN check, before the player clicked Allow or applied the answer. It failed
+47.424 seconds later although the invitation had minutes left. Candidate gathering
+had completed in 107 ms; extending the gathering or invitation deadline would not
+address this failure.
+
+The bridge now applies the offer's credentials and fingerprint without its remote
+candidates or end-of-candidates marker. It gathers and publishes its own candidates
+normally, but waits with an open trickle checklist. Only after Allow applies the
+answer does the browser send connectivity checks; werift learns a peer-reflexive
+candidate and performs triggered checks. No application access is granted before
+Allow. This requires a browser-to-bridge candidate path; different-network/NAT
+coverage remains unmeasured and TURN remains a separate requirement.
+
+Publication cannot overwrite a terminal or connected bridge state. `asking` is
+documented as “answer published, awaiting browser connection,” because a browser
+failure before the channel opens cannot be reported over that channel.
+
+`test/test-web-agent-connect.js` holds consent for 65 seconds, verifies ICE remains
+`new` throughout, then connects the same invitation and exercises screenshots,
+input, permission refusal, and disconnect using the rebuilt shipped bridge.
+The fixed bridge also passed delayed approval in the user's live Safari tab:
+ICE stayed `new` while approval was pending, then moved from `checking` to
+`connected` in 13 ms. Screenshots and a sustained Paint drawing session traversed
+the DataChannel successfully; HTTP page evaluation was used only for diagnostics.
+
 A useful acceptance test for [6]: give a *different* agent than the one that wrote it
 nothing but the pasted sentence, and see if it gets to a screenshot.
 
