@@ -929,6 +929,41 @@
   (global $io_pit_phase (mut i32) (i32.const 0))
   (global $io_vga_status (mut i32) (i32.const 0))
 
+  ;; PCI configuration mechanism #1: a dword written to 0xCF8 selects
+  ;; bus/device/function/register, and 0xCFC..0xCFF read that register. Win9x
+  ;; leaves both ports open to ring 3, and 3Dfx's fxPCI scan (NFS II SE's
+  ;; SETUP calls it through SHELL.DLL!PCICheckVendorDevice) walks the bus this
+  ;; way to look for a Voodoo. With every port floating high the scan found no
+  ;; bus at all and setup stopped on "Error: Can not detect hardware!". The
+  ;; machine is a 440BX board: host bridge at 0:0.0 and PIIX4 ISA bridge at
+  ;; 0:7.0, nothing else. An empty slot reads all ones, as on hardware.
+  (global $io_pci_addr (mut i32) (i32.const 0))
+
+  (func $pci_config_read (param $addr i32) (result i32)
+    (local $dev i32) (local $reg i32) (local $id i32) (local $class i32)
+    (if (i32.eqz (i32.and (local.get $addr) (i32.const 0x80000000)))
+      (then (return (i32.const -1))))
+    ;; bus 0, function 0; device in bits 11..15
+    (if (i32.and (local.get $addr) (i32.const 0x00FF0700))
+      (then (return (i32.const -1))))
+    (local.set $dev (i32.and (i32.shr_u (local.get $addr) (i32.const 11)) (i32.const 0x1F)))
+    (local.set $reg (i32.and (local.get $addr) (i32.const 0xFC)))
+    (if (i32.eqz (local.get $dev))
+      (then
+        (local.set $id (i32.const 0x71908086))        ;; Intel 82443BX host bridge
+        (local.set $class (i32.const 0x06000003)))     ;; host bridge, rev 03
+      (else
+        (if (i32.eq (local.get $dev) (i32.const 7))
+          (then
+            (local.set $id (i32.const 0x71108086))    ;; Intel 82371AB PIIX4 ISA
+            (local.set $class (i32.const 0x06010002))) ;; ISA bridge, rev 02
+          (else (return (i32.const -1))))))
+    (if (i32.eqz (local.get $reg)) (then (return (local.get $id))))
+    (if (i32.eq (local.get $reg) (i32.const 0x04))
+      (then (return (i32.const 0x02000006))))          ;; mem+master; medium DEVSEL
+    (if (i32.eq (local.get $reg) (i32.const 0x08)) (then (return (local.get $class))))
+    (i32.const 0))
+
   ;; 398: IN/OUT AL/AX/EAX with an immediate or DX port. Operand bits 0..7 are
   ;; the x86 opcode, 8..15 hold an immediate port, and bit 16 records 66h.
   (func $th_port_io (param $op i32)
@@ -973,6 +1008,15 @@
             (global.set $io_vga_status
               (i32.xor (global.get $io_vga_status) (i32.const 8)))
             (local.set $value (global.get $io_vga_status))))
+        (if (i32.and (i32.eq (local.get $port) (i32.const 0xCF8))
+                     (i32.and (local.get $wide) (i32.eqz (local.get $word))))
+          (then (local.set $value (global.get $io_pci_addr))))
+        (if (i32.eq (i32.and (local.get $port) (i32.const 0xFFFC)) (i32.const 0xCFC))
+          (then
+            (local.set $value
+              (i32.shr_u
+                (call $pci_config_read (global.get $io_pci_addr))
+                (i32.shl (i32.and (local.get $port) (i32.const 3)) (i32.const 3))))))
         (if (i32.eqz (local.get $wide))
           (then
             (i32.store8 (global.get $reg_base) (local.get $value)))
@@ -989,6 +1033,11 @@
               (if (result i32) (local.get $word)
                 (then (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
                 (else (i32.load offset=0 (global.get $reg_base)))))))
+        ;; Only a dword write reaches the mechanism #1 address register; a byte
+        ;; write to 0xCF8 is mechanism #2's enable register, which is absent.
+        (if (i32.and (i32.eq (local.get $port) (i32.const 0xCF8))
+                     (i32.and (local.get $wide) (i32.eqz (local.get $word))))
+          (then (global.set $io_pci_addr (i32.and (local.get $value) (i32.const 0x80FFFFFC)))))
         (if (i32.and
               (i32.eq (local.get $port) (i32.const 0x43))
               (i32.eqz (i32.and (local.get $value) (i32.const 0xC0))))
