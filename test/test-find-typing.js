@@ -109,7 +109,9 @@ const checks = [
     // flags must have FR_FINDNEXT (0x08) set; default Down direction adds 0x01,
     // so accept 0x8/0x9/0x88/etc — the only invariant is the FR_FINDNEXT bit.
     pass: (() => {
-      const m = out.match(/dump-fr: flags=0x([0-9a-f]+) findWhat="ABC"/);
+      // dump-fr prints dlg=/fr=/size= before flags= (04b653b8); size=40 is
+      // the liveness bit, so require it — a freed struct's flags mean nothing.
+      const m = out.match(/dump-fr: .*\bsize=40 flags=0x([0-9a-f]+) .*\bfindWhat="ABC"/);
       return !!m && (parseInt(m[1], 16) & 0x08) !== 0;
     })(),
   },
