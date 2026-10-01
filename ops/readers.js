@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { createProcessObserver } = require('./processes');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -204,6 +205,7 @@ function createReader(options = {}) {
   const codexRoot = options.codexRoot === false ? null : options.codexRoot || path.join(os.homedir(), '.codex', 'sessions');
   const claudeRoot = options.claudeRoot === false ? null : options.claudeRoot || path.join(os.homedir(), '.claude', 'projects', root.replace(/[^a-zA-Z0-9-]/g, '-'));
   const sessionCache = new Map();
+  const observeProcesses = createProcessObserver(options);
   const assets = new Map();
   let discovery = null, discoveredAt = 0, discoveryWarnings = [];
   async function sessions(warnings) {
@@ -233,10 +235,14 @@ function createReader(options = {}) {
           cached = { key, session: parseSession(entry.provider, records, entry.file, partial, root) };
           sessionCache.set(entry.file, cached);
         }
-        if (cached.session) result.push({ ...cached.session });
+        if (cached.session) result.push({ ...cached.session, logFile: entry.file });
       } catch (e) { warnings.push(`${entry.provider}: could not read a session log (${e.code || e.message}).`); }
     }
-    return result.sort((a, b) => (b.lastActivityAt || '').localeCompare(a.lastActivityAt || '')).slice(0, 40);
+    const seen = new Set();
+    return result.sort((a, b) => (b.lastActivityAt || '').localeCompare(a.lastActivityAt || '')).filter(a => {
+      if (seen.has(a.id)) return false;
+      seen.add(a.id); return true;
+    }).slice(0, 40);
   }
   async function runs(warnings) {
     const result = [];
@@ -254,14 +260,15 @@ function createReader(options = {}) {
           if (!r || typeof r !== 'object' || typeof r.candidateId !== 'string' || !date(r.startedAt)) throw new Error('candidateId and ISO startedAt are required');
           const allowed = ['passed', 'failed', 'timeout', 'harness-error', 'running', 'unknown'];
           if (!allowed.includes(r.outcome)) throw new Error('invalid outcome');
-          const run = { id: entry.name, key: relative, source: directory, candidateId: r.candidateId, taskId: clip(r.taskId),
+          const run = { id: entry.name, key: relative, source: directory, candidateId: r.candidateId, taskId: clip(r.taskId), agentId: clip(r.agentId),
             startedAt: date(r.startedAt), finishedAt: date(r.finishedAt), outcome: r.outcome, route: clip(r.route),
             command: clip(r.command, 4000), build: clip(typeof r.build === 'string' ? r.build : JSON.stringify(r.build || {}), 2000),
             environment: clip(typeof r.environment === 'string' ? r.environment : JSON.stringify(r.environment || {}), 1000),
             summary: clip(r.summary, 2000), verification: r.verification === 'reviewed' ? 'reviewed' : 'unreviewed',
-            screenshots: [], artifacts: [] };
+            screenshots: [], visuals: [], artifacts: [] };
+          const diagrams = new Set(Array.isArray(r.diagrams) ? r.diagrams.filter(v => typeof v === 'string') : []);
           const names = new Set(['result.json', 'output.log']);
-          for (const value of [r.screenshot, ...(Array.isArray(r.screenshots) ? r.screenshots : []), ...(Array.isArray(r.artifacts) ? r.artifacts : [])]) {
+          for (const value of [r.screenshot, ...(Array.isArray(r.screenshots) ? r.screenshots : []), ...diagrams, ...(Array.isArray(r.artifacts) ? r.artifacts : [])]) {
             if (typeof value === 'string') names.add(value);
           }
           for (const name of names) {
@@ -272,7 +279,10 @@ function createReader(options = {}) {
             assets.set(key, { root: path.join(root, relative), name });
             const artifact = { name, url: `/artifact?key=${encodeURIComponent(key)}` };
             run.artifacts.push(artifact);
-            if (/\.(png|jpe?g|webp)$/i.test(name)) run.screenshots.push(artifact);
+            if (/\.(png|jpe?g|webp)$/i.test(name)) {
+              run.visuals.push({ ...artifact, kind: diagrams.has(name) ? 'diagram' : 'screenshot' });
+              if (!diagrams.has(name)) run.screenshots.push(artifact);
+            }
           }
           result.push(run);
         } catch (e) { warnings.push(`${relative}/result.json: ${e.message}`); }
@@ -313,6 +323,8 @@ function createReader(options = {}) {
     } catch (e) { warnings.push(`messageboard.txt: ${e.code || e.message}`); }
     const tasks = parseTasks(todo, candidates);
     const [runList, agents] = await Promise.all([runs(warnings), sessions(warnings)]);
+    const observations = agents.length ? await observeProcesses(agents) : new Map();
+    for (const a of agents) { a.process = observations.get(a); delete a.logFile; }
     for (const run of runList) if (!candidates.some(c => c.id === run.candidateId)) warnings.push(`${run.key}: candidate ${run.candidateId} is not in the manifest.`);
     for (const a of agents) {
       const task = tasks.find(t => t.owner === a.id && t.status === 'active');
@@ -326,7 +338,7 @@ function createReader(options = {}) {
     }
     return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,
       sources, warnings: [...new Set(warnings)], todoText: todo,
-      telemetryNote: 'Local log observations; process health and progress are unknown unless explicitly recorded. Last-request input is a context estimate, not live occupancy. Session tails may be partial.' };
+      telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }
   async function artifact(key) {
     const value = assets.get(key);

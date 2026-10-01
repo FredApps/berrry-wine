@@ -19,10 +19,33 @@ function health(a) {
   if (Date.now() - Date.parse(a.lastActivityAt) > 15 * 60000) return ['Quiet · check session', 'warn'];
   return [a.state === 'tool' ? 'Tool activity' : 'Recent activity', 'good'];
 }
+function visualCards(runs, limit = 6) {
+  const cards = runs.filter(r => r.visuals?.length).slice(0, limit);
+  return cards.length ? `<div class="visual-grid">${cards.map(r => {
+    const image = r.visuals[r.visuals.length - 1];
+    const candidate = state.candidates.find(c => c.id === r.candidateId);
+    return `<button class="visual-card" data-run="${escape(r.key)}"><span class="visual-image"><img src="${escape(image.url)}" alt="${escape(image.kind + ': ' + (r.route || image.name))}" loading="lazy">${image.kind === 'diagram' ? '<span class="visual-kind">Diagram</span>' : ''}</span><span class="visual-caption"><strong>${escape(candidate?.name || r.candidateId)}</strong><span>${age(r.startedAt)} ago${r.outcome === 'failed' || r.outcome === 'harness-error' ? ' · ' + escape(r.outcome) : ''} · Open evidence →</span></span></button>`;
+  }).join('')}</div>` : empty('No linked visuals yet.');
+}
+function agentRuns(a) { return state.runs.filter(r => r.agentId === a.id); }
+function processSummary(p, compact = false) {
+  if (!p?.matches.length) return `<div class="process-line sub">PID ${p?.status === 'unavailable' ? 'unavailable' : 'not matched'}</div>`;
+  return `<div class="process-line">${p.matches.map(m => `<span class="sub">PID ${m.pid}${m.shared ? ' · shared' : ''}</span>`).join(' ')}${compact ? '' : `<span class="sub">${p.childCount} child processes · sampled ${age(p.checkedAt)} ago</span>`}</div>`;
+}
+function processDetails(p) {
+  if (!p) return empty('No process observation available.');
+  const rows = [...p.matches.map(m => ({ ...m, relation: m.evidence + (m.shared ? ' · shared' : '') })), ...p.children.map(m => ({ ...m, relation: 'Host descendant' }))];
+  return section('Associated local processes') + processSummary(p) + `<p class="source-note">${escape(p.note || 'Exact session-log handle or verified Claude registry match. Descendants belong to the host; they may serve other sessions. Missing matches do not prove a session has exited.')} Sampled ${escape(when(p.checkedAt))}.</p>` +
+    (rows.length ? `<div class="process-table"><table><thead><tr><th>PID / parent</th><th>Process</th><th>OS state / age</th><th>Association</th></tr></thead><tbody>${rows.map(m => `<tr><td>${m.pid} / ${m.ppid}</td><td>${escape(m.name)}</td><td>${escape(m.state)} / ${escape(m.elapsed)}</td><td>${escape(m.relation)}</td></tr>`).join('')}</tbody></table></div><p class="source-note">OS state: R runnable, S sleeping, T stopped, Z zombie. This is not an agent health verdict.${p.childCount > p.children.length ? ` Showing ${p.children.length} of ${p.childCount} descendants.` : ''}</p>` : '');
+}
 function agentCard(a) {
   const [label, color] = health(a);
-  const context = a.contextEstimate === null ? 'unknown' : `${num(a.contextEstimate)}${a.contextLimit ? ' / ' + num(a.contextLimit) : ' / unknown'}`;
-  return `<article class="agent panel"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span><span class="sub">${escape(a.model || 'model unknown')}</span>${badge(label, color)}</div><button class="agent-title" data-agent="${escape(a.id)}">${escape(a.taskTitle || a.title)}</button><div class="agent-meta"><span>On task <b>${age(a.taskStartedAt)}</b></span><span>Activity <b>${age(a.lastActivityAt)} ago</b></span><span>Progress <b>${a.progressAt ? age(a.progressAt) + ' ago' : 'unknown'}</b></span></div><div class="metrics"><div>Context estimate <strong>${context}</strong><div class="meter"><progress aria-label="Estimated context usage" max="100" value="${a.contextLimit && a.contextEstimate !== null ? Math.min(100, 100 * a.contextEstimate / a.contextLimit) : 0}"></progress></div></div><div>Cache reuse <strong>${a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%'}</strong><div class="sub">${escape(a.lastEvent)}</div></div></div></article>`;
+  const latest = agentRuns(a).find(r => r.visuals?.length);
+  const image = latest?.visuals.at(-1);
+  const candidate = latest && state.candidates.find(c => c.id === latest.candidateId);
+  const name = a.taskTitle || (a.title && a.title !== a.id ? a.title : candidate?.name || 'Untitled session');
+  const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
+  return `<article class="agent panel"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button><div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
 function feedRows(rows, truncate = false) { return rows.map(row => `<div class="feed-row"><div class="sub">MESSAGEBOARD</div><div class="feed-text">${escape(truncate && row.text.length > 360 ? row.text.slice(0, 360) + '…' : row.text)}</div></div>`).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
@@ -34,6 +57,7 @@ function overview() {
   return title('Operations console', 'Track the work. Inspect the evidence. Keep the agents in view.') +
     `<div class="stats"><div class="stat"><div class="sub">OPEN TASKS</div><div class="value">${state.tasks.filter(t => !['done', 'unknown'].includes(t.status)).length}</div><div class="sub">${state.tasks.filter(t => t.status === 'unknown').length} legacy sections need review</div></div><div class="stat"><div class="sub">EXE CANDIDATES</div><div class="value">${state.candidates.length}</div><div class="sub">${state.candidates.filter(c => c.latestRun).length} with recorded runs</div></div><div class="stat"><div class="sub">RECENT AGENT ACTIVITY</div><div class="value">${active.length}</div><div class="sub">Observed within 15 minutes</div></div><div class="stat"><div class="sub">RECORDED RUNS</div><div class="value">${state.runs.length}</div><div class="sub">${state.runs.filter(r => r.verification === 'reviewed').length} reviewed results</div></div></div>` +
     section('Agent activity', 'agents') + `<div class="agent-list">${state.agents.filter(matches).slice(0, 4).map(agentCard).join('') || empty('No project session logs found.')}</div>` +
+    section('Latest visuals', 'corpus') + visualCards(state.runs.filter(matches).filter((r, i, runs) => r.visuals?.length && !runs.slice(0, i).some(other => other.candidateId === r.candidateId && other.visuals?.length))) +
     `<div class="columns"><div>${section('Tasks to review', 'tasks')}<div class="panel">${taskRows(tasks.slice(0, 6))}</div></div><div>${section('Latest activity', 'activity')}<div class="panel">${feedRows(state.activity.filter(matches).slice(0, 5), true)}</div></div></div>` + notice();
 }
 function tasksView() {
@@ -49,7 +73,7 @@ function corpusView() {
       return `<button class="candidate" data-candidate="${escape(c.id)}"><div class="thumbnail">${shot ? `<img src="${escape(shot.url)}" alt="Latest capture for ${escape(c.name)}" loading="lazy">` : 'NO CAPTURE YET'}</div><div class="candidate-info"><h3>${escape(c.name || c.id)}</h3><div class="sub">${escape(c.version || c.id)}</div><div class="candidate-bottom">${badge(c.latestRun ? c.latestRun.outcome : 'Untested', tone(c.latestRun?.outcome))}<span class="sub">${c.taskIds.length} linked tasks</span></div><div class="sub">Fixture ${escape(c.fixtureStatus)} · ${shot ? c.latestRun.verification + ' capture' : 'screenshot missing'}</div></div></button>`;
     }).join('') || empty('No matching candidates.')}</div>`;
 }
-function agentsView() { return title('Agents', 'Claude and Codex · local session observations') + `<p class="source-note">${escape(state.telemetryNote)}</p><div class="agent-list">${state.agents.filter(matches).map(agentCard).join('') || empty('No matching project sessions. See README for log directory options.')}</div>` + notice(); }
+function agentsView() { return title('Agents', 'Activity, current work, and local PIDs. Open details for telemetry.') + `<div class="agent-list">${state.agents.filter(matches).map(agentCard).join('') || empty('No matching project sessions. See README for log directory options.')}</div>` + notice(); }
 function activityView() { return title('Activity', 'Latest 150 nonempty messageboard entries, newest first.') + `<div class="panel">${feedRows(state.activity.filter(matches))}</div>`; }
 function render() {
   if (!state) return;
@@ -68,7 +92,9 @@ function candidateDetail(id) {
 function agentDetail(id) {
   const a = state.agents.find(a => a.id === id); if (!a) return;
   const fields = [['Session', a.id], ['Model', a.model || 'unknown'], ['Worktree', a.cwd], ['Assigned task', a.taskId || 'unknown — no explicit owner match'], ['On task', age(a.taskStartedAt)], ['Current turn started', when(a.turnStartedAt)], ['Latest activity', when(a.lastActivityAt)], ['Last progress', when(a.progressAt)], ['Observed state', a.state], ['Process health', 'unknown — no process attachment'], ['Last operation', a.lastEvent], ['Last-request input', num(a.inputTokens)], ['Last-request output', num(a.outputTokens)], ['Cache read', num(a.cacheReadTokens)], ['Cache write', num(a.cacheWriteTokens)], ['Reported context limit', num(a.contextLimit)], ['Session total tokens', num(a.totalTokens)], ['Usage observed', when(a.usageAt)], ['Compactions observed', a.compactions + (a.partial ? ' in sampled log windows' : '')], ['Log coverage', a.partial ? 'head + tail only; history may be incomplete' : 'complete file']];
-  show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1><dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
+  fields.find(f => f[0] === 'Process health')[1] = 'unknown — PID presence does not establish responsiveness';
+  fields.push(['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
+  show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
 }
 async function refresh() {
   if (loading) return; loading = true;
@@ -85,7 +111,7 @@ document.addEventListener('click', event => {
   if (el.dataset.task) { const t = state.tasks.find(t => t.id === el.dataset.task); if (t) show(`TODOS.md:${t.line}`, `<h1>${escape(t.title)}</h1><p>${badge(t.status, tone(t.status))}</p><pre>${escape(t.body)}</pre>${link('/source?path=TODOS.md', 'Read full source')}`); }
   if (el.dataset.candidate) candidateDetail(el.dataset.candidate);
   if (el.dataset.agent) agentDetail(el.dataset.agent);
-  if (el.dataset.run) { const r = state.runs.find(r => r.key === el.dataset.run); if (r) show('RUN / ' + r.id, `<h1>${escape(r.route || r.id)}</h1><p>${badge(r.outcome, tone(r.outcome))} ${escape(r.summary)}</p><dl><dt>Started</dt><dd>${escape(when(r.startedAt))}</dd><dt>Finished</dt><dd>${escape(when(r.finishedAt))}</dd><dt>Review</dt><dd>${escape(r.verification)}</dd><dt>Build</dt><dd>${escape(r.build)}</dd><dt>Environment</dt><dd>${escape(r.environment)}</dd></dl><pre>${escape(r.command)}</pre><div class="links">${r.artifacts.map(a => link(a.url, a.name)).join('')}</div>${r.screenshots.map(a => `<img class="detail-shot" src="${escape(a.url)}" alt="${escape(a.name)}">`).join('')}`); }
+  if (el.dataset.run) { const r = state.runs.find(r => r.key === el.dataset.run); if (r) show('RUN / ' + r.id, `<h1>${escape(r.route || r.id)}</h1><p>${badge(r.outcome, tone(r.outcome))} ${escape(r.summary)}</p><dl><dt>Started</dt><dd>${escape(when(r.startedAt))}</dd><dt>Finished</dt><dd>${escape(when(r.finishedAt))}</dd><dt>Review</dt><dd>${escape(r.verification)}</dd><dt>Build</dt><dd>${escape(r.build)}</dd><dt>Environment</dt><dd>${escape(r.environment)}</dd></dl><pre>${escape(r.command)}</pre><div class="links">${r.artifacts.map(a => link(a.url, a.name)).join('')}</div>${(r.visuals || r.screenshots).map(a => `<figure class="run-visual"><img class="detail-shot" src="${escape(a.url)}" alt="${escape(a.name)}"><figcaption class="sub">${escape(a.kind || 'screenshot')} · ${escape(a.name)}</figcaption></figure>`).join('')}`); }
   if (el.id === 'todo-source') show('TODOS.md', `<pre>${escape(state.todoText)}</pre>`);
 });
 $('#close-detail').onclick = () => $('#detail').close();

@@ -8,6 +8,7 @@ const os = require('node:os');
 const http = require('node:http');
 const { parseTasks, parseSession, createReader, logWindows } = require('./readers');
 const { createServer } = require('./server');
+const { parseProcesses, parseOpenFiles, associate } = require('./processes');
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wine-ops-'));
@@ -31,6 +32,31 @@ test('task parser preserves legacy uncertainty, links exact candidates, ignores 
   assert.equal(tasks[1].owner, 'claude:abc');
   assert.deepEqual(tasks[1].candidateIds, ['demo']);
   assert.deepEqual(tasks[2].candidateIds, []);
+});
+
+test('PID association requires exact open log or live Claude registry with matching process start', () => {
+  const processes = parseProcesses('101 1 S+ 01:02 Thu Oct 1 12:00:00 2026 /opt/bin/codex\n102 101 S 00:30 Thu Oct 1 12:00:32 2026 /bin/zsh\n103 102 R 00:15 Thu Oct 1 12:00:47 2026 node\n201 1 S 02:00 Thu Oct 1 11:59:02 2026 claude\n301 1 S 02:00 Thu Oct 1 11:59:02 2026 unrelated\n');
+  const agents = [
+    { id: 'codex:a', provider: 'codex', logFile: '/logs/a.jsonl' },
+    { id: 'codex:b', provider: 'codex', logFile: '/logs/b.jsonl' },
+    { id: 'codex:c', provider: 'codex', logFile: '/logs/c.jsonl' },
+    { id: 'claude:parent', provider: 'claude', logFile: '/logs/parent.jsonl' },
+    { id: 'claude:agent-child', provider: 'claude', logFile: '/logs/parent/subagents/agent-child.jsonl' },
+  ];
+  const files = parseOpenFiles('p101\nn/logs/a.jsonl\np301\nn/logs/c.jsonl\n');
+  const registry = [{ pid: 201, sessionId: 'parent', procStart: 'Thu Oct  1 11:59:02 2026', pidDomain: process.platform }];
+  const linked = associate(agents, processes, files, registry, '2026-10-01T12:01:02Z');
+  assert.deepEqual(linked.get(agents[0]).matches.map(p => p.pid), [101]);
+  assert.deepEqual(linked.get(agents[0]).children.map(p => p.pid), [102, 103]);
+  assert.equal(linked.get(agents[1]).status, 'unmatched');
+  assert.equal(linked.get(agents[2]).status, 'unmatched');
+  assert.equal(linked.get(agents[3]).matches[0].pid, 201);
+  assert.equal(linked.get(agents[4]).matches[0].shared, true);
+  assert.equal(linked.get(agents[3]).matches[0].shared, true);
+  registry[0].procStart = 'Wed Sep 30 11:59:02 2026';
+  assert.equal(associate(agents, processes, files, registry, null).get(agents[3]).status, 'unmatched');
+  assert.equal(associate(agents, [], new Map(), [], null, 'Permission denied').get(agents[0]).status, 'unavailable');
+  assert.equal(associate(agents, [], files, registry, null).get(agents[0]).status, 'unmatched');
 });
 
 test('provider usage distinguishes cached input, totals and context limits', () => {
@@ -86,12 +112,32 @@ test('session collection scopes to project, updates changed logs, and attaches e
   const file = 'codex/one.jsonl';
   const records = [{ type: 'session_meta', timestamp: '2026-10-01T12:00:00Z', payload: { id: 'one', cwd: f.root } }, { type: 'event_msg', timestamp: '2026-10-01T12:01:00Z', payload: { type: 'task_started' } }];
   await f.write(file, records.map(JSON.stringify).join('\n') + '\n');
+  await f.write('codex/duplicate.jsonl', records.map(JSON.stringify).join('\n') + '\n');
   await f.write('codex/other.jsonl', JSON.stringify({ type: 'session_meta', payload: { cwd: '/unrelated', id: 'private' } }) + '\n');
-  const reader = createReader({ root: f.root, codexRoot: path.join(f.root, 'codex'), claudeRoot: false });
+  const reader = createReader({ root: f.root, codexRoot: path.join(f.root, 'codex'), claudeRoot: false, processes: false });
   const first = await reader.snapshot();
   assert.equal(first.agents.length, 1); assert.equal(first.agents[0].taskId, 'T-1'); assert.equal(first.agents[0].progressAt, '2026-10-01T12:05:00.000Z');
   await fs.appendFile(path.join(f.root, file), JSON.stringify({ type: 'event_msg', timestamp: '2026-10-01T12:02:00Z', payload: { type: 'task_complete' } }) + '\n');
   assert.equal((await reader.snapshot()).agents[0].state, 'idle');
+});
+
+test('visuals preserve explicit session attribution and keep diagrams out of candidate screenshots', async t => {
+  const f = await fixture(); t.after(f.cleanup);
+  const png = await fs.readFile(path.join(f.root, 'scratch/runs/R-1/screen.png'));
+  await f.write('scratch/runs/R-1/flow.png', png);
+  await f.write('scratch/runs/R-1/result.json', JSON.stringify({ candidateId: 'demo', agentId: 'claude:agent-child', startedAt: '2026-10-01T12:00:00Z', outcome: 'unknown', screenshot: 'screen.png', diagrams: ['flow.png', '../../../secret.png', 'missing.png'] }));
+  await f.write('secret.png', png);
+  const reader = createReader({ root: f.root, codexRoot: false, claudeRoot: false });
+  const s = await reader.snapshot();
+  const r = s.runs[0];
+  assert.equal(r.agentId, 'claude:agent-child');
+  assert.deepEqual(r.visuals.map(v => [v.name, v.kind]), [['screen.png', 'screenshot'], ['flow.png', 'diagram']]);
+  assert.deepEqual(r.screenshots.map(v => v.name), ['screen.png']);
+  assert.equal(s.candidates[0].latestRun.screenshots[0].name, 'screen.png');
+  assert.ok(s.warnings.some(w => w.includes('secret.png')));
+  assert.ok(s.warnings.some(w => w.includes('missing.png')));
+  assert.ok(await reader.artifact('scratch/runs/R-1/flow.png'));
+  assert.equal(await reader.artifact('scratch/runs/R-1/../../../secret.png'), null);
 });
 
 test('HTTP is read-only, origin-checked, and serves only allowlisted files and contained artifacts', async t => {

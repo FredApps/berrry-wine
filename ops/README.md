@@ -20,7 +20,7 @@ launch agents, execute tests, edit tasks, or change the messageboard.
 | Corpus | `test/candidate-corpus/manifest.json`, matching tasks and recorded runs |
 | Candidate notes | Existing `docs/re-notes/<candidate-id>.md` or note paths named in the manifest |
 | Activity | Latest 150 nonempty lines of append-only `messageboard.txt` |
-| Agents | Project-scoped local Claude and Codex JSONL session logs |
+| Agents | Project-scoped local Claude and Codex JSONL session logs, local process snapshots |
 | Runs | `scratch/runs/<id>/result.json` and preserved `ops/runs/<id>/result.json` |
 
 The dashboard does not treat manifest notes or smoke-test `READY` as evidence
@@ -65,12 +65,69 @@ not automatically actionable tasks.
 ## Runs: one folder per execution
 
 Create a folder such as `scratch/runs/R-0085/` with a `result.json` and its
-outputs. `scratch/` is already gitignored. Example (replace with actual evidence):
+outputs. `scratch/` is already gitignored. This is a file convention, not a new
+capture API: use your existing shell, browser-control, and test tools.
+
+### Agent capture workflow
+
+1. Choose the exact `candidateId` from `test/candidate-corpus/manifest.json`.
+   App registry IDs and EXE basenames are not necessarily candidate IDs. If the
+   app has no manifest entry, keep the evidence in your existing investigation
+   notes until it is registered; do not attach it to an unrelated candidate.
+2. Make a unique run folder: use a UTC timestamp, candidate ID, and a short
+   agent/session suffix, for example
+   `scratch/runs/20261001T153012Z-serious-sam-demo-agent7-before/`.
+   Each execution owns its own folder; never overwrite another run.
+3. Reproduce or test using the existing tools. CLI `test/run.js --png=PATH`
+   writes a headless capture. For an already-controlled browser session,
+   `node tools/ctl.js -s SESSION_ID png PATH` captures that session. Existing
+   browser tests may already save the required PNGs and logs: copy those files
+   into the run folder instead of rerunning solely to change their location.
+   Record the original execution time and command, not the copy time.
+4. Save the screenshots and relevant output first. Use ordinary files inside
+   the run folder, not symlinks to temporary or remote artifacts. Remote workers
+   should copy the completed bundle into the checkout served by the dashboard;
+   it cannot discover files on another machine or in another worktree.
+5. Write `result.json` with the tested route/checkpoint (`startup`, `main-menu`,
+   `gameplay`, or a specific reproduction), command, outcome, and environment.
+   Record the actual loaded build: a browser may still run an older module than
+   the current local build file. Include commit, dirty-patch/module hashes when
+   known, and relevant browser/engine versions, renderer, thread mode, viewport,
+   or input sequence. Use `null` or an explicit `unknown` for unavailable values;
+   never substitute current HEAD for an unverified build identity.
+6. Publish the metadata last: write `result.json.tmp` and rename it to
+   `result.json` within the folder after artifact writes/copies finish. The
+   dashboard ignores the temporary filename and discovers the run on refresh.
+7. Inspect the image and supporting results before setting `verification` to
+   `reviewed`. A successful capture or normal exit alone does not prove the menu,
+   gameplay, audio, or input works. State exactly what passed in `summary`.
+   Record failures too; omit a screenshot field if capture failed and explain
+   why. Preserve useful failure logs.
+8. For a visual fix, keep separate before/after runs with matching candidate,
+   route, renderer, and environment. Reference their IDs in `TODOS.md` or the
+   app's investigation notes and append a messageboard update with their paths.
+   Explain any missing baseline or comparison mismatch.
+
+```text
+scratch/runs/<unique-id>/
+  screen.png       # capture from this execution, if available
+  output.log       # relevant test/run output
+  result.json      # published last; dashboard entry point
+```
+
+No new task runner or provider-specific integration is needed. Claude and Codex
+follow the same convention. The dashboard reports malformed run records and
+missing artifacts under source notices; check those if a capture does not appear.
+
+### Result format
+
+Example (replace with actual evidence; omit unavailable artifact paths):
 
 ```json
 {
   "candidateId": "serious-sam-demo",
   "taskId": "T-0142",
+  "agentId": "claude:YOUR_SESSION_ID",
   "startedAt": "2026-10-01T14:30:00Z",
   "finishedAt": "2026-10-01T14:31:00Z",
   "outcome": "failed",
@@ -99,12 +156,58 @@ paths are relative to that run folder; PNG/JPEG/WebP/JSON/text/log files are
 served. Escaping paths and symlinks outside the folder are rejected. A missing
 artifact is reported, not silently treated as a successful capture.
 
+### Visuals on Overview and Agents
+
+Overview prioritizes agent activity and shows the newest visual run for each of
+up to six candidates. Agent cards show one compact latest preview whose optional
+`agentId` exactly matches the provider-prefixed Session
+ID in agent details (for example `codex:<session-uuid>` or `claude:<session-uuid>`).
+For a Claude subagent, use its displayed `claude:agent-...` identity. Runs without
+an `agentId` still appear on Overview and Corpus; the dashboard does not guess
+ownership from task titles or filenames. A capture can predate the current task.
+
+Add `"diagrams": ["architecture.png", "render-flow.webp"]` to the same result
+file for related diagrams exported as PNG/JPEG/WebP. These appear as diagrams in
+visual previews and run details, and do not replace the candidate screenshot.
+No new folder or command is needed. Save the images first, then update metadata.
+Each preview uses the last image listed in the run (diagrams follow screenshots),
+shows its age, and opens all run artifacts, original timestamps, and review status.
+Run timestamps determine ordering; visual evidence does not imply agent health
+or that the current build passes.
+
 Promote a useful run by moving its whole folder to `ops/runs/<id>/` and committing
 it. Keep large traces out of Git. Delete the scratch copy after promotion to
 avoid displaying two copies. Cleaning scratch destroys unpreserved evidence.
 Run folders are ordered by their explicit start timestamp, never file mtime.
 
 ## Claude and Codex observation
+
+Agent cards display associated local PIDs. Agent details list PID, parent PID,
+executable name, OS state, process age, and up to 40 host descendants. Read-only
+`ps`/`lsof` observations refresh at most every ten seconds; no agent processes are
+started, stopped, or signaled by this feature. Command arguments and environment
+variables are not sent to the browser.
+
+The default cards prioritize session title, recent/quiet/ended activity, PID,
+and a small latest preview. Unknown task/progress clocks, model names, raw
+session IDs, token/cache telemetry, child processes and evidence metadata live
+in Details. A context estimate at 90% or more of the reported limit gets a
+compact warning on the card. Duplicate logs for the same provider/session ID
+produce one card, using the most recent activity. No-session-title fallback
+uses the latest capture's candidate name, or “Untitled session”.
+
+Codex association uses an exact open session-log path on a `codex` process.
+Claude also uses `~/.claude/sessions/<pid>.json`, requiring its session ID,
+provider executable, local PID domain, and process start time to match the live
+process table (stale/reused PIDs are rejected). Claude subagent logs can link to
+their parent session host, explicitly marked shared. Multiple sessions with the
+same host PID are marked shared as well; descendants are host-level processes,
+not proof of which task launched them. A stopped session may retain a live host.
+
+Missing utilities, permissions, or timeouts produce **PID unavailable**; an
+unmatched session shows **PID not matched**, never a guessed PID based on its
+title or working directory. Process presence and OS sleep/runnable state do not
+establish agent responsiveness or progress. This observes local processes only.
 
 Defaults:
 
@@ -135,7 +238,7 @@ session title and summarized measurements/activity are exposed.
 
 - **Activity:** observed timestamp and last tool/message state. A log is not a
   process heartbeat. “Quiet” after 15 minutes means inspect the session, not
-  that it is dead or stuck. Completed turns remain idle.
+  that it is dead or stuck. Completed turns remain idle, even with a live PID.
 - **Progress:** only the task's explicit `progress:` timestamp. Not tool calls.
 - **Context estimate:** last reported request input, with its timestamp. Codex's
   reported model context limit is used when present; Claude's limit remains

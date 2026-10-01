@@ -390,6 +390,19 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 ## Tools
 
+### Dashboard evidence: file convention
+
+When investigating EXE compatibility or changing visible behavior, read
+[`ops/README.md` — Agent capture workflow](ops/README.md#agent-capture-workflow).
+Save relevant before/after captures and logs in distinct
+`scratch/runs/<unique-id>/` folders using the documented `result.json` format.
+Use existing test/capture tools; no special capture command is required.
+Write artifacts first and publish `result.json` last. Record the actual tested
+build, route, and environment; keep unknown values explicit. Inspect evidence
+before marking it reviewed, and do not equate a screenshot with playability.
+Reference run IDs in task/investigation notes and your messageboard update.
+
+
 ### Shared-agent message board
 
 - Use the repository-root `messageboard.txt` to coordinate with other agents sharing the worktree.

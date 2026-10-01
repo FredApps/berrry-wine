@@ -21,8 +21,9 @@ const { createServer } = require('./server');
       { id: 'other', name: 'Another candidate', version: '2.0' },
     ] }));
     await write('messageboard.txt', '2026-10-01 codex PROGRESS startup fault reproduced\n<script>window.injected=true</script>\n');
-    await write('scratch/runs/R-1/result.json', JSON.stringify({ candidateId: 'demo', startedAt: now, outcome: 'failed', route: 'startup', screenshot: 'screen.png', command: 'node test/run.js --app=demo', summary: 'Fault before menu' }));
+    await write('scratch/runs/R-1/result.json', JSON.stringify({ candidateId: 'demo', agentId: 'codex:one', startedAt: now, outcome: 'failed', route: 'startup', screenshot: 'screen.png', diagrams: ['flow.png'], command: 'node test/run.js --app=demo', summary: 'Fault before menu' }));
     await write('scratch/runs/R-1/screen.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ioAAAAASUVORK5CYII=', 'base64'));
+    await write('scratch/runs/R-1/flow.png', await fs.readFile(path.join(root, 'scratch/runs/R-1/screen.png')));
     await write('codex/one.jsonl', [
       { type: 'session_meta', timestamp: now, payload: { id: 'one', cwd: root } },
       { type: 'turn_context', timestamp: now, payload: { model: 'codex-fixture' } },
@@ -30,7 +31,11 @@ const { createServer } = require('./server');
       { type: 'event_msg', timestamp: now, payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 10 }, model_context_window: 200 } } },
     ].map(JSON.stringify).join('\n') + '\n');
     await write('claude/two.jsonl', JSON.stringify({ type: 'assistant', cwd: root, sessionId: 'two', timestamp: now, message: { model: 'claude-fixture', stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }], usage: { input_tokens: 10, cache_read_input_tokens: 80, cache_creation_input_tokens: 10, output_tokens: 5 } } }) + '\n');
-    server = createServer({ root, codexRoot: path.join(root, 'codex'), claudeRoot: path.join(root, 'claude') });
+    server = createServer({ root, codexRoot: path.join(root, 'codex'), claudeRoot: path.join(root, 'claude'), processProbe: async () => ({
+      checkedAt: new Date().toISOString(), error: null, registry: [],
+      processes: [{pid: 12345, ppid: 1, name: 'codex', state: 'S', elapsed: '01:02', started: 'Thu Oct 1 12:00:00 2026'}, {pid:12346, ppid:12345, name:'node', state:'R', elapsed:'00:20', started:'Thu Oct 1 12:00:42 2026'}],
+      files: new Map([[path.join(root, 'codex/one.jsonl'), new Set([12345])]]),
+    }) });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
     const page = await browser.newPage();
@@ -40,6 +45,20 @@ const { createServer } = require('./server');
     await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('.agent');
     assert.equal(await page.$$eval('.agent', els => els.length), 2);
+    assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-line', el => el.textContent), /PID 12345/);
+    assert.match(await page.$eval('.agent:has([data-agent="claude:two"]) .process-line', el => el.textContent), /PID not matched/);
+    await page.click('[data-agent="codex:one"]');
+    assert.match(await page.$eval('.process-table', el => el.textContent), /12346/);
+    await page.click('#close-detail');
+    assert.equal(await page.$$eval('#main > .visual-grid .visual-card', els => els.length), 1);
+    assert.equal(await page.$eval('.visual-kind', el => el.textContent), 'Diagram');
+    assert.equal(await page.$$eval('.agent:has([data-agent="codex:one"]) .agent-preview', els => els.length), 1);
+    assert.equal(await page.$$eval('.agent:has([data-agent="claude:two"]) .agent-preview', els => els.length), 0);
+    assert.equal(await page.$$eval('.agent .metrics, .agent .visual-caption', els => els.length), 0);
+    assert.ok(!await page.$eval('.agent', el => el.textContent.includes('unknown')));
+    await page.click('#main > .visual-grid .visual-card');
+    await page.waitForFunction(() => [...document.querySelectorAll('.detail-shot')].length === 2 && [...document.querySelectorAll('.detail-shot')].every(img => img.naturalWidth > 0));
+    await page.click('#close-detail');
     assert.equal(await page.evaluate(() => window.injected), undefined);
     await fs.mkdir(shots, { recursive: true });
     await page.screenshot({ path: path.join(shots, 'overview.png'), fullPage: true });
@@ -61,6 +80,9 @@ const { createServer } = require('./server');
     assert.ok(await page.$eval('#detail-body', el => el.textContent.includes('Fault before menu')));
     await page.click('#close-detail');
     await page.click('a[data-view="agents"]'); await page.waitForSelector('[data-agent="claude:two"]');
+    await page.click('.agent:has([data-agent="codex:one"]) .agent-preview');
+    assert.ok(await page.$eval('#detail-body', el => el.textContent.includes('flow.png')));
+    await page.click('#close-detail');
     await page.click('[data-agent="claude:two"]');
     assert.ok(await page.$eval('#detail-body', el => el.textContent.includes('Cache write')));
     await page.click('#close-detail');
