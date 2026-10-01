@@ -71,6 +71,25 @@ function makeShell(opts = {}) {
   console.log('ok: exe name resolution');
 }
 
+// 1b. An app this host does not serve never resolves. On the deployed site a
+//     guest's "setup.exe" matched the local-only Moorhuhn 3 puzzle (exe
+//     setup.exe) and its launch failed with a 404.
+{
+  const served = createBrowserShell({
+    apps: { ...apps, puzzle: { exe: 'test/binaries/candidates/p/setup.exe' } },
+    unservedApps: ['puzzle', 'wordpad'],
+    debugMode: false,
+    screenCanvasSize: () => ({ w: 640, h: 480 }),
+  });
+  assert.strictEqual(served.appKeyForExe('setup.exe'), null,
+    'an unserved app is not matched by its exe basename');
+  assert.strictEqual(served.appKeyForExe('wordpad.exe'), null,
+    'an unserved app is not matched by its key either');
+  assert.strictEqual(served.appKeyForExe('mspaint.exe'), 'mspaint98',
+    'served apps still resolve');
+  console.log('ok: unserved apps never resolve');
+}
+
 // 2. launchExe reports whether the name resolved, and declines unknown exes
 //    without launching anything.
 {
