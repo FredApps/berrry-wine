@@ -240,6 +240,18 @@ let bridgeOut = '';
   await page.waitForSelector('#wa-agent-dialog input.link', { visible: true, timeout: 15000 });
   const uiLink = await page.$eval('#wa-agent-dialog input.link', el => el.value);
   await shot('1-pair');
+  // Draggable by its title bar like the Read Me window, and it stays where it
+  // was put when the next state rebuilds the dialog.
+  const start = await page.$eval('#wa-agent-dialog', el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  await page.mouse.move(start.x + 60, start.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 20, start.y - 30, { steps: 4 });
+  await page.mouse.move(start.x - 40, start.y - 70, { steps: 4 });
+  await page.mouse.up();
+  const moved = await page.$eval('#wa-agent-dialog', el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  check('the dialog drags by its title bar',
+    Math.abs(moved.x - (start.x - 100)) <= 1 && Math.abs(moved.y - (start.y - 80)) <= 1,
+    `${JSON.stringify(start)} -> ${JSON.stringify(moved)}`);
   check('Start → Connect Agent… shows a fresh link', /#wa1\./.test(uiLink) && uiLink !== link, uiLink);
 
   bridgeOut = '';
@@ -254,6 +266,9 @@ let bridgeOut = '';
     return d && !d.hidden && /wants to connect/.test(d.textContent) ? d.textContent : null;
   }));
   await shot('2-request');
+  const kept = await page.$eval('#wa-agent-dialog', el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  check('a dragged dialog keeps its place across state changes',
+    Math.abs(kept.x - moved.x) <= 1 && Math.abs(kept.y - moved.y) <= 1, `${JSON.stringify(moved)} -> ${JSON.stringify(kept)}`);
   check('a known bot signs in without registering again', !/REGISTER /.test(bridgeOut), bridgeOut);
   check('the dialog names the bot, says it is remembered and marks its label unverified',
     /testharnessbot wants to connect/.test(askText) && /known since/.test(askText) && /Test Harness \(unverified\)/.test(askText), askText);
