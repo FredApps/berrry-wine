@@ -281,6 +281,15 @@ const PUBLISHABLE_OUTSIDE_BINARIES = [
   // it is the owner's decision (2026-09-28, test/binaries/SOURCES.md). The
   // sequels and Winter/3/Tennis siblings stay local-only.
   'test/binaries/candidates/moorhuhn/',
+  // Need for Speed II (original), II Special Edition and III: Hot Pursuit
+  // demos: EA's own promotional demos, given away on magazine discs and
+  // download sites. Their packaging grants no redistribution right either
+  // way; publishing them as promotional demos is the owner's decision
+  // (2026-09-30, test/binaries/SOURCES.md). Only each manifest's files ship.
+  'test/binaries/candidates/need-for-speed-2-demo/',
+  'test/binaries/candidates/need-for-speed-3-demo/',
+  'build/nfs2se-browser.json',
+  'build/nfs2se-demo/',
   'packages/freeware/dxball/',
   'packages/freeware/blobby-volley/',
 ];
