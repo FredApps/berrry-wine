@@ -1257,6 +1257,10 @@
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
+  ;; Another app broadcast a registered message; see $regmsg_broadcast_in.
+  (func (export "registered_broadcast_deliver")
+        (param $hash i32) (param $wP i32) (param $lP i32) (result i32)
+    (call $regmsg_broadcast_in (local.get $hash) (local.get $wP) (local.get $lP)))
   ;; Browser audio topology bridge.  lib/host-audio.js diffs
   ;; MediaDevices.enumerateDevices() snapshots and supplies only documented
   ;; arrival/removal event codes; WAT retains filter and HWND ownership.

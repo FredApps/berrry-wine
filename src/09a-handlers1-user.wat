@@ -25,6 +25,77 @@
       (then (global.set $shell_hook_message (local.get $id))))
     (local.get $id))
 
+  ;; A registered message id is only this process's numbering. On Windows it
+  ;; comes from the global atom table, so every process agrees on it; here each
+  ;; emulated app interns into its own table. A broadcast of one to the other
+  ;; running apps therefore travels by name -- a case-folded FNV-1a, since the
+  ;; names compare case-insensitively -- and each receiver maps it back to its
+  ;; own id. InstallShield 3 is why: its 32-bit engine closes the 16-bit
+  ;; SETUP.EXE's "preparing the InstallShield Wizard" window by sending
+  ;; LOGO_MSG_LOGOCLOSE_30 to HWND_BROADCAST, and without this the launcher
+  ;; and its 28% progress box stayed up behind the wizard for good.
+  (func $regmsg_name_hash (param $name_g i32) (result i32)
+    (local $h i32) (local $c i32)
+    (local.set $h (i32.const 0x811C9DC5))
+    (block $done (loop $next
+      (local.set $c (call $gl8 (local.get $name_g)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (local.set $h (i32.mul
+        (i32.xor (local.get $h) (call $tolower (local.get $c)))
+        (i32.const 0x01000193)))
+      (local.set $name_g (i32.add (local.get $name_g) (i32.const 1)))
+      (br $next)))
+    (local.get $h))
+
+  ;; Sender half: HWND_BROADCAST of a registered message also goes to every
+  ;; other app. A message nobody registered by name has no meaning outside this
+  ;; process, so only an interned id is sent on.
+  (func $regmsg_broadcast_out (param $msg i32) (param $wparam i32) (param $lparam i32)
+    (local $name i32)
+    (if (i32.or (i32.lt_u (local.get $msg) (i32.const 0xC000))
+                (i32.gt_u (local.get $msg) (i32.const 0xFFFF)))
+      (then (return)))
+    (local.set $name (call $clipfmt_name_of (local.get $msg)))
+    (if (i32.eqz (local.get $name)) (then (return)))
+    (drop (call $host_broadcast_registered_message
+      (call $regmsg_name_hash (local.get $name))
+      (local.get $wparam) (local.get $lparam))))
+
+  ;; Receiver half: post this process's id for that name to each of its
+  ;; top-level windows, hidden ones included -- InstallShield's listener is a
+  ;; hidden popup. A process that never registered the name has no window that
+  ;; could recognise the number, so it gets nothing, which is what an unknown
+  ;; registered message amounts to on Windows. Returns the windows posted to.
+  (func $regmsg_broadcast_in (param $hash i32) (param $wparam i32) (param $lparam i32) (result i32)
+    (local $i i32) (local $e i32) (local $id i32) (local $rec i32) (local $hwnd i32)
+    (local $posted i32)
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $i) (global.get $CLIPFORMAT_SLOTS)))
+      (local.set $e (i32.add (global.get $CLIPFORMAT_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (br_if $found (i32.eqz (i32.load (local.get $e))))
+      (if (i32.eq (call $regmsg_name_hash (i32.load (local.get $e))) (local.get $hash))
+        (then
+          (local.set $id (i32.load offset=4 (local.get $e)))
+          (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $walk
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $hwnd (i32.load (local.get $rec)))
+      (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                   (i32.eqz (i32.load offset=8 (local.get $rec))))
+        (then
+          (local.set $posted (i32.add (local.get $posted)
+            (call $post_queue_push (local.get $hwnd) (local.get $id)
+              (local.get $wparam) (local.get $lparam))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $walk)))
+    (local.get $posted))
+
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
   (func $handle_RegisterWindowMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $register_window_message (local.get $arg0)))
