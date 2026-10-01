@@ -24,6 +24,8 @@ if (process.argv.includes('--help')) {
   --glide-source=path/to/glide-backend.js (diagnostic page override only)
   --glide-lfb-metrics (opt-in WAT LFB reasons, 5 x 7 counter snapshot; diagnostic timing)
   --swiftshader (explicit software WebGL; results are not hardware-GPU performance)
+  --cpu-profile [--cpu-profile-top=15] (V8 profile of page + every Worker per sample; diagnostic timing)
+  --rpc-census (per-sample counts of brokered host imports per guest thread slot)
   --no-sandbox (isolated Chrome test box only)
   --menu-click=130,310 --menu-wait=35 --race-wait=25 --out=build/nfs2-renderer-bench
 
@@ -45,6 +47,15 @@ const accelerate = process.argv.includes('--accelerate');
 const captureFrame = process.argv.includes('--capture-frame');
 const glideLfbMetrics = process.argv.includes('--glide-lfb-metrics');
 const softwareGpu = process.argv.includes('--swiftshader');
+// --cpu-profile: V8 sampling profile of the page and every Worker over each
+// sample. The renderer process runs ~2 cores flat out in a race, so the
+// question is which thread and what in it; raw .cpuprofile files land beside
+// result.json. Diagnostic: the profiler's overhead makes these samples slower.
+const cpuProfile = process.argv.includes('--cpu-profile');
+const cpuProfileTop = Number(arg('cpu-profile-top', '15')) || 15;
+// --rpc-census: per-sample histogram of the host imports guest Workers block
+// on (broker round trips), read as before/after deltas.
+const rpcCensus = process.argv.includes('--rpc-census');
 const captureMinBlue = Number(arg('capture-min-blue', '0'));
 const glideSource = arg('glide-source', '');
 const glideOverride = glideSource ? fs.readFileSync(path.resolve(ROOT, glideSource), 'utf8') : null;
@@ -288,6 +299,9 @@ async function observe(page) {
         [0x4d4fc8, 0x5553f8, 0x4d4978, 0x4d4930, 0x555a14, 0x560a04]
           .map(address => ['0x' + address.toString(16), ex.guest_read32(address) >>> 0])) : null,
       perf: window.WinePerf?.snapshot(),
+      // {"slot:name": count}; empty unless the page was loaded with ?rpc-census.
+      rpcCalls: Object.fromEntries((wine?.guestWorker?.broker?.stats?.().calls || [])
+        .map(c => [c.slot + ':' + c.name, c.count])),
     };
   }, glideLfbMetrics);
 }
@@ -295,6 +309,56 @@ async function observe(page) {
 function assertGlideBackend(state, expected) {
   assert(state.glideEndpoint?.api === 'glide' && state.glideEndpoint.backend === expected,
     `requested Glide ${expected}, actual endpoint ${JSON.stringify(state.glideEndpoint)}`);
+}
+
+// The page session sees only the page thread; with ?threads the guest's main
+// thread and every guest thread are Workers, each profiled on its own session.
+async function startCpuProfiles(page) {
+  const targets = [];
+  const start = async (label, session) => {
+    try {
+      await session.send('Profiler.enable');
+      await session.send('Profiler.setSamplingInterval', { interval: 200 });
+      await session.send('Profiler.start');
+      targets.push({ label, session });
+    } catch (e) { console.log(`cpu-profile: could not start on ${label}: ${e.message}`); }
+  };
+  await start('page', await page.target().createCDPSession());
+  for (const w of page.workers()) {
+    if (w.client) await start(`worker ${w.url().replace(/^https?:\/\/[^/]+\//, '').replace(/\?.*$/, '')}`, w.client);
+  }
+  return targets;
+}
+
+async function stopCpuProfiles(targets, prefix, seconds) {
+  const threads = [];
+  for (const [n, t] of targets.entries()) {
+    let profile;
+    try { ({ profile } = await t.session.send('Profiler.stop')); }
+    catch (e) { console.log(`cpu-profile: ${t.label} ended before the sample did (${e.message})`); continue; }
+    fs.writeFileSync(`${prefix}-${n}-${t.label.replace(/[^\w.-]+/g, '_')}.cpuprofile`, JSON.stringify(profile));
+    const byId = new Map(profile.nodes.map(node => [node.id, node]));
+    const self = new Map();
+    let busy = 0;
+    for (let i = 0; i < profile.samples.length; i++) {
+      const f = byId.get(profile.samples[i])?.callFrame;
+      const dt = profile.timeDeltas[i] || 0;
+      if (!f || f.functionName === '(idle)') continue;
+      const where = f.url ? `${f.url.replace(/^https?:\/\/[^/]+\//, '')}:${f.lineNumber + 1}` : '';
+      const key = `${f.functionName || '(anonymous)'}  ${where}`;
+      self.set(key, (self.get(key) || 0) + dt);
+      busy += dt;
+    }
+    const top = [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, cpuProfileTop)
+      .map(([fn, us]) => ({ fn, ms: us / 1000, share: us / (busy || 1) }));
+    threads.push({ label: t.label, busyMs: busy / 1000, wallShare: busy / (seconds * 1e6), top });
+  }
+  for (const t of threads) {
+    console.log(`cpu-profile ${(100 * t.wallShare).toFixed(1)}% of wall  ${t.busyMs.toFixed(0)}ms busy  ${t.label}`);
+    if (t.wallShare < 0.02) continue;
+    for (const r of t.top) console.log(`    ${(100 * r.share).toFixed(1).padStart(5)}%  ${r.ms.toFixed(0).padStart(6)}ms  ${r.fn}`);
+  }
+  return threads;
 }
 
 async function runCase(server, name) {
@@ -326,7 +390,7 @@ async function runCase(server, name) {
       if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) errors.push(line);
     });
     page.on('pageerror', error => errors.push(String(error)));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&d3d-renderer=${config.accelerated ? config.glide : 'software'}`,
+    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf${rpcCensus ? '&rpc-census' : ''}&d3d-renderer=${config.accelerated ? config.glide : 'software'}`,
       { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     if (captureFrame) {
@@ -472,9 +536,15 @@ async function runCase(server, name) {
     for (let i = 0; i < samples; i++) {
       await page.bringToFront();
       await page.screenshot({ path: path.join(dir, `sample-${i + 1}-before.png`) });
+      const profiling = cpuProfile ? await startCpuProfiles(page) : null;
       const loadBefore = os.loadavg(), cpuBefore = await cpu(), before = await observe(page);
       await sleep(seconds * 1000);
       const after = await observe(page), cpuAfter = await cpu(), loadAfter = os.loadavg();
+      if (profiling) {
+        const profileSummary = await stopCpuProfiles(profiling, path.join(dir, `sample-${i + 1}-cpu`), seconds);
+        report.cpuProfiles = report.cpuProfiles || [];
+        report.cpuProfiles.push(profileSummary);
+      }
       if (config.accelerated) {
         assertGlideBackend(before, config.glide); assertGlideBackend(after, config.glide);
       }
@@ -500,6 +570,13 @@ async function runCase(server, name) {
         cpuSeconds, cpuMsPerFrame: 1000 * cpuSeconds / frames, cpuByType,
         loadBefore, loadAfter, contended: Math.max(loadBefore[0], loadAfter[0]) > 4,
         before, after };
+      if (rpcCensus) {
+        result.rpcPerFrame = Object.entries(after.rpcCalls || {})
+          .map(([k, n]) => [k, (n - (before.rpcCalls?.[k] || 0)) / frames])
+          .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+        console.log(name, `sample${i+1} rpc round trips per frame (slot:import):`);
+        for (const [k, n] of result.rpcPerFrame.slice(0, 20)) console.log(`    ${n.toFixed(1).padStart(8)}  ${k}`);
+      }
       report.samples.push(result);
       console.log(name, `sample${i+1}`, JSON.stringify({fps:result.fps,cpuMsPerFrame:result.cpuMsPerFrame,frames,wallSeconds,loadBefore,loadAfter}));
       await page.screenshot({ path: path.join(dir, `sample-${i + 1}-after.png`) });

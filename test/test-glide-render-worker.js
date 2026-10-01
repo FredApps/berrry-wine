@@ -82,11 +82,30 @@ function fixture() {
   live.frame({ hwnd: 7, width: 2, height: 2, bitmap });
   assert.strictEqual(closed, 2, 'late transferred bitmap must be released');
 
+  // Swaps are pipelined one frame deep: the first answers at once, the next
+  // waits only for the previous swap, never for its own.
+  const piped = fixture(); await piped.bridge.submit(1, 0, 20);
+  const pipe = piped.endpoints[0];
+  pipe.gate = deferred(); const firstGate = pipe.gate;
+  assert.strictEqual(piped.bridge.submit(0, 100, 4), 1, 'a draw batch answers before it is drawn');
+  assert.strictEqual(piped.bridge.submit(4, 100, 4), 1, 'the first swap answers before it is drawn');
+  const second = piped.bridge.submit(4, 100, 4);
+  assert(second && typeof second.then === 'function', 'the second swap waits for the first');
+  let secondDone = false; second.then(() => { secondDone = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(secondDone, false);
+  pipe.gate = null; firstGate.resolve({ result: 1 });
+  assert.strictEqual(await second, 1);
+  await piped.bridge.close();
+
+  // A pipelined batch that fails poisons the context: the next call and the
+  // close both raise it.
   const failed = fixture(); await failed.bridge.submit(1, 0, 20);
   failed.endpoints[0].gate = deferred();
-  const rejected = failed.bridge.submit(0, 100, 4);
+  assert.strictEqual(failed.bridge.submit(0, 100, 4), 1);
   failed.endpoints[0].gate.reject(new Error('native raster failure'));
-  await assert.rejects(rejected, /native raster failure/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.throws(() => failed.bridge.submit(0, 100, 4), /native raster failure/);
   await assert.rejects(failed.bridge.close(), /native raster failure/);
   assert.strictEqual(failed.endpoints[0].terminated, true);
   console.log('PASS Glide shared render endpoint ownership, ordering, readback and teardown');
