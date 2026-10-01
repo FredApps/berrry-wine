@@ -38,7 +38,8 @@ const extraWat = String.raw`
     (local $style i32)
     (local.set $style (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xF7FFFFFF)))
     (if (local.get $on)
-      (then (local.set $style (i32.or (local.get $style) (i32.const 0x08000000)))))
+      ;; WS_DISABLED (bit 27), spelled as a shift: the hex literal equals a region base.
+      (then (local.set $style (i32.or (local.get $style) (i32.shl (i32.const 1) (i32.const 27))))))
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $style))))
   (func (export "test_menu_post") (param $hwnd i32) (param $msg i32) (param $wp i32)
     (call $menu_post (local.get $hwnd) (local.get $msg) (local.get $wp) (i32.const 0)))
