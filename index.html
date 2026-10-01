@@ -1837,6 +1837,7 @@ Resource-aware Win98 emulator
       "lib/media-import.js",
       "lib/media-import-ui.js",
       "lib/shutdown.js",
+      "lib/shell-link.js",
       "lib/browser-shell.js",
       "lib/pe.js",
       "lib/process-boot.js",
@@ -2182,6 +2183,9 @@ Resource-aware Win98 emulator
       appendLog: text => appendDebugLog(text),
     });
     window.wineMedia = mediaUI;
+    // A shortcut an installer saved on the guest desktop becomes a session
+    // icon here, launching the installed program from its filesystem.
+    shell.onGuestShortcuts(items => { for (const item of items) mediaUI.addSessionIcon(item); });
     window.browserShell.onAccountChange(refreshStartAccount);
     refreshStartAccount();
     // Kept media becomes desktop icons again on every visit. Nothing is read

@@ -4095,7 +4095,10 @@ async function main() {
       try { resolved = ctx.vfs._resolvePath(name); } catch (_) {}
       const tryPaths = [resolved, name.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName];
       for (const p of tryPaths) {
-        if (p && ctx.vfs.files.has(p)) return 1;
+        const entry = p && ctx.vfs.files.get(p);
+        // A DirectX system-file stub stands for a module we dispatch
+        // statically (lib/process-boot.js); it is not a PE to map.
+        if (entry && !entry.staticModule) return 1;
       }
     }
     // Same search, and the same bytes, the load itself will use.

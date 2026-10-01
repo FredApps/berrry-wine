@@ -2829,27 +2829,95 @@
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))) ;; E_INVALIDARG
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001)))) ;; output-only host
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+  ;; Copy at most 259 bytes of a guest string into a link under construction,
+  ;; NUL-terminated or as counted ANSI StringData. Returns the next offset.
+  (func $shell_link_put_chars (param $buf i32) (param $at i32) (param $src i32)
+      (param $counted i32) (result i32)
+    (local $len i32) (local $i i32)
+    (local.set $len (call $guest_strlen (local.get $src)))
+    (if (i32.gt_u (local.get $len) (i32.const 259))
+      (then (local.set $len (i32.const 259))))
+    (if (local.get $counted)
+      (then
+        (call $gs16 (i32.add (local.get $buf) (local.get $at)) (local.get $len))
+        (local.set $at (i32.add (local.get $at) (i32.const 2)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $at) (local.get $i)))
+        (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.set $at (i32.add (local.get $at) (local.get $len)))
+    (if (i32.eqz (local.get $counted))
+      (then
+        (call $gs8 (i32.add (local.get $buf) (local.get $at)) (i32.const 0))
+        (local.set $at (i32.add (local.get $at) (i32.const 1)))))
+    (local.get $at))
+
+  ;; The saved file is a real MS-SHLLINK shortcut: the header, then a LinkInfo
+  ;; whose LocalBasePath is the SetPath target, then the working directory and
+  ;; arguments as StringData. A header-only file named nothing, so anything
+  ;; that later reads the shortcut -- the browser desktop putting an installed
+  ;; game's icon up, or a guest resolving it -- had no target to find.
   (func $handle_IPersistFile_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $header i32) (local $header_wa i32) (local $written i32) (local $handle i32)
+    (local $link i32) (local $written i32) (local $handle i32) (local $entry i32)
+    (local $path i32) (local $args i32) (local $work i32) (local $flags i32)
+    (local $at i32) (local $info i32)
     (if (i32.eqz (local.get $arg1))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    (local.set $header (call $heap_alloc (i32.const 80)))
+    ;; Header 76 + LinkInfo at most 0x2D+261 + two StringData at most 261 + 4.
+    (local.set $link (call $heap_alloc (i32.const 1024)))
     (local.set $written (call $heap_alloc (i32.const 4)))
-    (if (i32.or (i32.eqz (local.get $header)) (i32.eqz (local.get $written)))
+    (if (i32.or (i32.eqz (local.get $link)) (i32.eqz (local.get $written)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    (local.set $header_wa (call $g2w (local.get $header)))
-    (call $zero_memory (local.get $header_wa) (i32.const 80))
-    (i32.store offset=0 (local.get $header_wa) (i32.const 0x4C))
-    (i32.store offset=4 (local.get $header_wa) (i32.const 0x00021401))
-    (i32.store offset=12 (local.get $header_wa) (i32.const 0x000000C0))
-    (i32.store offset=16 (local.get $header_wa) (i32.const 0x46000000))
-    (i32.store offset=60 (local.get $header_wa) (i32.const 1)) ;; SW_SHOWNORMAL
+    (call $zero_memory (call $g2w (local.get $link)) (i32.const 1024))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $path (load.field DxObject misc0 (local.get $entry)))
+    (local.set $args (load.field DxObject misc1 (local.get $entry)))
+    (local.set $work (load.field DxObject misc2 (local.get $entry)))
+    (if (local.get $path) (then (local.set $flags (i32.const 0x02))))       ;; HasLinkInfo
+    (if (local.get $work)
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x10))))) ;; HasWorkingDir
+    (if (local.get $args)
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x20))))) ;; HasArguments
+    (call $gs32 (local.get $link) (i32.const 0x4C))
+    (call $gs32 (i32.add (local.get $link) (i32.const 4)) (i32.const 0x00021401))
+    (call $gs32 (i32.add (local.get $link) (i32.const 12)) (i32.const 0x000000C0))
+    (call $gs32 (i32.add (local.get $link) (i32.const 16)) (i32.const 0x46000000))
+    (call $gs32 (i32.add (local.get $link) (i32.const 20)) (local.get $flags))
+    (call $gs32 (i32.add (local.get $link) (i32.const 60)) (i32.const 1)) ;; SW_SHOWNORMAL
+    (local.set $at (i32.const 0x4C))
+    (if (local.get $path)
+      (then
+        ;; LinkInfo: 0x1C-byte header, a fixed-disk VolumeID with an empty
+        ;; label at +0x1C, LocalBasePath at +0x2D, an empty CommonPathSuffix.
+        (local.set $info (i32.add (local.get $link) (local.get $at)))
+        (call $gs32 (i32.add (local.get $info) (i32.const 4)) (i32.const 0x1C))
+        (call $gs32 (i32.add (local.get $info) (i32.const 8)) (i32.const 1)) ;; VolumeIDAndLocalBasePath
+        (call $gs32 (i32.add (local.get $info) (i32.const 12)) (i32.const 0x1C))
+        (call $gs32 (i32.add (local.get $info) (i32.const 16)) (i32.const 0x2D))
+        (call $gs32 (i32.add (local.get $info) (i32.const 0x1C)) (i32.const 0x11))
+        (call $gs32 (i32.add (local.get $info) (i32.const 0x20)) (i32.const 3)) ;; DRIVE_FIXED
+        (call $gs32 (i32.add (local.get $info) (i32.const 0x28)) (i32.const 0x10))
+        (local.set $at (call $shell_link_put_chars
+          (local.get $info) (i32.const 0x2D) (local.get $path) (i32.const 0)))
+        (call $gs32 (i32.add (local.get $info) (i32.const 24)) (local.get $at))
+        (local.set $at (i32.add (local.get $at) (i32.const 1)))
+        (call $gs32 (local.get $info) (local.get $at))
+        (local.set $at (i32.add (i32.const 0x4C) (local.get $at)))))
+    (if (local.get $work)
+      (then (local.set $at (call $shell_link_put_chars
+        (local.get $link) (local.get $at) (local.get $work) (i32.const 1)))))
+    (if (local.get $args)
+      (then (local.set $at (call $shell_link_put_chars
+        (local.get $link) (local.get $at) (local.get $args) (i32.const 1)))))
+    (local.set $at (i32.add (local.get $at) (i32.const 4))) ;; TerminalBlock
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $arg1)) (i32.const 0x40000000)
       (i32.const 2) (i32.const 0x80) (i32.const 1)))
@@ -2857,14 +2925,16 @@
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)))
       (else
         (if (i32.and
-              (call $host_fs_write_file (local.get $handle) (local.get $header)
-                (i32.const 76) (local.get $written))
-              (i32.eq (call $gl32 (local.get $written)) (i32.const 76)))
+              (call $host_fs_write_file (local.get $handle) (local.get $link)
+                (local.get $at) (local.get $written))
+              (i32.eq (call $gl32 (local.get $written)) (local.get $at)))
           (then
-            (store.field DxObject flags (call $dx_from_this (local.get $arg0)) (i32.const 0))
+            (store.field DxObject flags (local.get $entry) (i32.const 0))
             (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
           (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))))
         (drop (call $host_fs_close_handle (local.get $handle)))))
+    (call $heap_free (local.get $link))
+    (call $heap_free (local.get $written))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IPersistFile_SaveCompleted (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $shell_link_mark (local.get $arg0) (i32.const 1024))
