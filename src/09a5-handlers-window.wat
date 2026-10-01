@@ -3725,6 +3725,11 @@
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $target_tid i32)
+    ;; HWND_BROADCAST, and the -1 Win9x reads as the same 16-bit handle.
+    (if (i32.or (i32.eq (local.get $arg0) (i32.const 0xFFFF))
+                (i32.eq (local.get $arg0) (i32.const -1)))
+      (then (call $regmsg_broadcast_out
+        (local.get $arg1) (local.get $arg2) (local.get $arg3))))
     ;; Renderer-wide top-level windows can belong to another WASM instance.
     ;; The host places those messages in the shared owning-app input queue.
     ;;
@@ -3770,6 +3775,8 @@
     (local.set $ok (i32.const 1))
     (if (i32.eq (local.get $arg0) (i32.const 0xFFFF)) ;; HWND_BROADCAST
       (then
+        (call $regmsg_broadcast_out
+          (local.get $arg1) (local.get $arg2) (local.get $arg3))
         (block $done (loop $scan
           (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
           (local.set $rec (call $wnd_record_addr (local.get $i)))
@@ -3859,6 +3866,13 @@
     (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32) (local $owner_tid i32)
     (local $post_kind i32) (local $mdi i32) (local $mdi_style i32) (local $mdi_id i32)
     (local $mdi_eip i32)
+    ;; HWND_BROADCAST, and the -1 Win9x reads as the same 16-bit handle:
+    ;; InstallShield's engine sends LOGO_MSG_LOGOCLOSE_30 to (HWND)-1. Other
+    ;; apps get it posted, not sent -- they run in their own instances.
+    (if (i32.or (i32.eq (local.get $arg0) (i32.const 0xFFFF))
+                (i32.eq (local.get $arg0) (i32.const -1)))
+      (then (call $regmsg_broadcast_out
+        (local.get $arg1) (local.get $arg2) (local.get $arg3))))
     (call $richedit_note_charformat_message
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     ;; These two compatibility paths need work after the real native WndProc

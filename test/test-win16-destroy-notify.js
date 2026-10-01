@@ -39,6 +39,14 @@ const extraWat = `
     (drop (call $wnd_set_style (local.get $h) (i32.const 0x50000000)))
     (call $wnd_set_parent (local.get $h) (local.get $parent))
     (local.get $h))
+  (func (export "test_dialog") (param $proc i32) (result i32)
+    (local $h i32)
+    (local.set $h (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $h) (global.get $WNDPROC_DIALOG))
+    (drop (call $dialog_proc_set (local.get $h) (i32.or (i32.const 0x000f0000) (local.get $proc))))
+    (drop (call $wnd_set_style (local.get $h) (i32.const 0x10000000)))
+    (local.get $h))
   (func (export "test_narrow") (param $h i32) (result i32) (call $win16_h16 (local.get $h)))
   (func (export "test_destroy_thunk") (result i32)
     (call $win16_thunk_for (i32.const 2) (i32.const 53) (i32.const 0)))
@@ -128,6 +136,15 @@ const word = n => [n & 255, (n >>> 8) & 255];
   // must all have been released.
   const lone = e.test_window(0x200, 0);
   assert.deepStrictEqual(run(lone, 0x70), both(lone));
+
+  // A modeless dialog's table procedure is the WNDPROC_DIALOG marker; the
+  // DLGPROC behind it is what must see WM_DESTROY. InstallShield 3's launcher
+  // posts its WM_QUIT from there, and its logo outlived the install without it.
+  const dialog = e.test_dialog(0x200);
+  const dialogChild = e.test_window(0x200, dialog);
+  assert.deepStrictEqual(run(dialog, 0x80), [...both(dialogChild), ...both(dialog)],
+    "a modeless dialog's DLGPROC gets WM_DESTROY and WM_NCDESTROY");
+  assert.strictEqual(e.test_alive(dialog), 0);
 
   console.log('PASS  Win16 DestroyWindow sends WM_DESTROY/WM_NCDESTROY to 16-bit procedures before teardown');
 })().catch(error => {

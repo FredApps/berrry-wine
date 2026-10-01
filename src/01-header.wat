@@ -194,6 +194,9 @@
   ;; get_window_info(hwnd, 0=style, 1=visible, 2=enabled, 3=pid, 4=exists) → renderer property.
   (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
   ;; post_window_message(...) → 1 when routed to another app instance.
+  (import "host" "broadcast_registered_message" (func $host_broadcast_registered_message (param i32 i32 i32) (result i32)))
+  ;; broadcast_registered_message(nameHash, wParam, lParam) → windows posted to
+  ;; in every *other* app instance (each resolves the name to its own id).
   (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))
   (import "host" "foreground_window" (func $host_foreground_window (result i32)))
   ;; foreground_window() → renderer-wide foreground top-level HWND, or NULL.

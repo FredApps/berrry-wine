@@ -11718,6 +11718,13 @@
           (if (i32.ge_s (call $wnd_table_find (local.get $cur)) (i32.const 0))
             (then
               (local.set $proc (call $wnd_table_get (local.get $cur)))
+              ;; A modeless dialog's table procedure is the WNDPROC_DIALOG
+              ;; marker; its DLGPROC is the one that answers WM_DESTROY, as
+              ;; $win16_DispatchMessage resolves it too. InstallShield 3's
+              ;; launcher posts its WM_QUIT from there, and without it the
+              ;; "preparing install" logo outlived the whole install.
+              (if (i32.eq (local.get $proc) (global.get $WNDPROC_DIALOG))
+                (then (local.set $proc (call $dialog_proc_get (local.get $cur)))))
               (if (call $win16_is_far_proc (local.get $proc))
                 (then
                   (call $win16_enter_wndproc (local.get $proc) (call $win16_h16 (local.get $cur))
