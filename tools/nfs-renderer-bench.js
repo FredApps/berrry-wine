@@ -13,9 +13,10 @@ const { execFileSync } = require('child_process');
 const puppeteer = require('puppeteer');
 const { readPE } = require('../lib/pe');
 const { startStaticServer, closeServer } = require('../test/static-server');
+const { summarizeProfile, printProfiles } = require('./cpu-profile-summary');
 const ROOT = path.resolve(__dirname, '..');
 if (process.argv.includes('--help')) {
-  console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
+  console.log('Diagnostics: --profile saves page/worker CPU profiles and prints each thread\'s top self time; --rpc-census prints brokered host-import round trips per frame; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
   console.log('Glide diagnostics: --glide-lfb-metrics enables the opt-in WAT LFB reason counters (5 reasons x 7 fields), recorded in every snapshot.');
   console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
   console.log('Readback A/B: --full-readbacks disables bounded D3DIM readback rectangles in the served script only; bounded readbacks remain the default.');
@@ -30,6 +31,9 @@ const seconds = Number(arg('seconds', '30'));
 const samples = Number(arg('samples', '2'));
 const seed = Number(arg('seed', '12345')) >>> 0;
 const profileEnabled = process.argv.includes('--profile');
+// --rpc-census: per-sample counts of the host imports each guest Worker
+// blocks on (broker round trips), printed per frame.
+const rpcCensus = process.argv.includes('--rpc-census');
 const readbackCensus = process.argv.includes('--readback-census');
 const glideLfbMetrics = process.argv.includes('--glide-lfb-metrics');
 const noD3DBatching = process.argv.includes('--no-d3d-batching');
@@ -196,6 +200,9 @@ async function observe(page) {
       surface: surface ? { width: surface.width, height: surface.height } : null,
       display: ex ? { width: ex.get_display_mode_w?.(), height: ex.get_display_mode_h?.() } : null,
       perf: window.WinePerf?.snapshot(),
+      // {"slot:name": count}; empty unless the page was loaded with ?rpc-census.
+      rpcCalls: Object.fromEntries((wine?.guestWorker?.broker?.stats?.().calls || [])
+        .map(c => [c.slot + ':' + c.name, c.count])),
     };
   }, glideLfbMetrics);
 }
@@ -235,7 +242,7 @@ async function runCase(server, name) {
       if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) errors.push(line);
     });
     page.on('pageerror', error => errors.push(String(error)));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&d3d-renderer=${config.driver === 'softtri' ? 'software' : config.glide}`,
+    await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf${rpcCensus ? '&rpc-census' : ''}&d3d-renderer=${config.driver === 'softtri' ? 'software' : config.glide}`,
       { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     await page.evaluate(async config => {
@@ -342,10 +349,14 @@ async function runCase(server, name) {
       if (config.driver === 'voodoo') {
         assertGlideBackend(before, config.glide); assertGlideBackend(after, config.glide);
       }
+      const profileThreads = [];
       for (const target of profilers) {
         const { profile } = await target.client.send('Profiler.stop');
         fs.writeFileSync(path.join(dir, 'sample-' + (i+1) + '-' + target.label + '.cpuprofile'), JSON.stringify(profile));
+        const url = target.url ? ' ' + target.url.replace(/^https?:\/\/[^/]+\//, '').replace(/\?.*$/, '') : '';
+        profileThreads.push({ label: target.label + url, ...summarizeProfile(profile, 15) });
       }
+      if (profileThreads.length) printProfiles(profileThreads, seconds);
       assert(before.running && after.running && !before.hidden && !after.hidden, 'visible live game required');
       assert.deepStrictEqual(after.scene, before.scene, 'scene configuration must remain fixed');
       if (errors.length) throw new Error(errors[0]);
@@ -365,6 +376,13 @@ async function runCase(server, name) {
         cpuSeconds, cpuMsPerFrame: 1000 * cpuSeconds / frames, cpuByType,
         loadBefore, loadAfter, contended: Math.max(loadBefore[0], loadAfter[0]) > 4,
         before, after };
+      if (rpcCensus) {
+        result.rpcPerFrame = Object.entries(after.rpcCalls || {})
+          .map(([k, n]) => [k, (n - (before.rpcCalls?.[k] || 0)) / frames])
+          .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+        console.log(name, `sample${i+1} rpc round trips per frame (slot:import):`);
+        for (const [k, n] of result.rpcPerFrame.slice(0, 20)) console.log(`    ${n.toFixed(1).padStart(8)}  ${k}`);
+      }
       report.samples.push(result);
       console.log(name, `sample${i+1}`, JSON.stringify({fps:result.fps,cpuMsPerFrame:result.cpuMsPerFrame,frames,wallSeconds,loadBefore,loadAfter}));
       await page.screenshot({ path: path.join(dir, `sample-${i + 1}-after.png`) });

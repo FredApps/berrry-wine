@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const puppeteer = require('puppeteer');
 const { startStaticServer, closeServer } = require('../test/static-server');
+const { summarizeProfile, printProfiles } = require('./cpu-profile-summary');
 const ROOT = path.resolve(__dirname, '..');
 const arg = (key, fallback) => process.argv.find(a => a.startsWith(`--${key}=`))?.slice(key.length + 3) ?? fallback;
 if (process.argv.includes('--help')) {
@@ -302,6 +303,12 @@ async function observe(page) {
       // {"slot:name": count}; empty unless the page was loaded with ?rpc-census.
       rpcCalls: Object.fromEntries((wine?.guestWorker?.broker?.stats?.().calls || [])
         .map(c => [c.slot + ':' + c.name, c.count])),
+      // Page-scheduled guest-thread slices: each one is a postMessage round
+      // trip between the page and that thread's Worker.
+      threadSlices: location.search.includes('rpc-census') ? Object.fromEntries([...(wine?.threadManager?.threads?.values?.() || [])]
+        .filter(t => t.link).map(t => ['T' + t.tid + '@' + (t.link.slot ?? '?'), {
+          slices: t.workerSlices | 0, ms: t.workerSliceMs || 0,
+          ends: { ...(t.link.sliceStats?.ends || {}) }, eip: (t.lastEip >>> 0).toString(16) }])) : null,
     };
   }, glideLfbMetrics);
 }
@@ -337,27 +344,9 @@ async function stopCpuProfiles(targets, prefix, seconds) {
     try { ({ profile } = await t.session.send('Profiler.stop')); }
     catch (e) { console.log(`cpu-profile: ${t.label} ended before the sample did (${e.message})`); continue; }
     fs.writeFileSync(`${prefix}-${n}-${t.label.replace(/[^\w.-]+/g, '_')}.cpuprofile`, JSON.stringify(profile));
-    const byId = new Map(profile.nodes.map(node => [node.id, node]));
-    const self = new Map();
-    let busy = 0;
-    for (let i = 0; i < profile.samples.length; i++) {
-      const f = byId.get(profile.samples[i])?.callFrame;
-      const dt = profile.timeDeltas[i] || 0;
-      if (!f || f.functionName === '(idle)') continue;
-      const where = f.url ? `${f.url.replace(/^https?:\/\/[^/]+\//, '')}:${f.lineNumber + 1}` : '';
-      const key = `${f.functionName || '(anonymous)'}  ${where}`;
-      self.set(key, (self.get(key) || 0) + dt);
-      busy += dt;
-    }
-    const top = [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, cpuProfileTop)
-      .map(([fn, us]) => ({ fn, ms: us / 1000, share: us / (busy || 1) }));
-    threads.push({ label: t.label, busyMs: busy / 1000, wallShare: busy / (seconds * 1e6), top });
+    threads.push({ label: t.label, ...summarizeProfile(profile, cpuProfileTop) });
   }
-  for (const t of threads) {
-    console.log(`cpu-profile ${(100 * t.wallShare).toFixed(1)}% of wall  ${t.busyMs.toFixed(0)}ms busy  ${t.label}`);
-    if (t.wallShare < 0.02) continue;
-    for (const r of t.top) console.log(`    ${(100 * r.share).toFixed(1).padStart(5)}%  ${r.ms.toFixed(0).padStart(6)}ms  ${r.fn}`);
-  }
+  printProfiles(threads, seconds);
   return threads;
 }
 
@@ -576,6 +565,14 @@ async function runCase(server, name) {
           .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
         console.log(name, `sample${i+1} rpc round trips per frame (slot:import):`);
         for (const [k, n] of result.rpcPerFrame.slice(0, 20)) console.log(`    ${n.toFixed(1).padStart(8)}  ${k}`);
+        console.log(name, `sample${i+1} page-scheduled thread slices per frame (guest ms per slice, slice end reasons):`);
+        for (const [k, t] of Object.entries(after.threadSlices || {})) {
+          const b = before.threadSlices?.[k] || { slices: 0, ms: 0, ends: {} };
+          const n = t.slices - b.slices;
+          const ends = Object.entries(t.ends).map(([why, c]) => [why, c - (b.ends[why] || 0)])
+            .filter(([, c]) => c > 0).map(([why, c]) => `${why}:${(c / frames).toFixed(1)}`).join(' ');
+          console.log(`    ${(n / frames).toFixed(1).padStart(8)}  ${k}  ${n ? ((t.ms - b.ms) / n).toFixed(2) : '-'}ms  eip=${t.eip}  ${ends}`);
+        }
       }
       report.samples.push(result);
       console.log(name, `sample${i+1}`, JSON.stringify({fps:result.fps,cpuMsPerFrame:result.cpuMsPerFrame,frames,wallSeconds,loadBefore,loadAfter}));
