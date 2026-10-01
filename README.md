@@ -27,6 +27,7 @@ Every tile links to that app on the live site. All screenshots are the emulator'
 - **DirectDraw, Direct3D, DirectSound, DirectInput:** the DirectX 5 SDK samples, Plus! 98 screensavers, and startup or gameplay paths for Diablo, Age of Empires, RollerCoaster Tycoon, Caesar III, Heroes of Might and Magic II, Jazz Jackrabbit 2, Quake II and other demos
 - **Real DLLs:** msvcrt.dll, mfc42u.dll, comctl32.dll, RichEdit and other Win32 libraries load with relocations, so MFC applications run against the real runtime
 - **Networking:** a virtual LAN where two browser tabs, or two emulator processes, play Hearts and Liquid War against each other over Winsock and DDEML
+- **Agents and recording:** Start → Connect Agent… hands the running game to an AI agent on another machine over WebRTC, with the person able to watch, pause or take back control at any time; Start → Record Screen saves the game window as video
 
 The smoke matrix tracks 114 binaries. Its latest recorded complete run reported 81 PASS, 29 WARN/known-limited, 4 expected 16-bit skips, and no unexpected crashes. Focused tests go much deeper than that startup gate for the apps above.
 
