@@ -5,37 +5,20 @@ archived software on archive.org.
 
 ## Need for Speed Windows demos
 
-Original Electronic Arts demos, unmodified (no binary patches). Both were
-published by EA itself on its FTP server; that server is gone, so the Wayback
-Machine captures below are the publisher's own copies. The fixtures were
-fetched from the mirrors and checked against EA's files:
+Local candidate fixtures (original demo executables, no binary patches):
 
-| App | EA's own release (Wayback capture) | Mirror the fixture recipe fetches | SHA-1 |
-| --- | --- | --- | --- |
-| `nfs2_demo` | [ftp.ea.com/pub/ea/demos/nfs2/nfs2demo.exe](https://web.archive.org/web/20170130184810/ftp://ftp.ea.com/pub/ea/demos/nfs2/nfs2demo.exe) | [classicdosgames.com](https://www.classicdosgames.com/files/games/electronicarts/nfs2demo.exe) | `3618d9c4070794e5cee4629a85c5e874e006db84` |
-| `nfs3_demo` | [ftp.ea.com/pub/ea/demos/nfs3/nfsdemo.zip](https://web.archive.org/web/20170130170545/ftp://ftp.ea.com/pub/ea/demos/nfs3/nfsdemo.zip) | [archive.org nfs03demo.zip](https://archive.org/download/need-for-speed-demo-coll-windows/nfs03demo.zip) | `c3f247d051cd347e2f0515d71d8e387f00a6f373` (mirror zip) |
-
-Checked 2026-09-30: EA's `nfs2demo.exe` has the same SHA-1 as the fixture. EA's
-`nfsdemo.zip` (SHA-1 `008f76760a72f29ea82baadf20e641f5bb603b86`, dated
-1998-09-15 on the FTP) is a different archive from the mirror's repack, but all
-133 files it contains are byte-identical to the fixture's `game/` tree.
+| App | Archive | SHA-1 |
+| --- | --- | --- |
+| `nfs2_demo` | [nfs2demo.exe](https://www.classicdosgames.com/files/games/electronicarts/nfs2demo.exe) | `3618d9c4070794e5cee4629a85c5e874e006db84` |
+| `nfs3_demo` | [nfs03demo.zip](https://archive.org/download/need-for-speed-demo-coll-windows/nfs03demo.zip) | `c3f247d051cd347e2f0515d71d8e387f00a6f373` |
 
 Reproduce with `node tools/fetch-candidate-corpus.js --id=need-for-speed-2-demo`
 and `--id=need-for-speed-3-demo`. The manifest preserves the complete asset trees.
 NFS II is the original software/DirectDraw demo, not the Glide Special Edition.
-NFS III is the September 1998 final demo. Its `install.win`, the one file not in
-EA's zip, is reproduced from the original bundled InstallShield installer's
-output (English, local install); the recipe writes its relative data paths,
-CRLF lines, and DOS EOF byte.
-
-**Publishing decision (owner, 2026-09-30):** both demos ship on the public site.
-No redistribution terms come with either demo; the owner judged that publishing
-these limited, decades-old promotional demos is acceptable provided each links
-back to its source, EA's own release first. Only the files each
-`.wine-assembly-browser.json` names are uploaded. The Glide builds
-(`nfs2se_glide_demo`, `nfs3_glide_demo`) are not covered and stay local. The
-`localOnly` flag in the candidate manifest refers to the gitignored fixture,
-not to deployment.
+NFS III is the September 1998 final demo. Its `install.win` is reproduced from
+the original bundled InstallShield installer's output (English, local install);
+the recipe writes its relative data paths, CRLF lines, and DOS EOF byte.
+Both are marked `localOnly`; demo licensing is not a public redistribution grant.
 
 ## Windows 98 Demo/Shareware Games A-D
 

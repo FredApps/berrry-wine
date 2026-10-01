@@ -281,13 +281,6 @@ const PUBLISHABLE_OUTSIDE_BINARIES = [
   // it is the owner's decision (2026-09-28, test/binaries/SOURCES.md). The
   // sequels and Winter/3/Tennis siblings stay local-only.
   'test/binaries/candidates/moorhuhn/',
-  // Need for Speed II (1997) and III: Hot Pursuit (1998) Windows demos:
-  // Electronic Arts' own promotional demos, unmodified and verified against
-  // EA's FTP release. No redistribution terms ship with either; publishing
-  // them with source links is the owner's decision (2026-09-30,
-  // test/binaries/SOURCES.md). Only each manifest's files ship.
-  'test/binaries/candidates/need-for-speed-2-demo/',
-  'test/binaries/candidates/need-for-speed-3-demo/',
   'packages/freeware/dxball/',
   'packages/freeware/blobby-volley/',
 ];
