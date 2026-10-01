@@ -20,7 +20,8 @@
 //
 //   A. onto a DC whose clip is one rect  -> takes the fast path
 //   B. onto a DC whose clip is that rect OR'd with a far-away one -> the fast
-//      path declines (a >1-rect clip is reason 1), so the generic kernel runs,
+//      path declines (a >1-rect clip is reason 1), so the generic kernel runs
+//      (32bpp SRCCOPY now uses the separately checked band path),
 //      and because the union still covers the whole blit the intended output
 //      is identical.
 //
@@ -35,6 +36,10 @@ const { bootRenderHarness } = require('./render-helper');
 // test_gdi_raster_bitblt pins both DCs to 0. The destination DC is exactly
 // what a 1bpp DDB source reads its two colours out of, so it has to be real.
 const EXTRA_WAT = `
+  (func (export "test_band_system_clip") (param $hdc i32) (param $region i32)
+    (i32.store offset=4
+      (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 1))
+      (local.get $region)))
   (func (export "test_bitblt_dcs")
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_raster_bitblt (local.get 0) (local.get 1)
@@ -391,7 +396,7 @@ const ROPS = {
     }
   });
 
-  check('generic 32bpp SRCCOPY preserves clips, row layout, overlap and reserved bytes', () => {
+  check('banded 32bpp SRCCOPY preserves clips, row layout, overlap and reserved bytes', () => {
     const bytes = new Uint8Array(memory.buffer);
     const width = 13, height = 11;
     const clips = [[1, 1, 6, 10], [8, 2, 12, 8]];
@@ -445,15 +450,58 @@ const ROPS = {
               }
             }
             const before = counts();
+            const bandsBefore = wat.test_gdi_fast_count(10);
             assert.strictEqual(wat.test_bitblt_dcs(dst.hdc, 0, dst.desc,
               c.dx, c.dy, c.w, c.h, src.desc, c.sx, c.sy, 0, ROPS.SRCCOPY), 1);
             assert.deepStrictEqual(moved(before, counts()),
-              [{ i: REASON.MULTI_CLIP, delta: 1 }], 'must exercise generic traversal');
+              [{ i: REASON.MULTI_CLIP, delta: 1 }], 'single-rectangle path must decline');
+            assert.strictEqual(wat.test_gdi_fast_count(10) - bandsBefore,
+              overlap ? 0 : 1, 'separate backing uses bands; overlap keeps traversal');
             assert.deepStrictEqual(bytes.slice(dst.bits, dst.bits + dst.stride * height),
               expected, JSON.stringify({ dstTopDown, srcTopDown, overlap, ...c }));
           }
         }
       }
+    }
+  });
+
+  check('band intersections honor both clips, DC origins, empty clips and extreme edges', () => {
+    const width = 13, height = 11, ox = 3, oy = -2;
+    const appRects = [[-1000000000, -4, 2, 1000000000], [4, -4, 10, 1000000000]];
+    const systemRects = [[-3, 3, 10, 5], [-3, 7, 10, 12]];
+    const makeRegion = rects => {
+      const r = wat.test_gdi_rgn_alloc_rect(...rects[0]);
+      for (const rect of rects.slice(1)) {
+        const other = wat.test_gdi_rgn_alloc_rect(...rect);
+        wat.test_gdi_rgn_combine(r, r, other, 2);
+        wat.test_gdi_rgn_delete(other);
+      }
+      return r;
+    };
+    const inside = (rs, x, y) => rs.some(([l,t,r,b]) => x >= l && x < r && y >= t && y < b);
+    for (const empty of [false, true]) {
+      const dst = destination(width, height), src = packedSource(width, height, 32);
+      fill(dst, 0xab123456);
+      dv.setInt32(dst.desc + 72, ox, true);
+      dv.setInt32(dst.desc + 76, oy, true);
+      const app = makeRegion(appRects);
+      const sys = makeRegion(empty ? [[0,0,0,0]] : systemRects);
+      wat.test_gdi_dc_clip_select(dst.hdc, app);
+      wat.test_band_system_clip(dst.hdc, sys);
+      const expected = new Uint8Array(memory.buffer, dst.bits, dst.stride * height).slice();
+      for (let y=0; y<height; y++) for (let x=0; x<width; x++) {
+        if (empty || !inside(appRects,x-ox,y-oy) || !inside(systemRects,x-ox,y-oy)) continue;
+        const value = dv.getUint32(src.bits+y*src.stride+x*4,true) & 0xffffff;
+        new DataView(expected.buffer).setUint32(y*dst.stride+x*4,value,true);
+      }
+      const before = wat.test_gdi_fast_count(10);
+      assert.strictEqual(wat.test_bitblt_dcs(dst.hdc,0,dst.desc,0,0,width,height,
+        src.desc,0,0,0,ROPS.SRCCOPY),1);
+      assert.strictEqual(wat.test_gdi_fast_count(10)-before,1);
+      assert.deepStrictEqual(new Uint8Array(memory.buffer,dst.bits,dst.stride*height),expected);
+      wat.test_band_system_clip(dst.hdc,0);
+      wat.test_gdi_rgn_delete(app);
+      wat.test_gdi_rgn_delete(sys);
     }
   });
 

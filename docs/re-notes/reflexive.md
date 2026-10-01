@@ -116,6 +116,108 @@ cycles). That synthetic result is not a gameplay FPS claim. Reproduce with
 `node /private/tmp/reflexive-probe/bitblt-bench.js`; raw results are in
 `/private/tmp/reflexive-probe/bitblt-bench.json`.
 
+Follow-up BitBlt diagnosis (2026-09-30): the saved post-EMMS active-play
+profile still spends 3.522s of 21.881s sampled time inside BitBlt (16.10%,
+including callees): 2.533s in the raster loop itself, 500ms in region
+membership, and the rest mostly in DC/window/clip lookups. These are sampled
+durations, not an isolated CPU benchmark. Function names were resolved from
+the captured EMMS source closure, not current function indices. The raster
+fragment's executable WAT remains identical to that closure (comments differ).
+The same run's draw-worker counters record 234 complex-clip declines spanning
+112,320,000 requested pixels, exactly 234 full 800x600 rectangles. Do not sum
+the shared decline histogram across workers.
+
+A fresh frozen-runtime 12-click gameplay capture confirms 150 reason-1
+declines / 72,000,000 requested pixels and 22 fast-path hits. The screenshot
+shows active gameplay, score 94. High local host load makes its timing
+unsuitable for speed claims. Between-call snapshots show no application clip
+and a single full-window system clip: the expensive application region is
+transient, so inspecting only the settled DC misses it.
+Two subsequent probes armed guest breakpoints at the BitBlt import thunk and
+the preceding guest block `0x40a3b4`, but neither snapshot stopped there;
+both still observed the normal update-loop EIP. Their snapshots therefore
+do not establish the transient region's rectangle count or visible area.
+
+The remaining algorithmic cost is concrete: the fallback visits every pixel
+in the requested rectangle, calls the general surface/bounds/address helper,
+and checks cached row visibility. A row intersecting multiple clip intervals
+sets cache state 2, which re-enters full DC/region membership per pixel. The
+previous SRCCOPY optimization removed destination reads and RGB/ROP work but
+kept that traversal. The next candidate is to intersect source/destination
+bounds and canonical clip bands once, then copy only visible row spans with
+incrementing pointers. Preserve overlap order and clear the reserved byte
+(`source & 0x00ffffff`); unconditional `memory.copy` does not preserve that
+existing output contract. No new raster optimization was made in this debug
+pass. Artifacts: `/private/tmp/reflexive-probe/bitblt-profile-breakdown.json`,
+`bitblt-debug-run/result.json`, and `bitblt-debug-run/end.png`.
+
+The subsequent fix adds a second 32bpp SRCCOPY fast path after the
+single-rectangle path declines. It intersects the application's canonical
+region rectangles with USER's system clip and the DC target bounds, then
+reuses the existing XRGB row loop for each nonempty intersection. Source and
+destination surface clipping stays in that loop. Clip-edge arithmetic uses
+i64 before clamping to the requested extent. Overlapping backing ranges,
+including different base pointers into one allocation, retain the existing
+generic traversal; reserved bytes are still cleared. Counter 10 of
+`test_gdi_fast_count` counts band-path calls. Reason-1 declines continue to
+describe the first fast path, while counter 9 now counts only pixels that
+actually reach the final per-pixel fallback.
+
+Validation: 13 BitBlt widening checks (including independent byte oracles for
+24 clip/bounds/orientation/padding/overlap cases, explicit band-path coverage,
+both clip operands, shifted DC origins, empty clips and large coordinates),
+10 decline-counter checks and four bulk-blit checks pass. Fragment balance,
+logical-AND and diff checks pass. A frozen-runtime 40-click real-browser
+gameplay run ends at score 2808 with 549 blocks left, no crash. All 672
+complex-clip copies use the band path; fallback pixel count stays zero.
+The raster change is the only difference from the earlier EMMS runtime.
+
+An isolated 800x600 copy with two disjoint 350x600 visible clip rectangles
+compares matched before/after modules in two ABBA cycles, 30 copies per arm.
+All destination bytes agree, including untouched holes and reserved bytes.
+Mean process CPU falls from 362.092ms to 52.894ms (85.4% less, 6.85x).
+This is a kernel benchmark, not a gameplay FPS gain; host load was high and
+the actual game's transient clip geometry was not captured. Reproduce with
+`/private/tmp/reflexive-probe/build-bands-bench.js` and `bands-bench.js`;
+results are `bands-bench.json`, gameplay artifacts `bands-gameplay-after/`.
+
+Remote follow-up (2026-10-01): `fast-near-9tb-1` was idle (load 0.00) before
+four sequential ABBA 40-click runs and two separate profiling runs. These
+use the same frozen host/runtime closure as above, changing only the band
+path, with Node 24.15.0 and headless Chrome 152/SwiftShader. There is no
+display server, so their present rate is not player-visible FPS. Software
+GPU emulation accounts for most browser CPU; renderer-process CPU is
+reported separately. Boards and animation loads are not pinned.
+
+The unprofiled renderer CPU/present results are inconclusive: before
+55.17/55.63ms, after 53.92/65.86ms; weighted means 55.40 versus 58.76ms.
+The after runs rescue 748 and 446 complex-clipped copies and have zero
+fallback pixels, versus 233.76M and 232.80M fallback pixels before. All four
+routes survive. These results do not establish a whole-game speedup.
+
+The separate matched profiles do establish that the targeted cost is gone:
+BitBlt inclusive sampled draw-worker time is 3333ms / 30511ms before
+(10.92%) versus 60ms / 30387ms after (0.20%). The latter completes 765
+presents versus 500 before, rescues 643 band copies and scans zero fallback
+pixels. This is diagnostic sampling across different boards, not a claim
+that the whole game improved by the same ratio. Function indices were
+resolved from each frozen build's source, not the current worktree.
+
+Remaining draw-worker self-time leaders after the fix are `$uop_fast`
+1716ms, `$branch_end_at` 831ms, `$th_load32_rop` 591ms, `$run` 531ms,
+`$th_push_r` 463ms, `$win32_dispatch` 458ms, `$decode_block` 399ms and
+`$th_store32_rop` 335ms. `waitForResponse` contributes 404ms and idle
+18098ms; neither is evidence of CPU spinning. Main-worker idle is 29991ms
+out of roughly 30 seconds. Helper workers mostly wait in `waitStepEpoch`.
+No stuck scheduler was observed. Further optimization should measure guest
+code on a fresh current-main build first: these intentionally frozen arms
+predate later micro-op and host changes from other sessions.
+
+Evidence: `/private/tmp/reflexive-probe/bands-remote-results/summary.json`,
+`profiles.json`, the raw per-worker profiles and screenshots in the same
+directory. Isolated remote artifacts remain in `/home/vg/collapse-bands-bench`;
+all benchmark/browser processes were closed after capture.
+
 The scheduler fix makes `freeRunParkBound` recognize unsatisfied helper waits
 and their deadlines instead of treating them as runnable. Real browser windows
 using identical WASM and otherwise frozen host scripts measured 4,823–4,912
