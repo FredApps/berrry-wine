@@ -2715,15 +2715,11 @@ Resource-aware Win98 emulator
       // A small first-class desktop link for provenance and complete original
       // package downloads. It is intentionally not an emulator app or toolbar
       // option: opening it must not allocate a second 512MB guest instance.
-      const sources = document.createElement('div');
-      sources.className = 'desktop-icon';
-      sources.dataset.app = 'sources';
-      sources.innerHTML = '<div class="icon-img">📦</div><div class="icon-label">Sources</div>';
-      let sourcesLastClick = 0;
       // Sources and Read Me have no exe to take an icon from, so they get
-      // RetroDiffusion pixel art (the session chips' source, lib/session-chips.js).
-      // The emoji stays until the image decodes, so offline still shows one.
-      const pixelIcon = (box, prompt) => {
+      // RetroDiffusion pixel art, generated once and kept in icons/ui/ (a live
+      // API call per page load put the desktop at the mercy of berrry's load).
+      // The emoji stays until the image decodes, so a failed load still shows one.
+      const pixelIcon = (box, name) => {
         const img = new Image(32, 32);
         img.style.imageRendering = 'pixelated';
         img.alt = '';
@@ -2733,14 +2729,18 @@ Resource-aware Win98 emulator
           box.style.border = '0';
           box.appendChild(img);
         };
-        img.src = 'https://wine-assembly.berrry.app/api/retrodiffusion/image/32/32/mc_item?prompt='
-          + prompt + '&remove_bg=true&seed=7';
+        img.src = 'icons/ui/' + name + '.png';
       };
+      const sources = document.createElement('div');
+      sources.className = 'desktop-icon';
+      sources.dataset.app = 'sources';
+      sources.innerHTML = '<div class="icon-img">📦</div><div class="icon-label">Sources</div>';
+      pixelIcon(sources.querySelector('.icon-img'), 'sources');
+      let sourcesLastClick = 0;
       sources.addEventListener('click', () => {
         for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
         sources.classList.add('selected');
         const now = Date.now();
-      pixelIcon(sources.querySelector('.icon-img'), 'open+cardboard+box+package+with+floppy+disks+windows+98+icon');
         if (SINGLE_APP_MODE || now - sourcesLastClick < 500) {
           window.open('sources.html', 'wine-assembly-sources');
           sourcesLastClick = 0;
@@ -2755,12 +2755,12 @@ Resource-aware Win98 emulator
       readme.className = 'desktop-icon';
       readme.dataset.app = 'readme';
       readme.innerHTML = '<div class="icon-img">📄</div><div class="icon-label">Read Me</div>';
+      pixelIcon(readme.querySelector('.icon-img'), 'readme');
       let readmeLastClick = 0;
       readme.addEventListener('click', () => {
         for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
         readme.classList.add('selected');
         const now = Date.now();
-      pixelIcon(readme.querySelector('.icon-img'), 'white+paper+text+document+page+with+folded+corner+windows+98+icon');
         if (SINGLE_APP_MODE || now - readmeLastClick < 500) {
           openReadme();
           readmeLastClick = 0;
