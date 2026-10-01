@@ -401,8 +401,11 @@ every number above). All screenshots were checked to be mid-race.
 
 NFS III: Glide and D3D are level within this box's noise (the 09-29 rerun had
 Glide ahead, 13.98 vs 10.53, before the D3D batching work), and both are about
-3x software. The desktop `nfs3_demo` entry sets no `Thrash Driver`, so it
-starts on `softtria.dll`, the slowest renderer.
+3x software. The desktop `nfs3_demo` entry used to set no `Thrash Driver` and
+so started on `softtria.dll`, the slowest renderer; it now starts on Direct3D
+(`b8382e31`). NFS II's software count was checked in the CLI: with the car
+moving, every primary present is one Lock/Unlock of a distinct image (760 of
+760 in a 300-batch window), so it counts real rendered frames.
 
 NFS II: the original software demo runs about 3.6x the SE Glide demo's frame
 rate. These are different editions and tracks, so the ratio is the cost of
