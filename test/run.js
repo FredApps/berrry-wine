@@ -24,6 +24,8 @@ const {
   decodeMfcCString,
   g2w: translateGuest,
   readSyncObjectName,
+  walkStackFrame,
+  formatFrames,
 } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -266,6 +268,18 @@ const TRACE_STACK_FILTER = (() => {
   }
   return filter;
 })();
+// --trace-stack-scan: for code built without frame pointers, where the EBP
+// chain is garbage (NFS II prints frames=[0x0003ffff]), list the stack dwords
+// that are return addresses instead: code pointers preceded by a call
+// instruction (mem-utils walkStackFrame). A stale return address left in a
+// dead slot matches too, so trust the innermost few and confirm with --count.
+const TRACE_STACK_SCAN = hasFlag('trace-stack-scan');
+function traceStackLine(getEbp, esp, dv, g2w, imageBase, buffer, depth) {
+  if (!TRACE_STACK_SCAN) return `frames=[${walkFrames(getEbp, dv, g2w, depth).map(hex).join(' <- ')}]`;
+  const frames = walkStackFrame(buffer, esp >>> 0, imageBase >>> 0,
+    { depth: depth * 16, codeLo: imageBase >>> 0, codeHi: 0x80000000 });
+  return formatFrames(frames, depth) || 'frame=[]';
+}
 const QUIET_API = hasFlag('quiet-api');               // --quiet-api: suppress [API] one-line log spam
 const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
@@ -3230,9 +3244,8 @@ async function main() {
       // --trace-stack: walk EBP chain on matched calls
       if (TRACE_STACK && (!TRACE_STACK_FILTER || TRACE_STACK_FILTER.has(t))) {
         const depth = TRACE_STACK_FILTER ? TRACE_STACK_FILTER.get(t) : TRACE_STACK_DEFAULT_DEPTH;
-        const chain = walkFrames(() => e.get_ebp(), dv, g2w, depth);
         flushDedup();
-        logs.push(`  frames=[${chain.map(hex).join(' <- ')}]`);
+        logs.push('  ' + traceStackLine(() => e.get_ebp(), esp, dv, g2w, imageBase, memory.buffer, depth));
       }
 
       // Legacy struct dumps only fire when API isn't typed (formatter already covers them)
@@ -4492,8 +4505,8 @@ async function main() {
           const depth = TRACE_STACK_FILTER
             ? TRACE_STACK_FILTER.get(name) : TRACE_STACK_DEFAULT_DEPTH;
           const e = workerExports();
-          const chain = walkFrames(() => e.get_ebp(), f.ctx.dv, f.ctx.g2w, depth);
-          header += `\n  frames=[${chain.map(hex).join(' <- ')}]`;
+          header += '\n  ' + traceStackLine(() => e.get_ebp(), f.esp, f.ctx.dv, f.ctx.g2w,
+            e.get_image_base(), f.ctx.memory, depth);
         }
         return header;
       },
