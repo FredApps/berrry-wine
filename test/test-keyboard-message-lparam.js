@@ -60,4 +60,18 @@ assert.strictEqual(directInputOnly.peekAsyncKeyState(0x28), 0x8000,
 assert.strictEqual(directInputOnly.peekKeyDownState(0x28), 0,
   'DirectInput physical state observes key-up without waiting for GetMessage');
 
+// TranslateMessage copies the keystroke's lParam into the WM_CHAR. NFS II's
+// lib_char loops over its repeat count, so a WM_CHAR 0x1B with lParam 0 was
+// zero characters and Escape never skipped the intro movie.
+const chars = new RendererProbe();
+chars.handleKeyDown(0x1B, { code: 'Escape' });
+chars.handleKeyPress(0x1B);
+chars.handleKeyUp(0x1B, { code: 'Escape' });
+assert.deepStrictEqual(chars.inputQueue.map(e => e.msg), [0x0100, 0x0102, 0x0101]);
+assert.strictEqual(chars.inputQueue[1].lParam >>> 0, 0x00010001,
+  'WM_CHAR carries the keydown lParam: repeat count 1, Escape scan code 0x01');
+chars.handleKeyPress(0x41);
+assert.strictEqual(chars.inputQueue[3].lParam >>> 0, 1,
+  'a character with no keystroke behind it still has a repeat count of 1');
+
 console.log('PASS Win32 keyboard messages preserve ordering while DirectInput tracks physical key release');
