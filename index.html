@@ -2066,6 +2066,7 @@ Resource-aware Win98 emulator
     // log pane, and what to tidy up once the last guest is gone.
     const shell = window.browserShell.createBrowserShell({
       apps,
+      unservedApps: LOCAL_DESKTOP ? [] : LOCAL_CANDIDATE_APPS.map(a => a[0]),
       resolveRunSlice: window.wineApps.resolveRunSlice,
       debugMode: DEBUG_MODE,
       screenCanvasSize: () => screenCanvasSize(),
