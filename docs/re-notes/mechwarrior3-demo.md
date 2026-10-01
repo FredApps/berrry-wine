@@ -1538,3 +1538,13 @@ Publication waits remain about 1 ms/frame. See the same report for artifacts.
 The later shared-WebGL rollout enables lazy sync by default. Use
 `?no-lazy-sync` or uncheck **Lazy sync** in the debug toolbar for eager readback;
 the checkbox also applies to running guest workers.
+
+The [P/PC repeatability follow-up](../fp-mw3-repeatability.md) found that
+`processSharedCtx()` omitted `wallNowMs`: the cooperative loading thread could
+read the host date while the main thread read the pinned calendar. Adding the
+shared key makes P/P match at all 1,750 recorded batch boundaries; pinning file
+timestamps alone did not (first loading-thread divergence at batch 742).
+Six subsequent untraced 2,400-batch cockpit windows pass image/API/tier-counter
+checks. Balanced P/PC user CPU is 83.1945/84.5155s on EPYC/V8, a 1.588% slowdown
+for the countdown, with +1.225%/+1.952% in the two orders. The older -3.85%
+single-pair observation is not reproduced; C remains experimental.

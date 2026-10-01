@@ -58,6 +58,28 @@ check('the thread-scoped half does not', () => {
   }
 });
 
+check('worker calendar APIs use the moving process calendar', () => {
+  const { createHostImports } = require('../lib/host-imports');
+  const memory = new ArrayBuffer(65536);
+  let now = Date.UTC(1999, 5, 1, 12, 34, 56, 789);
+  const mainCtx = { getMemory: () => memory, wallNowMs: () => now };
+  const workerCtx = { ...processSharedCtx(mainCtx), getMemory: () => memory };
+  const main = createHostImports(mainCtx).host;
+  const worker = createHostImports(workerCtx).host;
+  const bytes = new Uint8Array(memory);
+  for (const advance of [0, 1234, 86400000]) {
+    now += advance;
+    for (const [kind, size] of [[0, 16], [1, 16], [2, 8], [3, 4]]) {
+      assert.strictEqual(main.wall_clock(256, kind), 1);
+      assert.strictEqual(worker.wall_clock(512, kind), 1);
+      assert.deepStrictEqual([...bytes.subarray(512, 512 + size)],
+        [...bytes.subarray(256, 256 + size)], `calendar kind ${kind}, advance ${advance}`);
+    }
+  }
+  main.wall_clock(256, 0);
+  assert.strictEqual(new DataView(memory).getUint16(256, true), 1999);
+});
+
 check('a key the host does not have stays absent', () => {
   // The two hosts legitimately share different sets — the browser has a
   // sharedMixer because several apps play audio in one page, the CLI has
