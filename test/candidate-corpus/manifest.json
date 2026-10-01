@@ -46,6 +46,62 @@
       "notes": "The bundled EA readme identifies this as the final demo: Corvette on Rocky Pass, random Single Race/Hot Pursuit and weather. Includes original software and Direct3D renderer DLLs plus installer/readme/license files."
     },
     {
+      "id": "need-for-speed-2-full",
+      "name": "Need for Speed II (retail CD)",
+      "kind": "game",
+      "version": "1997 Windows 95 PC CD-ROM",
+      "executables": [
+        "cd/NFSW.EXE"
+      ],
+      "sourcePage": "https://archive.org/details/nfs-2_202308",
+      "license": "commercial EA retail CD; no redistribution permission, so keep the ISO and extracted tree as an ignored local fixture and never deploy them",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/nfs-2_202308/NFS2.ISO",
+          "sha1": "137085b8538613fed087bf9343773e58a7d5546b",
+          "type": "file",
+          "destination": "sources/NFS2.ISO"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractArchive",
+          "archive": "sources/NFS2.ISO",
+          "into": "cd"
+        }
+      ],
+      "notes": "Full original (non-SE) release, same NFSW.EXE name as the nfs2_demo payload. The CD root carries NFS2.ICO, the icon EA shipped for it; nfsw.exe has no icon resource. No app entry yet: reference/source fixture only."
+    },
+    {
+      "id": "need-for-speed-2-se-full",
+      "name": "Need for Speed II SE (retail CD)",
+      "kind": "game",
+      "version": "1997 Special Edition PC CD-ROM",
+      "executables": [
+        "cd/NFS2SEA.EXE"
+      ],
+      "sourcePage": "https://archive.org/details/need-for-speed-ii-se",
+      "license": "commercial EA retail CD; no redistribution permission, so keep the ISO and extracted tree as an ignored local fixture and never deploy them",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/need-for-speed-ii-se/Need%20for%20Speed%20II%20SE.iso",
+          "sha1": "07beaf879ce3f5a33c2d96fa4783bf9fad34f751",
+          "type": "file",
+          "destination": "sources/NFS2SE.ISO"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractArchive",
+          "archive": "sources/NFS2SE.ISO",
+          "into": "cd"
+        }
+      ],
+      "notes": "Full Special Edition: NFS2SEA.EXE (3Dfx Glide), NFS2SEN.EXE, with NFS2SEA/SEN/SER.ICO at the CD root. No app entry yet: reference/source fixture only."
+    },
+    {
       "id": "dxball",
       "name": "DX-Ball",
       "kind": "game",
