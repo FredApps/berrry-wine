@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The 🌐 LAN session chip (lib/browser-shell.js over lib/session-chips.js),
+// The LAN session chip (a globe) (lib/browser-shell.js over lib/session-chips.js),
 // driven with a stand-in room so it needs no game and no second browser:
 //
 //   node test/test-web-lan-chip.js
@@ -74,7 +74,9 @@ let browser = null;
 
   const chip = () => page.evaluate(() => {
     const el = document.getElementById('wine-lan-chip');
-    return el ? { text: el.textContent, placement: window.wineSession.placement(), data: el.dataset.chip } : null;
+    const icon = el && el.querySelector('[data-icon]');
+    return el ? { text: el.textContent, placement: window.wineSession.placement(), data: el.dataset.chip,
+      icon: icon && icon.dataset.icon } : null;
   });
   const menuText = async () => {
     await page.click('#wine-lan-chip');
@@ -103,8 +105,8 @@ let browser = null;
     lan.attach(window.__wine, window.__room, { lan: { label: 'Blobby Volley' } }, 'blobby_volley');
   });
   const open = await until('owner chip', async () => { const c = await chip(); return c && /room open/.test(c.text) ? c : null; });
-  check('a room open shows 🌐 in the tray with the old toast\'s id and text',
-    open.data === 'lan' && open.placement === 'tray' && /🌐/.test(open.text) && /waiting for players/.test(open.text)
+  check('a room open shows the globe in the tray with the old toast\'s id and text',
+    open.data === 'lan' && open.placement === 'tray' && open.icon === 'lan' && /waiting for players/.test(open.text)
       && !/LAN ·/.test(open.text), JSON.stringify(open));
 
   await page.evaluate(() => {
@@ -113,14 +115,24 @@ let browser = null;
   });
   const joined = await chip();
   check('an event is held in the chip\'s text', /alex joined/.test(joined.text), JSON.stringify(joined));
-  // In the tray the summary is short: 🌐 and the head count.
-  const settled = await until('summary', async () => { const c = await chip(); return c.text.replace(/\s/g, '') === '🌐2' ? c : null; }, 3000).catch(() => null);
+  // In the tray the summary is short: the globe and the head count.
+  const settled = await until('summary', async () => { const c = await chip(); return c.text.trim() === '2' ? c : null; }, 3000).catch(() => null);
   check('then it settles to a short summary that counts players', !!settled, JSON.stringify(await chip()));
 
   await page.evaluate(() => document.body.classList.add('single-app', 'app-running'));
   const floated = await until('float', async () => { const c = await chip(); return c.placement === 'float' ? c : null; }, 3000).catch(() => null);
   check('without a taskbar it floats and spells the summary out',
     !!floated && /Blobby Volley · 2 players/.test(floated.text), JSON.stringify(floated));
+
+  // The icons are RetroDiffusion pixel art from the deployed site, not emoji:
+  // this needs the network, and a fallback emoji here means the image failed.
+  const icons = await until('icons decoded', () => page.evaluate(() => {
+    const imgs = [...document.querySelectorAll('#wa-chips img.wa-icon')];
+    return imgs.length && imgs.every(i => i.complete && i.naturalWidth === 32)
+      ? imgs.map(i => i.src.replace(/\?.*/, '')).join(' ') : null;
+  }), 15000).catch(() => null);
+  check('chip icons are RetroDiffusion images from wine-assembly.berrry.app',
+    !!icons && /^https:\/\/wine-assembly\.berrry\.app\/api\/retrodiffusion\//.test(icons), String(icons));
 
   const ownerMenu = await menuText();
   check('the owner\'s menu says whose room, lists the players and recent events',

@@ -106,6 +106,13 @@ let bridgeOut = '';
 
   browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    const NativePC = window.RTCPeerConnection;
+    window.__consentPeers = [];
+    window.RTCPeerConnection = class extends NativePC {
+      constructor(...args) { super(...args); window.__consentPeers.push(this); }
+    };
+  });
   await page.setViewport({ width: 1024, height: 700 });
   fs.mkdirSync(SHOTS, { recursive: true });
   const shot = name => page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
@@ -170,6 +177,26 @@ let bridgeOut = '';
 
   const before = await request(base, 'GET', '/snapshot', { key });
   check('nothing is reachable before the player allows it', before.status === 409, `${before.status} ${JSON.stringify(before.json)}`);
+
+  // Safari failed after ~47s when the bridge probed before Allow. Wait
+  // longer than that real deadline, checking ICE itself rather than just
+  // the dialog label, then require the SAME invitation to connect below.
+  console.log('INFO  holding consent for 65 seconds to cover early ICE expiry');
+  for (let i = 0; i < 13; i++) {
+    await sleep(5000);
+    const idle = await page.evaluate(() => ({
+      phase: window.__pairing.state.phase,
+      ice: window.__consentPeers[0].iceConnectionState,
+      remote: !!window.__consentPeers[0].remoteDescription,
+    }));
+    if (idle.phase !== 'asking' || idle.ice !== 'new' || idle.remote) {
+      throw new Error(`ICE started before consent: ${JSON.stringify(idle)}`);
+    }
+  }
+  check('ICE remains new throughout a 65-second consent delay', true);
+  const waiting = await request(base, 'GET', '/status', { key });
+  check('bridge remains available without an early failure',
+    waiting.json.state === 'asking' && waiting.json.error === null, JSON.stringify(waiting.json));
 
   const recordKey = await page.evaluate(() => window.AgentPair.recordKey(window.AgentPair.readToken(window.__pairing.state.token).id));
   const pubBefore = await request(`http://127.0.0.1:${PORT}`, 'GET', `/api/public-data/users/${encodeURIComponent(recordKey)}`);
@@ -257,10 +284,12 @@ let bridgeOut = '';
   await page.click('#wa-agent-dialog .title button'); // Minimize
   const waitingChip = await page.evaluate(() => {
     const el = document.querySelector('#wa-chips [data-chip=agent]');
-    return { hidden: document.getElementById('wa-agent-dialog').hidden, text: el && el.textContent, title: el && el.title };
+    return { hidden: document.getElementById('wa-agent-dialog').hidden, text: el && el.textContent, title: el && el.title,
+      icons: el ? [...el.querySelectorAll('[data-icon]')].map(i => i.dataset.icon).join(',') : '' };
   });
   check('minimizing the pairing dialog leaves a counting-down 🤖 chip',
-    waitingChip.hidden && /⏱ \d+:\d\d/.test(waitingChip.text || '') && /waiting/.test(waitingChip.title || ''), JSON.stringify(waitingChip));
+    waitingChip.hidden && /\d+:\d\d/.test(waitingChip.text || '') && waitingChip.icons === 'robot,hourglass'
+      && /waiting/.test(waitingChip.title || ''), JSON.stringify(waitingChip));
 
   bridgeOut = '';
   bridge = spawn('node', [BRIDGE, uiLink, `--config-dir=${configDir}`, '--runs-as=Test Harness'],
@@ -315,9 +344,9 @@ let bridgeOut = '';
   await page.evaluate(() => window.toggleRecording());
   const recChip = await until('record chip', () => page.evaluate(() => {
     const el = document.querySelector('#wa-chips [data-chip=record]');
-    return el ? el.textContent : null;
+    return el && el.querySelector('[data-icon=record]') ? el.textContent : null;
   }), 5000).catch(() => null);
-  check('recording adds a ● chip beside the agent', /●\s*\d\d:\d\d/.test(recChip || ''), String(recChip));
+  check('recording adds a ● chip beside the agent', /\d\d:\d\d/.test(recChip || ''), String(recChip));
 
   // No taskbar (single-app, phone): the same chip floats over the game.
   await page.evaluate(() => document.body.classList.add('single-app', 'app-running'));
