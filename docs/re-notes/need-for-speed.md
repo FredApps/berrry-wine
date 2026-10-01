@@ -250,3 +250,25 @@ readbacks per frame remain, not one per line. Earlier counters show virtually
 identical triangle totals for D3D/Glide but 386 versus 229 GPU draws/frame and
 40% more guest blocks for D3D. See `docs/nfs-renderer-benchmark.md` for evidence,
 profiling limitations, artifacts and reproduction.
+
+## NFS II game step (GAME/s)
+
+`nfsw.exe` has no frame pointers, so `--trace-stack` EBP walks are garbage; the
+chain below came from `--trace-stack=IDirectDrawSurface_Lock:12
+--trace-stack-scan` during a race, confirmed with `--count`.
+
+The race runs on worker thread T2. `0x4311f9` calls `0x443bb1` in a loop;
+`0x443bb1` runs one race session (1 hit per race) and calls the per-frame
+render step `0x43f116` from its loop at `0x444052` (the only call site).
+`0x43f116` calls `0x43efab` with EAX=1,2,3 and presents once through `0x43f0af`
+(474 steps vs 473 presents in one counted race). The 237K-Lock stack through
+`0x4825fa`/`0x48eb14` is the multimedia-timer thread, not frames.
+
+`perf.logicalFrame` is `{ address: 0x43f116, verifier: 0x444057 }`. Because the
+step runs on T2, the HUD sums `get_logical_frame_count` across thread
+instances (`ThreadManager.readWasmExportAll`); before that it read 0. Browser
+race, Worker threads: GAME 10.7/s with the verifier agreeing.
+
+CLI route to the race: `--threads --real-ticks`, then mousedown/mouseup on
+RACE (130,310) a few times (batch rate varies 50-155/s, and an early click
+opens Game Setup instead). Cooperative mode runs NFS II at ~1 batch/s.

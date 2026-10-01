@@ -854,13 +854,23 @@ class WineAssembly {
     }
   }
 
+  // The step counter is a per-instance global, so the total is main's plus
+  // every guest thread's: NFS II enters its game step on a worker thread.
   async _readLogicalFrameCount() {
+    let total;
     if (this.guestWorker) {
-      return (await this.guestWorker.callExport('get_logical_frame_count')) >>> 0;
+      total = (await this.guestWorker.callExport('get_logical_frame_count')) >>> 0;
+    } else {
+      const ex = this.instance && this.instance.exports;
+      total = ex && typeof ex.get_logical_frame_count === 'function'
+        ? ex.get_logical_frame_count() >>> 0 : 0;
     }
-    const ex = this.instance && this.instance.exports;
-    return ex && typeof ex.get_logical_frame_count === 'function'
-      ? ex.get_logical_frame_count() >>> 0 : 0;
+    if (this.threadManager && this.threadManager.readWasmExportAll) {
+      for (const { value } of await this.threadManager.readWasmExportAll('get_logical_frame_count')) {
+        total = (total + value) >>> 0;
+      }
+    }
+    return total;
   }
 
   async _readPerfCounter(slot) {
