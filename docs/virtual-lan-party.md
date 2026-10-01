@@ -1507,7 +1507,20 @@ the room on 2026-09-21 (below).
 **Invite links.** `?app=ID&room=OWNER_USERID` names the room to join. There is
 no Invite button (one under the chip sat on top of the game's own UI): while a
 page is in a room, `history.replaceState` writes that link into the page's own
-address, owner and members alike, so sharing the page *is* the invite. The
+address, owner and members alike, so sharing the page *is* the invite. The 🌐
+chip's menu also has Copy invite link.
+
+**The 🌐 chip** (2026-10-01) is a session chip (`lib/session-chips.js`, shared
+with the agent and recording chips), in place of the old fading corner toast.
+It sits in the taskbar tray on the desktop and floats top right over the game
+otherwise, left of the exit-fullscreen button. An event (joined, left,
+hosting) is held in its text and then it settles to a summary (`Blobby Volley ·
+2 players`, `in sam's room`); its menu lists the seats and the last few events
+and has Copy invite link and Leave/Close room, keep playing. Leaving closes the
+room and stops the join offers but leaves the game running offline. The element
+keeps the toast's id, `#wine-lan-chip`, and its event text, which the
+two-browser tests read; `test/test-web-lan-chip.js` drives the chip itself
+with a stand-in room. The
 parameter is removed again when the room closes or the game quits; other
 parameters such as `?debug` are kept. A link is the person's answer already,
 so it shows no card. If the owner is

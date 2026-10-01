@@ -179,7 +179,7 @@ convenience, and marked as such. A remembered key shows "(known since Sep 30)".
 
 The Connected dialog sketched above was built first and then replaced by the chip
 menu: a window open over the game for the whole session was in the way, and the same
-model also carries the recording chip (and later the LAN room's). The floating strip
+model also carries the recording chip and the LAN room's 🌐 chip. The floating strip
 dims after 3 s with no news and never resizes the game. It lives in the DOM, and both
 agent screenshots and the recorder read the canvas, so it is in neither picture.
 
