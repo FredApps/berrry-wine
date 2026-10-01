@@ -130,6 +130,24 @@ async function main() {
   assert(!caller.files.has('c:\\diablo\\diablo.ini'),
     'a post-adoption write must not appear in the caller');
 
+  // Overwriting an inherited file keeps its identity. NFS II's installer
+  // copies FeData\pc\text twice, and the second CREATE_ALWAYS over a file the
+  // first pass wrote threw because the adopted world had no identity map.
+  writeGuestFile(child, 'C:\\Diablo\\storm.dll', Uint8Array.from([0x4d, 0x5a, 5, 6]));
+  assert.deepStrictEqual(Array.from(readGuestFile(child, 'C:\\Diablo\\storm.dll', 16)),
+    [0x4d, 0x5a, 5, 6]);
+
+  // The browser shell adopts from a plain snapshot object, not a VirtualFS.
+  // One taken without an identity map must not strip the adopter's own.
+  const snapshotChild = new VirtualFS();
+  snapshotChild.adoptFrom({
+    files: new Map(caller.files), dirs: new Set(caller.dirs),
+    readOnlyDrives: new Set(caller.readOnlyDrives), cwd: caller.cwd,
+  });
+  writeGuestFile(snapshotChild, 'C:\\Diablo\\diablo.exe', Uint8Array.from([0x4d, 0x5a, 7, 8]));
+  assert.deepStrictEqual(Array.from(readGuestFile(snapshotChild, 'C:\\Diablo\\diablo.exe', 16)),
+    [0x4d, 0x5a, 7, 8]);
+
   console.log('PASS test-vfs-adopt');
 }
 

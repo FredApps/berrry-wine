@@ -2827,6 +2827,14 @@ class WineAssembly {
     // read image_base off it (SEH and callstack formatting) and would otherwise
     // translate every guest address against zero.
     const exeName = url.replace(/^.*[\\\/]/, '');
+    // What GetModuleFileName and the command line report after "<drive>:\":
+    // the whole drive-relative path for an exe launched from a guest path
+    // (imported media, a disc launcher's child), as the CLI's --exe-guest-path
+    // does. NFS II's 16-bit InstallShield is D:\SETUP\ENGLISH\SETUP.EXE and
+    // looks for _SETUP.DLL beside the path it is given; a bare basename sent
+    // it to D:\. A registry app's URL is a server path, not a guest one.
+    const processName = /^[a-z]:[\\/]/i.test(url)
+      ? url.slice(3).replace(/\//g, '\\') : exeName;
     this._exeName = exeName;
     this._exeUrl = url;
     if (opts.args) this._extraArgs = opts.args;
@@ -2837,7 +2845,7 @@ class WineAssembly {
       // queue and lock ownership must remain distinct from every guest slot.
       this.instance.exports.set_host_shadow(1);
       entry = await this.guestWorker.loadPe(
-        exeBytes, exeName, this.processId, {
+        exeBytes, processName, this.processId, {
           extraArgs: this._extraArgs || '',
           exeDrive: ProcessBoot.exeDriveForPath(url),
         });
@@ -2864,7 +2872,7 @@ class WineAssembly {
       this._publishWorkerDllCount(meta.get_dll_count | 0);
     } else {
       ProcessBoot.setExeDrive(this.instance.exports, url);
-      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
+      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, processName);
       if (this._extraArgs) {
         ProcessBoot.setExtraCmdline(this.instance.exports, this.memory.buffer, this._extraArgs);
       }
@@ -2891,7 +2899,7 @@ class WineAssembly {
     }
     if (this.guestWorker) {
       ProcessBoot.setExeDrive(this.instance.exports, url);
-      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
+      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, processName);
     }
 
     return entry;

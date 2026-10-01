@@ -1089,8 +1089,13 @@ const EXE_GUEST_PATH = (() => {
   }
   return normalized;
 })();
-const EXE_PROCESS_NAME = EXE_GUEST_PATH
-  ? EXE_GUEST_PATH.replace(/^[a-z]:\\/i, '') : path.basename(EXE_PATH);
+// A --media-exe launch (tools/run-media.js) is a guest path too, and reports
+// its directory the way host.js does for imported media: NFS II's InstallShield
+// finds _SETUP.DLL beside D:\SETUP\ENGLISH\SETUP.EXE, not in D:\.
+const EXE_PROCESS_GUEST_PATH = EXE_GUEST_PATH ||
+  (MEDIA_EXE && /^[a-z]:\\/i.test(MEDIA_EXE) ? MEDIA_EXE : null);
+const EXE_PROCESS_NAME = EXE_PROCESS_GUEST_PATH
+  ? EXE_PROCESS_GUEST_PATH.replace(/^[a-z]:\\/i, '') : path.basename(EXE_PATH);
 // Windows file names are case-insensitive and the guest asks for whatever case
 // its source code used (MCM: LoadLibraryA("lang.dll") for LANG.DLL). A plain
 // existsSync(path.join(dir, name)) only agrees with that on macOS, so a DLL
