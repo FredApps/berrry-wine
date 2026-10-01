@@ -2,6 +2,7 @@
 'use strict';
 
 const assert = require('assert');
+const { parseShellLink } = require('../lib/shell-link');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
@@ -276,7 +277,12 @@ async function main() {
     'IPersistFile::Save writes the shortcut');
   const saved = context.vfs.files.get(linkPath.toLowerCase());
   assert(saved, 'shortcut exists in the VFS');
-  assert.strictEqual(saved.data.length, 76, 'shortcut contains one Shell Link Header');
+  // The configured target, directory and arguments are in the file, not
+  // just a header: the browser desktop launches installed games from it.
+  assert.deepStrictEqual(parseShellLink(saved.data), {
+    target: 'D:\\Tools\\ptanks.exe', workingDir: 'C:\\Games\\Pocket Tanks',
+    args: '-windowed', description: '', showCmd: 1,
+  }, 'shortcut names its target, working directory and arguments');
   const header = new DataView(saved.data.buffer, saved.data.byteOffset, saved.data.byteLength);
   assert.strictEqual(header.getUint32(0, true), 0x4c, 'shortcut header size is canonical');
   assert.strictEqual(header.getUint32(4, true), 0x00021401, 'shortcut carries CLSID_ShellLink');
