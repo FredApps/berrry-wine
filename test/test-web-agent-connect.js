@@ -20,8 +20,9 @@
 //   - the local API refuses a request without the key or with a foreign Host
 //   - a disconnect from the agent closes the page side
 //   - the same through Start → Connect Agent…: link, consent dialog (a known
-//     bot, signing in without registering), Allow, tray icon, Take back pill,
-//     Disconnect. Screenshots of each dialog state go to build/agent-connect/.
+//     bot, signing in without registering), Allow closing into the 🤖 session
+//     chip (tray and floating placements), ✋ Take back, the chip menu's
+//     radios, Disconnect. Screenshots of each dialog state go to build/agent-connect/.
 
 'use strict';
 
@@ -253,6 +254,13 @@ let bridgeOut = '';
     Math.abs(moved.x - (start.x - 100)) <= 1 && Math.abs(moved.y - (start.y - 80)) <= 1,
     `${JSON.stringify(start)} -> ${JSON.stringify(moved)}`);
   check('Start → Connect Agent… shows a fresh link', /#wa1\./.test(uiLink) && uiLink !== link, uiLink);
+  await page.click('#wa-agent-dialog .title button'); // Minimize
+  const waitingChip = await page.evaluate(() => {
+    const el = document.querySelector('#wa-chips [data-chip=agent]');
+    return { hidden: document.getElementById('wa-agent-dialog').hidden, text: el && el.textContent, title: el && el.title };
+  });
+  check('minimizing the pairing dialog leaves a counting-down 🤖 chip',
+    waitingChip.hidden && /⏱ \d+:\d\d/.test(waitingChip.text || '') && /waiting/.test(waitingChip.title || ''), JSON.stringify(waitingChip));
 
   bridgeOut = '';
   bridge = spawn('node', [BRIDGE, uiLink, `--config-dir=${configDir}`, '--runs-as=Test Harness'],
@@ -266,6 +274,8 @@ let bridgeOut = '';
     return d && !d.hidden && /wants to connect/.test(d.textContent) ? d.textContent : null;
   }));
   await shot('2-request');
+  check('a waiting agent turns the chip to attention',
+    await page.$eval('#wa-chips [data-chip=agent]', el => /attention/.test(el.className) && /Allow/.test(el.textContent)), 'no attention chip');
   const kept = await page.$eval('#wa-agent-dialog', el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; });
   check('a dragged dialog keeps its place across state changes',
     Math.abs(kept.x - moved.x) <= 1 && Math.abs(kept.y - moved.y) <= 1, `${JSON.stringify(moved)} -> ${JSON.stringify(kept)}`);
@@ -279,37 +289,109 @@ let bridgeOut = '';
     return st.json && st.json.state === 'connected';
   });
   check('Allow in the dialog connects', true);
-  const trayShown = await page.$eval('#wa-agent-tray', el => !el.hidden);
-  check('the taskbar shows the agent icon', trayShown, 'hidden');
+  const chipOf = () => page.evaluate(() => {
+    const el = document.querySelector('#wa-chips [data-chip=agent]');
+    const strip = document.getElementById('wa-chips');
+    return el ? { text: el.textContent, cls: el.className, placement: window.wineSession.placement(),
+      act: !!el.querySelector('.act'), inClock: !!strip.closest('#clock-area') } : null;
+  });
+  const closedIntoChip = await until('dialog closes into the chip', async () => {
+    const hidden = await page.$eval('#wa-agent-dialog', el => el.hidden);
+    const c = await chipOf();
+    return hidden && c ? c : null;
+  }, 5000).catch(() => null);
+  check('after Allow the dialog closes into a 🤖 chip in the taskbar tray',
+    !!closedIntoChip && closedIntoChip.placement === 'tray' && closedIntoChip.inClock, JSON.stringify(closedIntoChip));
 
   await request(base2, 'POST', '/click', { key: key2, body: { x: 5, y: 5 } });
-  const pillShown = await until('Take back pill', () => page.$eval('#wa-agent-pill', el => !el.hidden), 5000).catch(() => false);
+  const driving = await until('chip says driving', async () => {
+    const c = await chipOf();
+    return c && /\bdrive\b/.test(c.cls) && c.act ? c : null;
+  }, 5000).catch(() => null);
+  await shot('3-tray');
+  check('the tray chip turns blue with ✋ while the agent drives', !!driving, JSON.stringify(await chipOf()));
+
+  // A recording is a second chip in the same strip.
+  await page.evaluate(() => window.toggleRecording());
+  const recChip = await until('record chip', () => page.evaluate(() => {
+    const el = document.querySelector('#wa-chips [data-chip=record]');
+    return el ? el.textContent : null;
+  }), 5000).catch(() => null);
+  check('recording adds a ● chip beside the agent', /●\s*\d\d:\d\d/.test(recChip || ''), String(recChip));
+
+  // No taskbar (single-app, phone): the same chip floats over the game.
+  await page.evaluate(() => document.body.classList.add('single-app', 'app-running'));
+  const floating = await until('chip floats', async () => {
+    const c = await chipOf();
+    return c && c.placement === 'float' && !c.inClock ? c : null;
+  }, 3000).catch(() => null);
+  check('without a taskbar the chip floats top right and spells out the state',
+    !!floating && /testharnessbot driving/.test(floating.text) && /Take back/.test(floating.text), JSON.stringify(floating));
+  await page.click('#wa-chips [data-chip=agent] .ico');
+  const menuText = await until('chip menu', () => page.evaluate(() => {
+    const m = document.querySelector('.wa-chip-menu[data-chip=agent]');
+    return m ? m.innerText : null;
+  }), 3000).catch(() => '');
+  check('the chip menu names the bot, its unverified label and the modes',
+    /testharnessbot/.test(menuText) && /Test Harness \(unverified\)/.test(menuText)
+      && /Agent drives/.test(menuText) && /Disconnect/.test(menuText), menuText);
   await shot('3-connected');
-  check('the Take back pill appears once the agent drives', pillShown, 'pill hidden');
+  await page.keyboard.press('Escape');
 
-  await page.click('#wa-agent-pill');
+  await page.click('#wa-chips [data-chip=agent] .act');
   const refusedUi = await request(base2, 'POST', '/click', { key: key2, body: { x: 5, y: 5 } });
-  const watchChecked = await page.$eval('#wa-agent-dialog input[value=watch]', el => el.checked);
-  check('the pill hands input back and the dialog shows watch-only',
-    refusedUi.status === 422 && watchChecked && await page.$eval('#wa-agent-pill', el => el.hidden),
-    `${refusedUi.status} watch=${watchChecked}`);
+  const afterTake = await chipOf();
+  check('✋ Take back hands input back: the agent is refused and the chip says watching',
+    refusedUi.status === 422 && /watching/.test(afterTake.text) && !afterTake.act, `${refusedUi.status} ${JSON.stringify(afterTake)}`);
 
-  const discBtn = await page.$$('#wa-agent-dialog button.btn');
-  for (const btn of discBtn) {
-    if ((await btn.evaluate(el => el.textContent)) === 'Disconnect') { await btn.click(); break; }
-  }
+  const clickMenuItem = (text) => page.evaluate((t) => {
+    const it = [...document.querySelectorAll('.wa-chip-menu[data-chip=agent] .it')].find(el => el.textContent.trim().endsWith(t));
+    if (it) it.click();
+    return !!it;
+  }, text);
+  await page.click('#wa-chips [data-chip=agent] .ico');
+  await page.waitForSelector('.wa-chip-menu[data-chip=agent]', { timeout: 3000 });
+  await clickMenuItem('Paused');
+  const paused = await page.evaluate(async () => {
+    const ui = await import('/lib/agent-connect-ui.js');
+    const radio = [...document.querySelectorAll('.wa-chip-menu[data-chip=agent] [role=menuitemradio]')]
+      .find(el => /Paused/.test(el.textContent));
+    return { mode: ui.controller().state.mode, stillOpen: !!radio, checked: radio && radio.getAttribute('aria-checked') };
+  });
+  const pausedUi = await page.evaluate(() => window.wineSession.get('agent') && document.querySelector('#wa-chips [data-chip=agent]').textContent);
+  check('a mode radio in the menu applies, stays open and reads back checked',
+    paused.mode === 'paused' && paused.stillOpen && paused.checked === 'true' && /paused/.test(pausedUi), JSON.stringify(paused) + pausedUi);
+  const pausedRefused = await request(base2, 'GET', '/screenshot.png', { key: key2 });
+  check('paused refuses even a screenshot', pausedRefused.status !== 200, String(pausedRefused.status));
+
+  await clickMenuItem('Disconnect');
   const endText = await until('ended dialog', () => page.evaluate(() => {
     const d = document.getElementById('wa-agent-dialog');
-    return d && /disconnected/.test(d.textContent) ? d.textContent : null;
+    return d && !d.hidden && /disconnected/.test(d.textContent) ? d.textContent : null;
   }), 5000).catch(() => '');
   await shot('4-ended');
-  check('Disconnect in the dialog ends the session', /The agent is disconnected/.test(endText), endText);
+  check('Disconnect in the chip menu ends the session', /The agent is disconnected/.test(endText), endText);
   const agentSide = await until('bridge sees bye', async () => {
     const st = await request(base2, 'GET', '/status', { key: key2 });
     return st.json && st.json.state === 'closed' ? st.json : null;
   }, 10000).catch(() => null);
   check('the agent is told the player disconnected', !!agentSide && /player disconnected/.test(agentSide.error), JSON.stringify(agentSide));
-  check('the tray icon goes away', await page.$eval('#wa-agent-tray', el => el.hidden), 'still shown');
+  check('the agent chip goes away', !(await chipOf()), 'still shown');
+
+  await page.click('#wa-chips [data-chip=record]');
+  const recMenu = await until('record menu', () => page.evaluate(() => {
+    const m = document.querySelector('.wa-chip-menu[data-chip=record]');
+    return m ? m.innerText : null;
+  }), 3000).catch(() => '');
+  check('the ● chip menu offers Stop and save and Discard', /Recording/.test(recMenu) && /Stop and save/.test(recMenu) && /Discard/.test(recMenu), recMenu);
+  await page.evaluate(() => {
+    const it = [...document.querySelectorAll('.wa-chip-menu[data-chip=record] .it')].find(el => /Discard/.test(el.textContent));
+    if (it) it.click();
+  });
+  const recGone = await until('record chip gone', () => page.evaluate(() =>
+    !document.querySelector('#wa-chips [data-chip=record]') && document.getElementById('wa-chips').hidden
+      && document.getElementById('start-record-label').textContent === 'Record Screen'), 5000).catch(() => false);
+  check('Discard stops the recording and the strip empties', recGone, 'still recording');
 
   check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
 })().catch((err) => {

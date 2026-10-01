@@ -83,8 +83,9 @@ along, whichever agent that is. This design makes it a Start-menu feature:
  └─────────────────────────┘
 ```
 
-In `body.single-app` mode the Start menu is hidden while an app runs, so the dialog
-also opens from the tray icon's menu and stays reachable mid-game.
+In `body.single-app` mode the Start menu is hidden while an app runs. A session
+started on the phone's desktop stays reachable mid-game through its floating chip, but
+there is no way yet to *start* one once a game is up.
 
 ### Dialog: state 1 of 3, "Pair"
 
@@ -152,21 +153,40 @@ convenience, and marked as such. A remembered key shows "(known since Sep 30)".
  │                                    [ Disconnect ]       │
  └─────────────────────────────────────────────────────────┘
 
- while the agent drives:
+ as built, after Allow the dialog closes into a session chip (lib/session-chips.js):
 
- ╔═══════════════════════════════════════════════════════╗
- ║                                    ┌───────────────┐  ║
- ║          (game)                    │🤖 Take back ✋│  ║
- ║                                    └───────────────┘  ║
- ╚═══════════════════════════════════════════════════════╝
+ no taskbar (single-app, phone, fullscreen): a strip over the game, top right
+ ╔═══════════════════════════════════════════════════════════════╗
+ ║                 ┌──────────────────────────────────┬──────────┐║
+ ║   (game)        │🤖 wanderbot driving [✋ Take back]│● REC 0:42│║
+ ║                 └──────────────────────────────────┴──────────┘║
+ ║                 │ 🤖 wanderbot · 38 ms                 │       ║
+ ║                 │ key 7f3a·c91e·04b2 · runs as … (unverified)  ║
+ ║                 │ last: click · 2s ago · 14 commands   │       ║
+ ║                 │ ● Agent drives / Watch only / Paused │       ║
+ ║                 │ ✓ May see … ✓ May use … ✓ May run …  │       ║
+ ║                 │ Disconnect                           │       ║
+ ╚═══════════════════════════════════════════════════════════════╝
 
- taskbar tray:  [🤖] ← blinks on every agent command; click = reopen dialog
+ desktop: the same chips, short, in the taskbar tray:  [🤖 ✋][● 0:42] 21:42
+
+ chip states:  🤖 waiting for agent… ⏱ 9:12   (Minimize on the pairing dialog)
+               🤖 wanderbot wants to connect — Allow?   (attention; dialog pops too)
+               🤖 wanderbot driving [✋ Take back]      (blue)
+               🤖 wanderbot watching 👁
+               🤖 ⏸ paused                              (dimmed)
 ```
+
+The Connected dialog sketched above was built first and then replaced by the chip
+menu: a window open over the game for the whole session was in the way, and the same
+model also carries the recording chip (and later the LAN room's). The floating strip
+dims after 3 s with no news and never resizes the game. It lives in the DOM, and both
+agent screenshots and the recorder read the canvas, so it is in neither picture.
 
 - "Take back" is the existing `user-input on` path in `lib/agent-remote.js` (input
   exclusivity). It doesn't disconnect, and the agent receives `{event:'user-took-input'}`.
 - Esc is **not** a take-back key, because games use Esc.
-- Closing the dialog minimizes it to the tray. Reloading or closing the page ends the
+- Minimizing the pairing dialog leaves the waiting chip. Reloading or closing the page ends the
   session, and a new link is needed.
 
 ---
@@ -469,7 +489,7 @@ pairing then runs on one machine with no berrry account and no network.
                              source in tools/wine-agent/, bundled (werift + [1]) into one
                              file; nomcp register/sign-in; localhost API (section 2)
  [4] lib/agent-remote.js     transport seam: HubPoll (existing) | RtcChannel (new)
- [5] index.html              Start item, 3-state dialog, frame + "Take back" pill, tray
+ [5] index.html              Start item, pairing/consent dialog, 🤖 session chip
  [6] skills/…/SKILL.md, reference/*.md, /llms.txt
  [7] tools/deploy-berrry.js  include skills/ and llms.txt in the deploy set (verify: it
                              walks lib/ and src/ today)
@@ -496,12 +516,14 @@ Everything up to [6] runs on the dev-server mirror before any berrry change land
                                    became a new module rather than a transport seam in
                                    agent-remote.js: that file only gained runCommands()
                                    and commandNeeds()
- lib/agent-connect-ui.js      [5]  the dialog, the tray 🤖, the Take back pill; loaded
-                                   on first click. index.html gained one Start item
+ lib/agent-connect-ui.js      [5]  the pairing and consent dialogs, then the 🤖 chip;
+                                   loaded on first click. index.html gained one Start item
+ lib/session-chips.js              session chips: tray or floating strip, Win98 menus;
+                                   also used by lib/recorder.js (● REC)
  skills/…/SKILL.md, reference/ [6] plus root SPEC.md (→ llms.txt)
  tools/deploy-berrry.js       [7]  ships skills/ (.md .mjs .txt)
  test/test-agent-pair.js      [9]  8 checks, no browser
- test/test-web-agent-connect.js    35 checks: real Chrome ⇄ the shipped bridge over a
+ test/test-web-agent-connect.js    46 checks: real Chrome ⇄ the shipped bridge over a
                                    real DataChannel, via the controller API and then
                                    through the Start menu; screenshots in
                                    build/agent-connect/
