@@ -109,7 +109,7 @@ for (const c of cases) {
   }
   const term = c.name === 'Find from EOF starts at top' ? 'hel' : 'ell';
   check(`${c.name}: FINDREPLACE has FR_FINDNEXT and ${term}`, (() => {
-    const m = c.out.match(new RegExp(`dump-fr: flags=0x([0-9a-f]+) findWhat="${term}"`));
+    const m = c.out.match(new RegExp(`dump-fr: .*\\bsize=40 flags=0x([0-9a-f]+) .*\\bfindWhat="${term}"`));
     return !!m && (parseInt(m[1], 16) & 0x08) !== 0;
   })());
   check(`${c.name}: no not-found MessageBox`, !c.out.includes(`Cannot find "${term}"`));
