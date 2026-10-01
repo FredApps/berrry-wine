@@ -1680,6 +1680,15 @@ class WineAssembly {
           self.logToUI(`[ShellExecute] launching ${launchFile} from the caller's filesystem`);
           return 33;
         }
+        // A relative name the caller's own filesystem has is that file too:
+        // Win98's CreateProcess looks in the current directory before any
+        // search path. NFS II's AUTORUN.EXE changes into SETUP\ENGLISH and
+        // starts a bare "setup.exe", which the basename heuristic below
+        // resolved to an unrelated registered app (Moorhuhn 3 Puzzle).
+        if (!absolute && shell.launchVfsExe && shell.launchVfsExe(launchFile, self, launchDir, params)) {
+          self.logToUI(`[ShellExecute] launching ${launchFile} from the caller's current directory`);
+          return 33;
+        }
         if (/\.exe$/i.test(file) && shell.launchExe(file)) {
           self.logToUI(`[ShellExecute] launching ${file}`);
           return 33;

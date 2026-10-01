@@ -150,7 +150,7 @@ function makeShell(opts = {}) {
 
   const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
   assert.match(shellSource,
-    /wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*app\.args,[\s\S]*?\}\)/,
+    /let launchArgs = [^;]*\bapp\.args;[\s\S]*?wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*launchArgs,[\s\S]*?\}\)/,
     'browser launch must pass app.args into loadExe before PE startup');
   assert.match(shellSource,
     /vfs\.setCurrentDirectory\(app\.workingDirectory\)/,
@@ -174,6 +174,9 @@ function makeShell(opts = {}) {
   assert.match(hostSource,
     /if \(absolute && shell\.launchVfsExe && shell\.launchVfsExe\(launchFile, self, launchDir, params\)\)/,
     'browser host offers relative and absolute executable names to the caller VFS');
+  assert(hostSource.indexOf('if (!absolute && shell.launchVfsExe && shell.launchVfsExe(launchFile, self, launchDir, params))') <
+      hostSource.indexOf("if (/\\.exe$/i.test(file) && shell.launchExe(file))"),
+    'a bare name in the caller current directory (NFS II autorun "setup.exe") beats the registry basename match');
   assert.strictEqual(
     (shellSource.match(/queuePendingLaunch\(key, SINGLE_APP\(\)\);/g) || []).length,
     2,
