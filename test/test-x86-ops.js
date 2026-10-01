@@ -187,6 +187,23 @@ async function main() {
   runCode([0x66, 0x06, 0x66, 0x07, 0x8B, 0xC4]); // push es; pop es; mov eax,esp
   test('16-bit PUSH/POP ES preserves stack width', e.get_eax(), imageBase + 0xD00000);
 
+  // PCI configuration mechanism #1 (3Dfx's fxPCI scan, NFS II SE setup):
+  // a dword out to 0xCF8 selects a register, 0xCFC..0xCFF read it back.
+  const pciRead = (addr, inBytes, port = 0xCFC) => {
+    runCode([0x66, 0xBA, 0xF8, 0x0C, 0xB8, ...le32(addr), 0xEF,   // mov dx,0xcf8; mov eax,addr; out dx,eax
+      0x66, 0xBA, port & 0xFF, port >> 8, ...inBytes]);           // mov dx,port; in ...
+    return e.get_eax() >>> 0;
+  };
+  test('PCI 0:0.0 is the 440BX host bridge', pciRead(0x80000000, [0xED]), 0x71908086);
+  test('PCI 0:7.0 is the PIIX4 ISA bridge', pciRead(0x80003800, [0xED]), 0x71108086);
+  test('PCI 0:0.0 class is host bridge', pciRead(0x80000008, [0xED]), 0x06000003);
+  test('PCI empty slot reads all ones', pciRead(0x80000800, [0xED]), 0xFFFFFFFF);
+  test('PCI bus 1 is empty', pciRead(0x80010000, [0xED]), 0xFFFFFFFF);
+  test('PCI disabled address reads all ones', pciRead(0x00000000, [0xED]), 0xFFFFFFFF);
+  test('PCI byte read at 0xCFE is the device id low byte',
+    pciRead(0x80000000, [0x31, 0xC0, 0xEC], 0xCFE), 0x90);                // xor eax,eax; in al,dx
+  test('PCI address register reads back', pciRead(0x80003808, [0xED], 0xCF8), 0x80003808);
+
   // Delphi/VCL uses x87 FILD/FISTP qword pairs as a memcpy fast path. The
   // integer payload is often a string chunk, so preserving raw bytes matters.
   const fpuCopyBytes = [0x54, 0x4d, 0x41, 0x49, 0x4e, 0x46, 0x4f, 0x52]; // "TMAINFOR"
