@@ -1676,21 +1676,21 @@ Resource-aware Win98 emulator
   <div id="start-menu">
     <div class="banner">Wine&nbsp;Assembly</div>
     <div class="items">
-      <a class="item" href="#" id="start-add-game-item" onclick="addGameFromStart(event)" title="Open a game, disc image or archive from this device"><span class="ico">&#128190;</span>Add a Game...</a>
+      <a class="item" href="#" id="start-add-game-item" onclick="addGameFromStart(event)" title="Open a game, disc image or archive from this device"><span class="ico"><img src="icons/ui/add-game.png" width="16" height="16" alt="&#128190;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Add a Game...</a>
       <div class="sep"></div>
-      <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico">&#128196;</span>Read Me</a>
-      <a class="item" href="apps/"><span class="ico">&#127918;</span>Apps</a>
-      <a class="item" href="design/"><span class="ico">&#128208;</span>Design</a>
-      <a class="item" href="story.html"><span class="ico">&#128218;</span>The Story</a>
-      <a class="item" href="https://berrry.app/create?remix=wine-assembly" target="_blank" rel="noopener"><span class="ico">&#127827;</span>Remix on Berrry</a>
-      <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico">&#128187;</span>Source on GitHub</a>
+      <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico"><img src="icons/ui/readme.png" width="16" height="16" alt="&#128196;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Read Me</a>
+      <a class="item" href="apps/"><span class="ico"><img src="icons/ui/apps.png" width="16" height="16" alt="&#127918;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Apps</a>
+      <a class="item" href="design/"><span class="ico"><img src="icons/ui/design.png" width="16" height="16" alt="&#128208;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Design</a>
+      <a class="item" href="story.html"><span class="ico"><img src="icons/ui/story.png" width="16" height="16" alt="&#128218;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>The Story</a>
+      <a class="item" href="https://berrry.app/create?remix=wine-assembly" target="_blank" rel="noopener"><span class="ico"><img src="icons/ui/berrry.png" width="16" height="16" alt="&#127827;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Remix on Berrry</a>
+      <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico"><img src="icons/ui/github.png" width="16" height="16" alt="&#128187;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Source on GitHub</a>
       <div class="sep"></div>
       <a class="item" href="#" id="start-record-item" onclick="toggleRecordingFromStart(event)" title="Record screen + audio to video"><span class="ico" id="start-record-ico">&#9679;</span><span id="start-record-label">Record Screen</span></a>
-      <a class="item" href="#" id="start-agent-item" onclick="connectAgentFromStart(event)" title="Let an AI agent see and play this session"><span class="ico"><img src="https://wine-assembly.berrry.app/api/retrodiffusion/image/32/32/mc_item?prompt=friendly+robot+head+with+antenna+windows+98+desktop+icon&amp;remove_bg=true&amp;seed=7" width="16" height="16" alt="&#129302;" draggable="false" style="vertical-align:middle" onerror="this.replaceWith(this.alt)"></span>Connect Agent...</a>
+      <a class="item" href="#" id="start-agent-item" onclick="connectAgentFromStart(event)" title="Let an AI agent see and play this session"><span class="ico"><img src="icons/ui/agent.png" width="16" height="16" alt="&#129302;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Connect Agent...</a>
       <div class="sep"></div>
-      <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
+      <a class="item" href="?debug"><span class="ico"><img src="icons/ui/debug.png" width="16" height="16" alt="&#128295;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Debug Mode</a>
       <div class="sep"></div>
-      <a class="item" href="#" id="start-account-item" onclick="accountFromStart(event)" title="Your berrry account: online play and saves"><span class="ico">&#128100;</span><span id="start-account-label">Log In...</span></a>
+      <a class="item" href="#" id="start-account-item" onclick="accountFromStart(event)" title="Your berrry account: online play and saves"><span class="ico"><img src="icons/ui/account.png" width="16" height="16" alt="&#128100;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span><span id="start-account-label">Log In...</span></a>
       <a class="item" href="#" id="start-shutdown-item" onclick="openShutdownFromStart(event)" title="Shut Down Windows"><span class="ico"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="1.5" width="13" height="9" fill="#c0c0c0" stroke="#000"/><rect x="2" y="3" width="10" height="6" fill="#1084d0"/><rect x="5" y="11" width="4" height="2" fill="#808080"/><rect x="3" y="13" width="8" height="1.5" fill="#000"/><circle cx="12.5" cy="12" r="3" fill="#ffd700" stroke="#000"/></svg></span>Shut Down...</a>
     </div>
   </div>
@@ -2721,9 +2721,10 @@ Resource-aware Win98 emulator
       sources.innerHTML = '<div class="icon-img">📦</div><div class="icon-label">Sources</div>';
       let sourcesLastClick = 0;
       // Sources and Read Me have no exe to take an icon from, so they get
-      // RetroDiffusion pixel art (the session chips' source, lib/session-chips.js).
-      // The emoji stays until the image decodes, so offline still shows one.
-      const pixelIcon = (box, prompt) => {
+      // RetroDiffusion pixel art, generated once and kept in icons/ui/ (a live
+      // API call per page load put the desktop at the mercy of berrry's load).
+      // The emoji stays until the image decodes, so a failed load still shows one.
+      const pixelIcon = (box, name) => {
         const img = new Image(32, 32);
         img.style.imageRendering = 'pixelated';
         img.alt = '';
@@ -2733,14 +2734,13 @@ Resource-aware Win98 emulator
           box.style.border = '0';
           box.appendChild(img);
         };
-        img.src = 'https://wine-assembly.berrry.app/api/retrodiffusion/image/32/32/mc_item?prompt='
-          + prompt + '&remove_bg=true&seed=7';
+        img.src = 'icons/ui/' + name + '.png';
       };
+      pixelIcon(sources.querySelector('.icon-img'), 'sources');
       sources.addEventListener('click', () => {
         for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
         sources.classList.add('selected');
         const now = Date.now();
-      pixelIcon(sources.querySelector('.icon-img'), 'open+cardboard+box+package+with+floppy+disks+windows+98+icon');
         if (SINGLE_APP_MODE || now - sourcesLastClick < 500) {
           window.open('sources.html', 'wine-assembly-sources');
           sourcesLastClick = 0;
@@ -2756,11 +2756,11 @@ Resource-aware Win98 emulator
       readme.dataset.app = 'readme';
       readme.innerHTML = '<div class="icon-img">📄</div><div class="icon-label">Read Me</div>';
       let readmeLastClick = 0;
+      pixelIcon(readme.querySelector('.icon-img'), 'readme');
       readme.addEventListener('click', () => {
         for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
         readme.classList.add('selected');
         const now = Date.now();
-      pixelIcon(readme.querySelector('.icon-img'), 'white+paper+text+document+page+with+folded+corner+windows+98+icon');
         if (SINGLE_APP_MODE || now - readmeLastClick < 500) {
           openReadme();
           readmeLastClick = 0;
