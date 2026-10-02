@@ -36,11 +36,18 @@ function taskPreview(t) {
   const visual = run.visuals.at(-1);
   return `<button class="task-preview" data-run="${escape(run.key)}" aria-label="Open ${escape(label.toLowerCase())} for ${escape(t.title)}"><img src="${escape(visual.url)}" alt="${escape(visual.kind + ': ' + (run.route || visual.name))}" loading="lazy"><span>${escape(label)} · ${age(run.startedAt)} ago</span></button>`;
 }
+function taskOwner(t, details=false) {
+  if(!t.owner)return '<div class="task-owner sub">Unassigned</div>';
+  const agent=state.agents.find(a=>a.id===t.owner);
+  const identity=details ? t.owner : t.owner.split(':')[0]+' · '+t.owner.split(':').at(-1).slice(-8);
+  const [activity,color]=agent ? health(agent) : ['Session not observed',''];
+  const pid=agent?.process?.matches?.[0]?.pid;
+  return `<div class="task-owner"><span class="sub">Assigned to</span>${agent ? `<button class="owner-link" data-agent="${escape(agent.id)}" title="${escape(agent.id)}">${escape(identity)} ↗</button>` : `<span class="sub" title="${escape(t.owner)}">${escape(identity)}</span>`}${pid ? `<span class="sub">PID ${pid}</span>` : ''}${badge(activity,color)}${terminalLink({id:t.owner},details)}</div>`;
+}
 function taskRows(tasks) { return tasks.length ? sortedTasks(tasks).map(t => {
   const [status,label,,symbol] = taskState(t.status);
-  const owner = t.owner ? t.owner.split(':')[0] + (state.agents.find(a => a.id === t.owner)?.process?.matches?.[0]?.pid ? ' · PID ' + state.agents.find(a => a.id === t.owner).process.matches[0].pid : '') : 'Unassigned';
   const next = status === 'blocked' ? t.blocker || t.next : t.next;
-  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}<div class="sub">${escape(t.id)} · ${escape(owner)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div></div>${taskPreview(t)}${badge(label, 'task-label task-label-' + status)}</div>`;
+  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}${taskOwner(t)}<div class="sub">${escape(t.id)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div><button class="task-details" data-task="${escape(t.id)}">Details →</button></div>${taskPreview(t)}${badge(label, 'task-label task-label-' + status)}</div>`;
 }).join('') : empty('No matching tasks.'); }
 function health(a) {
   if (!a.lastActivityAt) return ['Unknown', ''];
@@ -57,6 +64,11 @@ function visualCards(runs, limit = 6) {
   }).join('')}</div>` : empty('No linked visuals yet.');
 }
 function agentRuns(a) { return state.runs.filter(r => r.agentId === a.id); }
+function terminalLink(a, details=false) {
+  const entry=state.terminals?.find(t=>t.agentId===a.id);
+  if(!entry)return details ? '<span class="sub">Terminal unavailable · no registered tmux session</span>' : '';
+  return `<button class="details-button" data-terminal="${escape(entry.id)}" ${entry.available?'':'disabled'} title="${escape(entry.available?'Open in view mode':entry.reason)}">${entry.available?'Terminal >_':'Terminal unavailable'}</button>`;
+}
 const cpuUsage = value => Number.isFinite(value) ? value.toFixed(1) + '%' : '—';
 const memoryUsage = value => !Number.isFinite(value) ? '—' : value >= 1024 ** 3 ? (value / 1024 ** 3).toFixed(1) + ' GiB' : Math.round(value / 1024 ** 2) + ' MiB';
 function processSummary(p, compact = false) {
@@ -76,7 +88,7 @@ function agentCard(a) {
   const candidate = latest && state.candidates.find(c => c.id === latest.candidateId);
   const name = a.taskTitle || (a.title && a.title !== a.id ? a.title : candidate?.name || 'Untitled session');
   const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
-  return `<article class="agent panel"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button><div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
+  return `<article class="agent panel"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button><div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
 function feedRows(rows, truncate = false) { return rows.map(row => `<div class="feed-row"><div class="sub">MESSAGEBOARD</div><div class="feed-text">${escape(truncate && row.text.length > 360 ? row.text.slice(0, 360) + '…' : row.text)}</div></div>`).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
@@ -166,8 +178,12 @@ async function refresh() {
 }
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
+  if (el.dataset.terminal) { const entry=state.terminals?.find(t=>t.id===el.dataset.terminal);if(entry?.available)window.OpsTerminal.open(entry); }
   if (el.dataset.taskFilter) { filter = filter === el.dataset.taskFilter ? 'all' : el.dataset.taskFilter; render(); }
-  if (el.dataset.task) { const t = state.tasks.find(t => t.id === el.dataset.task); if (t) { const evidence = taskEvidence(t); show(`TODOS.md:${t.line}`, `<h1>${escape(t.title)}</h1><p>${badge(taskState(t.status)[1], 'task-label task-label-' + t.status)}</p>${evidence.runs.length ? section(evidence.label) + (evidence.label === 'Related app' ? '<p class="source-note">These captures belong to the same app; they are not explicitly linked to this task.</p>' : '') + visualCards(evidence.runs, 4) : ''}<pre>${escape(t.body)}</pre>${link('/source?path=TODOS.md', 'Read full source')}`); } }
+  if (el.dataset.task) { const t = state.tasks.find(t => t.id === el.dataset.task); if (t) {
+    const evidence = taskEvidence(t);
+    show(`TASK / ${t.id}`, `<h1>${escape(t.title)}</h1><p>${badge(taskState(t.status)[1], 'task-label task-label-' + t.status)}</p>${taskOwner(t,true)}<dl><dt>Started</dt><dd>${escape(when(t.startedAt))}</dd><dt>Last progress</dt><dd>${escape(when(t.progressAt))}</dd>${t.next ? `<dt>Next</dt><dd>${escape(t.next)}</dd>` : ''}${t.blocker ? `<dt>Blocker</dt><dd>${escape(t.blocker)}</dd>` : ''}${t.needs ? `<dt>Needs</dt><dd>${escape(t.needs)}</dd>` : ''}</dl>${t.status==='blocked' ? `<button data-blocker="${escape(t.id)}">Respond to blocker →</button>` : ''}${evidence.runs.length ? section(evidence.label) + (evidence.label === 'Related app' ? '<p class="source-note">These captures belong to the same app; they are not explicitly linked to this task.</p>' : '') + visualCards(evidence.runs, 4) : ''}<details><summary>Task source · TODOS.md:${t.line}</summary><pre>${escape(t.body)}</pre>${link('/source?path=TODOS.md', 'Read full source')}</details>`);
+  } }
   if (el.dataset.candidate) candidateDetail(el.dataset.candidate);
   if (el.dataset.agent) agentDetail(el.dataset.agent);
   if (el.dataset.blocker) blockerDetail(el.dataset.blocker);

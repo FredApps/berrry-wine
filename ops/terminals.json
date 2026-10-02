@@ -1,0 +1,12 @@
+{
+  "terminals": [
+    {
+      "id": "orchestrator",
+      "agentId": "codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0",
+      "label": "Orchestrator",
+      "session": "wine-orchestrator",
+      "pane": "%0",
+      "panePid": 80668
+    }
+  ]
+}

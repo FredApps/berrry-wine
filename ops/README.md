@@ -1,17 +1,47 @@
 # Wine / Ops
 
-A local dashboard with append-only blocker replies. Files remain the source of truth; no database,
-generated project state, API keys, external requests, or new dependencies.
+A local dashboard with append-only blocker replies and an optional tmux terminal.
+Files remain the source of truth; no database or external service.
 
 ```sh
+npm ci --prefix ops --ignore-scripts
 node ops/server.js
 # http://127.0.0.1:8098
 ```
 
 The UI polls every five seconds while visible. Reads are cached in memory;
 restart to rebuild everything. The server binds only to loopback. It does not
-launch agents, execute tests, or edit tasks. Its only write action is an explicit
-user click to append a blocker reply to `messageboard.txt`.
+launch agents or edit tasks. Explicit actions can append a blocker reply to
+`messageboard.txt` or send terminal input after enabling Control.
+
+## Browser terminal
+
+The orchestrator card has a **Terminal >_** button. Open it to view the registered
+pane; **Enable control** sends keyboard input to that pane. Only one browser can
+control a mapping at a time. Reconnect starts in View. Closing the drawer detaches
+the web client and leaves the agent running.
+
+`ops/terminals.json` explicitly links an agent ID to a tmux session, pane ID and
+pane PID. A stale PID disables attachment; update the mapping after deliberately
+replacing the orchestrator. Find those values with:
+
+```sh
+tmux list-panes -a -F '#{session_name} #{pane_id} #{pane_pid}'
+```
+
+The bridge uses [tmux control mode](https://github.com/tmux/tmux/wiki/Control-Mode)
+through Node child-process pipes, plus JavaScript-only `ws` and `@xterm/xterm`.
+There is no `node-pty`, native Node addon, or dependency install script. The
+existing tmux executable is required. Only the mapped pane is shown, with an
+initial screen capture followed by live output; tmux status bars and copy-mode
+overlays are not mirrored. The original pane dimensions are retained; smaller
+viewers scroll instead of resizing the agent's terminal.
+
+WebSocket connections require a same-origin, single-use, 30-second ticket.
+View input is rejected by the server. Control input is sent as literal bytes to
+the pinned pane, with a PID check before delivery. Keep this loopback service local.
+Run `node --test ops/terminal.test.js` to exercise a disposable tmux server;
+the test never sends commands to the real orchestrator.
 
 ## Sources
 

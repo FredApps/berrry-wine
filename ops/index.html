@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Wine / Ops</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <script src="/vendor/xterm.js" defer></script>
+  <script src="/terminal.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -36,5 +39,10 @@
     <footer><span id="updated">Waiting for sources</span><span>Edit the source files to update this dashboard.</span></footer>
   </div>
   <dialog id="detail"><div class="dialog-top"><span id="detail-label">Details</span><button id="close-detail" aria-label="Close details">✕</button></div><div id="detail-body"></div></dialog>
+  <dialog id="terminal-drawer" aria-labelledby="terminal-title">
+    <div class="terminal-top"><strong id="terminal-title">Terminal</strong><span id="terminal-status" role="status">Disconnected</span><button id="terminal-mode" disabled>Enable control</button><button id="terminal-reconnect">Reconnect</button><button id="terminal-expand">Expand</button><button id="terminal-close" aria-label="Close terminal">✕</button></div>
+    <p id="terminal-notice">View only. Closing this drawer leaves the agent running.</p>
+    <div id="terminal-screen"></div>
+  </dialog>
 </body>
 </html>
