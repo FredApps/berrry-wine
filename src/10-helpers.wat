@@ -7660,6 +7660,7 @@
     (local $base_x i32) (local $base_y i32)
     (local $font_pts i32) (local $font_weight i32) (local $font_italic i32)
     (local $dlg_font i32) (local $font_units i32)
+    (local $nc_w i32) (local $nc_h i32)
     ;; Win16 USER uses the classic 8x16 SYSTEM_FONT dialog base. Win32
     ;; dialogs in this runtime use the measured 8pt MS Sans Serif 6x13 base.
     (local.set $base_x
@@ -7820,27 +7821,45 @@
     ;; from GetWindowRect then preserve that undersized rect, clipping the
     ;; bottom row of controls (pinball's Player Controls buttons).
     ;;
-    ;; Child dialog pages have no separately composed top-level chrome, so
-    ;; their template dimensions remain unchanged.
+    ;; A child dialog with no frame style (the usual property-sheet or wizard
+    ;; page) has no chrome, so its template size is its window size. A child
+    ;; that asks for chrome gets it, exactly as CreateDialog's
+    ;; AdjustWindowRectEx does on Windows and as $defwndproc_do_nccalcsize
+    ;; then takes it back out: WS_CAPTION reserves the same frame and caption
+    ;; as a top-level dialog (a child never has a menu bar), and a lone
+    ;; WS_BORDER/WS_DLGFRAME is the 1px simple child border. Leaving the
+    ;; captioned child at its template size cut ~26px off its client area:
+    ;; InstallShield 3's WS_CHILD|WS_CAPTION "Setup" progress dialog lost the
+    ;; lower two thirds of its Cancel button.
+    (local.set $nc_w (i32.const 0))
+    (local.set $nc_h (i32.const 0))
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))
+      (then
+        (local.set $nc_w (select (i32.const 5) (i32.const 8) (global.get $is_win16)))
+        (local.set $nc_h
+          (i32.add
+            (select (i32.const 24) (i32.const 30) (global.get $is_win16))
+            (select (i32.const 18) (i32.const 0)
+              (i32.ne (local.get $menu_key) (i32.const 0))))))
+      (else
+        (if (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000)) (i32.const 0x00C00000))
+          (then
+            (local.set $nc_w (select (i32.const 5) (i32.const 8) (global.get $is_win16)))
+            (local.set $nc_h (select (i32.const 24) (i32.const 30) (global.get $is_win16))))
+          (else
+            (if (i32.ne (i32.and (local.get $style) (i32.const 0x00C00000)) (i32.const 0))
+              (then
+                (local.set $nc_w (i32.const 2))
+                (local.set $nc_h (i32.const 2))))))))
     (call $ctrl_geom_set (local.get $dlg_slot)
       (i32.div_u (i32.mul (local.get $dlg_x) (local.get $base_x)) (i32.const 4))
       (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (local.get $base_y)) (i32.const 4)) (i32.const 8))
       (i32.add
         (i32.div_u (i32.mul (local.get $dlg_cx) (local.get $base_x)) (i32.const 4))
-        (select
-          (select (i32.const 5) (i32.const 8) (global.get $is_win16))
-          (i32.const 0)
-          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))))
+        (local.get $nc_w))
       (i32.add
         (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (local.get $base_y)) (i32.const 4)) (i32.const 8))
-        (select
-          (i32.add
-            (select (i32.const 24) (i32.const 30) (global.get $is_win16))
-            (select
-              (i32.const 18) (i32.const 0)
-              (i32.ne (local.get $menu_key) (i32.const 0))))
-          (i32.const 0)
-          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))))
+        (local.get $nc_h)))
     ;; Allocate one CREATESTRUCT on the heap, reused for every control
     (local.set $cs (call $heap_alloc (i32.const 48)))
     (local.set $cs_wa (call $g2w (local.get $cs)))

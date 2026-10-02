@@ -1002,10 +1002,11 @@
         (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
         (return)))
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
-    ;; 16 bytes of extra storage per window; a word needs both of its bytes
-    ;; inside it.
+    ;; $WND_EXTRA_STRIDE bytes of extra storage per window; a word needs both
+    ;; of its bytes inside it.
     (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
-                (i32.gt_u (local.get $arg1) (i32.const 14)))
+                (i32.gt_u (local.get $arg1)
+                  (i32.sub (global.get $WND_EXTRA_STRIDE) (i32.const 2))))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
