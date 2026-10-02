@@ -635,26 +635,28 @@
   ;; Registered classes may reserve cbWndExtra bytes addressed by nonnegative
   ;; Get/SetWindowLong indices. Keep the first four LONG slots independent of
   ;; GWL_USERDATA; authentic WinHelp uses offsets 4, 8, and 12 concurrently.
+  ;; Each window owns $WND_EXTRA_STRIDE (40) bytes, Win9x's cbWndExtra limit.
   (func $wnd_extra_addr (param $slot i32) (param $index i32) (result i32)
     (i32.add (global.get $WINDOW_EXTRA_TABLE)
-      (i32.add (i32.mul (local.get $slot) (i32.const 16)) (local.get $index))))
+      (i32.add (i32.mul (local.get $slot) (global.get $WND_EXTRA_STRIDE))
+        (local.get $index))))
 
   (func $wnd_extra_reset_slot (param $slot i32)
-    (local $p i32)
-    (local.set $p (call $wnd_extra_addr (local.get $slot) (i32.const 0)))
-    (i32.store (local.get $p) (i32.const 0))
-    (i32.store offset=4 (local.get $p) (i32.const 0))
-    (i32.store offset=8 (local.get $p) (i32.const 0))
-    (i32.store offset=12 (local.get $p) (i32.const 0)))
+    (call $zero_memory (call $wnd_extra_addr (local.get $slot) (i32.const 0))
+      (global.get $WND_EXTRA_STRIDE)))
+
+  ;; True when a LONG at byte offset $index lies wholly inside the window's
+  ;; extra bytes. Unsigned, so a negative index is refused too.
+  (func $wnd_extra_long_index_ok (param $index i32) (result i32)
+    (i32.le_u (local.get $index)
+      (i32.sub (global.get $WND_EXTRA_STRIDE) (i32.const 4))))
 
   (func $wnd_extra_get (param $hwnd i32) (param $index i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.or
           (i32.lt_s (local.get $slot) (i32.const 0))
-          (i32.or
-            (i32.gt_u (local.get $index) (i32.const 12))
-            (i32.ne (i32.and (local.get $index) (i32.const 3)) (i32.const 0))))
+          (i32.eqz (call $wnd_extra_long_index_ok (local.get $index))))
       (then (return (i32.const 0))))
     (i32.load (call $wnd_extra_addr (local.get $slot) (local.get $index))))
 
@@ -663,9 +665,7 @@
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.or
           (i32.lt_s (local.get $slot) (i32.const 0))
-          (i32.or
-            (i32.gt_u (local.get $index) (i32.const 12))
-            (i32.ne (i32.and (local.get $index) (i32.const 3)) (i32.const 0))))
+          (i32.eqz (call $wnd_extra_long_index_ok (local.get $index))))
       (then (return (i32.const 0))))
     (local.set $p (call $wnd_extra_addr (local.get $slot) (local.get $index)))
     (local.set $old (i32.load (local.get $p)))

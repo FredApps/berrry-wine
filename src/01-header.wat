@@ -1104,7 +1104,7 @@
   ;; 0x00005104  8B      SHARED_DLG_ENDED / SHARED_DLG_RESULT
   ;; 0x0000510C  4B      SHARED_DLG_PUMP_HWND (modal pump hwnd, all instances)
   ;; 0x00005110  240B    LAUNCH_ENV_OVERRIDES (host-supplied NAME=VALUE entries)
-  ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
+  ;; 0x00005200  10KB    WINDOW_EXTRA_TABLE (256 entries x 40 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
   ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
@@ -2137,8 +2137,15 @@
   ;; Per-window cbWndExtra-compatible storage. USER classes in WinHelp use
   ;; independent LONG slots at offsets 0, 4, 8, and 12; aliasing these to
   ;; GWL_USERDATA corrupts toolbar layout state.
+  ;;
+  ;; 40 bytes per window is the Win95/98 ceiling on cbWndExtra (RegisterClass
+  ;; fails above it), so every class a Win9x app can register fits. It was 16:
+  ;; InstallShield 3's progress gauge (ISBarCls) keeps its empty-part colour
+  ;; at offset 0x10, the store was refused, GetWindowLong read back 0, and the
+  ;; unfilled bar and its percentage were painted black.
   (global $WINDOW_EXTRA_TABLE i32 (region.addr $WINDOW_EXTRA_TABLE 0))
   (global $WINDOW_EXTRA_TABLE_SIZE i32 (region.size $WINDOW_EXTRA_TABLE))
+  (global $WND_EXTRA_STRIDE i32 (i32.const 40))
   ;; One-shot override for CreateDialogIndirectParam*: when non-zero,
   ;; $dlg_load reads the DLGTEMPLATE directly from this guest pointer
   ;; instead of resolving an RT_DIALOG resource.

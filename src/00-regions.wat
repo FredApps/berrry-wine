@@ -123,7 +123,8 @@
   ;; region's own size, so the two cannot disagree.
   (region.declare $LAUNCH_ENV_OVERRIDES (size 0x000000F0) (align 0x00000010)
     (owner "01-header.wat:$LAUNCH_ENV_OVERRIDES"))
-  (region.declare $WINDOW_EXTRA_TABLE (size 0x00001000) (align 0x00000100)
+  (region.declare $WINDOW_EXTRA_TABLE (size 0x00002800) (align 0x00000100)
+    (stride $WND_EXTRA_STRIDE (count $MAX_WINDOWS))
     (owner "09c0-window-table.wat:$wnd_extra_addr"))
   (region.declare $PAINT_SCRATCH (size 0x00000100) (align 0x00000100)
     (stride 0x10 (count $PAINT_SCRATCH_SLOTS))
