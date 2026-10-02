@@ -5,11 +5,14 @@
 //
 //   node tools/toyvm/arm-bench.js --exe=A.EXE,B.EXE [--arms=l1,uop,jit,only]
 //        [--dispatches=20m] [--reps=1] [--timeout=300] [--out=FILE.json]
+//        [--l1-seconds=S]
 //
 //   l1         threaded x86 alone (the oracle)
 //   uop        l1 + the µop loop tier (uop-live.js), shell-bench's schedule
 //   uopc       ...with its programs chained in one E1 arena (--uop-chain)
 //   jit        l1 + the live region JIT (region-live.js), sweep-dos's schedule
+//   jit-early  ...profiled 6M after 6M whatever the run length (the CLI's)
+//   jit-r8     ...jit-early carrying up to 8 regions in its install
 //   only       the µop-only arm (uop-only.js): loop nests and straight lines
 //   only-line  ...straight lines only, linked
 //   only-bl    only, with straight lines built on the baseline passes
@@ -31,6 +34,13 @@
 // naive register/mask forwarding (TOYVM_NAIVEFWD=0), `@nok` with a naive
 // program's constants back on `movi` (TOYVM_CONSTK=0). They stack:
 // only-naive@spill@nofuse.
+//
+// --l1-seconds=S sizes each program's run instead: an L1 run of --dispatches
+// first measures that program's rate, and every arm then runs the count L1
+// retires in about S seconds of CPU. One count per program, the same for every
+// arm, so the dispatch and frame check still holds. A program that ends before
+// its calibration budget keeps the count it ended at. Short runs overweight
+// one-time build and compile cost, and can stop inside an intro.
 //
 // Name an arm twice (--arms=l1,l1,only) to time a second copy of it: that
 // pair's spread is this run's null band.
@@ -71,6 +81,12 @@ const ARMS = {
   uop: (b) => ({ uop: { sampleAfter: Math.floor(b / 10), profileFor: 1e6 } }),
   uopc: (b) => ({ uop: { sampleAfter: Math.floor(b / 10), profileFor: 1e6, chain: true } }),
   jit: (b) => ({ regionJit: { sampleAfter: Math.floor(b / 4), profileFor: Math.floor(b / 4), gateAt: 0 } }),
+  // ...on the CLI's fixed schedule (profile 6M after 6M) rather than half the
+  // run, which on a long run leaves the first half on L1; and the same carrying
+  // up to 8 regions in its one install (the default carries 1, so a program
+  // whose time is spread over several loops is mostly left on L1).
+  'jit-early': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0 } }),
+  'jit-r8': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, regions: 8 } }),
   only: () => ({ uopOnly: { shape: 'loop' } }),
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes
@@ -158,6 +174,7 @@ async function main() {
   for (const a of arms) if (!armOf(a)) throw new Error(`unknown arm ${a} (known: ${Object.keys(ARMS).join(',')})`);
   if (arms[0] !== 'l1') throw new Error('the first arm is the oracle: l1');
   const budget = count(arg('dispatches', '20m'));
+  const l1Secs = arg('l1-seconds', null) === null ? 0 : Number(arg('l1-seconds'));
   const reps = Number(arg('reps', 1));
   const timeoutS = Number(arg('timeout', 300));
   const outFile = arg('out', null);
@@ -165,16 +182,22 @@ async function main() {
   if (!progs.length) throw new Error('--exe=A.EXE,B.EXE');
   // Arms named twice are timed twice, and labelled apart.
   const labels = arms.map((a, i) => (arms.indexOf(a) === i ? a : `${a}#${arms.slice(0, i).filter((x) => x === a).length + 1}`));
-  console.log(`arm-bench: ${progs.length} program(s), ${budget} dispatches, arms ${labels.join(',')}, reps ${reps},`
+  console.log(`arm-bench: ${progs.length} program(s), ${l1Secs ? `~${l1Secs}s of L1 each (calibrated at ${budget})` : `${budget} dispatches`}, arms ${labels.join(',')}, reps ${reps},`
     + ` loadavg ${os.loadavg().map((x) => x.toFixed(2)).join(' ')}`);
   const rows = [];
   for (let pi = 0; pi < progs.length; pi++) {
     const exe = progs[pi];
-    const row = { exe, name: path.basename(exe), arms: {} };
+    const row = { exe, name: path.basename(exe), arms: {}, budget };
+    if (l1Secs) {
+      const c = await runOne(exe, budget, 'l1', timeoutS);
+      if (c.ok && c.dispatched >= budget) row.budget = Math.round(c.dispatched / c.cpuSecs * l1Secs);
+      console.log(`      ${row.name}: calibration ${c.ok ? `${c.dispatched} in ${c.cpuSecs.toFixed(2)}s` : c.reason}`
+        + ` -> ${row.budget} dispatches`);
+    }
     for (let rep = 0; rep < reps; rep++) {
       for (let i = 0; i < arms.length; i++) {
         const k = (i + pi + rep) % arms.length;
-        const r = await runOne(exe, budget, arms[k], timeoutS);
+        const r = await runOne(exe, row.budget, arms[k], timeoutS);
         const prev = row.arms[labels[k]];
         // Best of the reps, by CPU time; a failure anywhere marks the arm.
         if (!prev || (prev.ok && (!r.ok || r.cpuSecs < prev.cpuSecs))) row.arms[labels[k]] = r;
