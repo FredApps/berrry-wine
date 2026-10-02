@@ -9,6 +9,15 @@ const http = require('node:http');
 const { parseTasks, parseSession, createReader, logWindows } = require('./readers');
 const { createServer } = require('./server');
 const { parseProcesses, parseOpenFiles, associate } = require('./processes');
+const { identify } = require('./backfill');
+
+test('historical image association never treats prose as a candidate ID', () => {
+  assert.equal(identify('This generally works; open build/caesar3-gameplay.png'), null);
+  assert.equal(identify('/project/build/caesar3-gameplay.png'), null);
+  assert.equal(identify('/project/build/generally/menu.png'), 'generally');
+  assert.equal(identify('/project/build/pirates_2004/menu.png'), 'pirates-2004');
+  assert.equal(identify('/project/pirates-2004/serious-sam-demo/menu.png'), null);
+});
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wine-ops-'));
@@ -22,6 +31,13 @@ async function fixture() {
   await write('scratch/runs/R-1/screen.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ioAAAAASUVORK5CYII=', 'base64'));
   return { root, write, cleanup: () => fs.rm(root, { recursive: true, force: true }) };
 }
+
+test('task queue metadata distinguishes deferred work from blockers and keeps the next step', () => {
+  const tasks = parseTasks('- [!] Old agent\n  status: deferred\n  Next: Resume only when requested\n- [ ] Later idea\n  status: backlog\n');
+  assert.equal(tasks[0].status, 'deferred');
+  assert.equal(tasks[0].next, 'Resume only when requested');
+  assert.equal(tasks[1].status, 'backlog');
+});
 
 test('task parser preserves legacy uncertainty, links exact candidates, ignores fenced examples', () => {
   const text = '## Legacy\nStill historical\n\n## Current\n- [!] Startup\n  candidate: demo\n  owner: claude:abc\n- [x] Fixed\n  candidate: demo-extra\n```md\n- [ ] example\n```';

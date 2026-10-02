@@ -19,6 +19,13 @@ configured model. Keep normal sandbox and approval protections.
 4. Acknowledge each received handoff on the board. Record which files, local
    processes, remote machines and benchmark resources are released or retained.
    Never silently take over a resource because a session is quiet.
+   A handoff may also be reconstructed from transcripts, Git history, artifacts,
+   and process observations: label it reconstructed and cite the evidence.
+   Missing owner acknowledgment alone must not require the user to resume an
+   old agent. Retain specific unverified jobs or conflicting file claims as
+   explicit unknowns; do not infer that reconstruction stopped a process.
+   User scope update, 2026-10-01: skip Claude migration for now. Defer its five
+   remaining roots without taking their files/jobs or blocking Codex work.
 5. Build a current coordinated task section in `TODOS.md`, preserving historical
    sections and concurrent changes. Give every task a stable ID, owner, desired
    result/done criteria, next step, and evidence/handoff references. Explicitly

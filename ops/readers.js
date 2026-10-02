@@ -66,7 +66,8 @@ function parseTasks(text, candidates = []) {
     const explicit = metadata(body, 'status');
     const candidateIds = candidates.filter(c => new RegExp(`(^|[^a-zA-Z0-9_-])${c.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-zA-Z0-9_-])`).test(body)).map(c => c.id);
     tasks.push({ id: metadata(body, 'id') || `todo-${line}`, title: clip(title, 250), body: body.slice(0, 24000), line,
-      section, kind, status: ['backlog', 'ready', 'active', 'blocked', 'review', 'done'].includes(explicit) ? explicit : status,
+      section, kind, status: ['backlog', 'ready', 'active', 'blocked', 'review', 'deferred', 'done'].includes(explicit) ? explicit : status,
+      next: field(body, 'next'),
       owner: metadata(body, 'owner'), startedAt: date(metadata(body, 'started')), progressAt: date(metadata(body, 'progress')),
       blocker: field(body, 'blocker'), needs: field(body, 'needs'), waitingOn: field(body, 'waiting-on'), blockedAt: date(metadata(body, 'blocked-since')),
       replyAllowed: /^[\w.-]{1,100}$/.test(metadata(body, 'id') || ''),

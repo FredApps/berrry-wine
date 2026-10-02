@@ -21,7 +21,7 @@ const { createServer } = require('./server');
       { id: 'other', name: 'Another candidate', version: '2.0' },
     ] }));
     await write('messageboard.txt', '2026-10-01 codex PROGRESS startup fault reproduced\n<script>window.injected=true</script>\n');
-    await write('scratch/runs/R-1/result.json', JSON.stringify({ candidateId: 'demo', agentId: 'codex:one', startedAt: now, outcome: 'failed', route: 'startup', screenshot: 'screen.png', diagrams: ['flow.png'], command: 'node test/run.js --app=demo', summary: 'Fault before menu' }));
+    await write('scratch/runs/R-1/result.json', JSON.stringify({ candidateId: 'demo', taskId: 'T-1', agentId: 'codex:one', startedAt: now, outcome: 'failed', route: 'startup', screenshot: 'screen.png', diagrams: ['flow.png'], command: 'node test/run.js --app=demo', summary: 'Fault before menu' }));
     await write('scratch/runs/R-1/screen.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ioAAAAASUVORK5CYII=', 'base64'));
     await write('scratch/runs/R-1/flow.png', await fs.readFile(path.join(root, 'scratch/runs/R-1/screen.png')));
     await write('codex/one.jsonl', [
@@ -65,11 +65,38 @@ const { createServer } = require('./server');
     await fs.mkdir(shots, { recursive: true });
     await page.screenshot({ path: path.join(shots, 'overview.png'), fullPage: true });
     await page.click('a[data-view="tasks"]'); await page.waitForSelector('#filter');
+    assert.deepEqual(await page.$$eval('[data-task-group]', els => els.map(e => e.dataset.taskGroup)), ['active','ready']);
+    assert.match(await page.$eval('.task-label-active', el => el.textContent), /Running/);
+    assert.match(await page.$eval('.task-active .task-preview', el => el.textContent), /Task evidence/);
+    assert.match(await page.$eval('.task-ready .task-preview', el => el.textContent), /Related app/);
+    await page.click('.task-active .task-preview');
+    assert.match(await page.$eval('#detail-body', el => el.textContent), /Fault before menu/);
+    await page.click('#close-detail');
     await page.select('#filter', 'active');
     assert.equal(await page.$$eval('.task', els => els.length), 1);
     await page.click('[data-task="T-1"]'); await page.waitForSelector('dialog[open]');
     assert.ok(await page.$eval('#detail-body', el => el.textContent.includes('Fix startup')));
+    assert.equal(await page.$$eval('#detail-body .visual-card', els => els.length), 1);
     await page.click('#close-detail');
+    await write('TODOS.md', '## Queue\n- [x] Finished first in file\n- [ ] Later\n  status: backlog\n- [!] Claude paused\n  status: deferred\n  Next: Leave untouched\n- [!] Need fixture\n  blocker: Installer missing\n- [ ] Review result\n  status: review\n- [ ] Verify gameplay\n  Next: Run input probe\n- [~] Fix startup\n  id: T-1\n  Next: Compare <before> and after\n\n## Old notes\nHistorical prose\n');
+    await page.select('#filter', 'all');
+    await page.waitForSelector('[data-task-group="deferred"]', {timeout:15000});
+    assert.deepEqual(await page.$$eval('[data-task-group]', els => els.map(e => e.dataset.taskGroup)), ['active','ready','review','blocked','backlog','deferred','done','unknown']);
+    assert.equal(await page.$eval('[data-task-group="done"]', el => el.open), false);
+    assert.equal(await page.$eval('[data-task-group="deferred"]', el => el.open), false);
+    assert.match(await page.$eval('.task-active .task-next', el => el.textContent), /Compare <before> and after/);
+    assert.equal(await page.$$eval('.task-ready .task-preview', els => els.length), 0);
+    await page.click('[data-task-group="done"] summary');
+    await page.click('#refresh');
+    await page.waitForFunction(() => document.querySelector('[data-task-group="done"]')?.open);
+    await page.screenshot({path:path.join(shots,'tasks.png'),fullPage:true});
+    await page.click('[data-task-filter="ready"]');
+    assert.equal(await page.$$eval('[data-task-group]', els => els.length), 1);
+    await page.click('[data-task-filter="ready"]');
+    await page.setViewport({width:390,height:844});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.screenshot({path:path.join(shots,'tasks-mobile.png'),fullPage:true});
+    await page.setViewport({width:1440,height:1000});
     await page.click('a[data-view="corpus"]'); await page.waitForSelector('.candidate');
     await page.type('#search', 'Demo');
     assert.equal(await page.$$eval('.candidate', els => els.length), 1);
@@ -111,6 +138,23 @@ const { createServer } = require('./server');
     await page.click('#close-detail');
     await page.waitForFunction(() => document.querySelector('.blocker')?.textContent.includes('Reply posted'));
     await page.screenshot({path:path.join(shots,'blockers.png'),fullPage:true});
+    await write('TODOS.md', '- [~] Work on Demo\n  id: T-1\n  candidate: demo\n- [ ] Queue another\n  candidate: other\n');
+    await write('test/candidate-corpus/manifest.json', JSON.stringify({candidates:[
+      {id:'passed',name:'A Passed'}, {id:'unknown',name:'B Unknown'},
+      {id:'untested',name:'C Untested'}, {id:'failed',name:'D Failed'},
+      {id:'other',name:'E Queued'}, {id:'demo',name:'Z Working'},
+    ]}));
+    for(const outcome of ['passed','unknown','failed']) await write(`scratch/runs/${outcome}/result.json`,JSON.stringify({candidateId:outcome,startedAt:now,outcome}));
+    await page.click('a[data-view="corpus"]');
+    await page.waitForFunction(() => document.querySelectorAll('.candidate').length === 6,{timeout:15000});
+    assert.deepEqual(await page.$$eval('.candidate',els=>els.map(e=>e.dataset.candidate)),['demo','other','failed','untested','unknown','passed']);
+    assert.match(await page.$eval('.candidate-working',el=>el.textContent),/In progress.*Work on Demo/s);
+    await page.select('#filter','working');
+    assert.equal(await page.$$eval('.candidate',els=>els.length),1);
+    await page.select('#filter','all');
+    await page.screenshot({path:path.join(shots,'corpus-ranked.png'),fullPage:true});
+    await page.setViewport({width:390,height:844});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     assert.deepEqual(errors, []);
     console.log(`PASS dashboard navigation, task filters, search, provider details, PNGs, escaping, mobile layout and live file refresh\nScreenshots: ${shots}`);
   } finally {

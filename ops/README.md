@@ -52,7 +52,22 @@ checkboxes when recording current tasks:
 ```
 
 `[ ]` = ready, `[~]` = active, `[!]` = blocked, `[x]` = done. An optional
-`status: backlog|ready|active|blocked|review|done` overrides the checkbox.
+`status: backlog|ready|active|blocked|review|deferred|done` overrides the checkbox.
+The Tasks screen groups Running, Up next, Needs review, Blocked, Backlog,
+Deferred, Done, and Historical notes in that order, with text and color labels.
+Within a group, file order is queue order: move a task earlier in `TODOS.md`
+to prioritize it. `Next:` is shown directly on the row. Backlog, deferred,
+completed, and historical groups start collapsed; filter or search to reveal
+them. Group expansion is retained during refresh. Running means explicitly
+assigned in the ledger, not inferred live process health. Use `deferred` for
+work intentionally excluded from the current scope, rather than `blocked`.
+Task rows show the latest available screenshot or diagram. Runs with an exact
+`taskId` take precedence; otherwise captures from a linked candidate appear as
+**Related app**, without claiming they prove this task. Owner identity alone
+does not link images. Click the thumbnail for run evidence or the task title
+for up to four associated visual runs. Add `taskId` to run metadata for precise
+association. Preview dates are the recorded run dates, including historical
+imports; they do not imply fresh validation.
 Candidate IDs can occur anywhere in the item, so one task can link several
 candidates. Prefer explicit IDs and use the full provider-prefixed session ID
 shown in agent details for `owner:`. Session ownership is advisory. Continue
@@ -198,6 +213,13 @@ artifact is reported, not silently treated as a successful capture.
 
 ### Visuals on Overview and Agents
 
+The EXE corpus prioritizes candidates linked to running tasks, then review,
+blocked, and queued tasks. Within those groups, failed/timeout/harness-error
+results come before untested, unknown, and passed results; names break ties.
+An In progress banner names the active task, with a matching filter. Completed
+and deferred tasks do not mark a candidate active. Task state and run outcome
+are displayed separately: a past failed capture can coexist with active work.
+
 Overview prioritizes agent activity and shows the newest visual run for each of
 up to six candidates. Agent cards show one compact latest preview whose optional
 `agentId` exactly matches the provider-prefixed Session
@@ -221,6 +243,40 @@ avoid displaying two copies. Cleaning scratch destroys unpreserved evidence.
 Run folders are ordered by their explicit start timestamp, never file mtime.
 
 ## Claude and Codex observation
+
+### Backfill existing visual evidence
+
+Run `node ops/backfill.js --scan`, then `node ops/backfill.js --publish` to
+inventory this project's historical Codex/Claude tool references and existing
+`build/` and `scratch/` images. This never executes recovered commands or starts
+guest applications. The scan can take several minutes for large session logs.
+
+The inventory and dated import reports live in `scratch/ops-backfill/`.
+Published bundles live in `scratch/runs/history-<candidate>-<content-hash>/` and
+appear on the next dashboard refresh. Repeating publication skips content
+already in run folders. Existing runs and source files are never modified.
+
+Candidate mapping requires an exact candidate/registered app ID as a complete
+path component or image filename stem. Words in tool inputs never establish
+candidate identity (for example, the ordinary word "generally" is not evidence
+for GeneRally). `node ops/backfill.js --audit` moves unsafe older imports to
+`scratch/ops-backfill/quarantine/` and writes an association audit, preserving
+the files outside the live dashboard. Publication revalidates old inventories.
+Ambiguous
+associations, missing files, small PNG crops, and near-black/transparent PNGs
+are reported rather than published as previews. This pixel check is only a
+triage heuristic, not visual review; useful dark captures may need manual import.
+Diagrams named as such are tagged separately. Other images remain screenshots.
+
+Every bundle records original path, SHA-256, dimensions when decoded, and
+session-log line references. Raw transcripts and tool commands are not copied.
+A unique referencing session can link the visual to its agent card; this does
+not establish authorship. These records use original file mtime as an explicitly
+labeled fallback date, not verified capture time. Build identity and outcome
+remain unknown, and verification remains unreviewed. The importer does not
+promote historical captures into compatibility passes.
+
+### Live process observation
 
 Agent cards display associated local PIDs with OS-reported CPU percentage and
 resident memory (RSS), plus a background-process count and summed CPU/RSS.
