@@ -9,6 +9,7 @@
   <script src="/vendor/xterm.js" defer></script>
   <script src="/terminal.js" defer></script>
   <script src="/task-ui.js" defer></script>
+  <script src="/approval-ui.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -36,10 +37,12 @@
   </aside>
   <div class="workspace">
     <header><div class="breadcrumb">wine-assembly <span>/</span> <b>OPS CONSOLE</b></div><label class="search"><span>&gt;_</span><input id="search" type="search" placeholder="Search this view…" aria-label="Search this view"></label><span id="connection" role="status">Connecting…</span><button id="refresh" title="Refresh data">↻</button></header>
+    <section id="urgent-approvals" aria-label="Live approval requests" aria-live="polite" hidden></section>
     <main id="main" tabindex="-1"><div class="empty">Reading project files…</div></main>
     <footer><span id="updated">Waiting for sources</span><span>Tasks and discussion stay in your text files.</span></footer>
   </div>
   <dialog id="detail"><div class="dialog-top"><span id="detail-label">Details</span><button id="close-detail" aria-label="Close details">✕</button></div><div id="detail-body"></div></dialog>
+  <dialog id="approval-review" aria-labelledby="approval-title"><div class="dialog-top"><strong id="approval-title">Review live command approval</strong><button id="approval-close" aria-label="Close approval review">✕</button></div><div id="approval-body"></div></dialog>
   <dialog id="task-editor" aria-labelledby="task-editor-title">
     <div class="dialog-top"><strong id="task-editor-title">New task</strong><button id="task-editor-close" aria-label="Close task editor">✕</button></div>
     <form id="task-editor-form">

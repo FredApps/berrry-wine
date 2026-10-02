@@ -116,6 +116,7 @@ function parseSession(provider, records, file, partial, root) {
     totalTokens: null, usageAt: null, compactions: 0, partial, progressAt: null, taskId: null };
   let projectMatch = false;
   let usageAtCompaction = false;
+  let hasSessionMeta = false;
   for (const e of records) {
     if (e.type === 'ops_window_boundary') {
       session.turnStartedAt = null;
@@ -130,7 +131,8 @@ function parseSession(provider, records, file, partial, root) {
     if (typeof cwd === 'string' && inside(root, path.resolve(cwd))) { projectMatch = true; session.cwd = cwd; }
     if (!session.startedAt && time) session.startedAt = time;
     if (provider === 'codex') {
-      if (e.type === 'session_meta') {
+      if (e.type === 'session_meta' && !hasSessionMeta) {
+        hasSessionMeta=true;
         session.id = `codex:${p.id || p.session_id || path.basename(file, '.jsonl')}`;
         session.startedAt = date(p.timestamp) || time;
         session.contextLimit = number(p.context_window);
@@ -311,6 +313,19 @@ function createReader(options = {}) {
   async function snapshot() {
     assets.clear();
     const warnings = [], sources = [];
+    let projectStatus={available:false,body:'',updatedAt:null,author:null};
+    try {
+      const file=await safeFile(root,'ops/STATUS.md');
+      if(file){
+        const text=await readText(file,16*1024);
+        const [header,...parts]=text.replace(/\r\n/g,'\n').split('\n\n');
+        const metadata=header.split('\n').every(line=>/^(updated|author):/i.test(line));
+        projectStatus={available:true,body:metadata?parts.join('\n\n').trim():text.trim(),
+          updatedAt:metadata?date(header.match(/^updated:[ \t]*(.+)$/im)?.[1]?.trim()):null,
+          author:metadata?clip(header.match(/^author:[ \t]*(.+)$/im)?.[1],160):null};
+        sources.push('ops/STATUS.md');
+      }
+    }catch(e){warnings.push(`ops/STATUS.md: ${e.code || e.message}`);}
     let candidates = [], todo = '', activity = [];
     try {
       const manifest = JSON.parse(await readText(path.join(root, 'test/candidate-corpus/manifest.json')));
@@ -362,7 +377,7 @@ function createReader(options = {}) {
     for (const a of agents) { a.process = observations.get(a); delete a.logFile; }
     for (const run of runList) if (!candidates.some(c => c.id === run.candidateId)) warnings.push(`${run.key}: candidate ${run.candidateId} is not in the manifest.`);
     for (const a of agents) {
-      const task = tasks.find(t => t.owner === a.id && t.status === 'active');
+      const task = ['active','blocked','review','ready'].map(status=>tasks.find(t=>t.owner===a.id && t.status===status)).find(Boolean);
       if (task) { a.taskId = task.id; a.taskTitle = task.title; a.taskStartedAt = task.startedAt; a.progressAt = task.progressAt; }
     }
     for (const c of candidates) {
@@ -371,7 +386,7 @@ function createReader(options = {}) {
       c.latestRun = matching[0] || null;
       c.lastVerifiedRun = matching.find(r => r.outcome === 'passed' && r.verification === 'reviewed') || null;
     }
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,projectStatus,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }

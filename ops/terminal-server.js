@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const exec = promisify(execFile);
+const {parseApproval}=require('./approval-prompt');
 
 function createTerminalBridge(server, options = {}) {
   const root = options.root || path.resolve(__dirname, '..');
@@ -15,6 +16,55 @@ function createTerminalBridge(server, options = {}) {
   let WebSocketServer, wss;
   try { ({WebSocketServer} = require('ws')); wss = new WebSocketServer({noServer:true,maxPayload:32768,perMessageDeflate:false}); } catch {}
   const tickets = new Map(), connections = new Set(), controllers = new Map();
+  const observed=new Map(), decisions=new Set();
+  const signature=value=>crypto.createHash('sha256').update(value).digest('hex');
+  async function capture(target) {
+    if(!await exists(target))throw Error('Registered pane changed or unavailable');
+    const {stdout}=await exec(tmux,[...tmuxArgs,'capture-pane','-p','-J','-t',target.pane],{timeout:2000,maxBuffer:131072});
+    return stdout;
+  }
+  async function approvals() {
+    const targets=await mappings(),items=[],warnings=[];
+    for(const id of observed.keys())if(!targets.some(t=>t.id===id))observed.delete(id);
+    for(const target of targets) {
+      try {
+        const screen=await capture(target),prompt=parseApproval(screen),fingerprint=signature(JSON.stringify(target)+screen);
+        if(!prompt){observed.delete(target.id);continue;}
+        let record=observed.get(target.id);
+        if(!record || record.fingerprint!==fingerprint) {
+          record={id:crypto.randomBytes(24).toString('hex'),fingerprint,target,firstSeenAt:new Date().toISOString(),sent:false};
+          observed.set(target.id,record);
+        }
+        record.checkedAt=Date.now();
+        items.push({...prompt,id:record.id,terminalId:target.id,label:target.label || target.session,firstSeenAt:record.firstSeenAt,sent:record.sent});
+      }catch{observed.delete(target.id);warnings.push(`Approval monitor unavailable for ${target.label || target.session}. Inspect the terminal.`);}
+    }
+    return {items,warnings};
+  }
+  async function approvalDecision(req,res) {
+    const fail=(code,message)=>{res.writeHead(code,{'Content-Type':'text/plain'});res.end(message);};
+    if(!originOK(req))return fail(403,'Same-origin request required');
+    if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>1024)return fail(413,'Request too large');chunks.push(chunk);}
+    let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{return fail(400,'Invalid JSON');}
+    if(!['accept','decline'].includes(input?.decision))return fail(400,'Choose accept once or decline');
+    const record=[...observed.values()].find(r=>r.id===input.id);
+    if(!record || record.sent || Date.now()-record.checkedAt>15000)return fail(409,'Prompt expired or already answered. Refresh and review again.');
+    const id=record.target.id;
+    if(controllers.has(id) || decisions.has(id))return fail(409,'Terminal is being controlled. Switch all browser terminals to View first.');
+    decisions.add(id);
+    try {
+      const target=(await mappings()).find(t=>t.id===id);
+      if(!target || JSON.stringify(target)!==JSON.stringify(record.target))return fail(409,'Terminal registration changed. Refresh first.');
+      const screen=await capture(target);
+      if(!parseApproval(screen) || signature(JSON.stringify(target)+screen)!==record.fingerprint)return fail(409,'Prompt changed. Refresh and review the current command.');
+      record.sent=true; // Never replay a decision, including after an ambiguous send failure.
+      await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,input.decision==='accept'?'y':'Escape'],{timeout:2000,maxBuffer:65536});
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({sent:true}));
+    }catch{return fail(409,'Could not confirm delivery. Inspect the terminal before trying again.');}
+    finally{decisions.delete(id);}
+  }
   const originOK = req => /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '') && req.headers.origin === `http://${req.headers.host}`;
   async function mappings() {
     let data; try { data=JSON.parse(await fs.readFile(config,'utf8')); } catch { return []; }
@@ -79,6 +129,7 @@ function createTerminalBridge(server, options = {}) {
     ws.on('close',cleanup);ws.on('error',cleanup);ws.on('pong',()=>{alive=true;});
     const heartbeat=setInterval(()=>{if(!alive){ws.terminate();return;}alive=false;ws.ping();},15000);heartbeat.unref();
     function setMode(nextMode) {
+      if(nextMode==='control' && decisions.has(target.id)){send('error',{message:'An approval decision is being delivered. Try again shortly.'});return;}
       if(nextMode==='control' && controllers.has(target.id) && controllers.get(target.id)!==ws) {send('error',{message:'Another browser controls this terminal. Switch it to View first.'});return;}
       inputEpoch++;release();mode=nextMode;
       if(mode==='control')controllers.set(target.id,ws);
@@ -142,6 +193,6 @@ function createTerminalBridge(server, options = {}) {
   }
   function close(){tickets.clear();for(const ws of connections)ws.terminate();wss?.close();}
   server.on('close',close);
-  return {list,ticket,close};
+  return {list,ticket,close,approvals,approvalDecision};
 }
 module.exports={createTerminalBridge};

@@ -151,6 +151,15 @@ test('session collection scopes to project, updates changed logs, and attaches e
   assert.equal((await reader.snapshot()).agents[0].state, 'idle');
 });
 
+test('forked Codex logs keep the first worker identity instead of inherited parent metadata',()=>{
+  const root='/project';
+  const session=parseSession('codex',[
+    {type:'session_meta',payload:{id:'worker',session_id:'parent',cwd:root}},
+    {type:'session_meta',payload:{id:'parent',cwd:root}},
+  ],'/logs/worker.jsonl',false,root);
+  assert.equal(session.id,'codex:worker');
+});
+
 test('visuals preserve explicit session attribution and keep diagrams out of candidate screenshots', async t => {
   const f = await fixture(); t.after(f.cleanup);
   const png = await fs.readFile(path.join(f.root, 'scratch/runs/R-1/screen.png'));
@@ -241,6 +250,25 @@ test('blocker replies append one line, require same origin and a stable blocked 
 });
 
 module.exports = { fixture };
+
+test('agent TLDR uses explicit review metadata, refreshes from disk and bounds file reads',async t=>{
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  assert.equal((await reader.snapshot()).projectStatus.available,false);
+  await f.write('ops/STATUS.md','updated: 2026-10-01T12:00:00Z\nauthor: codex:one\n\n# Startup verified\n\n## Needs attention\n- Gameplay unknown.\n');
+  let snapshot=await reader.snapshot();
+  assert.equal(snapshot.projectStatus.author,'codex:one');
+  assert.equal(snapshot.projectStatus.updatedAt,'2026-10-01T12:00:00.000Z');
+  assert.match(snapshot.projectStatus.body,/^# Startup verified/);
+  await f.write('ops/STATUS.md','# Changed without review timestamp\n\n<script>inert</script>');
+  snapshot=await reader.snapshot();
+  assert.equal(snapshot.projectStatus.updatedAt,null);
+  assert.match(snapshot.projectStatus.body,/Changed without review/);
+  await f.write('ops/STATUS.md','x'.repeat(17000));
+  snapshot=await reader.snapshot();
+  assert.equal(snapshot.projectStatus.available,false);
+  assert.ok(snapshot.warnings.some(w=>w.startsWith('ops/STATUS.md:')));
+});
 
 test('task writes preserve source, reject stale/conflicting changes, and deduplicate retries',async t=>{
   const f=await fixture();t.after(f.cleanup);

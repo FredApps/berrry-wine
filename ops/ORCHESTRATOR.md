@@ -34,6 +34,16 @@ configured model. Keep normal sandbox and approval protections.
 
 ## Execute the queue
 
+- Maintain `ops/STATUS.md` as the short user-facing TLDR shown above Overview
+  and Tasks. Keep it around 150 words: the actual outcome, what needs the user's
+  attention, and the next meaningful step. State uncertainty plainly. Update
+  `updated:` and `author:` only after reviewing the content, whenever an
+  important result, execution gate, decision, or direction changes. Do not
+  copy activity logs, token counts, or exhaustive resource tables into it.
+  You own the summary; workers propose material updates through the board.
+  Reread before editing and atomically replace the file; coordinate any handoff
+  of authorship. Keep detailed evidence and ownership in the existing ledger.
+
 - Dashboard requests arrive in `TODOS.md` under `## Dashboard requests`, with
   stable `T-…` IDs, done criteria, optional `depends-on:` IDs and no owner.
   Inspect this section and `[OPS-TASK task-id]` / `[OPS-NOTE task-id]` board
@@ -73,6 +83,22 @@ configured model. Keep normal sandbox and approval protections.
   proposed resolution before changing task status.
 
 ## Lifecycle and recovery
+
+Keep `ops/STATUS.md` to roughly 80–120 words. Lead with what is running or
+waiting, then the specific action needed from the user and what happens next.
+Use ordinary language; put debugging history, acronyms and validation matrices
+in linked handoffs. Distinguish a task report from a live observation.
+For each task, `Next:` should name one concrete action and deliverable; `Done:`
+should describe an observable result. A blocker should say who can resolve it,
+what they must do, and where to do it. Do not label an automated review rejection
+as an ordinary approval request or suggest retrying it through another channel.
+
+The console observes registered tmux panes for native command approval prompts.
+The user reviews the exact command and chooses Approve once or Decline. Board
+replies do not grant tool approval. After a decision, verify the actual result
+before updating the task: sending a decision does not prove successful execution.
+Keep `waitingOn`, the blocker reason and STATUS current when the pending action
+changes (for example, fixture upload becomes results download).
 
 During the initial wind-down, continue receiving handoffs and making independent
 read-only progress; use bounded waits (30–60 seconds) and check the board between

@@ -20,7 +20,7 @@ async function fixture() {
   const server=createServer({root,codexRoot:false,claudeRoot:false,tmuxArgs:['-L',socket]});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`;
-  return {root,tmux,server,base,async close(){server.closeTerminals();await new Promise(resolve=>server.close(resolve));try{tmux('kill-server');}catch{}await fs.rm(root,{recursive:true,force:true});}};
+  return {root,tmux,server,base,pane,async close(){server.closeTerminals();await new Promise(resolve=>server.close(resolve));try{tmux('kill-server');}catch{}await fs.rm(root,{recursive:true,force:true});}};
 }
 function track(ws) {
   const events=[];ws.on('message',raw=>events.push(JSON.parse(raw)));
@@ -73,6 +73,82 @@ test('tmux bridge authenticates, enforces view mode, controls fixture only, and 
 
 module.exports={fixture};
 
+const approvalScreen=`Would you like to run the following command?
+
+Thread: Agent (test)
+Environment: local
+Reason: Read the fixture
+
+$ printf fixture
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again (p)
+  3. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel or o to open thread`;
+
+test('approval parser refuses incomplete prompts and historical menus',()=>{
+  const {parseApproval}=require('./approval-prompt');
+  assert.equal(parseApproval(approvalScreen).command,'printf fixture');
+  assert.equal(parseApproval(approvalScreen).reason,'Read the fixture');
+  assert.equal(parseApproval(approvalScreen+'\nCommand finished'),null);
+  assert.equal(parseApproval(approvalScreen.replace('Yes, proceed (y)','Yes, proceed')),null);
+  assert.equal(parseApproval('Execution stopped by automated security review'),null);
+  assert.equal(parseApproval(approvalScreen.split('$ printf')[0]),null);
+});
+
+test('live approvals require a fresh unchanged pane and explicit decision; browser reviews disposable prompts', {timeout:30000},async t=>{
+  const f=await fixture();t.after(()=>f.close());
+  const script=path.join(f.root,'prompt.js'),keys=path.join(f.root,'keys');
+  await fs.writeFile(script,`process.stdin.setRawMode(true);process.stdin.resume();const screen=${JSON.stringify(approvalScreen)};process.stdout.write('\\x1b[2J\\x1b[H'+screen);process.stdin.on('data',b=>{require('fs').appendFileSync(${JSON.stringify(keys)},b);if(b.toString()==='s')process.stdout.write('\\x1b[2J\\x1b[H'+screen.replace('Read the fixture','Changed request'));});`);
+  f.tmux('send-keys','-t',f.pane,'node '+script,'Enter');
+  const state=()=>fetch(f.base+'/api/state').then(r=>r.json());
+  let p;
+  for(let n=0;n<50;n++){p=(await state()).approvals.items[0];if(p)break;await new Promise(r=>setTimeout(r,30));}
+  assert.ok(p);assert.equal(p.command,'printf fixture');
+  const post=(id,decision='accept',origin=f.base)=>fetch(f.base+'/api/approval-decision',{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify({id,decision})});
+  assert.equal((await post(p.id,'accept',null)).status,403);
+  assert.equal((await post(p.id,'accept','http://evil.invalid')).status,403);
+  assert.equal((await post(p.id,'always')).status,400);
+  assert.equal((await post('missing')).status,409);
+  f.tmux('send-keys','-t',f.pane,'s');
+  await new Promise(r=>setTimeout(r,100));
+  assert.equal((await post(p.id)).status,409,'changed screen must reject the old approval');
+  p=(await state()).approvals.items[0];assert.equal(p.reason,'Changed request');
+  // Terminal control and approval actions cannot both own browser input.
+  const grant=await(await fetch(f.base+'/api/terminal-ticket',{method:'POST',headers:{Origin:f.base,'Content-Type':'application/json'},body:JSON.stringify({id:'fixture'})})).json();
+  const ws=new WebSocket(f.base.replace('http:','ws:')+'/api/terminal?ticket='+grant.token,{origin:f.base}),wait=track(ws);
+  t.after(()=>ws.terminate());await wait(e=>e.type==='mode');
+  ws.send(JSON.stringify({type:'mode',mode:'control'}));await wait(e=>e.type==='mode'&&e.mode==='control');
+  assert.equal((await post(p.id)).status,409);
+  ws.close();await new Promise(resolve=>ws.once('close',resolve));
+  const browser=await require('puppeteer').launch({executablePath:process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+  t.after(()=>browser.close());const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(f.base);await page.waitForSelector('[data-approval]');
+  await page.click('[data-approval]');
+  assert.match(await page.$eval('.approval-command',el=>el.textContent),/printf fixture/);
+  await page.click('[data-approval-decision="accept"]');
+  await page.waitForFunction(()=>document.querySelector('#approval-review-status').textContent.includes('Decision sent'));
+  assert.equal(await fs.readFile(keys,'utf8'),'sy');
+  assert.equal((await post(p.id)).status,409);
+  assert.equal((await state()).approvals.items[0].sent,true);
+  assert.deepEqual(errors,[]);
+  // Change the visible prompt without changing the registered pane PID.
+  f.tmux('send-keys','-t',f.pane,'C-c');
+  await new Promise(r=>setTimeout(r,100));
+  await fs.writeFile(script,`process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('\\x1b[2J\\x1b[H'+${JSON.stringify(approvalScreen.replace('Read the fixture','Different request'))});process.stdin.on('data',b=>require('fs').appendFileSync(${JSON.stringify(keys)},b));`);
+  // Raw mode above does not interpret Ctrl-C, so stop only our fixture child.
+  f.tmux('respawn-pane','-k','-t',f.pane,'node '+script);
+  // A respawn changes the PID: the old registration must no longer match.
+  assert.equal((await state()).approvals.items.length,0);
+  assert.equal((await post(p.id)).status,409);
+  const [pane,pid]=f.tmux('list-panes','-t','=fixture','-F','#{pane_id} #{pane_pid}').split(' ');
+  await fs.writeFile(path.join(f.root,'ops/terminals.json'),JSON.stringify({terminals:[{id:'fixture',agentId:'codex:test',session:'fixture',pane,panePid:+pid}]}));
+  for(let n=0;n<50;n++){p=(await state()).approvals.items[0];if(p)break;await new Promise(r=>setTimeout(r,30));}
+  assert.ok(p);assert.equal((await post(p.id,'decline')).status,200);
+  await new Promise(r=>setTimeout(r,100));assert.equal(await fs.readFile(keys,'utf8'),'sy\x03\x1b');
+});
+
 test('browser terminal renders, controls a disposable pane, and reconnects in View', {timeout:30000},async t=>{
   const f=await fixture();t.after(()=>f.close());
   const browser=await require('puppeteer').launch({executablePath:process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
@@ -90,8 +166,8 @@ test('browser terminal renders, controls a disposable pane, and reconnects in Vi
   await page.waitForFunction(()=>document.querySelector('#terminal-status').textContent.includes('Control enabled'));
   const marker=path.join(f.root,'browser-controlled');
   await page.keyboard.type(`touch ${marker}`);await page.keyboard.press('Enter');
-  for(let n=0;n<50;n++){try{await fs.access(marker);break;}catch{await new Promise(r=>setTimeout(r,50));}}
-  await fs.access(marker);
+  for(let n=0;n<200;n++){try{await fs.access(marker);break;}catch{await new Promise(r=>setTimeout(r,50));}}
+  try{await fs.access(marker);}catch(e){console.error('Fixture screen:',f.tmux('capture-pane','-p','-t',f.pane));throw e;}
   await page.click('#terminal-reconnect');
   await page.waitForFunction(()=>document.querySelector('#terminal-status').textContent.includes('View only'));
   await page.setViewport({width:390,height:844});

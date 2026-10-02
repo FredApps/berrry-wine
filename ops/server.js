@@ -31,6 +31,7 @@ function createServer(options = {}) {
     try {
       const url = new URL(req.url, `http://${host}`);
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
+      if(req.method==='POST' && url.pathname==='/api/approval-decision') return await terminals.approvalDecision(req,res);
       if(req.method==='POST' && ['/api/tasks','/api/task-note'].includes(url.pathname)) {
         if(req.headers.origin!==`http://${host}`)return fail(403,'Same-origin request required');
         if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');
@@ -88,12 +89,13 @@ function createServer(options = {}) {
       if (url.pathname === '/api/state') {
         const data = await snapshot();
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        return res.end(req.method === 'HEAD' ? undefined : JSON.stringify({...data,terminals:await terminals.list()}));
+        return res.end(req.method === 'HEAD' ? undefined : JSON.stringify({...data,terminals:await terminals.list(),approvals:await terminals.approvals()}));
       }
       let file, type = 'text/plain; charset=utf-8';
       const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
+        '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.js':['node_modules/@xterm/xterm/lib/xterm.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.css':['node_modules/@xterm/xterm/css/xterm.css','text/css; charset=utf-8'],
         };
@@ -105,7 +107,7 @@ function createServer(options = {}) {
         type = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' })[extension] || type;
       } else if (url.pathname === '/source') {
         const relative = url.searchParams.get('path') || '';
-        if (relative === 'TODOS.md' || relative === 'test/candidate-corpus/manifest.json' || /^docs\/re-notes\/[\w.-]+\.md$/.test(relative)) file = await safeFile(reader.root, relative);
+        if (relative === 'TODOS.md' || relative === 'ops/STATUS.md' || relative === 'test/candidate-corpus/manifest.json' || /^docs\/re-notes\/[\w.-]+\.md$/.test(relative)) file = await safeFile(reader.root, relative);
       }
       if (!file) return fail(404, 'Not found');
       const stream = fs.createReadStream(file);

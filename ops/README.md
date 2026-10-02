@@ -9,7 +9,8 @@ node ops/server.js
 # http://127.0.0.1:8098
 ```
 
-The UI polls every five seconds while visible. Reads are cached in memory;
+The UI polls every five seconds, including background tabs for approval alerts
+(the browser may throttle background timers). Reads are cached in memory;
 restart to rebuild everything. The server binds only to loopback. Explicit
 actions create/edit/reorder tasks in `TODOS.md`, append discussion to
 `messageboard.txt`, or send terminal input after enabling Control. Creating a
@@ -46,9 +47,43 @@ the test never sends commands to the real orchestrator.
 
 ## Sources
 
+**What matters now** is the agent-written `ops/STATUS.md`, shown prominently on
+Overview with a compact preview on Tasks. It refreshes with the other files.
+This is an editorial summary, not a health calculation. The explicit review
+timestamp and author are displayed; file mtime is never substituted. After
+24 hours the UI asks readers to check freshness, without claiming work stopped.
+
+The coordinator owns routine updates. Workers report material changes on the
+board so concurrent agents do not overwrite each other. Keep about 150 words:
+what actually changed, what needs attention from the user, and what happens
+next. Remove superseded points rather than accumulating a log. Reread the file,
+write a temporary sibling, then rename it after review. Example:
+
+```markdown
+updated: 2026-10-02T02:40:26Z
+author: codex:coordinator-session-id
+
+# Startup works; gameplay still needs verification.
+
+## Needs attention
+- Choose which installer version to support.
+
+## What changed
+- The startup regression passed; this does not establish gameplay support.
+
+## Next
+- Verify controls and save gameplay evidence after the version is chosen.
+```
+
+Separate metadata from the body with a blank line. Headings, paragraphs,
+bullets, bold, and inline code are supported; HTML remains inert text. The file
+is limited to 16 KiB. Missing files and missing review timestamps are explicit.
+The summary does not change task status, dispatch agents, or resolve blockers.
+
 | View | Source |
 | --- | --- |
 | Tasks | Existing root `TODOS.md` |
+| What matters now | Agent-maintained `ops/STATUS.md` |
 | Corpus | `test/candidate-corpus/manifest.json`, matching tasks and recorded runs |
 | Candidate notes | Existing `docs/re-notes/<candidate-id>.md` or note paths named in the manifest |
 | Activity | Latest 150 nonempty lines of append-only `messageboard.txt` |
@@ -457,3 +492,28 @@ partial records, HTTP boundaries, and artifact traversal. The second uses the
 repository's existing Puppeteer installation for a small dashboard-only browser
 test with synthetic sources; it never launches an emulator or reads your real
 session logs. `CHROME` can point to a Chrome executable.
+
+## Live command approvals
+
+Registered tmux panes are inspected on each dashboard refresh. A recognized
+Codex command approval appears above every view, with a tab-title notification,
+reason, terminal, and time first observed (not an inferred timeout). Review opens
+the full command and original prompt. Approve once sends the native `y` shortcut;
+Decline sends Escape. No persistent command rule is offered. Decisions are never
+sent automatically, and posting a messageboard reply is not approval.
+
+The server checks the loopback origin, registered pane and PID, a recent
+observation, and an unchanged screen immediately before sending a decision.
+Decisions cannot be replayed; active browser terminal control prevents submission.
+Only the recognized command-menu layout is supported. Other prompts require
+inspection through the web terminal. Automated review rejections are reported
+blockers, not user-approvable commands.
+
+This is a narrow screen adapter, not the structured
+[Codex app-server approval protocol](https://learn.chatgpt.com/docs/app-server).
+Terminal output can imitate UI text, and native keyboard input or process output
+can race a screen check. Review the original terminal if anything is unexpected;
+do not use this bridge to approve commands from untrusted terminal sessions.
+“Decision sent” confirms delivery only, not execution or success. Monitor failures
+are displayed explicitly. Pending observations live in memory, not a database,
+and disappear when the dashboard server restarts.
