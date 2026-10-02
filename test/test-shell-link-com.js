@@ -272,6 +272,26 @@ async function main() {
   assert.strictEqual(e.test_refcount(shell), 3, 'IPersist query AddRefs the shared object');
   assert.strictEqual(callMethod(read(persistBaseOut), 2), 2, 'IPersist reference balances');
 
+  // InstallShield names the shortcut's icon (an .ico beside an exe that has
+  // none) and a description; both must survive into the saved file.
+  const descOut = alloc(64);
+  assert.strictEqual(callMethod(shell, 6, descOut, 64), 0);
+  assert.strictEqual(readAnsi(descOut), '', 'GetDescription is empty before SetDescription');
+  const descSource = ansi('Pocket Tanks Deluxe');
+  const iconSource = ansi('C:\\Games\\Pocket Tanks\\tanks.ico');
+  assert.strictEqual(callMethod(shell, 7, descSource), 0, 'SetDescription succeeds');
+  assert.strictEqual(callMethod(shell, 17, iconSource, 2), 0, 'SetIconLocation succeeds');
+  dv.setUint8(wa(descSource), 'Q'.charCodeAt(0));
+  dv.setUint8(wa(iconSource), 'Q'.charCodeAt(0));
+  assert.strictEqual(callMethod(shell, 6, descOut, 64), 0);
+  assert.strictEqual(readAnsi(descOut), 'Pocket Tanks Deluxe', 'GetDescription returns an owned copy');
+  const iconOut = alloc(260);
+  const iconIndexOut = alloc(4);
+  assert.strictEqual(callMethod(shell, 16, iconOut, 260, iconIndexOut), 0);
+  assert.strictEqual(readAnsi(iconOut), 'C:\\Games\\Pocket Tanks\\tanks.ico',
+    'GetIconLocation returns an owned copy');
+  assert.strictEqual(read(iconIndexOut), 2, 'GetIconLocation returns the icon index');
+
   const linkPath = 'C:\\WINDOWS\\Desktop\\Pocket Tanks.lnk';
   assert.strictEqual(callMethod(persist, 6, wide(linkPath), 1), 0,
     'IPersistFile::Save writes the shortcut');
@@ -281,8 +301,9 @@ async function main() {
   // just a header: the browser desktop launches installed games from it.
   assert.deepStrictEqual(parseShellLink(saved.data), {
     target: 'D:\\Tools\\ptanks.exe', workingDir: 'C:\\Games\\Pocket Tanks',
-    args: '-windowed', description: '', showCmd: 1,
-  }, 'shortcut names its target, working directory and arguments');
+    args: '-windowed', description: 'Pocket Tanks Deluxe',
+    iconLocation: 'C:\\Games\\Pocket Tanks\\tanks.ico', iconIndex: 2, showCmd: 1,
+  }, 'shortcut names its target, working directory, arguments, description and icon');
   const header = new DataView(saved.data.buffer, saved.data.byteOffset, saved.data.byteLength);
   assert.strictEqual(header.getUint32(0, true), 0x4c, 'shortcut header size is canonical');
   assert.strictEqual(header.getUint32(4, true), 0x00021401, 'shortcut carries CLSID_ShellLink');
