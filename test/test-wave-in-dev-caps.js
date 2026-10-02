@@ -45,7 +45,7 @@ function utf16z(view, offset, maxChars) {
   result = e.test_wave_in_get_dev_caps_w(1, caps, 128);
   assert.strictEqual(Number(result & 0xffffffffn), 2, 'only device zero exists');
   result = e.test_wave_in_get_dev_caps_w(0, caps, 79);
-  assert.strictEqual(Number(result & 0xffffffffn), 11, 'undersized WAVEINCAPSW is rejected');
+  assert.strictEqual(Number(result & 0xffffffffn), 0, 'short WAVEINCAPSW copies a bounded prefix');
   console.log('PASS waveInGetDevCapsW exposes one coherent PCM capture device');
 })().catch(error => {
   console.error(error.stack || error.message);

@@ -411,42 +411,85 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
-  ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
-  ;; Fill WAVEOUTCAPSA struct with basic PCM support
-  ;; waveOutGetDevCaps{A,W}(uDeviceID, lpCaps, cbCaps). WAVEOUTCAPSA and
-  ;; WAVEOUTCAPSW differ only in szPname[32] being CHAR vs WCHAR, so everything
-  ;; after that field sits 32 bytes further along in the wide struct.
-  (func $wave_out_dev_caps (param $caps_g i32) (param $cb i32) (param $wide i32)
-    (local $wa i32) (local $i i32) (local $tail i32)
-    (local.set $wa (call $g2w (local.get $caps_g)))
-    (call $zero_memory (local.get $wa) (local.get $cb))
-    ;; wMid=1 (Microsoft), wPid=1, vDriverVersion = 4.0
-    (i32.store16 (local.get $wa) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
-    ;; szPname = "Audio" at offset 8
-    (call $store_char (i32.add (local.get $caps_g) (i32.const 8)) (i32.const 0x41) (local.get $wide))
-    (local.set $i (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (local.get $i))) (i32.const 0x75) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 2)))) (i32.const 0x64) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 3)))) (i32.const 0x69) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 0x6F) (local.get $wide))
-    ;; dwFormats / wChannels / dwSupport: 40/44/48 (A), 72/76/80 (W)
-    (local.set $tail (i32.add (local.get $wa) (select (i32.const 72) (i32.const 40) (local.get $wide))))
-    (i32.store (local.get $tail) (i32.const 0x00000FFF))                ;; common PCM formats
-    (i32.store16 (i32.add (local.get $tail) (i32.const 4)) (i32.const 2))  ;; stereo
-    (i32.store (i32.add (local.get $tail) (i32.const 8)) (i32.const 0x0C))) ;; VOLUME|LRVOLUME
+  ;; Store only the bytes present in the caller-sized capability prefix.
+  (func $wave_caps_byte (param $wa i32) (param $size i32) (param $offset i32) (param $value i32)
+    (if (i32.lt_u (local.get $offset) (local.get $size))
+      (then (i32.store8 (i32.add (local.get $wa) (local.get $offset)) (local.get $value)))))
 
+  ;; WAVE{IN,OUT}CAPS share the header, name, formats and channels. Build only
+  ;; min(cb, sizeof(caps)) bytes; short and zero-length queries are valid.
+  ;; One bounded span handles sparse backing without a second guest owner.
+  (func $wave_dev_caps_fill (param $caps_g i32) (param $cb i32)
+      (param $wide i32) (param $capture i32) (result i32)
+    (local $wa i32) (local $size i32) (local $stride i32) (local $tail i32)
+    (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $caps_g)) (then (return (i32.const 11))))
+    (local.set $tail (select (i32.const 72) (i32.const 40) (local.get $wide)))
+    (local.set $size (i32.add (local.get $tail)
+      (select (i32.const 8) (i32.const 12) (local.get $capture))))
+    (if (i32.lt_u (local.get $cb) (local.get $size))
+      (then (local.set $size (local.get $cb))))
+    (local.set $wa (call $guest_span_in (local.get $caps_g) (local.get $size)))
+    (call $zero_memory (local.get $wa) (local.get $size))
+    (call $wave_caps_byte (local.get $wa) (local.get $size) (i32.const 0) (i32.const 1)) ;; wMid
+    (call $wave_caps_byte (local.get $wa) (local.get $size) (i32.const 2) (i32.const 1)) ;; wPid
+    (call $wave_caps_byte (local.get $wa) (local.get $size) (i32.const 5) (i32.const 4)) ;; v4.00
+    (local.set $stride (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (if (local.get $capture)
+      (then ;; Microphone
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 0))) (i32.const 77))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 1))) (i32.const 105))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 2))) (i32.const 99))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 3))) (i32.const 114))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 4))) (i32.const 111))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 5))) (i32.const 112))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 6))) (i32.const 104))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 7))) (i32.const 111))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 8))) (i32.const 110))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 9))) (i32.const 101))
+      )
+      (else ;; Audio
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 0))) (i32.const 65))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 1))) (i32.const 117))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 2))) (i32.const 100))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 3))) (i32.const 105))
+        (call $wave_caps_byte (local.get $wa) (local.get $size)
+          (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 4))) (i32.const 111))
+      ))
+    (call $wave_caps_byte (local.get $wa) (local.get $size) (local.get $tail) (i32.const 255)) ;; dwFormats
+    (call $wave_caps_byte (local.get $wa) (local.get $size)
+      (i32.add (local.get $tail) (i32.const 1)) (i32.const 15))
+    (call $wave_caps_byte (local.get $wa) (local.get $size)
+      (i32.add (local.get $tail) (i32.const 4)) (i32.const 2)) ;; stereo
+    (if (i32.eqz (local.get $capture)) (then
+      (call $wave_caps_byte (local.get $wa) (local.get $size)
+        (i32.add (local.get $tail) (i32.const 8)) (i32.const 12)))) ;; VOLUME|LRVOLUME
+    (call $guest_span_writeback (local.get $caps_g) (local.get $wa) (local.get $size))
+    (i32.const 0))
   (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $wave_out_dev_caps (local.get $arg1) (local.get $arg2) (i32.const 0))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; MMSYSERR_NOERROR
+    (i32.store offset=0 (global.get $reg_base) (call $wave_dev_caps_fill
+      (local.get $arg1) (local.get $arg2) (i32.const 0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))  ;; 3 args stdcall
   )
 
   ;; waveOutGetDevCapsW(uDeviceID, lpCaps, cbCaps) — wide-char variant
   (func $handle_waveOutGetDevCapsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $wave_out_dev_caps (local.get $arg1) (local.get $arg2) (i32.const 1))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (call $wave_dev_caps_fill
+      (local.get $arg1) (local.get $arg2) (i32.const 1) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
@@ -2700,40 +2743,11 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
-  ;; waveInGetDevCaps{A,W}(uDeviceID, lpCaps, cbCaps). The capture backend
-  ;; exposes one stereo PCM device, matching waveInGetNumDevs/waveInOpen.
-  ;; WAVEINCAPS differs only in the width of szPname[32]: its dwFormats and
-  ;; wChannels fields begin at 40/44 (A) and 72/76 (W), respectively.
+  ;; Capture-device validation remains separate from the common bounded writer.
   (func $wave_in_dev_caps (param $device i32) (param $caps_g i32) (param $cb i32) (param $wide i32) (result i32)
-    (local $wa i32) (local $stride i32) (local $tail i32) (local $size i32)
     (if (local.get $device)
       (then (return (i32.const 2)))) ;; MMSYSERR_BADDEVICEID
-    (local.set $size (select (i32.const 80) (i32.const 48) (local.get $wide)))
-    (if (i32.or (i32.eqz (local.get $caps_g))
-                (i32.lt_u (local.get $cb) (local.get $size)))
-      (then (return (i32.const 11)))) ;; MMSYSERR_INVALPARAM
-    (local.set $wa (call $g2w (local.get $caps_g)))
-    (call $zero_memory (local.get $wa) (local.get $size))
-    (i32.store16 (local.get $wa) (i32.const 1))      ;; wMid
-    (i32.store16 offset=2 (local.get $wa) (i32.const 1)) ;; wPid
-    (i32.store offset=4 (local.get $wa) (i32.const 0x0400))
-    (local.set $stride (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    ;; szPname = "Microphone"
-    (call $store_char (i32.add (local.get $caps_g) (i32.const 8)) (i32.const 0x4D) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (local.get $stride))) (i32.const 0x69) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 2)))) (i32.const 0x63) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 3)))) (i32.const 0x72) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 4)))) (i32.const 0x6F) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 5)))) (i32.const 0x70) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 6)))) (i32.const 0x68) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 7)))) (i32.const 0x6F) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 8)))) (i32.const 0x6E) (local.get $wide))
-    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 9)))) (i32.const 0x65) (local.get $wide))
-    (local.set $tail (i32.add (local.get $wa)
-      (select (i32.const 72) (i32.const 40) (local.get $wide))))
-    (i32.store (local.get $tail) (i32.const 0x00000FFF)) ;; common PCM formats
-    (i32.store16 offset=4 (local.get $tail) (i32.const 2)) ;; stereo
-    (i32.const 0))
+    (call $wave_dev_caps_fill (local.get $caps_g) (local.get $cb) (local.get $wide) (i32.const 1)))
 
   (func $handle_waveInGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $wave_in_dev_caps
