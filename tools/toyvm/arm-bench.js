@@ -15,6 +15,8 @@
 //   jit-r8     ...jit-early carrying up to 8 regions in its install
 //   jit-sep    ...jit-early with the region as a separate module, no swap
 //   jit-sepw   ...jit-sep prepared on a worker thread
+//   jit-sepc   ...jit-sep re-profiling continuously, adding regions as scenes change
+//   jit-sepwc  ...jit-sepc prepared on a worker thread
 //   only       the µop-only arm (uop-only.js): loop nests and straight lines
 //   only-line  ...straight lines only, linked
 //   only-bl    only, with straight lines built on the baseline passes
@@ -96,6 +98,13 @@ const ARMS = {
   // the whole process).
   'jit-sep': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true } }),
   'jit-sepw': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true, worker: true } }),
+  // ...and continuously: re-profile every window and add a region whenever a
+  // new loop has become the hottest (region-live.js `continuous`). The 5% floor
+  // keeps a scene with no dominant loop from paying an audit per window.
+  'jit-sepc': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true,
+    continuous: true, minShare: 5 } }),
+  'jit-sepwc': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true,
+    worker: true, continuous: true, minShare: 5 } }),
   only: () => ({ uopOnly: { shape: 'loop' } }),
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes

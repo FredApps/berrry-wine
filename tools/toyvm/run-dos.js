@@ -1170,6 +1170,10 @@ async function main() {
       // worker thread without stopping the guest.
       sep: flag('region-jit-sep'),
       worker: flag('region-jit-worker'),
+      // `--region-jit-continuous`: keep profiling and add regions as the
+      // program's hot loop moves (region-live.js `continuous`).
+      continuous: flag('region-jit-continuous'),
+      minShare: Number(arg('region-jit-min-share', 0)),
       gateAt: Number(arg('region-jit-gate', 1)),
       gateIters: count(arg('region-jit-gate-iters'), 4000),
       log: flag('region-jit-verbose') ? console.log : (() => {}),
@@ -1553,6 +1557,7 @@ async function main() {
       + (j.declined ? ` -- ${j.declined}` : '')
       + (j.gate ? `  gate ${j.gate.toFixed(2)}x, share ${j.share.toFixed(1)}%` : '')
       + (j.installs ? `  ${j.installs} install(s), ${j.drops} drop(s)` : '')
+      + (j.windows ? `  ${j.windows} window(s), ${j.skipped} unchanged` : '')
       + (j.ms.prepare !== undefined
         // Every field defaulted: a run that DECLINED has `prepare` and only
         // some of the stages under it, and reading `pick` off that threw --

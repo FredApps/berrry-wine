@@ -186,11 +186,19 @@ class LiveJit {
       // whole interpreter and swapping the guest onto it. Needs a running
       // module built with `exportAll`.
       sep = false,
+      // `continuous`: keep profiling after an install and add regions as the
+      // program moves on. A demo is a run of scenes, each with its own hot
+      // loop, and a JIT that profiles once installs the FIRST scene's loop and
+      // leaves every later one to the interpreter (DREAM: the 6-12M window
+      // picks a loop worth +19% over those 12M and nothing over 100M). Each
+      // window only goes to the backend when its hottest arena address is one
+      // no earlier window has already handled.
+      continuous = false,
       log = () => {},
     } = opts;
     Object.assign(this, {
       session, vm, machine, portIn, portOut, sampleAfter, profileFor, regions,
-      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log, sep,
+      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log, sep, continuous,
       extras: extras || new (require('./extras').Extras)(),
     });
     this.phase = 'profiling';
@@ -214,6 +222,24 @@ class LiveJit {
     this.guards = null;              // the installed regions' byte guards
     this.share = 0;
     this.gateRatio = null;
+    this.seenHot = new Set();        // continuous: hottest addresses already handled
+    this.windows = 0;                // continuous: profile windows closed
+    this.skipped = 0;                // ...of which nothing new was hot
+  }
+
+  // Is this window collecting samples? Once, before the first install; always,
+  // in continuous mode.
+  sampling() {
+    return this.phase === 'profiling'
+      || (this.continuous && (this.phase === 'installed' || this.phase === 'declined'));
+  }
+
+  // continuous: start the next profile window here.
+  rewindow() {
+    this.samples = new Map();
+    this.sampleLog = [];
+    this.sampleAfter = this.dispatched;
+    this.windows++;
   }
 
   // Chain this into DosSession's `afterSlice`. A budget-expiry return leaves
@@ -222,7 +248,7 @@ class LiveJit {
   // blind to exactly the hot loops that never end.
   sample({ left, dispatched }) {
     this.dispatched = dispatched;
-    if (this.phase !== 'profiling') return;
+    if (!this.sampling()) return;
     if (left >= 0 || dispatched < this.sampleAfter) return;
     const at = this.vm.raw('ip');
     this.samples.set(at, (this.samples.get(at) || 0) + 1);
@@ -262,6 +288,8 @@ class LiveJit {
       regs, machine,
       regions: this.regions, minShare: this.minShare, minOps: this.minOps,
       gateAt: this.gateAt, gateIters: this.gateIters,
+      // Heads already installed, which a continuous window must not pick again.
+      exclude: this.session.cache.regionAt ? [...this.session.cache.regionAt.keys()] : [],
       // The running module's declarations, for the region module's imports.
       sep: this.sep ? this.sepDecls() : null,
       // THE HANDLER TABLE'S TAIL AS IT STANDS. `--tree-fold` appends to the
@@ -326,10 +354,18 @@ class LiveJit {
     if (this.busy) return this.phase;
     if (this.phase === 'installed') {
       if (!this.guardsHold()) this.uninstall("the guest rewrote the region's own bytes");
-      return this.phase;
+      if (!this.continuous) return this.phase;
     }
-    if (this.phase !== 'profiling') return this.phase;
+    if (!this.sampling()) return this.phase;
     if (this.dispatched < this.sampleAfter + this.profileFor) return this.phase;
+    if (this.continuous) {
+      // The same scene as a window already handled costs nothing but the
+      // sampling: no bundle, no pick, no audit.
+      let top = -1, n = -1;
+      for (const [a, c] of this.samples) if (c > n) { top = a; n = c; }
+      if (top < 0 || this.seenHot.has(top)) { this.skipped++; this.rewindow(); return this.phase; }
+      this.seenHot.add(top);
+    }
     if (!this.samples.size) {
       // Nothing landed in a live block: a program can retire millions of
       // dispatches inside code the cache threw away underneath the samples.
@@ -355,6 +391,10 @@ class LiveJit {
   async run() {
     const t = now();
     try { return await this.runPipeline(); } finally {
+      if (this.continuous) {
+        if (this.installedAt && this.installedAt.length) this.phase = 'installed';
+        this.rewindow();
+      }
       // A worker prepares while the guest runs, so the wall time of the wait is
       // not a cost; what the worker thread itself spent is, and it says so.
       this.buildMs += this.backend.name === 'worker'
@@ -493,9 +533,11 @@ class LiveJit {
         { base: prepared.picks[0].idx, n: prepared.extras.length, epoch: prepared.extrasEpoch });
     }
     const cache = this.session.cache;
-    cache.regionAt = new Map(prepared.picks.map(p => [p.key, p.idx]));
-    cache.regionSucc = new Map(prepared.picks.map(p => [p.key, p.succ]));
-    cache.regionBytes = new Map(prepared.picks.map(p => [p.key, p.guard]));
+    // continuous: the earlier regions stay; these join them.
+    const kept = (m) => (this.continuous && m ? [...m] : []);
+    cache.regionAt = new Map([...kept(cache.regionAt), ...prepared.picks.map(p => [p.key, p.idx])]);
+    cache.regionSucc = new Map([...kept(cache.regionSucc), ...prepared.picks.map(p => [p.key, p.succ])]);
+    cache.regionBytes = new Map([...kept(cache.regionBytes), ...prepared.picks.map(p => [p.key, p.guard])]);
     cache.regionCodeBits = !liveFlag('no-region-code-bits');
     // ONLY THE REGION'S OWN BYTES. This used to flush the whole cache, on the
     // argument that every block in the arena was compiled against the old
@@ -638,8 +680,9 @@ class LiveJit {
       + ` dropped, return stack ${rtop0} -> ${(narrow && !liveFlag('install-drop-rtop')) ? keep : 0}`
       + ` (${repaired} frame(s) re-pointed, ${unrepaired} not)`
       + `${narrow ? '' : ' (wide drop)'}`);
-    this.guards = this.guards0(prepared);
-    this.installedAt = prepared.picks.map(p => p.headIp);
+    this.guards = [...(this.continuous && this.guards ? this.guards : []), ...this.guards0(prepared)];
+    this.installedAt = [...(this.continuous && this.installedAt ? this.installedAt : []),
+      ...prepared.picks.map(p => p.headIp)];
     this.ms.swap = now() - ts;
   }
 
@@ -660,7 +703,7 @@ class LiveJit {
       drops: this.drops, share: this.share, gate: this.gateRatio,
       rtopRepaired: this.rtopRepaired, rtopCut: this.rtopCut,
       at: this.installedAt, ms: { ...this.ms }, buildMs: this.buildMs, backend: this.backend.name,
-      samples: this.samples.size,
+      samples: this.samples.size, windows: this.windows, skipped: this.skipped,
     };
   }
 }

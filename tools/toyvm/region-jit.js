@@ -280,6 +280,12 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
     // `int` still ends the walk: it hands the machine to the host by design and
     // there is nothing to inline.
     if (bo.bad) return no(`0x${cur.toString(16)} contains ${bo.bad.name}`);
+    // A word no handler has is an INSTALLED region's table slot (a live JIT
+    // that keeps profiling, region-live.js `continuous`): its loop is compiled
+    // already and is opaque here, so the walk cannot go through it.
+    if (bo.t.end === 'bad-handler') {
+      return no(`0x${cur.toString(16)} runs into an installed region or an unknown handler`);
+    }
     const { tops, endWord, truncated, t } = bo;
 
     const mark = { ops: ops.length, spans: spans.length, heads: heads.length, inner: inner.length, fwd: fwdCand.length };

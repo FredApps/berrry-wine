@@ -73,6 +73,9 @@ async function prepareRegions(bundle) {
     if (!p) break;
     p.share = 100 * p.samples / Math.max(1, total);
     if (p.share < bundle.minShare) continue;
+    // A continuous window keeps sampling inside installed regions; those heads
+    // are already compiled.
+    if (bundle.exclude && bundle.exclude.includes(`${p.cs}:${p.headIp}`)) continue;
     picks.push(p);
   }
   if (!picks.length) return { declined: 'no self-loop region found' };
