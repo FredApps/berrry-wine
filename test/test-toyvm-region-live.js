@@ -28,7 +28,7 @@ const os = require('os');
 const path = require('path');
 const { runDos } = require('../tools/toyvm/run-dos');
 const { wavBytes } = require('../tools/toyvm/audio');
-const { inlineBackend } = require('../tools/toyvm/region-prepare');
+const { inlineBackend, nodeWorkerBackend } = require('../tools/toyvm/region-prepare');
 
 // A tiny assembler with labels. The first program below is laid out by hand
 // with its addresses in the comments, which is readable exactly as long as
@@ -301,6 +301,10 @@ async function run(com, jit, fold = false) {
       gateAt: 0,
       backend: inlineBackend(),
       log: () => {},
+      // 'sep' / 'sepw': the region as its own module written into the running
+      // table (tools/toyvm/region-sep.js), prepared inline or on a worker.
+      ...(jit === 'sep' || jit === 'sepw' ? { sep: true } : {}),
+      ...(jit === 'sepw' ? { backend: nodeWorkerBackend() } : {}),
     } : null,
     // Ungated on purpose: this program's loop is entered a few thousand times,
     // and the point of the arm is that the two allocators coexist, not that the
@@ -433,7 +437,43 @@ async function main() {
   assert.strictEqual(sxBoth.cells, sxOff.cells,
     'the text screen differs with the JIT and the tree fold both on');
 
+  // --- and the same two programs with the region as a SEPARATE module -------
+  // Nothing is swapped: the region goes into the running instance's table, so
+  // the carry the arms above check cannot be what makes these agree. The SMC
+  // program also re-installs after its drop, into the next table slot.
+  const sepOn = await run(com, 'sep');
+  const sepSx = await run(sxCom, 'sep');
+  for (const [arm, ref, label] of [[sepOn, off, 'rewritten loop'], [sepSx, sxOff, 'side exit']]) {
+    assert.ok(arm.jit && arm.jit.installs >= 1,
+      `--region-jit-sep installed nothing over the ${label} (phase ${arm.jit && arm.jit.phase}`
+      + `${arm.jit && arm.jit.declined ? `: ${arm.jit.declined}` : ''})`);
+    for (const k of ['bx', 'si', 'dx', 'bp']) {
+      assert.strictEqual(arm[k], ref[k], `${k} differs with --region-jit-sep over the ${label}: ${arm[k]} vs ${ref[k]}`);
+    }
+    assert.strictEqual(arm.frame, ref.frame, `the frame differs with --region-jit-sep over the ${label}`);
+    assert.strictEqual(arm.wav, ref.wav, `the audio differs with --region-jit-sep over the ${label}`);
+    const d = Math.abs(arm.dispatched - ref.dispatched);
+    assert.ok(d <= arm.jit.installs + arm.jit.drops,
+      `the dispatch clock moved by ${d} with --region-jit-sep over the ${label}`);
+  }
+  assert.ok(sepOn.jit.drops >= 1, 'the separate-module region survived the guest rewriting its loop');
+  // ...and prepared on a worker thread. The run waits for it here (no
+  // `worker: true`), so what this checks is the worker's half -- the bundle
+  // crossing a postMessage, a thread that never ran emit() numbering handlers,
+  // the bytes coming back -- not how far the guest got meanwhile.
+  const sepW = await run(com, 'sepw');
+  assert.ok(sepW.jit && sepW.jit.installs >= 1,
+    `the worker installed nothing (phase ${sepW.jit && sepW.jit.phase}`
+    + `${sepW.jit && sepW.jit.declined ? `: ${sepW.jit.declined}` : ''})`);
+  for (const k of ['bx', 'si', 'dx']) {
+    assert.strictEqual(sepW[k], off[k], `${k} differs with the worker-prepared region: ${sepW[k]} vs ${off[k]}`);
+  }
+  assert.strictEqual(sepW.frame, off.frame, 'the frame differs with the worker-prepared region');
+
   fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`PASS test-toyvm-region-live: --region-jit-sep: ${sepOn.jit.installs} install(s) / `
+    + `${sepOn.jit.drops} drop(s) and the side exit identical with no module swap; worker `
+    + `${sepW.jit.installs} install(s), values identical`);
   console.log(`PASS test-toyvm-region-live: --region-jit + --tree-fold in one run: `
     + `${sxBoth.jit.installs} region install(s) and ${sxBoth.tree ? sxBoth.tree.trees : 0} `
     + `tree handler(s) in one table, bx/si/bp and frame identical to the interpreter`);

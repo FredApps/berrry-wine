@@ -39,7 +39,8 @@ async function buildModule(variant, opts = {}) {
   const suffix = (opts.hist ? '-hist' : '')
     + (opts.ipHist ? '-iphist' : '')
     + (opts.lazyFlags === false ? '-eager' : '')
-    + (opts.fuseCond === false ? '-genericcond' : '') + regionKey;
+    + (opts.fuseCond === false ? '-genericcond' : '')
+    + (opts.exportAll ? '-xall' : '') + regionKey;
   const file = `toyvm-${variant}${suffix}.wat`;
   const bytes = await compileWat(
     (f) => { if (f !== file) throw new Error(`unexpected file ${f}`); return wat; },
@@ -59,7 +60,7 @@ async function makeVm(variant, opts = {}) {
     : await buildModule(variant,
       { hist: !!opts.hist, ipHist: !!opts.ipHist,
         lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
-        regions: opts.regions || null });
+        exportAll: !!opts.exportAll, regions: opts.regions || null });
   // WHERE THE REGIONS LANDED IN THE TABLE. Regions are appended after the
   // ordinary handlers, so their index is HANDLERS.length + n -- but only as
   // measured against the table THIS module was built with. HANDLERS is rebuilt

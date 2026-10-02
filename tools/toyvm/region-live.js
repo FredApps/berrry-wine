@@ -181,11 +181,16 @@ class LiveJit {
       // appends to the same one; with both on, neither side may number its
       // handlers from zero. A standalone JIT gets its own.
       extras = null,
+      // `sep` (region-sep.js): compile only the region functions and write them
+      // into the RUNNING instance's handler table, instead of rebuilding the
+      // whole interpreter and swapping the guest onto it. Needs a running
+      // module built with `exportAll`.
+      sep = false,
       log = () => {},
     } = opts;
     Object.assign(this, {
       session, vm, machine, portIn, portOut, sampleAfter, profileFor, regions,
-      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log,
+      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log, sep,
       extras: extras || new (require('./extras').Extras)(),
     });
     this.phase = 'profiling';
@@ -257,6 +262,8 @@ class LiveJit {
       regs, machine,
       regions: this.regions, minShare: this.minShare, minOps: this.minOps,
       gateAt: this.gateAt, gateIters: this.gateIters,
+      // The running module's declarations, for the region module's imports.
+      sep: this.sep ? this.sepDecls() : null,
       // THE HANDLER TABLE'S TAIL AS IT STANDS. `--tree-fold` appends to the
       // same one (tools/toyvm/extras.js), so a module built with only THIS
       // side's regions would leave the fold's handlers out of the table and
@@ -266,6 +273,15 @@ class LiveJit {
       extrasBefore: this.extras.handlers.slice(),
       extrasEpoch: this.extras.epoch,
     };
+  }
+
+  // Parsed once per module text: the vm is never rebound in this mode.
+  sepDecls() {
+    if (!this.decls || this.declsOf !== this.vm.wat) {
+      this.decls = require('./region-sep').declsFromWat(this.vm.wat);
+      this.declsOf = this.vm.wat;
+    }
+    return this.decls;
   }
 
   // Has the guest rewritten any byte an installed region was compiled from?
@@ -338,7 +354,13 @@ class LiveJit {
   // so the guest is not running meanwhile and wall time is what it cost.
   async run() {
     const t = now();
-    try { return await this.runPipeline(); } finally { this.buildMs += now() - t; }
+    try { return await this.runPipeline(); } finally {
+      // A worker prepares while the guest runs, so the wall time of the wait is
+      // not a cost; what the worker thread itself spent is, and it says so.
+      this.buildMs += this.backend.name === 'worker'
+        ? (now() - t) - (this.ms.prepare || 0) + (this.ms.workerCpu || 0)
+        : now() - t;
+    }
   }
 
   async runPipeline() {
@@ -396,60 +418,71 @@ class LiveJit {
     // `WebAssembly.compile` is asynchronous and browsers run it off the main
     // thread, so what the page loses here is the swap below; headless, where
     // nothing else is running, this line is the whole wait.
-    const tc = now();
-    const next = await makeVm(vm.variant, {
-      portIn: this.portIn, portOut: this.portOut, memory: vm.memory,
-      bytes: prepared.bytes,
-    });
-    this.ms.instantiate = now() - tc;
-    const ts = now();
-    carryState(old, next.exports);
-    // `--install-audit`: every zero-argument `get_`/`mget_`/`fget_` export the
-    // two instances share, compared after the carry. A global the carry does
-    // not know about is not a crash, it is a WRONG NUMBER LATER -- `idtb` and
-    // `attr_flip` were both found this way, by hand -- and the shape of the
-    // bug is always "the list in carryState is not the list emit.js emits".
-    // This asks the module instead of the list.
-    if (liveFlag('install-audit')) {
-      for (const k of Object.keys(next.exports)) {
-        if (!/^(get|mget|fget)_/.test(k) || typeof old[k] !== 'function') continue;
-        let a, b;
-        try { a = old[k](); b = next.exports[k](); } catch (e) { continue; }
-        if (a !== b) this.log(`[jit] install-audit: ${k} ${a} -> ${b}`);
+    // SEPARATE MODULE: the regions go into THIS instance's table and nothing
+    // is swapped, so there is no state to carry and no machine to re-point.
+    let ts;
+    if (prepared.sep) {
+      const tc = now();
+      require('./region-sep').installRegionModule(vm, prepared.bytes, prepared.picks);
+      this.ms.instantiate = now() - tc;
+      ts = now();
+    } else {
+      const tc = now();
+      const next = await makeVm(vm.variant, {
+        portIn: this.portIn, portOut: this.portOut, memory: vm.memory,
+        bytes: prepared.bytes,
+      });
+      this.ms.instantiate = now() - tc;
+      ts = now();
+      carryState(old, next.exports);
+      // `--install-audit`: every zero-argument `get_`/`mget_`/`fget_` export the
+      // two instances share, compared after the carry. A global the carry does
+      // not know about is not a crash, it is a WRONG NUMBER LATER -- `idtb` and
+      // `attr_flip` were both found this way, by hand -- and the shape of the
+      // bug is always "the list in carryState is not the list emit.js emits".
+      // This asks the module instead of the list.
+      if (liveFlag('install-audit')) {
+        for (const k of Object.keys(next.exports)) {
+          if (!/^(get|mget|fget)_/.test(k) || typeof old[k] !== 'function') continue;
+          let a, b;
+          try { a = old[k](); b = next.exports[k](); } catch (e) { continue; }
+          if (a !== b) this.log(`[jit] install-audit: ${k} ${a} -> ${b}`);
+        }
       }
-    }
-    vm.rebind(next);
-    // The machine caches the export table it pokes registers through, and the
-    // VGA period is programmed once per change -- both have to be told.
-    //
-    // `setVmExports`, NOT `setMemory`: the latter is the boot-time reset (it
-    // reinstalls the IVT, clears the text page and rewrites the BIOS data
-    // area), and calling it here took the guest's own interrupt handlers away
-    // at the install. That was the whole of the "stops making progress" class
-    // -- ACCIDENT, BRW, CONTAGIO and DRAGON -- and none of those four ever
-    // executed a single region op: with `--trap` (a region body of
-    // `unreachable`) each reproduced its divergence exactly and never trapped.
-    if (this.machine) this.machine.setVmExports(vm.exports);
-    if (vm.exports.set_rep_fast) vm.exports.set_rep_fast(this.repFast ? 1 : 0);
-    // THE CARD'S PROGRAMMING IS RE-APPLIED, NOT RE-DERIVED. `$vga_period`,
-    // `$vga_vb`, `$vga_line`, `$vga_hb` and `$vga_phase0` are five globals with
-    // no accessor pair, so `carryState` cannot reach them and the new instance
-    // starts on the module's defaults (26000/2340/57/11/0). This used to be
-    // handled by setting `session.vgaHz = 0`, which makes the next slice
-    // program the card AGAIN -- and that is not the same thing: the session
-    // only re-reads `vgaTiming()` when the refresh RATE changes, so a card
-    // whose line count moved under an unchanged rate is running on a `lines`
-    // the current call no longer reports, and the recompute would then hand
-    // the new instance a retrace geometry the old instance was not running on.
-    // No corpus program has been shown to depend on that difference -- on the
-    // measured corpus `vgaTiming()` returns what it returned -- so this is a
-    // narrowing, not a fix for a known divergence: it re-applies a number the
-    // host already has instead of asking for it again.
-    if (this.session.vgaPeriod && vm.exports.set_vga_period) {
-      vm.exports.set_vga_period(this.session.vgaPeriod, this.session.vgaLines);
-      if (old.get_vga_phase0 && vm.exports.set_vga_phase0) {
-        vm.exports.set_vga_phase0(old.get_vga_phase0());
+      vm.rebind(next);
+      // The machine caches the export table it pokes registers through, and the
+      // VGA period is programmed once per change -- both have to be told.
+      //
+      // `setVmExports`, NOT `setMemory`: the latter is the boot-time reset (it
+      // reinstalls the IVT, clears the text page and rewrites the BIOS data
+      // area), and calling it here took the guest's own interrupt handlers away
+      // at the install. That was the whole of the "stops making progress" class
+      // -- ACCIDENT, BRW, CONTAGIO and DRAGON -- and none of those four ever
+      // executed a single region op: with `--trap` (a region body of
+      // `unreachable`) each reproduced its divergence exactly and never trapped.
+      if (this.machine) this.machine.setVmExports(vm.exports);
+      if (vm.exports.set_rep_fast) vm.exports.set_rep_fast(this.repFast ? 1 : 0);
+      // THE CARD'S PROGRAMMING IS RE-APPLIED, NOT RE-DERIVED. `$vga_period`,
+      // `$vga_vb`, `$vga_line`, `$vga_hb` and `$vga_phase0` are five globals with
+      // no accessor pair, so `carryState` cannot reach them and the new instance
+      // starts on the module's defaults (26000/2340/57/11/0). This used to be
+      // handled by setting `session.vgaHz = 0`, which makes the next slice
+      // program the card AGAIN -- and that is not the same thing: the session
+      // only re-reads `vgaTiming()` when the refresh RATE changes, so a card
+      // whose line count moved under an unchanged rate is running on a `lines`
+      // the current call no longer reports, and the recompute would then hand
+      // the new instance a retrace geometry the old instance was not running on.
+      // No corpus program has been shown to depend on that difference -- on the
+      // measured corpus `vgaTiming()` returns what it returned -- so this is a
+      // narrowing, not a fix for a known divergence: it re-applies a number the
+      // host already has instead of asking for it again.
+      if (this.session.vgaPeriod && vm.exports.set_vga_period) {
+        vm.exports.set_vga_period(this.session.vgaPeriod, this.session.vgaLines);
+        if (old.get_vga_phase0 && vm.exports.set_vga_phase0) {
+          vm.exports.set_vga_phase0(old.get_vga_phase0());
+        }
       }
+
     }
 
     // The regions are part of the shared tail from here on: they were built at

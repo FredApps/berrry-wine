@@ -13,6 +13,8 @@
 //   jit        l1 + the live region JIT (region-live.js), sweep-dos's schedule
 //   jit-early  ...profiled 6M after 6M whatever the run length (the CLI's)
 //   jit-r8     ...jit-early carrying up to 8 regions in its install
+//   jit-sep    ...jit-early with the region as a separate module, no swap
+//   jit-sepw   ...jit-sep prepared on a worker thread
 //   only       the µop-only arm (uop-only.js): loop nests and straight lines
 //   only-line  ...straight lines only, linked
 //   only-bl    only, with straight lines built on the baseline passes
@@ -87,6 +89,13 @@ const ARMS = {
   // whose time is spread over several loops is mostly left on L1).
   'jit-early': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0 } }),
   'jit-r8': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, regions: 8 } }),
+  // ...jit-early, but the region is its own small module written into the
+  // RUNNING interpreter's table (region-sep.js) instead of a rebuilt
+  // interpreter the guest is swapped onto; and the same prepared on a worker
+  // thread while the guest keeps running (its CPU still counts: cpuSecs is
+  // the whole process).
+  'jit-sep': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true } }),
+  'jit-sepw': () => ({ regionJit: { sampleAfter: 6e6, profileFor: 6e6, gateAt: 0, sep: true, worker: true } }),
   only: () => ({ uopOnly: { shape: 'loop' } }),
   'only-line': () => ({ uopOnly: { shape: 'straight' } }),
   // ...loops fully optimized, straight lines on the baseline passes

@@ -6594,7 +6594,38 @@ function emit(variant, opts = {}) {
   if (opts.ipHist && variant !== 'tailcall') {
     throw new Error(`--block-hits is only implemented for the tailcall shell, not ${variant}`);
   }
-  return checkNesting(lowerRegs(fn(opts)));
+  const wat = checkNesting(lowerRegs(fn(opts)));
+  return opts.exportAll ? exportAll(wat) : wat;
+}
+
+// The handler table a build with `opts` numbers its handlers by, without
+// emitting it. emit() does this as its first step; a process that only DECODES
+// arena words (the region JIT's worker, region-prepare.js) has never called
+// emit(), and without the flagless and register-specialized twins
+// prepareTables() appends, every arena word past the base set names nothing.
+function useBuild(opts = {}) {
+  buildHandlers(opts.lazyFlags !== false, opts.fuseCond !== false);
+  prepareTables();
+}
+
+// THE INTERPRETER'S INSIDES, EXPORTED (`exportAll`, region-sep.js). A live
+// region normally rides into the guest on a rebuilt copy of this whole module
+// (region-live.js), which is ~2s of compile and audit and a fresh instance the
+// engine has to tier up again. The separate-module arm instead compiles ONLY
+// the region functions, importing what their bodies touch from the running
+// instance: the handler table (exported growable, so the install appends a
+// slot), and every named global and function under a fixed name -- `g$x`,
+// `f$x` -- because which of them a region body reaches is not known until the
+// region is picked. Nothing about the handlers changes; the exports are names.
+function exportAll(wat) {
+  const out = ['(export "h" (table $h))'];
+  for (const m of wat.matchAll(/^\(global \$([\w.]+) /gm)) out.push(`(export "g$${m[1]}" (global $${m[1]}))`);
+  for (const m of wat.matchAll(/^\(func \$([\w.]+)[ \n]/gm)) out.push(`(export "f$${m[1]}" (func $${m[1]}))`);
+  for (const m of wat.matchAll(/^\(import "[^"]+" "[^"]+" \(func \$([\w.]+) /gm)) {
+    out.push(`(export "f$${m[1]}" (func $${m[1]}))`);
+  }
+  const end = wat.lastIndexOf(')');
+  return `${wat.slice(0, end)}${out.join('\n')}\n${wat.slice(end)}`;
 }
 
 // helpers/LOCALS/STATE are exported for tools/toyvm/trace-jit.js, which builds
@@ -6603,6 +6634,10 @@ function emit(variant, opts = {}) {
 // call per $rget16 would be measuring module boundaries, not code generation.
 module.exports = {
   emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE, EXIT_WHY, INT_STUB,
+  // region-sep.js builds a module of region bodies alone, and those come out of
+  // buildRegion still naming registers as globals, as the whole module does
+  // before emit() lowers it.
+  lowerRegs, useBuild,
   EXTRA_GLOBALS,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.

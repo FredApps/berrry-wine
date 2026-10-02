@@ -407,6 +407,9 @@ async function runDos(o) {
     hist: wantHist,
     ipHist: blockHits || foldHot > 0,
     lazyFlags, fuseCond, regions: jitRegions,
+    // The separate-module region JIT imports the interpreter's table, globals
+    // and functions from this instance, so it has to be built exporting them.
+    exportAll: !!(regionJit && regionJit.sep),
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
@@ -772,14 +775,19 @@ async function runDos(o) {
       // `lazyFlags`/`fuseCond` change what a handler MEANS. Rebuilding on the
       // defaults happened to agree with a default run and would have swapped
       // `--no-lazy` or `--handler-hist` onto a different machine mid-flight.
-      build: { hist: wantHist, ipHist: blockHits, lazyFlags, fuseCond },
+      build: { hist: wantHist, ipHist: blockHits, lazyFlags, fuseCond,
+        exportAll: !!(regionJit && regionJit.sep) },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       // In-process and blocking, which is the right choice HERE: a headless run
       // has nothing else to do with the seconds the audit and the compile take,
       // and the run loop is already paused between two slices. The page uses a
       // worker instead (region-live.js `workerBackend`).
-      backend: require('./region-prepare').inlineBackend(),
+      // `worker: true` is the page's arrangement headless: a worker thread
+      // prepares while the guest keeps running (see the run loop below).
+      backend: regionJit && regionJit.worker
+        ? require('./region-prepare').nodeWorkerBackend()
+        : require('./region-prepare').inlineBackend(),
       log,
       // The same allocator the tree fold takes its ordinals from.
       extras,
@@ -820,7 +828,14 @@ async function runDos(o) {
     // Headless, the pipeline is simply awaited -- a one-second pause between
     // two slices costs a batch run nothing, and the page (which cannot afford
     // it) hands the same pipeline to a worker instead.
-    if (jit) { jit.pump(); if (jit.pending) await jit.pending; }
+    // With `worker: true` the guest does NOT wait: one trip through the event
+    // loop per slice lets the worker's answer in, and the install runs there,
+    // which is still between two slices. (A worker backend passed WITHOUT it is
+    // awaited like the inline one -- same answer, deterministic install point.)
+    if (jit) {
+      jit.pump();
+      if (jit.pending) await (regionJit.worker ? new Promise(setImmediate) : jit.pending);
+    }
     // Same seam, same reason: `pump` builds a module and moves the guest onto
     // it, which cannot happen while a slice is in wasm.
     if (folder) { folder.tick(session.dispatched); if (folder.needsInstall()) await folder.pump(); }
@@ -893,6 +908,8 @@ async function runDos(o) {
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
   } = session.stats();
 
+  // A worker that is still preparing when the run ends answers nobody.
+  if (jit && jit.backend.stop) jit.backend.stop();
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
   if (sliceLog) fs.writeFileSync(sliceLogFile, sliceLog.join('\n') + '\n');
@@ -1148,6 +1165,11 @@ async function main() {
       sampleAfter: count(arg('region-jit-after'), 6e6),
       profileFor: count(arg('region-jit-window'), 6e6),
       regions: Number(arg('region-jit-regions', 1)),
+      // `--region-jit-sep`: compile only the regions and write them into the
+      // running table (region-sep.js). `--region-jit-worker`: prepare on a
+      // worker thread without stopping the guest.
+      sep: flag('region-jit-sep'),
+      worker: flag('region-jit-worker'),
       gateAt: Number(arg('region-jit-gate', 1)),
       gateIters: count(arg('region-jit-gate-iters'), 4000),
       log: flag('region-jit-verbose') ? console.log : (() => {}),

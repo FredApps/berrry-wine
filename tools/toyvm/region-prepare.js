@@ -45,6 +45,9 @@ function dumpDir() {
 // Pick, build, guard, audit and compile, from nothing but plain data.
 async function prepareRegions(bundle) {
   const t0 = now();
+  // The handler numbering the arena words were compiled against; in a worker
+  // nothing has set it up yet (emit.js `useBuild`).
+  require('./emit').useBuild(bundle.build || {});
   const regions = new Map();
   for (const p of bundle.progs) {
     const prog = {
@@ -169,10 +172,16 @@ async function prepareRegions(bundle) {
   // `--handler-hist` (the histogram changes nothing the arena holds, but the
   // option is part of what the module IS) or `--no-lazy`/`--no-fusecond`,
   // where the guest would be swapped onto handlers with different semantics.
-  const built = await buildModule(bundle.variant,
-    { ...(bundle.build || {}), regions: [...before, ...out.map(p => p.region)] });
+  // `sep` (region-sep.js): only the region functions, importing the rest from
+  // the running instance, instead of the whole interpreter again. The shared
+  // tail is not rebuilt here, so a tail somebody else appended to (the tree
+  // fold) is already in the running table and the regions just follow it.
+  const built = bundle.sep
+    ? await require('./region-sep').buildRegionModule(bundle.sep, out.map(p => p.region))
+    : await buildModule(bundle.variant,
+      { ...(bundle.build || {}), regions: [...before, ...out.map(p => p.region)] });
   return {
-    picks: out, bytes: built.bytes, gate: { agree: true, ratio },
+    picks: out, bytes: built.bytes, sep: !!bundle.sep, gate: { agree: true, ratio },
     // What the install has to append to the shared tail, and the epoch it was
     // built against. An install whose epoch has moved is missing somebody
     // else's handlers and declines rather than swapping onto a short table.
@@ -189,4 +198,39 @@ function inlineBackend() {
   return { name: 'inline', prepare: (bundle) => prepareRegions(bundle) };
 }
 
-module.exports = { prepareRegions, inlineBackend };
+// The page's worker, headless: the same preparation on a node worker thread,
+// so the guest keeps running while the region is picked, audited and compiled
+// (run-dos.js does not await it -- it yields to the event loop between slices
+// until the answer is in, and the install then happens at that seam). The
+// worker's own CPU is reported back as `ms.workerCpu` so a bench can charge it:
+// process CPU counts every thread, and that is the honest total.
+function nodeWorkerBackend() {
+  const { Worker } = require('worker_threads');
+  const worker = new Worker(`
+    const { parentPort } = require('worker_threads');
+    const { prepareRegions } = require(${JSON.stringify(__filename)});
+    parentPort.on('message', (bundle) => {
+      const c0 = process.threadCpuUsage ? process.threadCpuUsage() : null;
+      const done = (out) => {
+        if (c0) {
+          const c = process.threadCpuUsage(c0);
+          out.ms = { ...(out.ms || {}), workerCpu: (c.user + c.system) / 1000 };
+        }
+        parentPort.postMessage(out);
+      };
+      prepareRegions(bundle).then(done,
+        (e) => done({ declined: 'the worker threw: ' + ((e && e.stack) || String(e)) }));
+    });`, { eval: true });
+  worker.unref();
+  return {
+    name: 'worker',
+    stop() { worker.terminate(); },
+    prepare: (bundle) => new Promise((resolve) => {
+      worker.once('message', resolve);
+      worker.once('error', (e) => resolve({ declined: `the worker failed: ${e && e.message}` }));
+      worker.postMessage(bundle);
+    }),
+  };
+}
+
+module.exports = { prepareRegions, inlineBackend, nodeWorkerBackend };
