@@ -59,6 +59,20 @@ test('PID association requires exact open log or live Claude registry with match
   assert.equal(associate(agents, [], files, registry, null).get(agents[0]).status, 'unmatched');
 });
 
+test('process CPU and RSS preserve zero, multicore usage and totals beyond the visible child limit', () => {
+  const processes = parseProcesses('101 1 S 01:02 0.0 2048 Thu Oct 1 12:00:00 2026 /opt/bin/codex\n' + Array.from({length:45},(_,i)=>`${200+i} 101 R 00:30 ${i === 44 ? '125.5' : '1.0'} 1024 Thu Oct 1 12:00:32 2026 node`).join('\n'));
+  assert.equal(processes[0].cpuPercent, 0);
+  assert.equal(processes[0].rssBytes, 2 * 1024 ** 2);
+  const a = {id:'codex:a',provider:'codex',logFile:'/logs/a.jsonl'};
+  const p = associate([a],processes,parseOpenFiles('p101\nn/logs/a.jsonl\n'),[],null).get(a);
+  assert.equal(p.childCount,45); assert.equal(p.children.length,40);
+  assert.equal(p.children[0].pid,244);
+  assert.equal(p.childCpuPercent,169.5);
+  assert.equal(p.childRssBytes,45 * 1024 ** 2);
+  const legacy = parseProcesses('101 1 S 01:02 Thu Oct 1 12:00:00 2026 codex')[0];
+  assert.equal(legacy.cpuPercent,null); assert.equal(legacy.rssBytes,null);
+});
+
 test('provider usage distinguishes cached input, totals and context limits', () => {
   const root = '/project';
   const time = '2026-10-01T12:00:00Z';
@@ -163,6 +177,51 @@ test('HTTP is read-only, origin-checked, and serves only allowlisted files and c
   assert.equal(foreignHostStatus, 403);
   for (const route of ['/source?path=secret.txt', '/source?path=../../secret.txt', '/artifact?key=secret.txt', '/readers.js']) assert.equal((await get(route)).status, 404);
   assert.equal((await get('/source?path=TODOS.md')).headers.get('content-type'), 'text/plain; charset=utf-8');
+});
+
+test('blocker replies append one line, require same origin and a stable blocked task, and never unblock', async t => {
+  const f = await fixture(); t.after(f.cleanup);
+  const todo = '- [!] Fix startup\n  id: B-1\n  owner: codex:one\n  blocker: Missing test fixture\n  needs: Copy the original installer\n  waiting-on: maintainer\n  blocked-since: 2026-10-01T12:00:00Z\n';
+  await f.write('TODOS.md', todo);
+  await f.write('messageboard.txt', 'keep this exact prefix');
+  const server = createServer({ root: f.root, codexRoot: false, claudeRoot: false });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (value, origin = base) => fetch(base + '/api/blocker-reply', {method:'POST', headers:{'Content-Type':'application/json', ...(origin ? {Origin:origin} : {})}, body:JSON.stringify(value)});
+  assert.equal((await post({taskId:'B-1',message:'ok'}, null)).status,403);
+  assert.equal((await post({taskId:'B-1',message:'ok'}, 'http://evil.invalid')).status,403);
+  assert.equal((await post({taskId:'B-1',message:''})).status,400);
+  assert.equal((await post({taskId:'B-1',message:'x'.repeat(9000)})).status,413);
+  assert.equal((await post({taskId:'missing',message:'ok'})).status,409);
+  const response = await post({taskId:'B-1',message:'Use fixture A.\nThen verify <script>.'});
+  assert.equal(response.status,201);
+  const board = await fs.readFile(path.join(f.root,'messageboard.txt'),'utf8');
+  assert.match(board,/^keep this exact prefix\n\S+ dashboard-user \[OPS-REPLY B-1\] Use fixture A\. Then verify <script>\.\n$/);
+  assert.equal(await fs.readFile(path.join(f.root,'TODOS.md'),'utf8'),todo);
+  const state = await (await fetch(base+'/api/state')).json();
+  assert.equal(state.tasks[0].status,'blocked');
+  assert.equal(state.tasks[0].needs,'Copy the original installer');
+  assert.equal(state.tasks[0].replies.length,1);
+  // TCP chunks may split a multibyte character; the stored reply must retain it.
+  const unicodeReply = 'Use café 日本語 😀';
+  const bytes = Buffer.from(JSON.stringify({taskId:'B-1',message:unicodeReply}));
+  const split = bytes.indexOf(Buffer.from('é')) + 1;
+  const unicodeStatus = await new Promise((resolve, reject) => {
+    const request = http.request(base + '/api/blocker-reply', {method:'POST', headers:{'Content-Type':'application/json', Origin:base}}, response => {
+      response.resume(); response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.write(bytes.subarray(0, split));
+    setTimeout(() => request.end(bytes.subarray(split)), 25);
+  });
+  assert.equal(unicodeStatus,201);
+  const unicodeBoard = await fs.readFile(path.join(f.root,'messageboard.txt'),'utf8');
+  assert.ok(unicodeBoard.startsWith(board));
+  assert.ok(unicodeBoard.endsWith(`[OPS-REPLY B-1] ${unicodeReply}\n`));
+  await f.write('TODOS.md',todo.replace('[!]','[~]'));
+  assert.equal((await post({taskId:'B-1',message:'stale'})).status,409);
+  assert.equal(await fs.readFile(path.join(f.root,'messageboard.txt'),'utf8'),unicodeBoard);
 });
 
 module.exports = { fixture };

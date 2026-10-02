@@ -61,12 +61,15 @@ function parseTasks(text, candidates = []) {
   const tasks = [];
   let section = 'TODOs', fenced = false;
   const metadata = (body, key) => body.match(new RegExp(`(?:^|[\\s|])${key}:\\s*([^\\s|]+)`, 'im'))?.[1] || null;
+  const field = (body, key) => clip(body.match(new RegExp(`^[ \\t]*${key}:[ \\t]*(.+)$`, 'im'))?.[1], 1000);
   function add(title, body, line, status, kind) {
     const explicit = metadata(body, 'status');
     const candidateIds = candidates.filter(c => new RegExp(`(^|[^a-zA-Z0-9_-])${c.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-zA-Z0-9_-])`).test(body)).map(c => c.id);
     tasks.push({ id: metadata(body, 'id') || `todo-${line}`, title: clip(title, 250), body: body.slice(0, 24000), line,
       section, kind, status: ['backlog', 'ready', 'active', 'blocked', 'review', 'done'].includes(explicit) ? explicit : status,
       owner: metadata(body, 'owner'), startedAt: date(metadata(body, 'started')), progressAt: date(metadata(body, 'progress')),
+      blocker: field(body, 'blocker'), needs: field(body, 'needs'), waitingOn: field(body, 'waiting-on'), blockedAt: date(metadata(body, 'blocked-since')),
+      replyAllowed: /^[\w.-]{1,100}$/.test(metadata(body, 'id') || ''),
       candidateIds, source: 'TODOS.md' });
   }
   for (let i = 0; i < lines.length; i++) {
@@ -322,6 +325,7 @@ function createReader(options = {}) {
       sources.push('messageboard.txt (latest 150 entries)');
     } catch (e) { warnings.push(`messageboard.txt: ${e.code || e.message}`); }
     const tasks = parseTasks(todo, candidates);
+    for (const task of tasks) task.replies = activity.filter(row => row.text.match(/^\S+ \S+ \[OPS-REPLY ([\w.-]+)\] /)?.[1] === task.id).slice(0, 10);
     const [runList, agents] = await Promise.all([runs(warnings), sessions(warnings)]);
     const observations = agents.length ? await observeProcesses(agents) : new Map();
     for (const a of agents) { a.process = observations.get(a); delete a.logFile; }

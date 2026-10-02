@@ -33,7 +33,7 @@ const { createServer } = require('./server');
     await write('claude/two.jsonl', JSON.stringify({ type: 'assistant', cwd: root, sessionId: 'two', timestamp: now, message: { model: 'claude-fixture', stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }], usage: { input_tokens: 10, cache_read_input_tokens: 80, cache_creation_input_tokens: 10, output_tokens: 5 } } }) + '\n');
     server = createServer({ root, codexRoot: path.join(root, 'codex'), claudeRoot: path.join(root, 'claude'), processProbe: async () => ({
       checkedAt: new Date().toISOString(), error: null, registry: [],
-      processes: [{pid: 12345, ppid: 1, name: 'codex', state: 'S', elapsed: '01:02', started: 'Thu Oct 1 12:00:00 2026'}, {pid:12346, ppid:12345, name:'node', state:'R', elapsed:'00:20', started:'Thu Oct 1 12:00:42 2026'}],
+      processes: [{pid: 12345, ppid: 1, name: 'codex', state: 'S', elapsed: '01:02', started: 'Thu Oct 1 12:00:00 2026', cpuPercent:2.5,rssBytes:128*1024**2}, {pid:12346, ppid:12345, name:'node', state:'R', elapsed:'00:20', started:'Thu Oct 1 12:00:42 2026',cpuPercent:120,rssBytes:1024**3}],
       files: new Map([[path.join(root, 'codex/one.jsonl'), new Set([12345])]]),
     }) });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -42,10 +42,12 @@ const { createServer } = require('./server');
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.setViewport({ width: 1440, height: 1000 });
-    await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForSelector('.agent');
     assert.equal(await page.$$eval('.agent', els => els.length), 2);
     assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-line', el => el.textContent), /PID 12345/);
+    assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-line', el => el.textContent), /2\.5% CPU · 128 MiB RSS/);
+    assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-background', el => el.textContent), /Background 1 · 120\.0% CPU · 1\.0 GiB RSS/);
     assert.match(await page.$eval('.agent:has([data-agent="claude:two"]) .process-line', el => el.textContent), /PID not matched/);
     await page.click('[data-agent="codex:one"]');
     assert.match(await page.$eval('.process-table', el => el.textContent), /12346/);
@@ -95,6 +97,20 @@ const { createServer } = require('./server');
     await write('messageboard.txt', 'fresh-poll-marker\n');
     await page.click('a[data-view="activity"]');
     await page.waitForFunction(() => document.querySelector('#main').textContent.includes('fresh-poll-marker'), { timeout: 15000 });
+    assert.deepEqual(errors, []);
+    await write('TODOS.md', '- [!] Obtain installer\n  id: B-1\n  blocker: Missing fixture\n  needs: Choose the test version\n  owner: codex:one\n');
+    await page.setViewport({width:1440,height:1000});
+    await page.click('a[data-view="blockers"]');
+    await page.waitForSelector('[data-blocker="B-1"]', {timeout:15000});
+    await page.click('[data-blocker="B-1"]');
+    await page.type('#reply-text','Use version 1.0; verify startup before resuming.');
+    await page.click('#blocker-reply button');
+    await page.waitForFunction(() => document.querySelector('#reply-status')?.textContent.includes('Posted.'));
+    assert.match(await fs.readFile(path.join(root,'messageboard.txt'),'utf8'),/\[OPS-REPLY B-1\] Use version 1.0/);
+    assert.match(await fs.readFile(path.join(root,'TODOS.md'),'utf8'),/\[!\]/);
+    await page.click('#close-detail');
+    await page.waitForFunction(() => document.querySelector('.blocker')?.textContent.includes('Reply posted'));
+    await page.screenshot({path:path.join(shots,'blockers.png'),fullPage:true});
     assert.deepEqual(errors, []);
     console.log(`PASS dashboard navigation, task filters, search, provider details, PNGs, escaping, mobile layout and live file refresh\nScreenshots: ${shots}`);
   } finally {

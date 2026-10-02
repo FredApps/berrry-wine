@@ -14,6 +14,7 @@
     <nav aria-label="Main navigation">
       <a href="#overview" data-view="overview"><span>01</span> Overview</a>
       <a href="#tasks" data-view="tasks"><span>02</span> Tasks <small id="task-count"></small></a>
+      <a href="#blockers" data-view="blockers"><span>!</span> Blockers <small id="blocker-count"></small></a>
       <a href="#corpus" data-view="corpus"><span>03</span> EXE corpus <small id="corpus-count"></small></a>
       <a href="#agents" data-view="agents"><span>04</span> Agents</a>
       <a href="#activity" data-view="activity"><span>05</span> Activity</a>
@@ -27,7 +28,7 @@
 ├─ CLAUDE ──┤
 │          ↓
 └─ OBSERVER / OPS</pre><div class="signal-bars">▂ ▃ ▆ ▄ ▂ ▅ ▇ ▃ ▄ ▆ ▂ ▃</div></div>
-    <div class="aside-foot"><span class="file-dot"></span> LOCAL FILE OBSERVER<br><small>READ ONLY / NO DATABASE</small></div>
+    <div class="aside-foot"><span class="file-dot"></span> LOCAL FILE OBSERVER<br><small>FILE BACKED / NO DATABASE</small></div>
   </aside>
   <div class="workspace">
     <header><div class="breadcrumb">wine-assembly <span>/</span> <b>OPS CONSOLE</b></div><label class="search"><span>&gt;_</span><input id="search" type="search" placeholder="Search this view…" aria-label="Search this view"></label><span id="connection" role="status">Connecting…</span><button id="refresh" title="Refresh data">↻</button></header>

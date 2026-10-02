@@ -385,10 +385,22 @@ p {
 }
 .process-line { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0 14px; }
 .process-line .sub { font-size:10px; }
+.process-host,.process-background { flex-basis:100%; }
 .process-table { overflow-x:auto; margin:16px 0; }
 .process-table table { border-collapse:collapse; width:100%; text-align:left; font-size:11px; }
 .process-table th,.process-table td { padding:9px; border-bottom:1px solid var(--line); }
 .process-table th { color:var(--muted); }
+.blocker-list { display:grid; gap:12px; }
+.blocker { padding:16px 20px; border-left:2px solid var(--amber); }
+.blocker-heading,.blocker-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.blocker-heading button { padding:0; border:0; background:none; font-weight:600; text-align:left; }
+.blocker p { font-size:12px; }
+.blocker-ask { color:var(--amber); }
+.blocker-footer { margin-top:12px; }
+#blocker-reply { margin:22px 0; }
+#blocker-reply textarea { display:block; width:100%; margin-top:8px; padding:12px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); resize:vertical; }
+#blocker-reply button:disabled { opacity:.6; cursor:default; }
+.blocker-source { margin-top:20px; }
 .metrics strong {
   color:var(--ink);
   font-weight:600;

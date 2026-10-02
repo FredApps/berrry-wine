@@ -1,5 +1,124 @@
 # TODOS
 
+## Coordinated migration queue — 2026-10-01
+
+Historical sections below are preserved; they are not automatically ready work.
+Coordinator: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0.
+Resource and acknowledgment ledger: `ops/handoffs/orchestrator-status.md`.
+
+**User decisions needed: none currently.** Blocked migration items below are
+old-agent handoff dependencies, not requests for the user to approve routine
+work. Idle owners may need their original sessions resumed to acknowledge;
+no ownership release is inferred. Active renderer and Serious Sam work continues.
+
+- [~] Receive old-owner handoffs and reconcile resource ownership
+  id: MIG-HANDOFF
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  started: 2026-10-01T23:44:20Z
+  Next: acknowledge durable handoffs individually; retain pending-owner list and running jobs.
+  Done: every observed root has explicit acknowledgment or a recorded owner-release blocker.
+  Evidence: ops/handoffs/initial-inventory.md; ops/handoffs/orchestrator-status.md.
+
+- [x] Review and verify released dashboard blocker workflow
+  id: MIG-OPS
+  owner: codex:01a0f9db-07f4-71d2-9fe8-42d5efc7f642
+  started: 2026-10-01T23:45:00Z
+  Next: complete; UTF-8 chunk corruption fixed with failing-before/passing-after regression, 9/9 tests pass. Live8098 reload deferred.
+  Done: bounded review and relevant tests recorded, defects fixed or explicitly queued.
+  Evidence: ops/handoffs/ops-dashboard.md; ops/handoffs/mig-ops-review.md.
+
+- [x] Verify existing PCP artifact correctness
+  id: MIG-FP
+  owner: codex:01a0f9db-4a5d-7733-ade9-8b71d8e3f05f
+  started: 2026-10-01T23:45:00Z
+  Next: complete; 400 sequences/14834ops pass, 264 preserved files unchanged. Native/game gates remain.
+  Done: parity result and remaining native/game gates recorded.
+  Evidence: ops/handoffs/fp-next-root.md; ops/handoffs/mig-fp-parity.md.
+
+- [x] Review remaining Serious Sam production integration
+  id: MIG-SAM
+  candidate: serious-sam-demo
+  owner: codex:01a0f9db-89c0-73b3-b528-fe8bf239e061
+  started: 2026-10-01T23:45:00Z
+  Next: complete; timer TLS/SEH isolation recommended after frozen replay, preserve mixed-file ownership.
+  Done: precise next task with ownership boundaries and validation; goal remains incomplete.
+  Evidence: ops/handoffs/01a0f6ff-da61-7710-a604-d9442103dbbd.md; ops/handoffs/mig-sam-review.md.
+
+- [!] Receive NFS2 and IS3 layout checkpoint before overlapping integration
+  id: MIG-NFS2
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  blocker: IS3 child released its build, but final NFS2 root handoff and private verification are still pending.
+  needs: Final root/child handoff, tested module identity and explicit build/file release.
+  waiting-on: claude:5e92d715-203b-491b-97c5-fd8ebf17c1de and is3-gauge-agent
+  blocked-since: 2026-10-01T23:44:20Z
+  Next: collect bounded checkpoint; do not overlap layout edits or build.
+  Done: ownership and remaining authorized task recorded.
+
+- [~] Verify handed-off renderer specular correction in isolated candidate
+  id: MIG-RENDER
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  Next: fixed72pass; shared-worker hit generated-fixed fog/specular guard. Narrow both-native-flags correction and guest-negative regression under review before remote rerun.
+  Done: unchanged analytical expected pixels pass; exact tested module/source evidence retained.
+  Evidence: ops/handoffs/01a0eb29-4302-7e20-9b06-7084fb37358b.md; ops/handoffs/mig-render-validation.md.
+
+- [~] Correct generated fixed fog/specular guard without widening guest support
+  id: MIG-RENDER-FOG
+  owner: codex:01a0f9db-4a5d-7733-ade9-8b71d8e3f05f
+  Next: narrow private-worktree guard to the fully generated pair, add guest/mixed negative assertions, then root runs remote worker tests.
+  Done: existing analytical fog/specular pixels pass while unsupported guest/mixed paths remain rejected.
+  Evidence: ops/handoffs/mig-render-fog-review.md; ops/handoffs/mig-render-validation.md.
+
+- [~] Replay Serious Sam production TLS diagnostic artifact to intro
+  id: MIG-SAM-REPLAY
+  candidate: serious-sam-demo
+  owner: codex:01a0f9db-89c0-73b3-b528-fe8bf239e061
+  Next: independent frozen native-GL replay with checked new port and module363d07ed; preserve8138/8146.
+  Done:87000 intro state and reviewed capture, or concrete failure evidence; stop only own new run.
+  Evidence: ops/handoffs/mig-sam-review.md; ops/handoffs/mig-sam-replay.md.
+
+- [x] Prepare matching FP native-code capture commands
+  id: MIG-FP-NATIVE-PLAN
+  owner: codex:01a0f9db-4a5d-7733-ade9-8b71d8e3f05f
+  Next: plan complete; local captures wait for Serious Sam CPU release, remote prerequisites need separate verification.
+  Done: executable matching P/PCM/PCP V8/Ion capture plan with prerequisites explicit.
+  Evidence: ops/handoffs/mig-fp-native-plan.md.
+
+- [x] Audit incoming owner evidence and missing handoffs
+  id: MIG-OWNERS
+  owner: codex:01a0f9db-07f4-71d2-9fe8-42d5efc7f642
+  Next: audit complete; nine original roots still lack durable handoffs, keep individual blockers open.
+  Done: received/released/retained resource distinctions and ready candidates recorded without runtime disturbance.
+  Evidence: ops/handoffs/mig-ownership-audit.md.
+
+- [!] Receive Pirates Worker sailing handoff
+  id: MIG-PIRATES
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  blocker: Worker route result and source/resource ownership not yet handed off.
+  needs: Durable handoff with current jobs, exact remaining task, and released files.
+  waiting-on: codex:01a0f736-78f1-7822-8b37-159d6f8ed94d
+  blocked-since: 2026-10-01T23:44:20Z
+  Next: await owner acknowledgment; preserve running jobs.
+  Done: accepted handoff and safe next task.
+
+- [x] Complete MMX root resource audit
+  id: MIG-MMX
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  Next: durable root/three-child handoff acknowledged; preserve notes/artifacts/server58114, no slower default enabled and no new optimization campaign assigned.
+  Evidence: ops/handoffs/01a0eef4-21b2-76b3-8352-48b0d6ac6e7f.md.
+  Done: checkpoint accepted, remaining work scoped from owner evidence.
+
+- [!] Reconcile older idle roots before touching their work
+  id: MIG-LEGACY
+  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+  blocker: Seven older roots have not acknowledged; inactivity does not release ownership.
+  needs: Owner wind-down acknowledgments identifying dirty hunks and live local/remote jobs.
+  waiting-on: inventory roots PID10341,36638,68796,53759,87219,77464,71819
+  blocked-since: 2026-10-01T23:44:20Z
+  Next: preserve claims; historical suggestions remain unassigned.
+  Done: releases received or individually documented as pending.
+
+---
+
 Snapshot of remaining work, written 2026-08-16 by picking up five Claude sessions
 that ran the night of 2026-08-15 and stopped mid-flight. Each item names the
 session that owns it, the files it touches, and what the *next* concrete step is.

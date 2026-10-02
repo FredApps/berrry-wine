@@ -11,8 +11,8 @@ const run = async (command, args) => (await exec(command, args, { timeout: 4000,
 
 function parseProcesses(text) {
   return text.split('\n').flatMap(line => {
-    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.+?)\s*$/);
-    return m ? [{ pid: +m[1], ppid: +m[2], state: m[3], elapsed: m[4], started: m[5].replace(/\s+/g, ' '), name: path.basename(m[6]) }] : [];
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(?:(\d+(?:\.\d+)?)\s+(\d+)\s+)?(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.+?)\s*$/);
+    return m ? [{ pid: +m[1], ppid: +m[2], state: m[3], elapsed: m[4], cpuPercent: m[5] === undefined ? null : +m[5], rssBytes: m[6] === undefined ? null : +m[6] * 1024, started: m[7].replace(/\s+/g, ' '), name: path.basename(m[8]) }] : [];
   });
 }
 function parseOpenFiles(text) {
@@ -54,8 +54,10 @@ function associate(agents, processes, files, registry, checkedAt, error = null) 
       if (!changed) break;
     }
     const children = processes.filter(p => descendants.has(p.pid) && !matches.has(p.pid));
+    const sum = key => children.every(p => Number.isFinite(p[key])) ? children.reduce((total, p) => total + p[key], 0) : null;
     result.set(a, { status: matches.size ? 'observed' : error ? 'unavailable' : 'unmatched', checkedAt,
-      matches: [...matches.values()], children: children.slice(0, 40), childCount: children.length, note: error });
+      matches: [...matches.values()], children: children.sort((a,b) => (b.cpuPercent || 0) - (a.cpuPercent || 0) || (b.rssBytes || 0) - (a.rssBytes || 0)).slice(0, 40), childCount: children.length,
+      childCpuPercent: sum('cpuPercent'), childRssBytes: sum('rssBytes'), note: error });
   }
   const owners = new Map();
   for (const [a, observation] of result) for (const p of observation.matches) {
@@ -72,7 +74,7 @@ function createProcessObserver(options = {}) {
   async function probe() {
     const checkedAt = new Date().toISOString();
     try {
-      const processes = parseProcesses(await run('ps', ['-axww', '-o', 'pid=,ppid=,stat=,etime=,lstart=,comm=']));
+      const processes = parseProcesses(await run('ps', ['-axww', '-o', 'pid=,ppid=,stat=,etime=,%cpu=,rss=,lstart=,comm=']));
       if (!processes.length) throw new Error('empty process table');
       const providers = processes.filter(p => ['codex', 'claude'].includes(p.name)).slice(0, 128);
       let files = new Map(), note = null;

@@ -4,11 +4,12 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createReader, safeFile } = require('./readers');
+const { createReader, safeFile, parseTasks } = require('./readers');
 
 function createServer(options = {}) {
   const reader = createReader(options);
   let cached, refreshedAt = 0, pending;
+  let appendQueue = Promise.resolve();
   async function snapshot() {
     if (cached && Date.now() - refreshedAt < 5000) return cached;
     if (!pending) pending = reader.snapshot().then(value => { cached = value; refreshedAt = Date.now(); return value; }).finally(() => { pending = null; });
@@ -23,9 +24,46 @@ function createServer(options = {}) {
     const host = req.headers.host || '';
     if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return fail(403, 'Loopback host required');
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin requests only');
-    if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Read-only dashboard');
     try {
       const url = new URL(req.url, `http://${host}`);
+      if (req.method === 'POST' && url.pathname === '/api/blocker-reply') {
+        if (req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin request required');
+        if (req.headers['content-type'] !== 'application/json') return fail(415, 'JSON required');
+        const chunks = [];
+        let bodyBytes = 0;
+        for await (const chunk of req) {
+          bodyBytes += chunk.length;
+          if (bodyBytes > 8192) return fail(413, 'Reply too long');
+          chunks.push(chunk);
+        }
+        const body = Buffer.concat(chunks, bodyBytes).toString('utf8');
+        let input; try { input = JSON.parse(body); } catch { return fail(400, 'Invalid JSON'); }
+        if (!input || typeof input.taskId !== 'string' || !/^[\w.-]{1,100}$/.test(input.taskId) || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 2000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.message)) return fail(400, 'A task ID and reply of 1–2000 characters are required');
+        const tasks = parseTasks(await fs.promises.readFile(path.join(reader.root, 'TODOS.md'), 'utf8'));
+        const matching = tasks.filter(t => t.id === input.taskId);
+        const task = matching.length === 1 && matching[0].status === 'blocked' && matching[0].replyAllowed ? matching[0] : null;
+        if (!task) return fail(409, 'Task is no longer blocked or does not exist. Refresh first.');
+        const message = input.message.replace(/\s+/g, ' ').trim();
+        const line = `${new Date().toISOString()} dashboard-user [OPS-REPLY ${task.id}] ${message}\n`;
+        // One append per explicit click. Never rewrite task state or board history.
+        const append = appendQueue.then(async () => {
+          const board = await safeFile(reader.root, 'messageboard.txt');
+          if (!board) throw new Error('Messageboard unavailable');
+          const handle = await fs.promises.open(board, 'r');
+          let prefix = '';
+          try {
+            const { size } = await handle.stat();
+            if (size) { const byte = Buffer.alloc(1); await handle.read(byte, 0, 1, size - 1); if (byte[0] !== 10) prefix = '\n'; }
+          } finally { await handle.close(); }
+          await fs.promises.appendFile(board, prefix + line, 'utf8');
+        });
+        appendQueue = append.catch(() => {});
+        await append;
+        refreshedAt = 0;
+        res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ posted: true, message: line.trim(), status: 'Awaiting owner verification' }));
+      }
+      if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Only blocker replies can be posted');
       if (url.pathname === '/api/state') {
         const data = await snapshot();
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });

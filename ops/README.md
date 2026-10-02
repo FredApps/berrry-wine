@@ -1,6 +1,6 @@
 # Wine / Ops
 
-A local, read-only dashboard. Files remain the source of truth; no database,
+A local dashboard with append-only blocker replies. Files remain the source of truth; no database,
 generated project state, API keys, external requests, or new dependencies.
 
 ```sh
@@ -10,7 +10,8 @@ node ops/server.js
 
 The UI polls every five seconds while visible. Reads are cached in memory;
 restart to rebuild everything. The server binds only to loopback. It does not
-launch agents, execute tests, edit tasks, or change the messageboard.
+launch agents, execute tests, or edit tasks. Its only write action is an explicit
+user click to append a blocker reply to `messageboard.txt`.
 
 ## Sources
 
@@ -61,6 +62,45 @@ using the existing messageboard protocol to coordinate edits.
 token counts or tool activity. Without them, the corresponding clocks show
 unknown. Historical sections without checkboxes are navigation into the source,
 not automatically actionable tasks.
+
+## Blockers and decisions
+
+Record actionable blockers as ordinary tasks in `TODOS.md`:
+
+```markdown
+- [!] Restore reproducible startup test
+  id: B-startup-fixture
+  owner: codex:YOUR_SESSION_ID
+  blocker: The original installer is missing from the test machine.
+  needs: Choose the version and supply its fixture path.
+  waiting-on: maintainer
+  blocked-since: 2026-10-01T14:00:00Z
+```
+
+`[!]` or `status: blocked` puts the task in Blockers and Overview's Needs attention.
+Use a stable explicit `id:` (letters, digits, underscore, dot or hyphen) to enable
+replies. Quiet sessions and unstructured messageboard prose are not inferred to
+be blocked tasks. `blocker`, `needs`, and `waiting-on` are single-line descriptions.
+
+**Respond → Post reply to messageboard** appends one timestamped line:
+
+```text
+2026-10-01T14:15:00.000Z dashboard-user [OPS-REPLY B-startup-fixture] Use version 1.0 at test/fixtures/installer.exe; verify startup.
+```
+
+The reply is a decision/help handoff, not a success assertion. The owner reads
+the board, verifies the proposed fix, records evidence, then changes the task to
+`[~]` (resumed) or `[x]` (done). If it still fails, keep `[!]` and update the ask.
+Agents may append replies using the same `[OPS-REPLY task-id]` marker, with their
+own actor name. The dashboard shows up to ten matching replies from its latest
+150 board entries; older history remains in the file. A task stays blocked after
+a reply, visibly labeled “Reply posted · still blocked”.
+
+The write endpoint accepts only same-origin JSON, a currently blocked stable ID,
+and a nonempty reply of at most 2,000 characters. Multiline text is normalized to
+one line; existing board bytes are preserved. No automatic sends, task edits, or
+process signals occur. On an uncertain network result, inspect Activity before
+retrying to avoid posting twice.
 
 ## Runs: one folder per execution
 
@@ -182,8 +222,14 @@ Run folders are ordered by their explicit start timestamp, never file mtime.
 
 ## Claude and Codex observation
 
-Agent cards display associated local PIDs. Agent details list PID, parent PID,
-executable name, OS state, process age, and up to 40 host descendants. Read-only
+Agent cards display associated local PIDs with OS-reported CPU percentage and
+resident memory (RSS), plus a background-process count and summed CPU/RSS.
+Agent details list PID, parent PID, CPU, RSS, executable name, OS state, process
+age, and up to 40 host descendants, busiest first. Totals include all observed
+descendants even when the table is capped. Shared hosts are labeled: these are
+host-process measurements, not per-subagent model/token usage. CPU can exceed
+100%; summed RSS can double-count shared memory. Detached/reparented processes
+and remote jobs cannot be reliably attributed and are not included. Read-only
 `ps`/`lsof` observations refresh at most every ten seconds; no agent processes are
 started, stopped, or signaled by this feature. Command arguments and environment
 variables are not sent to the browser.
