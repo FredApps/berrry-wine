@@ -37,7 +37,7 @@ function taskPreview(t) {
   return `<button class="task-preview" data-run="${escape(run.key)}" aria-label="Open ${escape(label.toLowerCase())} for ${escape(t.title)}"><img src="${escape(visual.url)}" alt="${escape(visual.kind + ': ' + (run.route || visual.name))}" loading="lazy"><span>${escape(label)} · ${age(run.startedAt)} ago</span></button>`;
 }
 function taskOwner(t, details=false) {
-  if(!t.owner)return '<div class="task-owner sub">Unassigned</div>';
+  if(!t.owner)return `<div class="task-owner"><span class="sub">Unassigned</span>${coordinatorButton()}</div>`;
   const agent=state.agents.find(a=>a.id===t.owner);
   const identity=details ? t.owner : t.owner.split(':')[0]+' · '+t.owner.split(':').at(-1).slice(-8);
   const [activity,color]=agent ? health(agent) : ['Session not observed',''];
@@ -47,7 +47,7 @@ function taskOwner(t, details=false) {
 function taskRows(tasks) { return tasks.length ? sortedTasks(tasks).map(t => {
   const [status,label,,symbol] = taskState(t.status);
   const next = status === 'blocked' ? t.blocker || t.next : t.next;
-  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}${taskOwner(t)}<div class="sub">${escape(t.id)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div><button class="task-details" data-task="${escape(t.id)}">Details →</button></div>${taskPreview(t)}${badge(label, 'task-label task-label-' + status)}</div>`;
+  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${t.status==='ready' && t.done?`<div class="task-next"><strong>Done when:</strong> ${escape(t.done)}</div>`:''}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}${dependencySummary(t)}${taskOwner(t)}<div class="sub">${escape(t.id)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div><div class="task-controls"><button class="task-details" data-task="${escape(t.id)}">${status==='review'?'Review →':'Details →'}</button>${taskControls(t)}</div></div>${taskPreview(t)}<div class="task-statuses">${badge(label, 'task-label task-label-' + status)}${pickupBadge(t)}</div></div>`;
 }).join('') : empty('No matching tasks.'); }
 function health(a) {
   if (!a.lastActivityAt) return ['Unknown', ''];
@@ -66,7 +66,7 @@ function visualCards(runs, limit = 6) {
 function agentRuns(a) { return state.runs.filter(r => r.agentId === a.id); }
 function terminalLink(a, details=false) {
   const entry=state.terminals?.find(t=>t.agentId===a.id);
-  if(!entry)return details ? '<span class="sub">Terminal unavailable · no registered tmux session</span>' : '';
+  if(!entry)return coordinator()?.available ? coordinatorButton() : details ? '<span class="sub">Terminal unavailable · no registered tmux session</span>' : '';
   return `<button class="details-button" data-terminal="${escape(entry.id)}" ${entry.available?'':'disabled'} title="${escape(entry.available?'Open in view mode':entry.reason)}">${entry.available?'Terminal >_':'Terminal unavailable'}</button>`;
 }
 const cpuUsage = value => Number.isFinite(value) ? value.toFixed(1) + '%' : '—';
@@ -123,8 +123,8 @@ function tasksView() {
     const open = filter !== 'all' || query || (expandedTaskGroups.get(s) ?? ['active','ready','review','blocked'].includes(s));
     return `<details class="task-group task-group-${s}" data-task-group="${s}" ${open ? 'open' : ''}><summary><span class="task-label task-label-${s}">${symbol} ${label}</span><span class="group-count">${items.length}</span><span class="group-hint">${hint}</span></summary><div class="panel">${taskRows(items)}</div></details>`;
   }).join('');
-  return title('Task queue', 'Running first, then the next assignments. Status comes from the task ledger, not process activity.', '<button id="todo-source">Read source</button>') +
-    `<div class="queue-counts">${counts}</div><div class="toolbar"><select id="filter" aria-label="Task status"><option value="all" ${filter === 'all' ? 'selected' : ''}>All statuses</option>${taskStates.map(([s,label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${tasks.length} items · order within each group follows TODOS.md</span></div>${groups || empty('No tasks match this view.')}`;
+  return title('Task queue', 'Running first, then the next assignments. Status comes from the task ledger, not process activity.', '<div class="task-controls"><button id="todo-source">Read source</button><button id="new-task" class="primary-action">+ New task</button></div>') +coordinatorBar()+
+    `<div class="queue-counts">${counts}</div><p id="task-queue-status" role="status"></p><div class="toolbar"><select id="filter" aria-label="Task status"><option value="all" ${filter === 'all' ? 'selected' : ''}>All statuses</option>${taskStates.map(([s,label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${tasks.length} items · source order; arrows reorder within a section</span></div>${groups || empty('No tasks match this view.')}`;
 }
 function candidateWork(c) {
   const order = ['active','review','blocked','ready'];
@@ -152,7 +152,7 @@ function render() {
   $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, agents: agentsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
-function show(label, html) { $('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
+function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
 function runRows(runs) { return runs.map(r => `<div class="run"><div class="run-head"><button data-run="${escape(r.key)}">${escape(r.id)} · ${escape(r.route || 'route unspecified')}</button>${badge(r.outcome, tone(r.outcome))}</div><div class="sub">${escape(when(r.startedAt))} · ${escape(r.verification)} · ${escape(r.source)}</div></div>`).join('') || empty('No run folders recorded yet. See ops/README.md.'); }
 function candidateDetail(id) {
   const c = state.candidates.find(c => c.id === id); if (!c) return;
@@ -166,24 +166,26 @@ function agentDetail(id) {
   fields.push(['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
   show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
 }
-async function refresh() {
-  if (loading) return; loading = true;
+let activeRefresh=null;
+function refresh() {
+  if(activeRefresh)return activeRefresh;
+  activeRefresh=fetchState().finally(()=>{activeRefresh=null;});return activeRefresh;
+}
+async function refreshAfterWrite(){if(activeRefresh)await activeRefresh;await refresh();}
+async function fetchState() {
   try {
     const response = await fetch('/api/state'); if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state = await response.json(); $('#connection').textContent = '● Connected'; $('#connection').classList.remove('error'); render();
+    state = await response.json(); $('#connection').textContent = '● Connected'; $('#connection').classList.remove('error'); render();refreshTaskDetail();
   } catch (e) {
     $('#connection').textContent = '● Disconnected'; $('#connection').classList.add('error');
     if (!state) $('#main').innerHTML = empty(`Could not read project data: ${e.message}. Start node ops/server.js.`);
-  } finally { loading = false; }
+  }
 }
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
   if (el.dataset.terminal) { const entry=state.terminals?.find(t=>t.id===el.dataset.terminal);if(entry?.available)window.OpsTerminal.open(entry); }
   if (el.dataset.taskFilter) { filter = filter === el.dataset.taskFilter ? 'all' : el.dataset.taskFilter; render(); }
-  if (el.dataset.task) { const t = state.tasks.find(t => t.id === el.dataset.task); if (t) {
-    const evidence = taskEvidence(t);
-    show(`TASK / ${t.id}`, `<h1>${escape(t.title)}</h1><p>${badge(taskState(t.status)[1], 'task-label task-label-' + t.status)}</p>${taskOwner(t,true)}<dl><dt>Started</dt><dd>${escape(when(t.startedAt))}</dd><dt>Last progress</dt><dd>${escape(when(t.progressAt))}</dd>${t.next ? `<dt>Next</dt><dd>${escape(t.next)}</dd>` : ''}${t.blocker ? `<dt>Blocker</dt><dd>${escape(t.blocker)}</dd>` : ''}${t.needs ? `<dt>Needs</dt><dd>${escape(t.needs)}</dd>` : ''}</dl>${t.status==='blocked' ? `<button data-blocker="${escape(t.id)}">Respond to blocker →</button>` : ''}${evidence.runs.length ? section(evidence.label) + (evidence.label === 'Related app' ? '<p class="source-note">These captures belong to the same app; they are not explicitly linked to this task.</p>' : '') + visualCards(evidence.runs, 4) : ''}<details><summary>Task source · TODOS.md:${t.line}</summary><pre>${escape(t.body)}</pre>${link('/source?path=TODOS.md', 'Read full source')}</details>`);
-  } }
+  if (el.dataset.task) taskDetail(el.dataset.task);
   if (el.dataset.candidate) candidateDetail(el.dataset.candidate);
   if (el.dataset.agent) agentDetail(el.dataset.agent);
   if (el.dataset.blocker) blockerDetail(el.dataset.blocker);

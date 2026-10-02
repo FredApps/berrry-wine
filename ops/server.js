@@ -6,9 +6,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createReader, safeFile, parseTasks } = require('./readers');
 const { createTerminalBridge } = require('./terminal-server');
+const { createTaskStore } = require('./task-store');
 
 function createServer(options = {}) {
   const reader = createReader(options);
+  const taskStore=createTaskStore(reader.root);
   let cached, refreshedAt = 0, pending;
   let appendQueue = Promise.resolve();
   let terminals;
@@ -29,6 +31,22 @@ function createServer(options = {}) {
     try {
       const url = new URL(req.url, `http://${host}`);
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
+      if(req.method==='POST' && ['/api/tasks','/api/task-note'].includes(url.pathname)) {
+        if(req.headers.origin!==`http://${host}`)return fail(403,'Same-origin request required');
+        if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');
+        const chunks=[];let size=0;
+        for await(const chunk of req){size+=chunk.length;if(size>16384)return fail(413,'Request too large');chunks.push(chunk);}
+        let input;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return fail(400,'Invalid JSON');}
+        try {
+          const result=await (url.pathname==='/api/tasks'?taskStore.mutate(input):taskStore.note(input));
+          // An older in-flight read must not become the next cached snapshot.
+          if(pending)await pending.catch(()=>{});refreshedAt=0;cached=null;
+          res.writeHead(201,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify(result));
+        }catch(e){
+          if(e.status===409){if(pending)await pending.catch(()=>{});refreshedAt=0;cached=null;}
+          if(e.status)return fail(e.status,e.message);throw e;
+        }
+      }
       if (req.method === 'POST' && url.pathname === '/api/blocker-reply') {
         if (req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin request required');
         if (req.headers['content-type'] !== 'application/json') return fail(415, 'JSON required');
@@ -66,7 +84,7 @@ function createServer(options = {}) {
         res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify({ posted: true, message: line.trim(), status: 'Awaiting owner verification' }));
       }
-      if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Only blocker replies can be posted');
+      if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Method not supported');
       if (url.pathname === '/api/state') {
         const data = await snapshot();
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -75,6 +93,7 @@ function createServer(options = {}) {
       let file, type = 'text/plain; charset=utf-8';
       const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
+        '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.js':['node_modules/@xterm/xterm/lib/xterm.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.css':['node_modules/@xterm/xterm/css/xterm.css','text/css; charset=utf-8'],
         };

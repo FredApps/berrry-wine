@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { createProcessObserver } = require('./processes');
 
 const MB = 1024 * 1024;
@@ -60,17 +61,24 @@ function parseTasks(text, candidates = []) {
   const lines = text.split(/\r?\n/);
   const tasks = [];
   let section = 'TODOs', fenced = false;
-  const metadata = (body, key) => body.match(new RegExp(`(?:^|[\\s|])${key}:\\s*([^\\s|]+)`, 'im'))?.[1] || null;
-  const field = (body, key) => clip(body.match(new RegExp(`^[ \\t]*${key}:[ \\t]*(.+)$`, 'im'))?.[1], 1000);
-  function add(title, body, line, status, kind) {
-    const explicit = metadata(body, 'status');
+  const metadata = (body, key) => body.match(new RegExp(`^[ \\t]*${key}:[ \\t]*([^\\s|]+)`, 'im'))?.[1] || null;
+  const field = (body, key,limit=1000) => clip(body.match(new RegExp(`^[ \\t]*${key}:[ \\t]*(.+)$`, 'im'))?.[1], limit);
+  function add(title, body, line, status, kind, endLine) {
+    // Examples in fenced blocks are prose, never task metadata.
+    let inFence=false;
+    const meta=body.split('\n').filter(line=>{if(/^\s*(```|~~~)/.test(line)){inFence=!inFence;return false;}return !inFence;}).join('\n');
+    const explicit = metadata(meta, 'status');
     const candidateIds = candidates.filter(c => new RegExp(`(^|[^a-zA-Z0-9_-])${c.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-zA-Z0-9_-])`).test(body)).map(c => c.id);
-    tasks.push({ id: metadata(body, 'id') || `todo-${line}`, title: clip(title, 250), body: body.slice(0, 24000), line,
+    tasks.push({ id: metadata(meta, 'id') || `todo-${line}`, title: clip(title, 250), body: body.slice(0, 24000), line, endLine,
       section, kind, status: ['backlog', 'ready', 'active', 'blocked', 'review', 'deferred', 'done'].includes(explicit) ? explicit : status,
-      next: field(body, 'next'),
-      owner: metadata(body, 'owner'), startedAt: date(metadata(body, 'started')), progressAt: date(metadata(body, 'progress')),
-      blocker: field(body, 'blocker'), needs: field(body, 'needs'), waitingOn: field(body, 'waiting-on'), blockedAt: date(metadata(body, 'blocked-since')),
-      replyAllowed: /^[\w.-]{1,100}$/.test(metadata(body, 'id') || ''),
+      next: field(meta, 'next',2000), done: field(meta,'done',2000), notes:field(meta,'notes',4000), evidence:field(meta,'evidence',4000),
+      explicitCandidates:field(meta,'candidate',4000).split(/[,\s]+/).filter(Boolean),
+      dependencies:field(meta,'depends-on',4000).split(/[,\s]+/).filter(Boolean),
+      createdAt:date(metadata(meta,'created')), createdBy:metadata(meta,'created-by'),
+      acceptedAt:date(metadata(meta,'accepted')), acceptedBy:metadata(meta,'accepted-by'),lastRequest:metadata(meta,'last-request'),
+      owner: metadata(meta, 'owner'), startedAt: date(metadata(meta, 'started')), progressAt: date(metadata(meta, 'progress')),
+      blocker: field(meta, 'blocker'), needs: field(meta, 'needs'), waitingOn: field(meta, 'waiting-on'), blockedAt: date(metadata(meta, 'blocked-since')),
+      replyAllowed: !inFence && /^[\w.-]{1,100}$/.test(metadata(meta, 'id') || '') && (meta.match(/^[ \t]*id:/gim) || []).length===1,
       candidateIds, source: 'TODOS.md' });
   }
   for (let i = 0; i < lines.length; i++) {
@@ -83,16 +91,21 @@ function parseTasks(text, candidates = []) {
       while (end < lines.length && !/^## /.test(lines[end])) end++;
       const body = lines.slice(i, end).join('\n');
       // Legacy prose remains visible without guessing its current status.
-      if (!/^\s*[-*] \[[ xX~!]\]/m.test(body)) add(section, body, i + 1, 'unknown', 'legacy section');
+      if (!/^\s*[-*] \[[ xX~!]\]/m.test(body)) add(section, body, i + 1, 'unknown', 'legacy section',end+1);
     }
     const match = line.match(/^\s*[-*] \[([ xX~!])\]\s+(.+)/);
     if (match) {
-      let end = i + 1;
-      while (end < lines.length && !/^\s*(?:[-*] \[|#{1,6} )/.test(lines[end])) end++;
+      let end = i + 1,insideFence=false;
+      while(end<lines.length){
+        if(/^\s*(```|~~~)/.test(lines[end]))insideFence=!insideFence;
+        else if(!insideFence && /^\s*(?:[-*] \[|#{1,6} )/.test(lines[end]))break;
+        end++;
+      }
       const body = lines.slice(i, end).join('\n');
-      add(match[2], body, i + 1, ({ x: 'done', '~': 'active', '!': 'blocked', ' ': 'ready' })[match[1].toLowerCase()], 'checkbox');
+      add(match[2], body, i + 1, ({ x: 'done', '~': 'active', '!': 'blocked', ' ': 'ready' })[match[1].toLowerCase()], 'checkbox',end+1);
     }
   }
+  for(const task of tasks){task.editable=task.kind==='checkbox' && task.replyAllowed && tasks.filter(t=>t.id===task.id).length===1;task.replyAllowed=task.editable;}
   return tasks;
 }
 
@@ -212,6 +225,7 @@ function createReader(options = {}) {
   const observeProcesses = createProcessObserver(options);
   const assets = new Map();
   let discovery = null, discoveredAt = 0, discoveryWarnings = [];
+  let boardStamp='',taskMessages=new Map();
   async function sessions(warnings) {
     if (!discovery || Date.now() - discoveredAt > 30000) {
       discovery = [];
@@ -324,9 +338,25 @@ function createReader(options = {}) {
       if (start) tail = tail.slice(tail.indexOf('\n') + 1);
       activity = tail.split(/\r?\n/).filter(l => l.trim()).slice(-150).reverse().map(text => ({ text: text.slice(0, 12000), source: 'messageboard.txt' }));
       sources.push('messageboard.txt (latest 150 entries)');
+      const stamp=stat.mtimeMs+':'+stat.size;
+      if(stamp!==boardStamp){
+        const messages=new Map();
+        for(const line of (await readText(file,32*MB)).split('\n')){
+          const m=/^(\S+) (\S+) \[OPS-(NOTE|ACK|REPLY|TASK) ([\w.-]+)\] (.*)$/.exec(line);
+          if(!m)continue;
+          const rows=messages.get(m[4]) || [];
+          rows.push({at:m[1],actor:m[2],kind:m[3],message:m[5].replace(/^request:[a-f0-9-]{36} /,'').replace(/ request:[a-f0-9-]{36}$/,''),text:line,source:'messageboard.txt'});
+          if(rows.length>50)rows.shift();messages.set(m[4],rows);
+        }
+        taskMessages=messages;boardStamp=stamp;
+      }
     } catch (e) { warnings.push(`messageboard.txt: ${e.code || e.message}`); }
     const tasks = parseTasks(todo, candidates);
-    for (const task of tasks) task.replies = activity.filter(row => row.text.match(/^\S+ \S+ \[OPS-REPLY ([\w.-]+)\] /)?.[1] === task.id).slice(0, 10);
+    for (const task of tasks) {
+      task.discussion=taskMessages.get(task.id) || [];
+      task.replies=task.discussion.filter(row=>row.kind==='REPLY').slice(-10).reverse();
+      task.pickup=task.acceptedAt && task.acceptedBy ? 'accepted' : task.owner ? 'assigned' : 'awaiting';
+    }
     const [runList, agents] = await Promise.all([runs(warnings), sessions(warnings)]);
     const observations = agents.length ? await observeProcesses(agents) : new Map();
     for (const a of agents) { a.process = observations.get(a); delete a.logFile; }
@@ -342,7 +372,7 @@ function createReader(options = {}) {
       c.lastVerifiedRun = matching.find(r => r.outcome === 'passed' && r.verification === 'reviewed') || null;
     }
     return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,
-      sources, warnings: [...new Set(warnings)], todoText: todo,
+      sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }
   async function artifact(key) {

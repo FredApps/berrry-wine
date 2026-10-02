@@ -10,9 +10,10 @@ node ops/server.js
 ```
 
 The UI polls every five seconds while visible. Reads are cached in memory;
-restart to rebuild everything. The server binds only to loopback. It does not
-launch agents or edit tasks. Explicit actions can append a blocker reply to
-`messageboard.txt` or send terminal input after enabling Control.
+restart to rebuild everything. The server binds only to loopback. Explicit
+actions create/edit/reorder tasks in `TODOS.md`, append discussion to
+`messageboard.txt`, or send terminal input after enabling Control. Creating a
+task or posting a note does not launch or wake an agent.
 
 ## Browser terminal
 
@@ -60,6 +61,61 @@ that their checksums or behavior have been verified. Candidate IDs are exact;
 they are not inferred from executable basenames.
 
 ## Tasks: use the existing Markdown file
+
+**Tasks → + New task** collects a title, done criteria, optional candidate, and
+Up next/Backlog queue. More fields include a next step, dependencies (stable task
+IDs), and notes/references. New requests get a UUID-based `T-…` ID and are
+appended under `## Dashboard requests`, unassigned and **Awaiting pickup**.
+
+The coordinator acknowledges by recording `accepted: <ISO timestamp>` and
+`accepted-by: codex:<session ID>`, then assigns `owner:` and updates the task
+status when work actually starts. It can append `[OPS-ACK task-id] message` to
+the board so the acknowledgment also appears in Discussion. Assignment alone
+shows **Assigned**; it is not an invented acknowledgment timestamp. The UI shows
+unresolved `depends-on:` IDs; the coordinator must check them before dispatch.
+
+Task Details exposes done criteria, next step, discussion, evidence, and queue
+actions. **Edit** preserves owner, status, timestamps, handoffs, and unknown source
+fields. **↑ / ↓** reorder editable peers of the same status within their existing
+Markdown section, preserving section boundaries. **Defer**, **Move to backlog**,
+and **Reopen/Queue task** change the ledger; they do not interrupt an agent.
+Tasks in review offer **Mark reviewed / done** or **Request another pass**.
+Legacy tasks without a unique explicit ID stay read-only until an ID is added.
+
+Worker tasks with no terminal of their own offer **Coordinator >_** when it is
+available. The coordinator bar reports observed activity; a live PID does not
+prove it will pick up a task. Open its terminal and explicitly prompt an idle
+coordinator to read the queue. No automatic keystrokes are sent.
+
+### Concurrent task edits
+
+Task writes compare a SHA-256 source revision, acquire the directory lock
+`scratch/ops-task-write.lock`, reread the file, and write a temporary file beside
+`TODOS.md` before renaming it. A stale form gets a conflict; its draft stays in
+the editor. **Load latest, keep my draft** shows the current task source for
+comparison before an explicit retry. Repeated submissions reuse a request ID;
+create/edit retries do not duplicate the saved task. Task mutation notices use
+`[OPS-TASK task-id]` in the board. If a notice fails after saving, the UI says the
+task was saved and that coordinator notification failed.
+
+**All agents editing `TODOS.md` must use the same lock.** Create the directory
+exclusively, reread the source after acquiring it, preserve unrelated content,
+write the update, and remove the empty lock directory in a `finally` block.
+If it exists, wait and retry; do not remove another writer's lock. Ordinary
+editors that ignore the lock can still race the final revision check/rename;
+the lock is the shared-writer contract, not an OS-enforced file lock. A crashed
+writer can leave a lock; verify it is no longer writing before removing it.
+
+### Task discussion
+
+The task detail **Send** action appends one `[OPS-NOTE task-id]` line with a
+deduplication request ID. Agents can append `[OPS-NOTE task-id] message` and
+`[OPS-ACK task-id] message` using their own actor name and the usual append-only
+messageboard protocol. Blocker replies remain `[OPS-REPLY task-id]`.
+Discussion shows the latest 50 matching entries, including task change notices,
+from the board (up to 32 MiB), independently of the Activity feed's latest 150
+entries. Replies never mark a task complete or unblock it. Acknowledgments and
+assignment are separate from the fact that a note was posted.
 
 Legacy level-two sections remain visible with **unknown** status. We do not
 guess whether historical prose describes work that is still open. Add ordinary
@@ -137,8 +193,8 @@ The reply is a decision/help handoff, not a success assertion. The owner reads
 the board, verifies the proposed fix, records evidence, then changes the task to
 `[~]` (resumed) or `[x]` (done). If it still fails, keep `[!]` and update the ask.
 Agents may append replies using the same `[OPS-REPLY task-id]` marker, with their
-own actor name. The dashboard shows up to ten matching replies from its latest
-150 board entries; older history remains in the file. A task stays blocked after
+own actor name. The dashboard shows up to ten matching replies from the task
+discussion; older history remains in the file. A task stays blocked after
 a reply, visibly labeled “Reply posted · still blocked”.
 
 The write endpoint accepts only same-origin JSON, a currently blocked stable ID,

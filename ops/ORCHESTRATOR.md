@@ -34,6 +34,24 @@ configured model. Keep normal sandbox and approval protections.
 
 ## Execute the queue
 
+- Dashboard requests arrive in `TODOS.md` under `## Dashboard requests`, with
+  stable `T-…` IDs, done criteria, optional `depends-on:` IDs and no owner.
+  Inspect this section and `[OPS-TASK task-id]` / `[OPS-NOTE task-id]` board
+  messages on each queue check. Acknowledge accepted requests with `accepted:`
+  (ISO time) and `accepted-by:` (your full session ID), plus an append-only
+  `[OPS-ACK task-id]` message explaining the next step. Check dependencies and
+  resource ownership before assigning a worker. Backlog tasks remain unscheduled.
+- When changing `TODOS.md`, exclusively create `scratch/ops-task-write.lock`
+  as a directory, then reread the current file under the lock. Preserve other
+  tasks and metadata, write/rename the new version, and remove the empty lock
+  in a `finally` block. Wait if it already exists; never remove another writer's
+  lock. This is also used by the dashboard to prevent concurrent lost updates.
+- The dashboard can edit, defer, reopen and reorder task records. These are
+  queue changes, not process signals. Notice changes at coordination boundaries
+  and reconcile any already-running worker before applying the new queue state.
+  Replies do not automatically resolve blockers, and task creation does not
+  wake an ended coordinator turn.
+
 - Coordinate the already authorized work described in the handoffs. Do not
   invent a new project direction or start a new optimization campaign.
 - Spawn workers for concrete independent tasks only after ownership is clear.

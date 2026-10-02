@@ -241,3 +241,74 @@ test('blocker replies append one line, require same origin and a stable blocked 
 });
 
 module.exports = { fixture };
+
+test('task writes preserve source, reject stale/conflicting changes, and deduplicate retries',async t=>{
+  const f=await fixture();t.after(f.cleanup);
+  const {createTaskStore,revision}=require('./task-store');
+  const store=createTaskStore(f.root),uuid=()=>require('node:crypto').randomUUID();
+  const file=path.join(f.root,'TODOS.md'),read=()=>fs.readFile(file,'utf8');
+  const original=await read();
+  const input={action:'create',requestId:uuid(),revision:revision(original),fields:{title:'Literal $& <task> id: fake',done:'Race starts and input works',candidates:['demo'],dependencies:['T-1'],status:'ready'}};
+  const result=await store.mutate(input),created=await read();
+  assert.ok(created.startsWith(original));
+  assert.equal(parseTasks(created).find(t=>t.id===result.taskId).title,input.fields.title);
+  assert.equal(parseTasks(created).find(t=>t.id===result.taskId).owner,null);
+  assert.equal((await store.mutate(input)).replayed,true);assert.equal(await read(),created);
+  await assert.rejects(store.mutate({...input,requestId:uuid()}),e=>e.status===409);
+  const block=parseTasks(created).find(t=>t.id==='T-1');
+  const edit={action:'edit',taskId:'T-1',requestId:uuid(),revision:revision(created),fields:{title:'Changed',done:'Pass checks',candidates:['demo'],dependencies:[],notes:'Keep <markup> inert'}};
+  await store.mutate(edit);
+  const updated=await read(),changed=parseTasks(updated).find(t=>t.id==='T-1');
+  assert.equal(changed.owner,block.owner);assert.equal(changed.startedAt,block.startedAt);assert.equal(changed.status,block.status);
+  assert.ok(updated.includes('## Legacy investigation\nHistorical prose; no current status.'));
+  await fs.mkdir(path.join(f.root,'scratch/ops-task-write.lock'));
+  await assert.rejects(store.mutate({...edit,requestId:uuid(),revision:revision(updated)}),e=>e.status===409);
+  await fs.rmdir(path.join(f.root,'scratch/ops-task-write.lock'));
+  const before=await read();
+  await assert.rejects(store.mutate({...edit,requestId:uuid(),revision:revision(before),fields:{...edit.fields,dependencies:[result.taskId]}}),e=>e.status===400);
+  await assert.rejects(store.mutate({...edit,requestId:uuid(),revision:revision(before),fields:{...edit.fields,title:'bad\n- [x] injected'}}),e=>e.status===400);
+  assert.equal(await read(),before);
+});
+
+test('task queue reorder and status preserve unrelated content, CRLF and fenced examples',async t=>{
+  const f=await fixture();t.after(f.cleanup);
+  const {createTaskStore,revision}=require('./task-store');const store=createTaskStore(f.root);
+  const original='## Queue\r\n- [ ] Alpha\r\n  id: A\r\n  owner: codex:one\r\n  Custom: preserve me\r\n  ```md\r\n  done: example only\r\n  - [ ] sample\r\n  ```\r\n\r\n- [ ] Beta\r\n  id: B\r\n\r\n## Legacy\r\nKeep exactly.\r\n';
+  await f.write('TODOS.md',original);const read=()=>fs.readFile(path.join(f.root,'TODOS.md'),'utf8');
+  const request={action:'move',taskId:'B',direction:'up',requestId:require('node:crypto').randomUUID(),revision:revision(original)};
+  await store.mutate(request);const reordered=await read();
+  assert.deepEqual(parseTasks(reordered).filter(t=>t.kind==='checkbox').map(t=>t.id),['B','A']);
+  assert.ok(reordered.includes('  Custom: preserve me\r\n  ```md\r\n  done: example only\r\n  - [ ] sample\r\n  ```'));
+  assert.ok(reordered.endsWith('## Legacy\r\nKeep exactly.\r\n'));
+  assert.equal(reordered.replace(/\r\n/g,'').includes('\n'),false);
+  await store.mutate(request);assert.equal(await read(),reordered);
+  await store.mutate({action:'status',taskId:'A',status:'deferred',requestId:require('node:crypto').randomUUID(),revision:revision(reordered)});
+  assert.equal(parseTasks(await read()).find(t=>t.id==='A').status,'deferred');
+  assert.equal(parseTasks(await read()).find(t=>t.id==='A').owner,'codex:one');
+});
+
+test('task APIs require same origin, retain discussion beyond activity window and surface explicit pickup',async t=>{
+  const f=await fixture();t.after(f.cleanup);
+  const server=createServer({root:f.root,codexRoot:false,claudeRoot:false});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const post=(route,input,origin=base)=>fetch(base+route,{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify(input)});
+  const state=await(await fetch(base+'/api/state')).json();
+  const input={action:'create',requestId:require('node:crypto').randomUUID(),revision:state.todoRevision,fields:{title:'New request',done:'Verified result',candidates:[],dependencies:[],status:'ready'}};
+  assert.equal((await post('/api/tasks',input,null)).status,403);
+  assert.equal((await post('/api/tasks',input,'http://evil.invalid')).status,403);
+  const result=await post('/api/tasks',input);assert.equal(result.status,201);const {taskId}=await result.json();
+  const note={taskId,requestId:require('node:crypto').randomUUID(),message:'Please verify café 日本語 <script>.'};
+  assert.equal((await post('/api/task-note',note)).status,201);
+  assert.equal((await post('/api/task-note',note)).status,201);
+  const board=await fs.readFile(path.join(f.root,'messageboard.txt'),'utf8');
+  assert.equal(board.split('[OPS-NOTE ').length,2);
+  await fs.appendFile(path.join(f.root,'messageboard.txt'),Array.from({length:160},(_,i)=>`2026-10-01 agent unrelated ${i}\n`).join(''));
+  let snapshot=await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
+  assert.equal(snapshot.tasks.find(t=>t.id===taskId).pickup,'awaiting');
+  assert.equal(snapshot.tasks.find(t=>t.id===taskId).discussion.filter(d=>d.kind==='NOTE').length,1);
+  await fs.appendFile(path.join(f.root,'TODOS.md'),'  accepted: 2026-10-01T12:00:00Z\n  accepted-by: codex:coordinator\n');
+  snapshot=await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
+  assert.equal(snapshot.tasks.find(t=>t.id===taskId).pickup,'accepted');
+  assert.equal(snapshot.tasks.find(t=>t.id===taskId).status,'ready');
+});
