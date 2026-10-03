@@ -86,7 +86,7 @@ The summary does not change task status, dispatch agents, or resolve blockers.
 | What matters now | Agent-maintained `ops/STATUS.md` |
 | Corpus | `test/candidate-corpus/manifest.json`, matching tasks and recorded runs |
 | Candidate notes | Existing `docs/re-notes/<candidate-id>.md` or note paths named in the manifest |
-| Activity | Latest 150 nonempty lines of append-only `messageboard.txt` |
+| Activity | Latest 150 messageboard entries plus up to 150 unique Git commits reachable from local refs, with All / Commits / Messages filtering |
 | Agents | Project-scoped local Claude and Codex JSONL session logs, local process snapshots |
 | Runs | `scratch/runs/<id>/result.json` and preserved `ops/runs/<id>/result.json` |
 
@@ -582,8 +582,12 @@ matching rules or turn image filenames into pass/fail results.
 Corpus displays linked screenshot coverage and filters for present/missing
 captures. Recorded evidence precedes unrecorded candidates after active work and
 failures. Queue previews show short summaries; full criteria remain in Details.
-Activity initially shows 25 entries with controls to reveal the remaining 150
-entry window. Narrow portrait and short landscape screens use compact navigation.
+Activity initially shows 25 matching entries, with controls to show more or all.
+The source filter combines with search and survives refreshes. Commits include
+subject, author, timestamp, short hash and a GitHub link when the configured
+origin is recognized; local visibility does not certify remote publication.
+Git reads are bounded and cached for 30 seconds, without fetching. Dated items
+sort newest first; undated board messages keep their order after dated items. Narrow portrait and short landscape screens use compact navigation.
 
 ## Live command approvals
 

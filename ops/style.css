@@ -610,6 +610,14 @@ p {
 .feed-text {
   white-space:pre-wrap;
 }
+.activity-meta { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.feed-row .activity-meta::before { content:none; }
+.activity-meta > span:first-child { color:var(--cyan); }
+.activity-meta code { color:var(--ink); font-size:11px; }
+.activity-meta time { white-space:normal; }
+.activity-meta .commit-link { margin-left:auto; padding:5px 0; }
+.commit-subject { font-weight:600; line-height:1.5; }
+.feed-commit { border-left:2px solid var(--cyan); }
 .toolbar {
   display:flex;
   flex-wrap:wrap;

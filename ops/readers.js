@@ -9,6 +9,7 @@ const { classifyCandidate } = require('./corpus-categories');
 const { inventory } = require('./corpus-inventory');
 const { getCatalog, launchFor } = require('./emulator-server');
 const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
+const { createActivityReader, boardEntry } = require('./activity');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -236,6 +237,7 @@ async function walkLogs(root, warnings, maxFiles = 10000) {
 
 function createReader(options = {}) {
   const root = path.resolve(options.root || path.join(__dirname, '..'));
+  const readActivity = createActivityReader(root);
   const codexRoot = options.codexRoot === false ? null : options.codexRoot || path.join(os.homedir(), '.codex', 'sessions');
   const claudeRoot = options.claudeRoot === false ? null : options.claudeRoot || path.join(os.homedir(), '.claude', 'projects', root.replace(/[^a-zA-Z0-9-]/g, '-'));
   const sessionCache = new Map();
@@ -402,7 +404,7 @@ function createReader(options = {}) {
       const start = Math.max(0, stat.size - 256 * 1024);
       let tail = await windowText(file, start, Math.min(stat.size, 256 * 1024));
       if (start) tail = tail.slice(tail.indexOf('\n') + 1);
-      activity = tail.split(/\r?\n/).filter(l => l.trim()).slice(-150).reverse().map(text => ({ text: text.slice(0, 12000), source: 'messageboard.txt' }));
+      activity = tail.split(/\r?\n/).filter(l => l.trim()).slice(-150).reverse().map(boardEntry);
       sources.push('messageboard.txt (latest 150 entries)');
       const stamp=stat.mtimeMs+':'+stat.size;
       if(stamp!==boardStamp){
@@ -417,6 +419,10 @@ function createReader(options = {}) {
         taskMessages=messages;boardStamp=stamp;
       }
     } catch (e) { warnings.push(`messageboard.txt: ${e.code || e.message}`); }
+    const activityResult = await readActivity(activity);
+    activity = activityResult.activity;
+    if (activityResult.warning) warnings.push(activityResult.warning);
+    else sources.push('git log --all (latest 150 commits; cached 30 seconds)');
     const tasks = parseTasks(todo, candidates);
     for (const task of tasks) {
       task.discussion=taskMessages.get(task.id) || [];
@@ -458,7 +464,7 @@ function createReader(options = {}) {
       const launchCatalog = await getCatalog(root);
       for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,projectStatus,releaseReadiness,
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,projectStatus,releaseReadiness,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }

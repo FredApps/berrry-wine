@@ -25,6 +25,7 @@ const taskStates = [
 const expandedTaskGroups = new Map();
 let agentHistoryOpen=false;
 let activityLimit=25;
+let activityFilter='all';
 let corpusGroup='all';
 let corpusCategory='all';
 let corpusRelease='all';
@@ -107,7 +108,13 @@ function agentCard(a) {
   const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
   return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
-function feedRows(rows, truncate = false) { return rows.map(row => `<div class="feed-row"><div class="sub">MESSAGEBOARD</div><div class="feed-text">${escape(truncate && row.text.length > 360 ? row.text.slice(0, 360) + '…' : row.text)}</div></div>`).join('') || empty('No messageboard entries.'); }
+function feedRows(rows, truncate = false) { return rows.map(row => {
+  const commit=row.type==='commit',text=String(commit?(row.subject || row.text || 'Untitled commit'):(row.text || ''));
+  const date=row.time && Number.isFinite(Date.parse(row.time)) ? `<time datetime="${escape(row.time)}">${escape(when(row.time))}</time>` : '<span>Date not recorded</span>';
+  const metadata=commit?`<code>${escape(row.shortHash || row.hash?.slice(0,8) || 'unknown')}</code><span>${escape(row.author || 'Unknown author')}</span>`:'';
+  const github=commit && typeof row.url==='string' && /^https:\/\/github\.com\//i.test(row.url) && !/[\u0000-\u0020]/.test(row.url)?`<a class="commit-link" href="${escape(row.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open commit '+(row.shortHash || row.hash || '')+' on GitHub')}">GitHub ↗</a>`:'';
+  return `<div class="feed-row${commit?' feed-commit':''}"><div class="sub activity-meta"><span>${commit?'COMMIT':'MESSAGEBOARD'}</span>${metadata}${date}${github}</div><div class="feed-text${commit?' commit-subject':''}">${escape(truncate && text.length>360?text.slice(0,360)+'…':text)}</div></div>`;
+}).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
 function section(name, target) { return `<div class="section-head"><h2>${name}</h2>${target ? `<a href="#${target}">View all →</a>` : ''}</div>`; }
 function notice() { return state.warnings.length ? `<div class="notice"><details><summary>${state.warnings.length} source notices</summary><ul>${state.warnings.map(w => `<li>${escape(w)}</li>`).join('')}</ul></details></div>` : ''; }
@@ -276,9 +283,10 @@ function agentsView() {
   return title('Agents', 'Decisions and sessions needing a check first. Recent activity is not proof of task progress.') + `<div class="agent-list">${current.filter(matches).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
 }
 function activityView() {
-  const rows=state.activity.filter(matches);
-  return title('Activity', 'Latest 150 nonempty messageboard entries, newest first.')+`<p class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</p><div class="panel">${feedRows(rows.slice(0,activityLimit))}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="150">Show all matching entries</button></div>':''}`;
+  const rows=matchingActivity();
+  return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
 }
+function matchingActivity() { return (state.activity || []).filter(row=>matches(row) && (activityFilter==='all' || (row.type==='commit'?'commit':'message')===activityFilter)); }
 function render() {
   if (!state) return;
   renderApprovals();
@@ -317,6 +325,7 @@ async function fetchState() {
     if (!state) $('#main').innerHTML = empty(`Could not read project data: ${e.message}. Start node ops/server.js.`);
   }
 }
+document.addEventListener('change',event=>{if(event.target.id==='activity-filter'){activityFilter=event.target.value;activityLimit=25;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-group'){corpusGroup=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-launch'){corpusLaunch=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-release'){corpusRelease=event.target.value;render();}});
@@ -326,7 +335,7 @@ document.addEventListener('click', event => {
   if(el.dataset.launchFilter){corpusLaunch=el.dataset.launchFilter;render();}
   if(el.dataset.releaseFilter){corpusRelease=el.dataset.releaseFilter;corpusCategory='all';corpusGroup='all';filter='all';query='';$('#search').value='';render();}
   if(el.dataset.corpusFilter){filter=el.dataset.corpusFilter;render();}
-  if(el.dataset.moreActivity){activityLimit+=Number(el.dataset.moreActivity);render();}
+  if(el.dataset.moreActivity){activityLimit=el.dataset.moreActivity==='all'?matchingActivity().length:activityLimit+Number(el.dataset.moreActivity);render();}
   if (el.dataset.terminal) { const entry=state.terminals?.find(t=>t.id===el.dataset.terminal);if(entry?.available)window.OpsTerminal.open(entry); }
   if (el.dataset.statusSummary) show('PROJECT / TLDR',statusSummary());
   if (el.dataset.taskFilter) { filter = filter === el.dataset.taskFilter ? 'all' : el.dataset.taskFilter; render(); }
@@ -358,7 +367,7 @@ document.addEventListener('submit', async event => {
   } catch (e) { status.textContent = `Could not confirm posting: ${e.message}. Check Activity before retrying.`; button.disabled = false; }
 });
 $('#refresh').onclick = refresh;
-$('#search').addEventListener('input', e => { query = e.target.value.toLowerCase(); render(); });
+$('#search').addEventListener('input', e => { query = e.target.value.toLowerCase(); activityLimit=25; render(); });
 document.addEventListener('change', e => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 window.addEventListener('hashchange', () => { view = location.hash.slice(1) || 'overview'; filter = 'all'; query = ''; $('#search').value = ''; render(); });
 refresh();

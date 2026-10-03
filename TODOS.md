@@ -3333,3 +3333,11 @@ Ready means assets are present, not gameplay or counter correctness.
   Next: Windowed default confirmed; AltEnter did not switch in browser. Audio stalls at44096bytes with2undelivered function callbacks. Implement owner-safe Worker completion delivery and separately diagnose fullscreen toggle; source proposal/evidence saved.
   Done: Explain intended behavior and demonstrate any supported fix with real browser evidence.
   Evidence: docs/re-notes/scummvm-fotaq.md; scratch/scummvm-av-20261003/
+
+- [x] Show Git commits in dashboard activity with source filter
+  id: OPS-ACTIVITY-COMMITS
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T23:16:31.625Z
+  Next: Complete: live mixed activity and All/Commits/Messages filter,150 unique local-ref commits;28 tests and public Puppeteer desktop/mobile/search/pagination/refresh PASS.
+  Done: Live activity shows recent unique commits with date/author/hash/link; filters and search work on desktop/mobile.
