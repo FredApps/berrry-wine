@@ -3353,13 +3353,13 @@ Ready means assets are present, not gameplay or counter correctness.
   accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
   created: 2026-10-03T23:32:35.471Z
   created-by: user
-  blocker: Awaiting user approval of loading UX design
+  blocker: Awaiting user approval of revision-2 loading UX design (Win98 File Download style)
   waiting-on: user
-  needs: Approve proposal sent in Telegram or request changes
-  next: Only after explicit user approval relayed via claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256, implement per ops/handoffs/claude-launch-ux-design-20261003.md section 5 (direct-launch gate, lib/launch-progress.js dialog, host.js byte/cache/abort progress, unit + Puppeteer network tests); silence is not approval.
+  needs: Approve revision-2 proposal sent in Telegram (msgs 291-294) or request changes
+  next: Only after explicit user approval relayed via claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256, implement per ops/handoffs/claude-launch-ux-design-20261003.md sections 3R and 5 (direct-launch gate, lib/launch-progress.js dialog, host.js byte/cache/abort progress, unit + Puppeteer network tests); silence is not approval.
   done: After user approves design, direct app URLs show no desktop flash or desktop startup work, fetch only selected-app assets plus required shared runtime, and show responsive loading feedback; desktop/multi-app mode uses the same loading dialog without disrupting other apps. Validate cache, slow network, errors, cancellation, mobile portrait and landscape, and asset request scope.
   notes: DESIGN ONLY until explicit user approval. Busy cursor alone is insufficient. Show honest download/preparation/startup states; no fabricated progress. Images must be labelled design mockups. Codex retains shared coordination; Claude owns this task.
-  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z
+  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z (revision 1, superseded by user correction "more like windows file downloading dialog"); revision 2 scratch/claude-launch-ux/revision-2/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups), receipt scratch/claude-launch-ux/revision-2/telegram-delivery.json msgs 291-294 at 2026-10-03T23:45:48Z
 
 - [x] Match Telegram blockers command to dashboard
   id: OPS-TELEGRAM-BLOCKERS
