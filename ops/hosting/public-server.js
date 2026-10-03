@@ -6,6 +6,24 @@ const crypto=require('node:crypto');
 const {promisify}=require('node:util');
 const scrypt=promisify(crypto.scrypt);
 const cookieName='__Host-wine_ops';
+// Avoid native form submission: Safari 26.4 can abort in its credential-save
+// prompt on this password-only login. The password still travels only by POST.
+const loginScript=`'use strict';
+const input=document.getElementById('password'),button=document.getElementById('sign-in'),status=document.getElementById('login-status');
+async function signIn(){
+  if(button.disabled)return;
+  if(!input.value){input.focus();return;}
+  button.disabled=true;status.textContent='Signing in…';
+  try{
+    const response=await fetch('/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:new URLSearchParams({password:input.value}),signal:AbortSignal.timeout(15000)});
+    if(response.status===204){input.value='';location.replace('/');return;}
+    status.textContent=response.status===401?'Incorrect password.':response.status===429?'Please retry in a minute.':'Sign-in failed. Please retry.';
+  }catch{status.textContent='Could not connect. Please retry.';}
+  button.disabled=false;
+}
+button.addEventListener('click',signIn);
+input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();signIn();}});
+`;
 
 function createGateway(config,upstreamPort=8098){
   const origin=new URL(config.origin);
@@ -22,7 +40,7 @@ function createGateway(config,upstreamPort=8098){
   // HTML form POSTs need their same-origin Origin header. no-referrer makes
   // browsers send Origin: null for this navigation; foreign origins stay denied.
   const baseHeaders={'Cache-Control':'no-store','Referrer-Policy':'same-origin','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};
-  const login=message=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wine / Ops · Sign in</title><style>body{margin:0;background:#08120e;color:#dcebd7;font:18px monospace;display:grid;place-items:center;min-height:100dvh}main{max-width:24rem;padding:2rem;border:1px solid #365440;margin:1rem}h1{color:#b0ef65}label,input,button{display:block;box-sizing:border-box;width:100%;margin-top:1rem}input,button{padding:.8rem;font:inherit;border:1px solid #739c5f;background:#102217;color:inherit}button{background:#b0ef65;color:#08120e;cursor:pointer}p{color:#a9b8ae;font-size:14px}</style><main><p>PRIVATE OPERATIONS CONSOLE</p><h1>WINE / OPS</h1><form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus maxlength="256"><button>Sign in →</button></form><p>${message||'Tasks · agents · corpus · approvals'}</p></main></html>`;
+  const login=message=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wine / Ops · Sign in</title><style>body{margin:0;background:#08120e;color:#dcebd7;font:18px monospace;display:grid;place-items:center;min-height:100dvh}main{max-width:24rem;padding:2rem;border:1px solid #365440;margin:1rem}h1{color:#b0ef65}label,input,button{display:block;box-sizing:border-box;width:100%;margin-top:1rem}input,button{padding:.8rem;font:inherit;border:1px solid #739c5f;background:#102217;color:inherit}button{background:#b0ef65;color:#08120e;cursor:pointer}p{color:#a9b8ae;font-size:14px}</style><main><p>PRIVATE OPERATIONS CONSOLE</p><h1>WINE / OPS</h1><div id="login-controls"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="off" required autofocus maxlength="256"><button type="button" id="sign-in">Sign in →</button></div><p id="login-status" role="status">${message||'Tasks · agents · corpus · approvals'}</p><noscript>JavaScript is required to sign in.</noscript></main><script src="/login.js" defer></script></html>`;
   const send=(res,status,body,headers={})=>{res.writeHead(status,{...baseHeaders,...headers});res.end(body);};
   const cookie=(value,age)=>`${cookieName}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${age}`;
   let epoch=0,attempts=0,inFlight=0;
@@ -40,8 +58,9 @@ function createGateway(config,upstreamPort=8098){
       if(!validOrigin(req))return send(res,403,'Unexpected host or origin');
       if(!['GET','HEAD'].includes(req.method) && req.headers.origin!==origin.origin)return send(res,403,'Same-origin request required');
       const url=new URL(req.url,origin);
+      if(url.pathname==='/login.js' && req.method==='GET')return send(res,200,loginScript,{'Content-Type':'text/javascript; charset=utf-8'});
       if(url.pathname==='/login'){
-        const pageHeaders={'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"};
+        const pageHeaders={'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"};
         if(req.method==='GET')return send(res,200,login(),pageHeaders);
         if(req.method!=='POST')return send(res,405,'Method not supported');
         if(req.headers['content-type']!=='application/x-www-form-urlencoded')return send(res,415,'Form required');
@@ -52,7 +71,7 @@ function createGateway(config,upstreamPort=8098){
         inFlight++;let derived;try{derived=await scrypt(password,config.salt,32);}finally{inFlight--;}
         if(!equal(derived.toString('hex'),config.passwordHash))return send(res,401,login('Incorrect password.'),pageHeaders);
         const value=(Date.now()+8*3600000)+'.'+crypto.randomBytes(16).toString('hex');
-        return send(res,303,'',{'Location':'/','Set-Cookie':cookie(value+'.'+sign(value),8*3600)});
+        return send(res,req.headers.accept==='application/json'?204:303,'',{'Location':'/','Set-Cookie':cookie(value+'.'+sign(value),8*3600)});
       }
       if(req.method==='POST'&&url.pathname==='/logout')return send(res,303,'',{'Location':'/login','Set-Cookie':cookie('',0)});
       if(!authorized(req))return url.pathname==='/'?send(res,303,'',{'Location':'/login'}):send(res,401,'Sign in required');

@@ -104,9 +104,9 @@ test('An existing approval is reformatted in place without another notification'
 test('Chat waits durably on explicit pre-input rejection, then delivers once',async()=>{
  const state={owner:{userId:10,chatId:10}},messages=[];let blocked=true,attempts=0;
  const make=()=>createBot({state,save:async()=>{},telegram:async(method,body)=>{messages.push(body.text);return {};},local:async()=>{attempts++;if(blocked)throw Object.assign(Error('Orchestrator has a prompt or draft open. Resolve it before sending chat'),{status:409});return {sent:true};}});
- await make().handle(message('ascii tldr'));assert.equal(state.chatQueue.length,1);assert(!state.chatAttempt);
+ await make().handle(message('capture next game'));assert.equal(state.chatQueue.length,1);assert(!state.chatAttempt);
  const restarted=make();blocked=false;await restarted.drainChat();await restarted.drainChat();
- assert.equal(state.chatQueue.length,0);assert.equal(attempts,2);assert.equal(state.lastChat.text,'ascii tldr');
+ assert.equal(state.chatQueue.length,0);assert.equal(attempts,2);assert.equal(state.lastChat.text,'capture next game');
 });
 test('Ambiguous delivery is never replayed, and waiting messages can be cancelled',async()=>{
  const state={owner:{userId:10,chatId:10}};let attempts=0;
@@ -118,10 +118,24 @@ test('Ambiguous delivery is never replayed, and waiting messages can be cancelle
 test('Successful chat uses typing instead of a queued reply and stops after the answer or approval',async()=>{
  const state={owner:{userId:10,chatId:10}},calls=[];let time=Date.now();
  const bot=createBot({state,now:()=>time,save:async()=>{},local:async()=>({sent:true}),telegram:async(method,body)=>{calls.push({method,body});return {};}});
- await bot.handle(message('status'));assert.equal(calls.length,1);assert.equal(calls[0].method,'sendChatAction');assert.equal(calls[0].body.action,'typing');
+ await bot.handle(message('check the game screenshots'));assert.equal(calls.length,1);assert.equal(calls[0].method,'sendChatAction');assert.equal(calls[0].body.action,'typing');
  await bot.typing();assert.equal(calls.length,1);
  time+=4000;await bot.typing();assert.equal(calls.length,2);
  state.pending={};time+=4000;await bot.typing();assert.equal(calls.length,2);
  state.pending=null;state.lastDirectReplyAt=time;await bot.typing();assert.equal(calls.length,2);
  state.lastDirectReplyAt=0;time+=11*60000;await bot.typing();assert.equal(calls.length,2);
+});
+test('Status questions reply from dated dashboard state without touching a busy terminal',async()=>{
+ const calls=[],requests=[],state={owner:{userId:10,chatId:10}};
+ const bot=createBot({state,save:async()=>{},telegram:async(method,body)=>{calls.push({method,body});return {message_id:42};},local:async url=>{requests.push(url);assert.equal(url,'/api/state');return {tasks:[],projectStatus:{available:true,body:'Checking gameplay screenshots.',updatedAt:'2026-10-03T09:00:00Z'}};}});
+ for(const text of ["whtas' latest",'sup','/status','ascii art tldr status'])await bot.handle(message(text));
+ assert.equal(requests.length,4);assert.equal(calls.length,4);
+ assert(calls.every(c=>c.method==='sendMessage'&&c.body.text.includes('Checking gameplay screenshots.')&&c.body.text.includes('2026-10-03T09:00:00Z')));
+ assert.equal(state.chatQueue,undefined);assert.equal(state.lastStatusDelivery.messageId,42);
+});
+test('Busy terminal keeps actionable chat queued with typing, without Saved chatter',async()=>{
+ const calls=[],state={owner:{userId:10,chatId:10}};
+ const bot=createBot({state,save:async()=>{},telegram:async(method,body)=>{calls.push({method,body});return {};},local:async()=>{const e=Error('Orchestrator has a prompt or draft open.');e.status=409;throw e;}});
+ await bot.handle(message('capture the next game'));
+ assert.equal(state.chatQueue.length,1);assert.deepEqual(calls.map(c=>c.method),['sendChatAction']);
 });

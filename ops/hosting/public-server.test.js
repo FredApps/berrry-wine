@@ -22,6 +22,15 @@ test('public gate protects HTTP, writes and WebSockets; forwards only the exact 
   assert.equal((await request('/',{headers:{origin:'https://evil.example'}})).status,403);
   assert.equal((await request('/login',{method:'POST'})).status,403);
   const headers={origin:config.origin,'content-type':'application/x-www-form-urlencoded'};
+  const login=await request('/login');
+  assert.doesNotMatch(login.text,/<form\b/i);
+  assert.match(login.text,/src="\/login.js"/);
+  assert.match(login.headers['content-security-policy'],/form-action 'none'/);
+  const script=await request('/login.js');assert.equal(script.status,200);
+  assert.match(script.text,/fetch\('\/login'/);
+  assert.equal((await request('/login',{method:'POST',headers:{...headers,origin:'null',accept:'application/json'},body:'password=test-password'})).status,403);
+  const ajax=await request('/login',{method:'POST',headers:{...headers,accept:'application/json'},body:'password=test-password'});
+  assert.equal(ajax.status,204);assert.match(ajax.headers['set-cookie'][0],/Secure; HttpOnly; SameSite=Strict/);
   assert.equal((await request('/login',{method:'POST',headers,body:'password=wrong'})).status,401);
   const signed=await request('/login',{method:'POST',headers,body:'password=test-password'});
   assert.equal(signed.status,303);assert.match(signed.headers['set-cookie'][0],/Secure; HttpOnly; SameSite=Strict/);
