@@ -72,4 +72,27 @@ handoffs, task ledger, messageboard and selected project memory.
 SSH authorization uses `node ops/hosting/ascii.js authorize bx_ID` with the local
 dedicated `scratch/ops-migration-key.pub`; the private key is never exported.
 
+## Public HTTPS dashboard
+
+Keep `wine-ops.service` on loopback port 8098. `wine-ops-public.service` exposes
+only the password gateway on 8099. Its private configuration is
+`~/.config/wine-ops/access.json` (0600): `origin` is the exact public HTTPS origin,
+`salt` is 16 random bytes in hex, `passwordHash` is Node scrypt(password, salt, 32)
+in hex, and `sessionKey` is 32 random bytes in hex. No plaintext password is kept
+on the server. Rotate `sessionKey` to revoke existing browser sessions.
+
+The gateway validates Host and browser Origin before translating an authenticated
+request to the loopback backend. Authentication covers every page, API, artifact
+and WebSocket upgrade. Writes require the exact public Origin. The login cookie
+is Secure, HttpOnly, SameSite=Strict and expires after eight hours; restarting the
+service preserves signed sessions, rotating the key revokes them. Login attempts
+are rate limited. Only then run `host 8099 --public --title "Wine Ops"` to publish
+the provider's TLS route. Port 8098 must never be hosted or publicly bound.
+
+Test with `node --test ops/hosting/public-server.test.js`. After deployment,
+check the external HTTPS login, unauthenticated API denial, authenticated state,
+and a terminal upgrade. The public route is intentionally ungated at the provider
+layer because the gateway supplies the password login; no token-bearing URL is
+needed. [Provider HTTPS hosting documentation](https://docs.boat.dev/hosting).
+
 Provider lifecycle documentation: [create sandbox](https://docs.boat.dev/api/reference/sandboxes/create-sandbox).
