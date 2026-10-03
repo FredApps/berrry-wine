@@ -2,6 +2,7 @@
 const crypto=require('node:crypto');
 const {approvalIdentity}=require('./approval-prompt');
 const formatting=require('./telegram-format');
+const {statusText}=require('./telegram-status');
 const hash=text=>crypto.createHash('sha256').update(text).digest('hex');
 const promptHash=p=>hash(p.terminalId+'\n'+approvalIdentity(p.prompt));
 const isStatusQuestion=text=>/^(?:\/status|status|(?:ascii(?: art)? )?tldr(?: status)?|(?:what['’]?s|whats['’]?|whtas['’]?) (?:the )?latest|any updates?|sup|hi|hey)[?!.]*$/i.test(text.trim());
@@ -18,14 +19,10 @@ function createBot({state,save,telegram,local,now=Date.now}) {
     let result;for(let i=0;i<chunks.length;i++)result=await telegram('sendMessage',{chat_id:state.owner.chatId,text:chunks[i],...(i===chunks.length-1?extra:{})});return result;
   };
   const authorized=(user,chat)=>!!state.owner && chat?.type==='private' && user?.id===state.owner.userId && chat.id===state.owner.chatId;
-  async function sendStatus(){
+  async function sendStatus({ascii=false}={}){
     const s=await local('/api/state');
-    const summary=s.projectStatus;
-    const rows=s.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status));
-    const body=summary?.available&&summary.body
-      ? summary.body+'\n\nSummary updated: '+(summary.updatedAt||'unknown')
-      : rows.slice(0,8).map(t=>`${t.status.toUpperCase()}: ${t.title}`).join('\n')||'No current task status recorded.';
-    const result=await send('Dashboard status\n'+body+'\n\nPending approvals: '+(s.approvals?.items.filter(p=>!p.sent).length||0));
+    const text=statusText(s,{ascii});
+    const result=await send(text,ascii?{entities:[{type:'pre',offset:0,length:text.length}]}:{});
     state.lastStatusDelivery={at:now(),messageId:result?.message_id};await save();return result;
   }
   async function notifyApproval(p) {
@@ -86,7 +83,7 @@ function createBot({state,save,telegram,local,now=Date.now}) {
     if(text==='/queue')return send(state.chatQueue?.length?state.chatQueue.map((x,i)=>`${i+1}. ${x.text}`).join('\n'):'No messages waiting.');
     if(text==='/cancel'){state.chatQueue=[];await save();return send('Waiting messages cancelled.');}
     if(text==='/screen'){const s=await local('/api/orchestrator-screen');for(const part of formatting.chunks([{text:s.text,type:'pre'}]))await send(part.text,{entities:part.entities});return;}
-    if(isStatusQuestion(text))return sendStatus();
+    if(isStatusQuestion(text))return sendStatus({ascii:/\bascii\b/i.test(text)});
     if(text==='/approvals'){const s=await local('/api/state');const p=s.approvals?.items.find(p=>p.terminalId==='orchestrator'&&!p.sent);if(!p)return send('No supported live command-approval prompt. /screen shows other prompts.');state.notified=null;return notifyApproval(p);}
     if(text.startsWith('/'))return send(HELP);
     if(text.length>4000)return send('Please keep messages under 4,000 characters.');

@@ -130,8 +130,19 @@ test('Status questions reply from dated dashboard state without touching a busy 
  const bot=createBot({state,save:async()=>{},telegram:async(method,body)=>{calls.push({method,body});return {message_id:42};},local:async url=>{requests.push(url);assert.equal(url,'/api/state');return {tasks:[],projectStatus:{available:true,body:'Checking gameplay screenshots.',updatedAt:'2026-10-03T09:00:00Z'}};}});
  for(const text of ["whtas' latest",'sup','/status','ascii art tldr status'])await bot.handle(message(text));
  assert.equal(requests.length,4);assert.equal(calls.length,4);
- assert(calls.every(c=>c.method==='sendMessage'&&c.body.text.includes('Checking gameplay screenshots.')&&c.body.text.includes('2026-10-03T09:00:00Z')));
+ assert(calls.every(c=>c.method==='sendMessage'&&c.body.text.includes('TASK STATUS')&&c.body.text.includes('2026-10-03 09:00 UTC')));
+ assert.equal(calls[3].body.entities[0].type,'pre');
+ assert.equal(calls[3].body.entities[0].length,calls[3].body.text.length);
+ assert(!calls[0].body.entities);
  assert.equal(state.chatQueue,undefined);assert.equal(state.lastStatusDelivery.messageId,42);
+});
+test('TLDR stays bounded for a large ledger and never dumps STATUS prose',()=>{
+ const {statusText}=require('./telegram-status');
+ const snapshot={tasks:Array.from({length:200},(_,i)=>({status:i<10?'active':'blocked',title:'Gameplay qualification '.repeat(20)})),candidates:[],projectStatus:{body:'SECRET_LONG_PROSE'.repeat(100)}};
+ const text=statusText(snapshot,{ascii:true});
+ assert(text.length<1100);assert(!text.includes('SECRET_LONG_PROSE'));
+ assert.match(text,/ACTIVE  10/);assert.match(text,/BLOCKED 190/);
+ assert(text.split('\n').every(line=>line.length===50));
 });
 test('Busy terminal keeps actionable chat queued with typing, without Saved chatter',async()=>{
  const calls=[],state={owner:{userId:10,chatId:10}};
