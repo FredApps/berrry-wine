@@ -6,7 +6,7 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 async function main(){
   if(!process.argv[2])throw Error('Usage: node verify-snapshot.js PRIVATE_SNAPSHOT_DIRECTORY');
-  const root=path.resolve(process.argv[2]),manifest=JSON.parse(await fs.readFile(path.join(root,'manifest.json'),'utf8'));
+  const root=path.resolve(process.argv[2]),manifest=JSON.parse(await fs.readFile(path.join(root,path.basename(process.argv[3]||'manifest.json')),'utf8'));
   let count=0;
   for(const entry of [...manifest.files,...manifest.archives]){
     const file=path.resolve(root,entry.path);

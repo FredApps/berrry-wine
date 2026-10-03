@@ -5,7 +5,7 @@ function chatReady(screen) {
   const lines=screen.trimEnd().split('\n');
   const index=lines.findLastIndex(line=>/^\s*›/.test(line));
   if(index<0 || !/^\s*›\s*(?:Ask Codex to do anything)?\s*$/.test(lines[index]))return false;
-  return /\bgpt-[\w.-]+\b/.test(lines.slice(index+1).join('\n'));
+  return /\bgpt-[\w.-]+\b/i.test(lines.slice(index+1).join('\n'));
 }
 function hasCodexChild(output,panePid) {
   const rows=output.trim().split('\n').map(line=>/^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)).filter(Boolean);
@@ -26,6 +26,6 @@ function chatSubmitKey(screen,message) {
   if(draft.join('').replace(/\s/g,'')!==message.replace(/\s/g,''))return null;
   const footer=lines.slice(index+draft.length).join('\n');
   if(/tab to queue message/i.test(footer))return 'Tab';
-  return /\bgpt-[\w.-]+\b|\d+% context left/.test(footer)?'Enter':null;
+  return /\bgpt-[\w.-]+\b|\d+% context left/i.test(footer)?'Enter':null;
 }
 module.exports={chatReady,hasCodexChild,chatSubmitKey};

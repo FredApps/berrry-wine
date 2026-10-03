@@ -3,7 +3,7 @@
 const {fork}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs');
 const dir=path.resolve(__dirname,'../scratch/telegram');fs.mkdirSync(dir,{recursive:true,mode:0o700});
-const lock=path.join(dir,'watchdog.lock');
+const lock=process.env.TELEGRAM_WATCHDOG_LOCK||path.join(dir,'watchdog.lock');
 try{fs.mkdirSync(lock);}catch{console.error('Telegram watchdog lock exists; verify no watchdog is alive before removing it.');process.exit(1);}
 fs.writeFileSync(path.join(lock,'pid'),String(process.pid));
 let child,last=Date.now(),stopping=false,restartTimer,restarts=0;

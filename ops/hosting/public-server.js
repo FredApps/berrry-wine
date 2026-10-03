@@ -19,7 +19,9 @@ function createGateway(config,upstreamPort=8098){
     const parts=value.split('.');
     return value.length<256 && parts.length===3 && /^\d+$/.test(parts[0]) && Number(parts[0])>Date.now() && equal(parts[2],sign(parts[0]+'.'+parts[1]));
   };
-  const baseHeaders={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};
+  // HTML form POSTs need their same-origin Origin header. no-referrer makes
+  // browsers send Origin: null for this navigation; foreign origins stay denied.
+  const baseHeaders={'Cache-Control':'no-store','Referrer-Policy':'same-origin','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};
   const login=message=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wine / Ops · Sign in</title><style>body{margin:0;background:#08120e;color:#dcebd7;font:18px monospace;display:grid;place-items:center;min-height:100dvh}main{max-width:24rem;padding:2rem;border:1px solid #365440;margin:1rem}h1{color:#b0ef65}label,input,button{display:block;box-sizing:border-box;width:100%;margin-top:1rem}input,button{padding:.8rem;font:inherit;border:1px solid #739c5f;background:#102217;color:inherit}button{background:#b0ef65;color:#08120e;cursor:pointer}p{color:#a9b8ae;font-size:14px}</style><main><p>PRIVATE OPERATIONS CONSOLE</p><h1>WINE / OPS</h1><form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus maxlength="256"><button>Sign in →</button></form><p>${message||'Tasks · agents · corpus · approvals'}</p></main></html>`;
   const send=(res,status,body,headers={})=>{res.writeHead(status,{...baseHeaders,...headers});res.end(body);};
   const cookie=(value,age)=>`${cookieName}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${age}`;
