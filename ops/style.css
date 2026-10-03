@@ -1159,6 +1159,11 @@ dd {
 .launch-unavailable pre { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
 .launch-detail { border-top:1px solid var(--line); margin:16px 0; }
 .launch-detail > p:last-child { flex-basis:100%; }
+.launch-availability { display:flex; align-items:center; flex-wrap:wrap; gap:12px 18px; padding:16px; margin-top:20px; border:1px solid var(--cyan); background:var(--paper); }
+.launch-availability > button:first-child { display:flex; align-items:center; gap:10px; min-height:44px; color:var(--cyan); }
+.launch-availability strong { font-size:22px; }
+.launch-availability > .sub { flex:1 1 250px; }
+.launch-availability button[aria-pressed="true"] { background:#183328; border-color:var(--cyan); }
 #urgent-approvals { position: sticky; top: 0; z-index: 12; margin: 20px 32px 0; border: 1px solid #e8ae54; background: #261f12; padding: 16px 20px; }
 .stat .value.task-label-blocked { color: var(--red); }
 .stat .value.task-label-review { color: var(--amber); }

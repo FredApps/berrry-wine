@@ -34,6 +34,23 @@ test('index anchor, suffix ranges and production link provenance fail closed',()
  const c={appIds:['game']},catalog={routes:[{appId:'game',label:'Game',available:true,url:'/emulator/?app=game'}]};assert.equal(launchFor(c,catalog,{status:'unknown',appIds:['game']}).productionRoutes.length,0);assert.equal(launchFor(c,catalog,{status:'verified',appIds:['game'],url:'https://example.test/lib/apps.js'}).productionRoutes[0].url,'https://example.test/?app=game');
 });
 
+test('declared sibling assets are launchable without allowing manifest escape into private files',async()=>{
+ const root=await fixture();
+ try{
+  const manifest=path.join(root,'test/binaries/game/files.json');
+  await fs.mkdir(path.join(root,'test/binaries/MUSIC'));
+  await fs.writeFile(path.join(root,'test/binaries/MUSIC/track.wav'),'music');
+  await fs.writeFile(manifest,JSON.stringify({files:[{url:'../MUSIC/track.wav'}]}));
+  const good=await buildCatalog(root);
+  assert.equal(good.routes.find(r=>r.appId==='game').available,true);
+  assert(good.allowed.has('test/binaries/MUSIC/track.wav'));
+  await fs.writeFile(manifest,JSON.stringify({files:[{url:'../../../ops/access.json'}]}));
+  const bad=await buildCatalog(root);
+  assert.equal(bad.routes.find(r=>r.appId==='game').available,false);
+  assert.equal(bad.allowed.has('ops/access.json'),false);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
 test('existing authenticated gateway protects entry, worker and binary requests',async()=>{
  const crypto=require('node:crypto'),{createGateway}=require('./hosting/public-server');
  const root=await fixture(),handler=createEmulatorHandler(root);

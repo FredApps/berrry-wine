@@ -636,7 +636,8 @@ exact evidence paths and package-specific limitations.
 
 ### Launch from EXE corpus
 
-Each registered route with its declared files present has a **Launch in emulator**
+Use **Launchable now** above the corpus list to show entries with an available
+local route. Each registered route with its declared files present has a **Launch in emulator**
 link on the corpus card and in its details. It opens `/emulator/?app=ID` in a new
 tab using this box's runtime and files. Missing routes show the missing paths;
 availability is separate from gameplay verification. **Open production** points

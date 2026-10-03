@@ -3293,13 +3293,16 @@ Ready means assets are present, not gameplay or counter correctness.
   status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T21:14:43.753Z
-  Next: Complete: authenticated emulator launch links live on cards/details; actual Icy Tower popup and public Solitaire runtime verified. Missing paths explicit; production link separate.
+  Next: Complete: prominent Launchable now filter shows127 exact available cards. Broken Sword sibling-manifest paths fixed. Public Puppeteer desktop/mobile/card-to-Solitaire runtime PASS;60ops tests PASS.
   Done: Installed corpus entries open real emulator app in new tab; missing/unregistered route explicit; authenticated gateway preserved.
 
 - [ ] Push all safe source changes to GitHub
   id: OPS-GITHUB-CHECKPOINT
-  status: active
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T21:14:43.754Z
-  Next: Audit inherited/new source changes, exclude secrets/fixtures/private artifacts, preserve newer remote history and push reviewed source checkpoint branch.
+  Next: Complete GitHub device login on this box, then push checkpoint/migrated-source-dashboard-20261003 including latest launchability correction; local checkpoint receipt records exact commit. HTTPS push lacks credentials.
   Done: Remote checkpoint commit contains reviewed explicit safe source manifest; push verified, unresolved runtime review gates preserved.
+  blocker: No GitHub authentication on migrated box; gh auth status confirms no logged-in hosts. User device sign-in required; do not paste tokens into chat.
+  waiting-on: user GitHub device authentication
+  Evidence: ops/handoffs/github-source-checkpoint-20261003.md; scratch/github-publication-audit-20261003/checkpoint.json

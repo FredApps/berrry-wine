@@ -14,6 +14,14 @@ function localPath(value) {
   return value;
 }
 function fileUrl(value) { return typeof value === 'string' ? value : value?.url; }
+function manifestAsset(manifest, value) {
+  const name = fileUrl(value);
+  if (typeof name !== 'string' || !name || /[\\\0?#]/.test(name) || path.posix.isAbsolute(name) || /^[a-z]+:/i.test(name)) return null;
+  // Installed manifests can explicitly name sibling MUSIC/SPEECH directories.
+  // Resolve those declarations before validation, but never leave fixture roots.
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(manifest), name));
+  return /^(?:test\/)?binaries\//.test(resolved) ? localPath(resolved) : null;
+}
 async function realFile(root, relative) {
   if (!localPath(relative)) return null;
   try {
@@ -61,9 +69,9 @@ async function buildCatalog(inputRoot) {
           const manifest = JSON.parse(await fsp.readFile(manifestFile, 'utf8'));
           if (!Array.isArray(manifest.files)) throw Error('Expected files array');
           for (const value of manifest.files) {
-            const name = localPath(fileUrl(value));
+            const name = manifestAsset(app.localFileManifest, value);
             if (!name) { invalid.push('Unsupported manifest asset path'); continue; }
-            add(path.posix.join(path.posix.dirname(app.localFileManifest), name));
+            add(name);
           }
         } catch { invalid.push('Invalid registered file manifest'); }
       }
