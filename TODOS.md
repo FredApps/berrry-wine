@@ -3323,3 +3323,13 @@ Ready means assets are present, not gameplay or counter correctness.
   Next: Restore exact inventory using owner-managed disk-safe transfer:96entries missing2267paths;16missing manifests leave further dependencies unknown.18entries need registry routes.
   Done: Existing registered fixture closures restored and launch availability checked; gameplay qualification remains separate.
   Evidence: ops/handoffs/corpus-missing-paths-20261003.md; scratch/corpus-missing-paths-20261003/missing-files.txt
+
+- [ ] Investigate ScummVM fullscreen and missing sound
+  id: SCUMMVM-AV-DIAG
+  candidate: scummvm-fotaq
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T22:59:25.111Z
+  Next: Windowed default confirmed; AltEnter did not switch in browser. Audio stalls at44096bytes with2undelivered function callbacks. Implement owner-safe Worker completion delivery and separately diagnose fullscreen toggle; source proposal/evidence saved.
+  Done: Explain intended behavior and demonstrate any supported fix with real browser evidence.
+  Evidence: docs/re-notes/scummvm-fotaq.md; scratch/scummvm-av-20261003/
