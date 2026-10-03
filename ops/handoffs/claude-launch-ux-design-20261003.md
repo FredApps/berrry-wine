@@ -59,6 +59,56 @@ Implementation impact vs revision 1: same files; `lib/launch-progress.js` view r
 instead of the checklist, and the reducer additionally keeps a smoothed network-only rate
 (unit-tested: no rate/time from cache-only bytes or <2 s of data; time left absent when any size unknown).
 
+## 3D. 500 ms reveal delay (user correction 2026-10-03: "only displays if load takes more than 0.5 s")
+
+Applies to every mode (direct link, desktop, phone single-app) and every phase. Supersedes any
+"show immediately" wording elsewhere in this file.
+
+- **One deadline per launch**, `revealAt = launchStart + 500 ms`. `launchStart` is the user's
+  launch action: navigation start (`performance.timeOrigin`) for a direct link, the
+  launching click/tap/`launchApp` call on the desktop. It is **not** reset at phase changes
+  (preparing → downloading → loading → starting all count against the same 500 ms).
+- **Until revealed, nothing of the dialog exists for the user**: not rendered, no taskbar
+  button, no focus move, no `aria-live` announcement, no Esc binding. Only the existing
+  `progress` cursor (and the black backdrop on a direct link) is present from the start.
+- **Fast launch**: if the first usable app window paints before `revealAt`, the timer is
+  cleared and the dialog is never shown — no flash.
+- **Timer fire is a re-check, not a command**: the callback carries its launch token and shows
+  the dialog only if `token === currentLaunch.token` and that launch is still pending (not
+  ready, cancelled, failed or superseded). A stale timer from an earlier launch can never
+  reopen a dialog. Timers are cleared on ready, cancel, failure and supersede.
+- **Close promptly** on readiness, in the same frame the first window is composited; there is no
+  minimum display time once shown.
+- **Failures before 500 ms**: the actionable error window (same shell, `Download error`, Retry /
+  Close) appears directly; no transient loading dialog is shown first. Failures after reveal
+  switch the visible window to the error body in place.
+- **Retry** starts a new launch token with a new 500 ms deadline (the error window is already up,
+  so the user sees the error window turn into progress only if Retry is still pending at 500 ms;
+  until then the error window shows "Retrying…" in its status line — it never disappears and
+  reappears).
+- **Launch-owned prompts** (LAN lobby, room/sign-in card) suppress the reveal while they are open;
+  if the launch is still pending when the prompt closes and `revealAt` has passed, reveal at once.
+- **Desktop concurrency**: a second launch request for the same app before reveal does not force
+  a reveal; after reveal it focuses the existing window (section 3).
+- Unknown-size progress, honest numbers and all other revision-2 constraints are unchanged.
+
+Planned deterministic validation (not written yet; reducer/controller with an injected fake clock
+and fake "first window" signal in `test/test-launch-progress.js`, plus two Puppeteer checks):
+
+| Case | Expectation |
+|---|---|
+| ready at 499 ms | never shown; timer cleared; no taskbar button, no live-region text ever |
+| ready at exactly 500 ms, before timer callback runs | not shown (re-check sees ready) |
+| ready at 501 ms after reveal | shown once, removed on the ready frame; no minimum time |
+| still pending at 500 ms, phase changes at 200/400/700 ms | shown once at 500 ms; no reset |
+| cancel at 300 ms, timer fires at 500 ms | never shown; no further requests |
+| fail at 300 ms | error window shown directly; loading body never rendered |
+| launch A at 0, cancel, launch B at 200 ms; A's timer fires at 500 ms | nothing shown at 500 ms; B shown at 700 ms if still pending |
+| launch A ready at 100 ms, launch B at 450 ms (desktop) | B revealed at 950 ms only if pending; A's cleared timer has no effect |
+| prompt open 0–2 s, launch pending after | revealed when prompt closes, not under the prompt |
+| Puppeteer warm-cache `?app=sol` | rAF sampling never sees the dialog |
+| Puppeteer throttled `?app=diablo_shareware` | dialog absent before 500 ms, present by 500 ms + 1 frame, gone on first window |
+
 ## 1. What happens today (read-only investigation)
 
 Direct link `index.html?app=ID`:
@@ -163,8 +213,11 @@ replaces the marquee with a static striped bar; text ≥12px, contrast as Win98 
 1. Inline `<head>` script (before any paint): if `?app=` names a registered id (or any id —
    validation happens later), set `html.direct-launch`. CSS hides `#desktop-icons`,
    `#taskbar`, `#readme-window`, `#build-stamp`, start menu; backdrop black.
-2. Show the dialog shell immediately from static markup (title from `?app` id, filled with
-   the app label once `apps.js` has parsed) — first feedback before the 86 scripts finish.
+2. The dialog shell is static markup (title from `?app` id, filled with the app label once
+   `apps.js` has parsed) but stays **hidden** and is revealed only by the 500 ms rule of section 3D,
+   counted from navigation start (`performance.timeOrigin`) — so a slow script download still gets
+   a dialog at 500 ms, and a fast launch never shows one. The black backdrop is not a dialog and is
+   present from first paint.
 3. `initDesktop()` is **skipped** under `direct-launch`; launch on `DOMContentLoaded`, not `load`.
    Load only `icons/apps/<id>.png` for the dialog (no manifest, no exe fallback — glyph if 404).
 4. On app exit / Show desktop: remove `direct-launch`, then run `initDesktop()` lazily (the
@@ -184,7 +237,7 @@ already knows which apps reach them). Not part of the first implementation.
 | `lib/browser-shell.js` | `launchAppInner` emits phase events; Cancel/Retry/AbortSignal; replaces `#status`-only progress; focus-existing on concurrent launch; taskbar button |
 | `host.js` | `fetchAssetBytes(url, {signal, onBytes})` streaming reader with `Content-Length`; `loadFiles` reports bytes/cache/failed-required; `init` reports wasm phase |
 | `lib/resources-icon.js` | `loadSingleAppIcon(id)` (PNG only) |
-| `test/test-launch-progress.js` (new) | reducer: unknown size never determinate, monotonic bar, slow after 8 s, retry keeps done files, cancel idempotent |
+| `test/test-launch-progress.js` (new) | reducer: unknown size never determinate, monotonic bar, slow after 8 s, retry keeps done files, cancel idempotent; 500 ms reveal cases of section 3D with an injected fake clock |
 | `test/test-web-direct-launch.js` (new) | Puppeteer assertions below; add both to the test-tier manifest |
 
 Network / visual assertions for `test-web-direct-launch.js` (local server, `?app=sol`,
@@ -194,8 +247,11 @@ plus one multi-file app such as `diablo_shareware`):
 - Zero requests to `lib/app-icon-manifest.json`, other `icons/apps/*.png`, `icons/ui/*.png`,
   or any other app's `test/binaries/**` path.
 - From `evaluateOnNewDocument`, sample each rAF: `#desktop-icons` and `#taskbar` never have a
-  non-zero visible box before the first app window; dialog visible ≤ 300 ms after DOMContentLoaded.
-- Dialog removed within one frame of the first window.
+  non-zero visible box before the first app window. Dialog is **not** visible before 500 ms after
+  launch initiation, is visible by ~500 ms + one frame when the launch is still pending (throttled
+  network), and is never visible on a launch whose first window paints before 500 ms (warm cache).
+- Dialog removed within one frame of the first window; no minimum display time.
+- 500 ms reveal boundary/race cases: see section 3D validation plan.
 - Throttled (CDP `Network.emulateNetworkConditions`): slow note appears, bar is
   indeterminate when `Content-Length` is stripped by request interception.
 - Intercept one required file → 503 ×3: error state, Retry succeeds and refetches only that URL.
@@ -215,3 +271,10 @@ Codex → `claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256`). No response i
 ## Coordinator visual review of revision 2
 
 Both labelled mockups were visually reviewed. The classic Windows download-dialog direction matches the requested revision. Before implementation, resolve one illustrative detail: the desktop mockup shows an unknown-size file beside a determinate total/percentage. The existing rule takes precedence: show a percentage only once every required file size is known. This is a mockup consistency note, not implementation approval.
+
+Owner response (2026-10-03): agreed and recorded as a rule — **every known-size example (a
+`NN%` title, a filled bar, `x of y MB`, or a time estimate) requires a known total, i.e. every
+required file's size known.** Any file still showing `?` forces the indeterminate form
+(`Downloading <App>`, sliding blocks, `Not known (N MB copied)`). The desktop.html source was
+corrected before sending (`diabloui.dll` 412 KB); the review may have read the pre-fix render.
+Either way the implementation follows the rule, not a mockup. No rerender/resend made for this note.
