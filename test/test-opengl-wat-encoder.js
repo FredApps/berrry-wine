@@ -41,6 +41,10 @@ function submissionResult(bytes, memory, guestToWasm = pointer => pointer) {
     const output = view.getUint32(lastAt + Stream.HEADER_BYTES + 8, true);
     new DataView(memory.buffer).setUint32(guestToWasm(output) >>> 0, 0xAABBCCDD, true);
   }
+  if (opcode === 108 && memory) {
+    const output = view.getUint32(lastAt + Stream.HEADER_BYTES + 16, true);
+    new DataView(memory.buffer).setUint32(guestToWasm(output) >>> 0, 8, true);
+  }
   if (opcode === 12) return 0x504;
   if (opcode === 48) return 0xC001;
   if (opcode === 49) {
@@ -338,6 +342,8 @@ async function main() {
     for (let i = 0; i < 16; i++) view.setFloat32(dataWa + i * 4, i + 0.25, true);
     new Uint8Array(mem.buffer, translateGuest(DATA + 0x1000), 8 * 8 * 4).fill(0xA7);
     gl.call(10, [0x0BE2]);
+    gl.call(109, [0, 0x3FD00000]); // GLdouble 0.25, both words precede clear.
+    gl.call(2, [0x100]);
     gl.call(34, [DATA]);
     for (let i = 0; i < 16; i++) view.setFloat32(dataWa + i * 4, 99, true);
     gl.call(45, [0x0DE1, 0, 4, 8, 8, 0, 0x1908, 0x1401, DATA + 0x1000]);
@@ -348,6 +354,9 @@ async function main() {
     gl.call(103, [0x84E2, DATA + 0x80]);
     assert.strictEqual(view.getUint32(translateGuest(DATA + 0x80), true), 0xAABBCCDD,
       'query output is visible before its barrier returns');
+    gl.call(108, [0x0DE1, 0, 0x805D, DATA + 0x84]);
+    assert.strictEqual(view.getUint32(translateGuest(DATA + 0x84), true), 8,
+      'texture level output is visible before the next guest instruction');
   });
 
   parity('pressure: generic capacity preserves complete ordered records', gl => {

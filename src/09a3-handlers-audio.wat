@@ -799,57 +799,115 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
+  ;; RIFF navigation uses the memory file's cursor when FOURCC_MEM was opened,
+  ;; never its synthetic HMMIO as a host filesystem handle. File-backed reads
+  ;; retain the existing provider path and bytes-read convention.
+  (func $mmio_riff_read (param $h i32) (param $dst i32) (param $count i32) (param $read_out i32) (result i32)
+    (local $slot i32) (local $pos i32) (local $n i32) (local $length i32)
+    (local.set $slot (call $mmio_mem_slot (local.get $h)))
+    (if (i32.eqz (local.get $slot))
+      (then (return (call $host_fs_read_file (local.get $h) (local.get $dst) (local.get $count) (local.get $read_out)))))
+    (local.set $pos (i32.load offset=20 (local.get $slot)))
+    (local.set $length (i32.load offset=24 (local.get $slot)))
+    (if (i32.lt_u (local.get $pos) (local.get $length))
+      (then
+        (local.set $n (i32.sub (local.get $length) (local.get $pos)))
+        (if (i32.lt_u (local.get $count) (local.get $n)) (then (local.set $n (local.get $count))))
+        (call $guest_memmove (local.get $dst)
+          (i32.add (i32.load offset=4 (local.get $slot)) (local.get $pos)) (local.get $n))
+        (i32.store offset=20 (local.get $slot) (i32.add (local.get $pos) (local.get $n)))))
+    (call $gs32 (local.get $read_out) (local.get $n))
+    (i32.const 1))
+
+  ;; Internal navigation needs SEEK_SET and SEEK_CUR(0) only. Memory files
+  ;; cannot seek outside their allocated buffer; failure preserves the cursor.
+  (func $mmio_riff_seek (param $h i32) (param $offset i32) (param $origin i32) (result i32)
+    (local $slot i32) (local $pos i32)
+    (local.set $slot (call $mmio_mem_slot (local.get $h)))
+    (if (i32.eqz (local.get $slot))
+      (then (return (call $host_fs_set_file_pointer (local.get $h) (local.get $offset) (local.get $origin)))))
+    (if (i32.eq (local.get $origin) (i32.const 1))
+      (then (return (i32.load offset=20 (local.get $slot)))))
+    (local.set $pos (local.get $offset))
+    (if (i32.gt_u (local.get $pos) (i32.load offset=8 (local.get $slot)))
+      (then (return (i32.const -1))))
+    (i32.store offset=20 (local.get $slot) (local.get $pos))
+    (local.get $pos))
+
   ;; 806: mmioDescend(hmmio, lpck, lpckParent, wFlags) — 4 args stdcall
   ;; Descends into a RIFF chunk. Reads 8-byte chunk header (ckid + cksize).
   ;; MMCKINFO struct: +0 ckid, +4 cksize, +8 fccType, +12 dwDataOffset, +16 dwFlags
   ;; wFlags: MMIO_FINDCHUNK=0x10, MMIO_FINDRIFF=0x20, MMIO_FINDLIST=0x40
   (func $handle_mmioDescend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ck_wa i32) (local $pos i32) (local $ckid i32) (local $cksize i32)
+    (local $ck_ga i32) (local $pos i32) (local $ckid i32) (local $cksize i32)
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
-    (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local $data_offset i32) (local $parent_wa i32)
-    ;; RIFF parsing below reads through the host filesystem.
-    (if (call $mmio_mem_slot (local.get $arg0))
-      (then (call $crash_unimplemented (local.get $name_ptr))))
-    (local.set $ck_wa (call $g2w (local.get $arg1)))
-    ;; arg3 = wFlags (passed as 5th stack arg), read from [esp+24] in caller
-    ;; Actually arg3 = wFlags since dispatcher reads 5 args
+    (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_ptr i32)
+    (local $data_offset i32) (local $parent_ga i32) (local $mem_slot i32)
+    (local $parent_end i64)
+    (local.set $mem_slot (call $mmio_mem_slot (local.get $arg0)))
+    (local.set $ck_ga (local.get $arg1))
+    ;; arg3 is the fourth API argument, wFlags. MMCKINFO addresses stay
+    ;; guest addresses: its fields may straddle noncontiguous sparse pages.
     ;; Save search criteria if FIND flags are set
     (if (local.get $arg3)
       (then
         ;; For FINDCHUNK/FINDRIFF/FINDLIST, save the target ckid/fccType
-        (local.set $search_id (i32.load (local.get $ck_wa)))       ;; ckid to find
-        (local.set $search_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8)))) ;; fccType to find
+        (local.set $search_id (call $gl32 (local.get $ck_ga)))       ;; ckid to find
+        (local.set $search_type (call $gl32 (i32.add (local.get $ck_ga) (i32.const 8)))) ;; fccType to find
       ))
     ;; Determine end position from parent chunk (if present)
     (local.set $end_pos (i32.const 0x7FFFFFFF))  ;; no limit if no parent
     (if (local.get $arg2)
       (then
-        (local.set $parent_wa (call $g2w (local.get $arg2)))
+        (local.set $parent_ga (local.get $arg2))
         (local.set $end_pos (i32.add
-          (i32.load offset=12 (local.get $parent_wa))  ;; parent dwDataOffset
-          (i32.load offset=4 (local.get $parent_wa))))))  ;; + parent cksize
+          (call $gl32 (i32.add (local.get $parent_ga) (i32.const 12)))  ;; parent dwDataOffset
+          (call $gl32 (i32.add (local.get $parent_ga) (i32.const 4)))))))  ;; + parent cksize
+    (if (local.get $mem_slot)
+      (then
+        (if (local.get $arg2)
+          (then
+            (local.set $parent_end (i64.add
+              (i64.extend_i32_u (call $gl32 (i32.add (local.get $parent_ga) (i32.const 12))))
+              (i64.extend_i32_u (call $gl32 (i32.add (local.get $parent_ga) (i32.const 4))))))
+            (if (i64.gt_u (local.get $parent_end) (i64.const 0xffffffff))
+              (then (local.set $end_pos (i32.const 0))))))
+        (if (i32.gt_u (local.get $end_pos) (i32.load offset=24 (local.get $mem_slot)))
+          (then (local.set $end_pos (i32.load offset=24 (local.get $mem_slot)))))))
     ;; Scratch area for bytesRead on stack
     (local.set $bytes_read_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
+    (local.set $bytes_read_ptr (local.get $bytes_read_ga))
     ;; Search loop: read chunk headers until we find the target or EOF
     (block $done
       (loop $search
         ;; Get current file position
-        (local.set $pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+        (local.set $pos (call $mmio_riff_seek (local.get $arg0) (i32.const 0) (i32.const 1)))
+        ;; A memory parent restricts both ends of the search range.
+        (if (local.get $mem_slot)
+          (then (if (local.get $arg2)
+            (then (br_if $done (i32.lt_u (local.get $pos)
+              (call $gl32 (i32.add (local.get $arg2) (i32.const 12)))))))))
         ;; Check if past end of parent chunk
         (br_if $done (i32.ge_u (local.get $pos) (local.get $end_pos)))
+        (if (local.get $mem_slot)
+          (then (br_if $done (i32.lt_u (i32.sub (local.get $end_pos) (local.get $pos)) (i32.const 8)))))
         ;; Read 8 bytes: ckid (4) + cksize (4) into the MMCKINFO struct
-        (i32.store (local.get $bytes_read_wa) (i32.const 0))
-        (drop (call $host_fs_read_file
+        (call $gs32 (local.get $bytes_read_ptr) (i32.const 0))
+        (drop (call $mmio_riff_read
           (local.get $arg0)
           (local.get $arg1)  ;; write directly into MMCKINFO (guest addr)
           (i32.const 8)
           (local.get $bytes_read_ga)))
         ;; Check if we read 8 bytes
-        (br_if $done (i32.lt_u (i32.load (local.get $bytes_read_wa)) (i32.const 8)))
-        (local.set $ckid (i32.load (local.get $ck_wa)))
-        (local.set $cksize (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))
+        (br_if $done (i32.lt_u (call $gl32 (local.get $bytes_read_ptr)) (i32.const 8)))
+        (local.set $ckid (call $gl32 (local.get $ck_ga)))
+        (local.set $cksize (call $gl32 (i32.add (local.get $ck_ga) (i32.const 4))))
+        ;; A malformed memory chunk must not wrap its padded skip into an
+        ;; earlier header or read outside the opened stream's data length.
+        (if (local.get $mem_slot)
+          (then (br_if $done (i32.gt_u (local.get $cksize)
+            (i32.sub (local.get $end_pos)
+              (i32.add (local.get $pos) (i32.const 8)))))))
         ;; For RIFF and LIST chunks, read 4 more bytes for fccType.
         ;; dwDataOffset is always the byte after cksize (pos+8) — for a RIFF/LIST
         ;; chunk the data area *starts with* the form type, so it is not skipped
@@ -863,19 +921,28 @@
               (i32.eq (local.get $ckid) (i32.const 0x46464952))  ;; "RIFF"
               (i32.eq (local.get $ckid) (i32.const 0x5453494C))) ;; "LIST"
           (then
+            (if (local.get $mem_slot)
+              (then
+                (br_if $done (i32.lt_u (local.get $cksize) (i32.const 4)))
+                (br_if $done (i32.lt_u (i32.sub (local.get $end_pos) (local.get $data_offset)) (i32.const 4)))))
             ;; Read fccType (4 bytes) into MMCKINFO+8
-            (i32.store (local.get $bytes_read_wa) (i32.const 0))
-            (drop (call $host_fs_read_file
+            (call $gs32 (local.get $bytes_read_ptr) (i32.const 0))
+            (drop (call $mmio_riff_read
               (local.get $arg0)
               (i32.add (local.get $arg1) (i32.const 8))  ;; fccType field (guest addr)
               (i32.const 4)
               (local.get $bytes_read_ga)))
-            (local.set $fcc_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
+            (if (local.get $mem_slot)
+              (then (br_if $done (i32.ne (call $gl32 (local.get $bytes_read_ptr)) (i32.const 4)))))
+            (local.set $fcc_type (call $gl32 (i32.add (local.get $ck_ga) (i32.const 8))))
           ))
+        ;; Non-container chunks have no form type (also clears reused output).
+        (if (local.get $mem_slot)
+          (then (call $gs32 (i32.add (local.get $ck_ga) (i32.const 8)) (local.get $fcc_type))))
         ;; Store dwDataOffset
-        (i32.store (i32.add (local.get $ck_wa) (i32.const 12)) (local.get $data_offset))
+        (call $gs32 (i32.add (local.get $ck_ga) (i32.const 12)) (local.get $data_offset))
         ;; Store dwFlags = 0
-        (i32.store (i32.add (local.get $ck_wa) (i32.const 16)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $ck_ga) (i32.const 16)) (i32.const 0))
         ;; If no FIND flags, accept first chunk
         (if (i32.eqz (local.get $arg3))
           (then
@@ -912,16 +979,19 @@
                 (return)))))
         ;; Not found — skip this chunk's data and try next
         ;; Seek past cksize bytes (word-aligned)
-        (drop (call $host_fs_set_file_pointer
+        (br_if $done (i32.eq (call $mmio_riff_seek
           (local.get $arg0)
           (i32.add (local.get $pos) (i32.add (i32.const 8)
             (i32.and (i32.add (local.get $cksize) (i32.const 1)) (i32.const 0xFFFFFFFE))))
-          (i32.const 0)))  ;; SEEK_SET
+          (i32.const 0)) (i32.const -1)))  ;; SEEK_SET
         (br $search)
       )
     )
     ;; Not found
-    (i32.store offset=0 (global.get $reg_base) (i32.const 514))  ;; MMIOERR_CHUNKNOTFOUND
+    ;; Correct documented memory-stream error; retain the inherited file-path
+    ;; result here pending its separate compatibility audit.
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 265) (i32.const 514) (local.get $mem_slot)))  ;; MMIOERR_CHUNKNOTFOUND
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
 
@@ -953,21 +1023,42 @@
   ;; 808: mmioAscend(hmmio, lpck, wFlags) — 3 args stdcall
   ;; Ascends out of a chunk — seeks past remaining chunk data
   (func $handle_mmioAscend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ck_wa i32) (local $end_pos i32)
-    (if (call $mmio_mem_slot (local.get $arg0))
-      (then (call $crash_unimplemented (local.get $name_ptr))))
-    (local.set $ck_wa (call $g2w (local.get $arg1)))
+    (local $ck_ga i32) (local $end_pos i32) (local $mem_slot i32) (local $result i32)
+    (local $wide_end i64)
+    (local.set $mem_slot (call $mmio_mem_slot (local.get $arg0)))
+    (local.set $ck_ga (local.get $arg1))
+    ;; Writing/re-sizing a dirty chunk is a separate unsupported operation.
+    (if (local.get $mem_slot)
+      (then
+        (if (i32.or (local.get $arg2) (i32.and (call $gl32 (i32.add (local.get $ck_ga) (i32.const 16))) (i32.const 0x10000000)))
+          (then (call $crash_unimplemented (local.get $name_ptr))))
+        ;; Padding is based on payload size, even at an odd stream offset.
+        (local.set $wide_end (i64.add
+          (i64.extend_i32_u (call $gl32 (i32.add (local.get $ck_ga) (i32.const 12))))
+          (i64.and (i64.add
+            (i64.extend_i32_u (call $gl32 (i32.add (local.get $ck_ga) (i32.const 4))))
+            (i64.const 1)) (i64.const -2))))
+        (if (i64.gt_u (local.get $wide_end) (i64.extend_i32_u (i32.load offset=8 (local.get $mem_slot))))
+          (then
+            (i32.store (global.get $reg_base) (i32.const 263))
+            (i32.store offset=16 (global.get $reg_base)
+              (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+            (return)))))
     ;; End of chunk = dwDataOffset + cksize, word-aligned
     (local.set $end_pos
       (i32.and
         (i32.add
           (i32.add
-            (i32.load (i32.add (local.get $ck_wa) (i32.const 12)))  ;; dwDataOffset
-            (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))  ;; cksize
+            (call $gl32 (i32.add (local.get $ck_ga) (i32.const 12)))  ;; dwDataOffset
+            (call $gl32 (i32.add (local.get $ck_ga) (i32.const 4))))  ;; cksize
           (i32.const 1))
         (i32.const 0xFFFFFFFE)))
-    (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $end_pos) (i32.const 0)))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (local.get $mem_slot)
+      (then (local.set $end_pos (i32.wrap_i64 (local.get $wide_end)))))
+    (local.set $result (call $mmio_riff_seek (local.get $arg0) (local.get $end_pos) (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 263) (i32.const 0)
+        (i32.and (i32.ne (local.get $mem_slot) (i32.const 0)) (i32.eq (local.get $result) (i32.const -1)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
@@ -2786,7 +2877,8 @@
     (i32.store offset=12 (local.get $slot) (local.get $arg3))
     (i32.store offset=16 (local.get $slot) (call $host_get_ticks))
     (i32.store offset=20 (local.get $slot)
-      (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+      (i32.or (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))
+        (i32.and (local.get $arg4) (i32.const 0x30))))
     (i32.store offset=0 (global.get $reg_base) (local.get $tid))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )

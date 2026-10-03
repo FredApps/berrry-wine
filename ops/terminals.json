@@ -2,11 +2,11 @@
   "terminals": [
     {
       "id": "orchestrator",
-      "agentId": "codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0",
-      "label": "Orchestrator",
+      "agentId": "codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5",
+      "label": "Orchestrator · persistent box",
       "session": "wine-orchestrator",
       "pane": "%0",
-      "panePid": 80668
+      "panePid": 95949
     }
   ]
 }

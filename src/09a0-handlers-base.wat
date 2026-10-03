@@ -122,6 +122,10 @@
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (local.set $idx (call $guest_name_is_static_system_dll (local.get $name)))
     (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
+    ;; Appended D3D8/9 identities preserve the earlier Glide pseudo handles.
+    (if (i32.or (i32.eq (local.get $idx) (i32.const 11))
+                (i32.eq (local.get $idx) (i32.const 12)))
+      (then (return (i32.const 1))))
     (i32.and
       (i32.ge_u (i32.sub (local.get $idx) (i32.const 1))
         (global.get $STATIC_SYS_DLL_FIRST_DX))
@@ -3507,11 +3511,27 @@
         (global.set $sleep_timeout (local.get $arg0))))
   )
 
-  ;; SleepEx dispatches completed I/O only on its submitting thread and only
-  ;; when alertable. Otherwise it uses the ordinary cooperative sleep path.
+  (func $handle_QueueUserAPC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $error i32)
+    (local.set $error (call $host_queue_user_apc (local.get $arg0) (local.get $arg1) (local.get $arg2) (global.get $current_thread_id)))
+    (if (local.get $error) (then (global.set $last_error (local.get $error))))
+    (i32.store (global.get $reg_base) (i32.eqz (local.get $error)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   (func $handle_SleepEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1) (then
-      (if (call $io_apc_start (i32.const 12)) (then (return)))))
+      (if (call $io_apc_start (i32.const 12)) (then (return)))
+      (if (local.get $arg0) (then
+        (call $user_apc_set_alertable (i32.const 1))
+        (global.set $user_apc_sleep (i32.const 1))
+        (global.set $yield_reason (i32.const 1))
+        ;; A scheduler-only handle: unsignaled except by this thread's APCs.
+        (global.set $wait_handle (i32.const 0xfffffff0))
+        (global.set $wait_handles_ptr (i32.const 0))
+        (global.set $wait_timeout (local.get $arg0))
+        (global.set $wait_stack_bytes (i32.const 12))
+        (global.set $steps (i32.const 0))
+        (return)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
     (global.set $yield_flag (i32.const 1))
@@ -4328,6 +4348,8 @@
     (local.set $result (call $host_wait_single (local.get $arg0) (local.get $arg1)))
     (if (i32.eq (local.get $result) (i32.const 0xFFFF))
       (then
+        (call $user_apc_set_alertable (i32.ne (local.get $arg2) (i32.const 0)))
+        (global.set $user_apc_sleep (i32.const 0))
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0))
         (global.set $wait_timeout (local.get $arg1))

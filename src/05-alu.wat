@@ -3292,16 +3292,9 @@
     (dispatch-next))
   ;; REP MOVSW
   (func $th_rep_movsw (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (block $d (loop $l
-      (br_if $d (i32.eqz (i32.load offset=4 (global.get $reg_base))))
-      (call $gs16 (i32.load offset=28 (global.get $reg_base)) (call $gl16 (i32.load offset=24 (global.get $reg_base))))
-      (if (global.get $df)
-        (then (i32.store offset=24 (global.get $reg_base) (i32.sub (i32.load offset=24 (global.get $reg_base)) (i32.const 2)))
-              (i32.store offset=28 (global.get $reg_base) (i32.sub (i32.load offset=28 (global.get $reg_base)) (i32.const 2))))
-        (else (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (i32.const 2)))
-              (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (i32.const 2)))))
-      (i32.store offset=4 (global.get $reg_base) (i32.sub (i32.load offset=4 (global.get $reg_base)) (i32.const 1)))
-      (br $l))) (dispatch-next))
+     (local $nx_fn i32) (local $nx_op i32)
+    (call $rep_movs_do (i32.const 2) (local.get $op))
+    (dispatch-next))
   ;; REP STOSW
   (func $th_rep_stosw (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (block $d (loop $l

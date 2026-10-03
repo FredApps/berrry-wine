@@ -631,6 +631,9 @@ const NO_SPIN_PARK = hasFlag('no-spin-park');
 // that puts back "give up one turn, then re-slice it".
 const NO_CLOCK_PARK_SLEEP = hasFlag('no-clock-park-sleep');
 const SPIN_PARK_K = parseInt(getArg('spin-park-k', ''), 10);
+// --spin-work-max=N: a clock read only counts toward a park when at most N
+// blocks retired since the previous read at that site (0 = no work check).
+const SPIN_WORK_MAX = parseInt(getArg('spin-work-max', ''), 10);
 const SPIN_PARK = { clockWaits: 0, peekWaits: 0, guestMsAdded: 0 };
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
@@ -638,10 +641,11 @@ const SPIN_PARK = { clockWaits: 0, peekWaits: 0, guestMsAdded: 0 };
 // hasFlag is an exact match, so the =N form has to be accepted separately or
 // `--trace-sched=500` silently does nothing.
 const TRACE_SCHED = hasFlag('trace-sched') || getArg('trace-sched', null) !== null;
+// --trace-sched-regs: after every batch, the main thread's registers and lazy
+// flag state as one line. Diffing two arms' streams names the first batch whose
+// STATE differs, not just its stop EIP (an A/B of a tier that must be exact).
+const TRACE_SCHED_REGS = hasFlag('trace-sched-regs');
 const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
-// --spin-work-max=N: a clock read only counts toward a park when at most N
-// blocks retired since the previous read at that site (0 = no work check).
-const SPIN_WORK_MAX = parseInt(getArg('spin-work-max', ''), 10);
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 // --host-census[=N]: count every host import, print a histogram every N calls
 // straight to stdout. For batches that never return, where buffered logs never
@@ -4030,6 +4034,9 @@ async function main() {
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.get_thread_priority = (handle, tid) => threadManager.getThreadPriority(handle, tid);
+  h.queue_user_apc = (callback, handle, data, tid) => threadManager.queueUserAPC(callback, handle, data, tid);
+  h.dequeue_user_apc = (tid, outWA) => threadManager.dequeueUserAPC(tid, outWA);
+  h.set_apc_alertable = (tid, flag) => threadManager.setAPCAlertable(tid, flag);
   h.set_thread_priority = (handle, priority, tid) => threadManager.setThreadPriority(handle, priority, tid);
   h.get_thread_locale = (tid) => threadManager.getThreadLocale(tid);
   h.set_thread_locale = (locale, tid) => threadManager.setThreadLocale(locale, tid);
@@ -4539,6 +4546,14 @@ async function main() {
     if (experiments.uopCensus) {
       wh.log_i32 = (val) => { logs.push(`[i32 T${tid}] ${hex(val)}`); workerApiLog.log_i32(val); };
     }
+    // A second Win16 task (WinExec) is a guest thread, and its --trace-win16
+    // records and fail-fast markers are log_i32 words the API logger would
+    // drop. Win16 has no 32-bit API log to own them, so the main decoder does.
+    const workerLogI32 = wh.log_i32;
+    wh.log_i32 = (val) => {
+      if (instance && instance.exports.is_win16 && instance.exports.is_win16()) h.log_i32(val);
+      else workerLogI32(val);
+    };
     if (TRACE_MOUSE_STATE) {
       const workerGetMousePosition = wh.get_mouse_position;
       const workerGetMouseButtons = wh.get_mouse_buttons;
@@ -4718,6 +4733,7 @@ async function main() {
   // and has to be propagated like every other one.
   if (NO_SPIN_PARK) inheritWasm('set_spin_park_k', 0);
   else if (Number.isFinite(SPIN_PARK_K)) inheritWasm('set_spin_park_k', SPIN_PARK_K);
+  if (Number.isFinite(SPIN_WORK_MAX)) inheritWasm('set_spin_work_max', SPIN_WORK_MAX);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4777,7 +4793,6 @@ async function main() {
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
   }
-  if (Number.isFinite(SPIN_WORK_MAX)) inheritWasm('set_spin_work_max', SPIN_WORK_MAX);
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   // Screen-size-driven defaults from the same table (lib/app-profiles.js
   // LAUNCH_PREFS) — the CLI's screen is whatever --screen= asked for, so a
@@ -5023,6 +5038,7 @@ async function main() {
         for (const p of paths) {
           const entry = addFile(p, hostPath, size);
           entry.decodedImage = decodedImage;
+          if (item && typeof item === 'object') ctx.vfs.applyFileMetadata(p, item);
         }
         // Same rule the page applies: a font the app ships is a font its
         // installer had put in the font directory, so mount it there too,
@@ -5657,6 +5673,7 @@ async function main() {
     if (NO_SPIN_PARK) instance.exports.set_spin_park_k(0);
     else if (Number.isFinite(SPIN_PARK_K)) instance.exports.set_spin_park_k(SPIN_PARK_K);
   }
+  if (instance.exports.set_spin_work_max && Number.isFinite(SPIN_WORK_MAX)) instance.exports.set_spin_work_max(SPIN_WORK_MAX);
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -5712,7 +5729,6 @@ async function main() {
           console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(a)}] changed`);
           console.log(`  Old: ${hex(extraWatchPrev[i])}  New: ${hex(v)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
           hit = true;
-  if (instance.exports.set_spin_work_max && Number.isFinite(SPIN_WORK_MAX)) instance.exports.set_spin_work_max(SPIN_WORK_MAX);
         }
         extraWatchPrev[i] = v;
       }
@@ -6542,6 +6558,10 @@ async function main() {
           armHandlerHistogram(batch);
         }
       }
+    }
+    if (TRACE_SCHED_REGS) {
+      const e = instance.exports, h = (v) => (v >>> 0).toString(16);
+      console.log(`[regs] b=${batch} eip=${h(e.get_eip())} eax=${h(e.get_eax())} ecx=${h(e.get_ecx())} edx=${h(e.get_edx())} ebx=${h(e.get_ebx())} esp=${h(e.get_esp())} ebp=${h(e.get_ebp())} esi=${h(e.get_esi())} edi=${h(e.get_edi())}`);
     }
     if (TRACE_SCHED) {
       const sched = describeSchedule(instance, threadManager);
@@ -10522,6 +10542,7 @@ if (VERBOSE) {
         + ` ${peekTrips} trips (${SPIN_PARK.peekWaits} serviced on the main thread)`
         + (SPIN_PARK.guestMsAdded ? `, ${SPIN_PARK.guestMsAdded}ms of guest time charged` : '')
         + `; K=${ex && ex.get_spin_park_k ? ex.get_spin_park_k() : '?'}`
+        + (ex && ex.get_spin_work_max ? ` workMax=${ex.get_spin_work_max()}` : '')
         + (perThread.length ? ` — ${perThread.join(', ')}` : ''));
     }
   }

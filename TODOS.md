@@ -3,15 +3,15 @@
 ## Coordinated migration queue — 2026-10-01
 
 Historical sections below are preserved; they are not automatically ready work.
-Coordinator: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0.
+Coordinator: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5.
 Resource and acknowledgment ledger: `ops/handoffs/orchestrator-status.md`.
 
 **No product decision needed for current independent work.** FP comparisons and
 result download are complete. REP final validation remains blocked by automated
 review. Codex handoff reconciliation is
-complete, including one explicitly reconstructed documentary handoff. Five
-Claude roots are deferred under the updated orchestration scope; their files
-and jobs remain preserved. No old-session wakeup is requested.
+complete, including one explicitly reconstructed documentary handoff. All five Claude migration handoffs are received and local claims released.
+Core migration is verified; bulk archives continue independently. Foreign remote
+resources remain unverified. Existing correctness/review blockers remain.
 
 - [x] Receive in-scope Codex handoffs and reconcile resource ownership
   id: MIG-HANDOFF
@@ -46,12 +46,13 @@ and jobs remain preserved. No old-session wakeup is requested.
   Done: precise next task with ownership boundaries and validation; goal remains incomplete.
   Evidence: ops/handoffs/01a0f6ff-da61-7710-a604-d9442103dbbd.md; ops/handoffs/mig-sam-review.md.
 
-- [ ] Defer NFS2 and IS3 root migration
+- [x] Receive NFS2 and IS3 migration handoff
   id: MIG-NFS2
-  status: deferred
-  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
-  Next: Claude migration deferred per updated ops/ORCHESTRATOR.md; preserve files/jobs and do not take overlapping claims. IS3/icon commits and tests are recorded but do not imply root transfer.
-  Done: resume only when scope includes Claude migration.
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Migration custody complete; all five Claude handoffs read and local claims released. Unfinished engineering remains separately queued.
+  Done: Owner handoffs received and local sessions exited; no foreign remote-service termination inferred.
+  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md; ops/handoffs/claude-migration-marketing-361d8f4f.md
 
 - [x] Verify handed-off renderer specular correction in isolated candidate
   id: MIG-RENDER
@@ -162,13 +163,15 @@ and jobs remain preserved. No old-session wakeup is requested.
   Evidence: ops/handoffs/01a0eef4-21b2-76b3-8352-48b0d6ac6e7f.md.
   Done: checkpoint accepted, remaining work scoped from owner evidence.
 
-- [ ] Defer four older Claude roots; accept reconstructed Codex coordination history
+- [x] Receive remaining Claude migration handoffs and Codex coordination history
   id: MIG-LEGACY
-  status: deferred
-  owner: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
-  Next: Claude PID10341,36638,68796,53759 deferred with claims preserved. Codex01a0a731 documentary reconstruction accepted; completed commits are ancestors and dedicated files clean. Preserve its unverified processes.
-  Done: Codex migration closed; Claude work stays deferred until scope changes.
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Migration custody complete; all five Claude handoffs read and local claims released. Unfinished engineering remains separately queued.
+  Done: Owner handoffs received and local sessions exited; no foreign remote-service termination inferred.
   Evidence: ops/handoffs/reconstructed-remaining.md; ops/ORCHESTRATOR.md.
+
+  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md; ops/handoffs/claude-migration-marketing-361d8f4f.md
 
 - [x] Revalidate transferred bounded wave capability writes
   id: MIG-AUDIO-CAPS
@@ -220,7 +223,7 @@ and jobs remain preserved. No old-session wakeup is requested.
 - [!] Correct REP MOVS restart on absent sparse pages
   id: MIG-SAM-REP-RESTART
   candidate: serious-sam-demo
-  owner: codex:01a0f9db-4a5d-7733-ade9-8b71d8e3f05f
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Next: incomplete handoff accepted; seven file/patch hashes verified. Matrices/regressions/zero-count/block paths pass. Corrected uop log passes with2entries/1COPYdeopt, tool exit unconfirmed. ContinueSearch, direct MOVS code-write review and final static gates remain after automated review stopped the worker.
   Done: correct single fault, first absent byte, failed-element preservation and retry at REP for widths1/2/4 DF0/1, with source identities and coverage limits. No generic fault-policy/classifier/layout changes or canonical build.
   Evidence: ops/handoffs/mig-sam-rep-restart.md; scratch/mig-sam-rep-restart-20261002/evidence-summary.json.
@@ -901,19 +904,19 @@ commit output — do not assume your hunks landed.**
   owner: codex:01a0f9db-89c0-73b3-b528-fe8bf239e061
   Notes: Planned60s observation ended normally4290batches/exit0; outer90s guard unused,6084 frozen hashes unchanged. Root reviewed640x480 title/loading PNG; no hang or gameplay claim. Both earlier harness failures preserved.
 
-- [~] Compare NFS3 speed and correctness in Glide, D3D and original software
+- [ ] Compare NFS3 speed and correctness in Glide, D3D and original software
   id: NFS3-RENDERER-BENCH
-  status: active
+  status: ready
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: need-for-speed-3-demo
-  Next: Review CDP SwiftShader versus Glide endpoint Intel/Mesa identity discrepancy from the completed failed attempt; propose evidence-backed correction without rerunning.
+  Next: Verify available backend-review evidence and exact missing package paths; preserve failed renderer-identity gate before any new qualification.
   Done: Report all three guest renderer paths on the same identified source/WASM/browser/CPU/GPU, resolution and controlled race/weather/input route. Separate original game software rendering from our software backend; verify no hidden GPU fallback or SwiftShader substitution. Save reviewed race images, repeated warmed-up FPS/frame-time median and p95, CPU profiles, draw/triangle/texture/upload/readback/fallback counters, sample counts and spread, plus same-path control. Report unavailable paths explicitly. Record bottlenecks and a predeclared performance acceptance budget; historical high-load FPS is not a current baseline.
   Evidence: ops/handoffs/nfs3-renderer-bench.md; scratch/nfs3-renderer-bench-20261002/closure-report.json; scratch/nfs3-renderer-bench-20261002/local-resource-preflight.json; ops/handoffs/nfs3-capacity-recheck.md; ops/handoffs/nfs3-software-prep.md
-  owner: codex:01a0f9db-07f4-71d2-9fe8-42d5efc7f642
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-02T04:11:37.233064+00:00
   accepted-by: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
-  Notes: Root34 downloaded hashes/cleanup/post-input checks pass; car/road image reviewed but no qualified timing. Failure occurred before qualification windows at backend identity gate. Host explicitly released for GTA2 then Unreal; all three original renderer paths remain required.
+  Notes: Old worker released at migration. Ricochet launch proof, Collapse association review, NFS3 backend identity and Jazz visual admission remain unresolved; package preparation is not gameplay/FPS acceptance.
 
 - [x] Audit the actual shared 3D rendering pipeline across APIs
   id: RENDER-SHARED-AUDIT
@@ -1059,14 +1062,14 @@ commit output — do not assume your hunks landed.**
   Evidence: ops/handoffs/01a08812-a2da-7333-83fc-851ef8fff7b1.md
 
 
-- [~] Measure browser FPS for strongest local and desktop game candidates
+- [ ] Measure browser FPS for strongest local and desktop game candidates
   id: OPS-GAME-FPS-BASELINE
-  status: active
+  status: ready
   candidate: jazz-jackrabbit-2-demo-installer, reflexive-collapse-crunch, reflexive-ricochet-xtreme, unreal-special-edition, gta2-demo
   done: Publish run performance metadata with guest present counts, wall duration, per-sample p95 frame time, renderer/GPU, hardware-versus-SwiftShader, scene, build hash and measurement date; review playable route before measuring. No menu, browser rAF or CLI batch timing relabelled as gameplay FPS.
-  Next: Review ordinary Ricochet ball-launch input and evolving-gameplay scene admission; preserve ready-board diagnostic without publishing it as gameplay FPS. Continue GTA2 after NFS3 clean release.
-  Notes: Ricochet root100hash/arithmetic audit and eight images reviewed: apparently unlaunched ball/full bricks/zero score, gameplay measurement unaccepted. Host released; NFS3 transferring. Collapse association preparation under root review/callsite proof assigned; Jazz route and Unreal package remain pending.
-  owner: codex:01a0f9db-07f4-71d2-9fe8-42d5efc7f642
+  Next: Inventory exact available fixtures and released route packages, then qualify gameplay for the first ready candidate; canceled conditional launches stay canceled.
+  Notes: Old worker released at migration. Ricochet launch proof, Collapse association review, NFS3 backend identity and Jazz visual admission remain unresolved; package preparation is not gameplay/FPS acceptance.
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-02T05:21:49.472399+00:00
   accepted-by: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
   Evidence: ops/handoffs/ops-game-fps-baseline.md; ops/handoffs/ops-fps-labels.md; ops/handoffs/ops-historical-fps-semantics.md; scratch/ops-gta2-fps-20261002/root-review.md; ops/handoffs/ops-unreal-fps-preparation.md; ops/handoffs/ops-jazz2-package.md; ops/handoffs/ops-collapse-v2-package.md; ops/handoffs/ops-ricochet-measurement.md
@@ -1081,3 +1084,2222 @@ commit output — do not assume your hunks landed.**
   Done: Publish only confidently associated existing captures with exact hashes/provenance, update coverage and disposition deltas, preserve originals and explicit unknowns; never rerun games to fabricate historical evidence.
   Evidence: ops/handoffs/ops-visual-acceptance.md; ops/handoffs/ops-quarantine-review.md; scratch/ops-visual-acceptance-20261002/final-verification.json
   Notes: The completed18-image recovery/147-bundle audit remains accepted. This deeper search is unscheduled, not permission to take deferred Claude claims or restore incorrect associations.
+
+## Gameplay coverage and EXE categories — requested 2026-10-03
+
+- [~] Inventory every game and complete gameplay screenshot/FPS coverage
+  id: OPS-ALL-GAMEPLAY-COVERAGE
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:30:54.631Z
+  created-by: user via Telegram
+  accepted: 2026-10-03T08:30:54.631Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Continue captures and qualified measurements:95 fresh gameplay scenes,74 limited input responses across107 attempted entries; six qualified logical-frame measurements. All-game coverage remains incomplete.
+  Done: Each game has a reviewed actual-gameplay screenshot and valid scene-qualified FPS evidence, or an explicit per-game blocker with exact missing paths; menus, intros and raw Flip event rates are not gameplay FPS.
+  Evidence: ops/handoffs/migration-core-ready-20261003.md
+
+- [x] Group games into categories in dashboard EXE corpus
+  id: OPS-EXE-CATEGORIES
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:30:54.631Z
+  created-by: user via Telegram
+  accepted: 2026-10-03T08:30:54.631Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete: live dashboard serves 241 entries in 14 categories; combined category/source/status filters verified.
+  Done: Every EXE corpus game has a category, dashboard grouping/filtering works, and source/package groups remain separate from game genre.
+  Evidence: ops/handoffs/corpus-categories-20261003.md; scratch/ops-preview/corpus-live-categories.png
+
+## Per-game screenshot and FPS coverage — 2026-10-03
+
+Exact required and missing fixture/artifact paths are recorded in each task JSON.
+Categories exclude tools and graphics demos; distribution variants remain explicit.
+Ready means assets are present, not gameplay or counter correctness.
+
+- [ ] Gameplay screenshot and FPS: abedemo
+  id: GAMEPLAY-abedemo
+  status: ready
+  candidate: abedemo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during actual gameplay; retain narrow input scope from reviewed batch17 evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-abedemo.json; scratch/runs/20261003-abedemo-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: aoe1
+  id: GAMEPLAY-aoe1
+  status: ready
+  candidate: aoe1
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during actual gameplay; retain narrow input scope from reviewed batch17 evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-aoe1.json; scratch/runs/20261003-aoe1-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: aoe2
+  id: GAMEPLAY-aoe2
+  status: ready
+  candidate: aoe2
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Diagnose actual owning-Worker graphics initialization rejection. Unicode repair cleared prior DirectX6.1a failure; ordinary run now shows DirectDraw graphics error, with no gameplay/FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-aoe2.json; scratch/runs/20261003-aoe2-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: Arcanum: Of Steamworks & Magick Obscura Demo
+  id: GAMEPLAY-arcanum-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: arcanum-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-arcanum-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-arcanum-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Atomic Bomberman Demo
+  id: GAMEPLAY-atomic_bomberman_june_demo
+  status: ready
+  candidate: atomic_bomberman_june_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-atomic_bomberman_june_demo.json; scratch/runs/20261003-atomic_bomberman_june_demo-gameplay-restored5/result.json
+
+- [ ] Gameplay screenshot and FPS: Baldur's Gate Chapters I & II
+  id: GAMEPLAY-baldurs-gate-chapters-1-2-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: baldurs-gate-chapters-1-2-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-baldurs-gate-chapters-1-2-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-baldurs-gate-chapters-1-2-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Baldur's Gate interactive demo
+  id: GAMEPLAY-baldurs-gate-interactive-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: baldurs-gate-interactive-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-baldurs-gate-interactive-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-baldurs-gate-interactive-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [!] Gameplay screenshot and FPS: Baldur's Gate non-interactive demo
+  id: GAMEPLAY-baldurs-gate-noninteractive-demo
+  status: deferred
+  candidate: baldurs-gate-noninteractive-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Noninteractive presentation demo: retain screenshot evidence separately; gameplay FPS is not applicable.
+  Done: Document noninteractive scope and preserve any reviewed presentation captures; gameplay FPS is not applicable.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-baldurs-gate-noninteractive-demo.json
+
+- [ ] Gameplay screenshot and FPS: Best Of Moorhuhn extras
+  id: GAMEPLAY-best-of-moorhuhn
+  status: ready
+  candidate: best-of-moorhuhn
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Confirm in-round Training1 action, cover other playable package variants, then qualify complete-frame measurements.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-best-of-moorhuhn.json; scratch/runs/20261003-moorhuhn_training_1-gameplay-restored14/result.json
+
+- [ ] Gameplay screenshot and FPS: Black & White 2 Demo
+  id: GAMEPLAY-black_white_2_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: black_white_2_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [x] Gameplay screenshot and FPS: Blobby Volley
+  id: GAMEPLAY-blobby-volley
+  status: done
+  candidate: blobby-volley
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete for reviewed ordinary gameplay and instrumented logical submissions: 467 frames /15.312065s =30.4988 logical gameplay frames/s. Physical displayed FPS/p95 unknown; not a hardware-GPU baseline.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-blobby-volley.json; scratch/runs/20261003-blobby-volley-logical-gameplay/result.json; ops/handoffs/gameplay-frame-counter-20261003.md
+
+- [ ] Gameplay screenshot and FPS: Bricks
+  id: GAMEPLAY-bricks
+  status: ready
+  candidate: bricks
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Title click starts the level 1 sliding-block board. Drag (305,293) to (259,293) shows no verified block displacement. Puzzle scene reviewed; controls and completed move remain unverified. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-bricks.json; scratch/runs/20261003-bricks-gameplay-restored1/result.json
+
+- [ ] Gameplay screenshot and FPS: Broken Sword Demo
+  id: GAMEPLAY-broken_sword_demo
+  status: ready
+  candidate: broken_sword_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement; reviewed response is hotspot cursor only, walking unverified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-broken_sword_demo.json; scratch/runs/20261003-broken-sword-cafe-hotspot/result.json
+
+- [ ] Gameplay screenshot and FPS: Caesar III Demo
+  id: GAMEPLAY-caesar3_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: caesar3_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-caesar3_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-caesar3_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Captain Claw Demo
+  id: GAMEPLAY-captain_claw_demo
+  status: ready
+  candidate: captain_claw_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-captain_claw_demo.json; scratch/runs/20261003-captain_claw_demo-gameplay-restored5/result.json
+
+- [x] Gameplay screenshot and FPS: Cave Story
+  id: GAMEPLAY-cave-story
+  status: done
+  candidate: cave-story
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualified one short instrumented logical-submission sample:25frames/1003.43ms=24.9145431171/s, mostly stationary opening room after movement/jump. Physical displayed FPS,p95 and sustained performance remain unknown.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-cave-story.json; scratch/runs/20261003-cave-story-logical-gameplay/qualification.json; scratch/runs/20261003-cave-story-logical-gameplay/result.json
+
+- [ ] Gameplay screenshot and FPS: Civilization II: Multiplayer Gold Edition
+  id: GAMEPLAY-civilization-2-mge-win32
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: civilization-2-mge-win32
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-civilization-2-mge-win32.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-civilization-2-mge-win32.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Sid Meier's Civilization II
+  id: GAMEPLAY-civilization-2-win16
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: civilization-2-win16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-civilization-2-win16.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-civilization-2-win16.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Cruel
+  id: GAMEPLAY-cruel
+  status: ready
+  candidate: cruel
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed drag of exposed 2 diamonds to A diamonds foundation: foundation now shows 2 diamonds and source pile exposes 5 diamonds. Ordinary completed card move; limited route only, no FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-cruel.json; scratch/runs/20261003-cruel-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Curse of Monkey Island Demo
+  id: GAMEPLAY-curse_monkey_island_demo
+  status: ready
+  candidate: curse_monkey_island_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-curse_monkey_island_demo.json; scratch/runs/20261003-curse_monkey_island_demo-gameplay-restored5/result.json
+
+- [ ] Gameplay screenshot and FPS: CWordZap
+  id: GAMEPLAY-cwordzap
+  status: ready
+  candidate: cwordzap
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Ordinary Ready click starts letter board; selecting S O T places letters into word row and End Word displays SOT. Score remains0:0; no accepted-word/scoring claim. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-cwordzap.json; scratch/runs/20261003-cwordzap-gameplay-restored2/result.json
+
+- [ ] Gameplay screenshot and FPS: Darkstone Demo
+  id: GAMEPLAY-darkstone_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: darkstone_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-darkstone_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-darkstone_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Deus Ex demo
+  id: GAMEPLAY-deus-ex-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: deus-ex-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Diablo Demo
+  id: GAMEPLAY-diablo_demo
+  status: ready
+  candidate: diablo_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Diagnose persistent dark transition after complete name entry; prior served-source closure rejection recorded, future helper includes all library JavaScript. No gameplay/FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/runs/20261003-diablo-demo-full-name-stall/result.json; scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-diablo_demo.json
+
+- [ ] Gameplay screenshot and FPS: Diablo II Demo
+  id: GAMEPLAY-diablo-2-demo-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: diablo-2-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-diablo-2-demo-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-diablo-2-demo-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Diablo Shareware
+  id: GAMEPLAY-diablo-shareware
+  status: ready
+  candidate: diablo-shareware
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during actual gameplay; retain narrow input scope from reviewed batch17 evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-diablo-shareware.json; scratch/runs/20261003-diablo_shareware-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: Dungeon Keeper Demo
+  id: GAMEPLAY-dungeon_keeper_demo
+  status: ready
+  candidate: dungeon_keeper_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete ordinary menu-to-gameplay input route with exact failed-request logging; no active scene or specific compatibility fault established.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-dungeon_keeper_demo.json; scratch/runs/20261003-dungeon_keeper_demo-gameplay-restored5/result.json
+
+- [x] Gameplay screenshot and FPS: DX-Ball
+  id: GAMEPLAY-dxball
+  status: done
+  candidate: dxball
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete narrow evidence: reviewed control/gameplay images and three independent short instrumented windows,60.219 logical gameplay frames/s. Physical display FPS and sustained performance unknown; rejected attempts preserved.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-dxball.json; scratch/runs/20261003-dxball-logical-gameplay/result.json; scratch/runs/20261003-dxball-logical-gameplay/qualification.json
+
+- [ ] Gameplay screenshot and FPS: Elasto Mania
+  id: GAMEPLAY-elasto-mania
+  status: ready
+  candidate: elasto-mania
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Ordinary Enter progression reaches Level16 NewWave motorcycle field. Up held1200ms overlaps loading, and only one final field capture is available; acceleration/control response is unverified. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-elasto-mania.json; scratch/runs/20261003-elasto_mania-gameplay-restored3/result.json
+
+- [ ] Gameplay screenshot and FPS: EmPipe
+  id: GAMEPLAY-empipe
+  status: ready
+  candidate: empipe
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Next starts pipe puzzle; click (186,185) places an elbow pipe in the red grid. Start/finish and upcoming pieces visible. No completed puzzle or score progression claim. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-empipe.json; scratch/runs/20261003-empipe-gameplay-restored1/result.json
+
+- [ ] Gameplay screenshot and FPS: Fallout demo
+  id: GAMEPLAY-fallout-demo
+  status: ready
+  candidate: fallout-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-fallout-demo.json; scratch/runs/20261003-fallout_demo-gameplay-restored5/result.json
+
+- [ ] Gameplay screenshot and FPS: FourStones
+  id: GAMEPLAY-fourstones
+  status: ready
+  candidate: fourstones
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Start then column-entry click places red stone bottom-left and computer replies blue in column4. One move/reply only. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-fourstones.json; scratch/runs/20261003-fourstones-gameplay-restored2/result.json
+
+- [ ] Gameplay screenshot and FPS: FreeCell
+  id: GAMEPLAY-freecell
+  status: ready
+  candidate: freecell
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-freecell.json; scratch/runs/20261003-freecell-gameplay-restored9/result.json
+
+- [ ] Gameplay screenshot and FPS: freecell16
+  id: GAMEPLAY-freecell16
+  status: ready
+
+  candidate: freecell16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Setup and ordinary card move now pass on worker-owned input routing fix. Reviewed gameplay image saved; qualify a meaningful per-game frame measurement. Dialog clipping remains.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-freecell16.json; scratch/runs/20261003-freecell16-gameplay-worker-route/result.json; ops/handoffs/win16-dialog-worker-trap-20261003.md
+
+- [ ] Gameplay screenshot and FPS: Funtris
+  id: GAMEPLAY-funtris
+  status: ready
+  candidate: funtris
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Implement bounded gravity-update/input-response metrics from source plan; no proven complete-frame boundary, so gameplay FPS remains unknown. Reviewed gameplay/input saved; never relabel GDI tile blits or gravity updates as frames.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-funtris.json; scratch/runs/20261003-funtris-gameplay-restored2/result.json; ops/handoffs/funtris-frame-counter-plan-20261003.md
+
+- [ ] Gameplay screenshot and FPS: Gallinelle XXL
+  id: GAMEPLAY-gallinelle-xxl
+  status: ready
+  candidate: gallinelle-xxl
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete gameplay frame measurement; active hunting scene and ammo decrement reviewed, no hit or sustained-play claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/runs/20261003-gallinelle-gameplay/result.json; scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gallinelle-xxl.json
+
+- [ ] Gameplay screenshot and FPS: GeneRally
+  id: GAMEPLAY-generally
+  status: ready
+  candidate: generally
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Run corrected post-countdown gate allowing00.00 before first movement; verify driving. Intro overlay stayed identical30sec until ordinary Enter acknowledged it. After countdown, track and car visible with no overlay/lights; timer00.00. Overly strict private gate incorrectly required nonzero timer before movement, so no driving input issued before120sec deadline. Gate corrected offline; no movement claim. FPS remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-generally.json; scratch/runs/20261003-generally-gameplay-restored4/result.json
+
+- [ ] Gameplay screenshot and FPS: Beneath a Steel Sky GOG installer
+  id: GAMEPLAY-gog-free-beneath-a-steel-sky
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-beneath-a-steel-sky
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-beneath-a-steel-sky.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-beneath-a-steel-sky.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: The Elder Scrolls: Arena GOG installer
+  id: GAMEPLAY-gog-free-elder-scrolls-arena
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-elder-scrolls-arena
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-elder-scrolls-arena.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-elder-scrolls-arena.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: The Elder Scrolls II: Daggerfall GOG installer
+  id: GAMEPLAY-gog-free-elder-scrolls-daggerfall
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-elder-scrolls-daggerfall
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-elder-scrolls-daggerfall.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-elder-scrolls-daggerfall.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Flight of the Amazon Queen GOG installer
+  id: GAMEPLAY-gog-free-flight-of-the-amazon-queen
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-flight-of-the-amazon-queen
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-flight-of-the-amazon-queen.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-flight-of-the-amazon-queen.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Lure of the Temptress GOG installer
+  id: GAMEPLAY-gog-free-lure-of-the-temptress
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-lure-of-the-temptress
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-lure-of-the-temptress.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-lure-of-the-temptress.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Shadow Warrior Classic Complete GOG installer
+  id: GAMEPLAY-gog-free-shadow-warrior-classic
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-shadow-warrior-classic
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-shadow-warrior-classic.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-shadow-warrior-classic.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Ultima IV: Quest of the Avatar GOG installer
+  id: GAMEPLAY-gog-free-ultima-iv
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gog-free-ultima-iv
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-ultima-iv.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gog-free-ultima-iv.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Golf
+  id: GAMEPLAY-golf
+  status: ready
+  candidate: golf
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed stock click: stock count changes 16 to 15 and J clubs appears over A spades waste. Limited one-draw card-game route only; no FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-golf.json; scratch/runs/20261003-golf-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Grand Theft Auto 2 demo
+  id: GAMEPLAY-gta2-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: gta2-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gta2-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-gta2-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Half-Life: Uplink
+  id: GAMEPLAY-half-life-uplink-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: half-life-uplink-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-half-life-uplink-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-half-life-uplink-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Heroes of Might and Magic II demo
+  id: GAMEPLAY-heroes-2-demo
+  status: ready
+  candidate: heroes-2-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Use verified adventure-map route and capture one isolated hero movement, then qualify complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-heroes-2-demo.json; scratch/runs/20261003-heroes2_demo-gameplay-restored15/result.json
+
+- [ ] Gameplay screenshot and FPS: Heroes of Might and Magic III demo
+  id: GAMEPLAY-heroes-3-demo-installer
+  status: ready
+  candidate: heroes-3-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during actual gameplay; retain narrow input scope from reviewed batch17 evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-heroes-3-demo-installer.json; scratch/runs/20261003-heroes3_demo-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: Hitman Demo 2 (Glide 3, experimental)
+  id: GAMEPLAY-hitman_glide_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: hitman_glide_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-hitman_glide_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-hitman_glide_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Hype Demo (Glide 3, experimental)
+  id: GAMEPLAY-hype_glide_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: hype_glide_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-hype_glide_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-hype_glide_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Icewind Dale demo
+  id: GAMEPLAY-icewind-dale-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: icewind-dale-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-icewind-dale-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-icewind-dale-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [x] Gameplay screenshot and FPS: Icy Tower
+  id: GAMEPLAY-icy-tower
+  status: done
+  candidate: icy-tower
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Narrow screenshot/measurement requirement fulfilled:49.98875253 logicalsubmissions/s,50frames/1000.225ms on5ff4844e, one instrumented mostlystationary platform sample after ordinary movement/jump. Sustained performance, physical displayFPS andp95 remain unknown.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: ops/handoffs/icy-tower-logical-measurement-20261003.md; scratch/runs/20261003-icy-tower-logical-gameplay/result.json; scratch/gameplay-icy-tower-counter-20261003/attempt7/root-measurement-review.json
+
+- [ ] Gameplay screenshot and FPS: Jardinains!
+  id: GAMEPLAY-jardinains
+  status: ready
+  candidate: jardinains
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete ordinary menu-to-gameplay route; preserve menu-only evidence and unknown input mapping.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-jardinains.json; scratch/runs/20261003-jardinains-gameplay-restored12/result.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Jazz Jackrabbit 2 demo installer
+  id: GAMEPLAY-jazz-jackrabbit-2-demo-installer
+  status: ready
+  candidate: jazz-jackrabbit-2-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete intro/menu route with timely ordinary Escape inputs and reach a player-controlled level; previous intro-only deadline is inconclusive.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-jazz-jackrabbit-2-demo-installer.json; scratch/runs/20261003-jazz2_demo-gameplay-restored15/result.json
+
+- [~] Gameplay screenshot and FPS: jigssawme
+  id: GAMEPLAY-jigssawme
+  status: active
+  candidate: jigssawme
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Localize valid BMP image-open failure from ordinary Upload; startup repair verified, no puzzle scene or FPS yet.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-jigssawme.json; scratch/runs/20261003-jigssawme-custom-bmp-image-failure/result.json
+
+- [ ] Gameplay screenshot and FPS: Liquid War
+  id: GAMEPLAY-liquid-war
+  status: ready
+  candidate: liquid-war
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed arena with red/yellow teams white walls and04:00 timer before ordinary cursor move. Final capture shows03:35 timer and changed team distribution; autonomous simulation also changes this, so cursor-steering response not independently verified. FPS remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-liquid-war.json; scratch/runs/20261003-liquid_war-gameplay-restored4/result.json
+
+- [ ] Gameplay screenshot and FPS: Little Fighter 2 installer
+  id: GAMEPLAY-little-fighter-2-installer
+  status: ready
+  candidate: little-fighter-2-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete arena rendering reviewed after primary-size repair; qualify full-frame measurement. Retain reduced-roster limitation and earlier limited movement response; latest control observation is combat-confounded.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-little-fighter-2-installer.json; scratch/runs/20261003-little_fighter_2-gameplay-primary-repaired/result.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Marbles
+  id: GAMEPLAY-marbles
+  status: ready
+  candidate: marbles
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete gameplay frame measurement; active board and limited column movement reviewed; no sustained-play claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/runs/20261003-marbles-gameplay/result.json; scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-marbles.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: mcm
+  id: GAMEPLAY-mcm
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: mcm
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-mcm.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-mcm.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Moorhuhn
+  id: GAMEPLAY-moorhuhn
+  status: ready
+  candidate: moorhuhn
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete gameplay frame measurement; active hunting scene and ammo decrement reviewed, no hit claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/runs/20261003-moorhuhn-original-gameplay/result.json; scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-moorhuhn.json
+
+- [x] Gameplay screenshot and FPS: Moorhuhn 2
+  id: GAMEPLAY-moorhuhn-2
+  status: done
+  candidate: moorhuhn-2
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Retain qualified single-sample logical measurement and substantial observer/cooperative overhead limitations; physical and normal uninstrumented FPS remain unknown.
+  Done: Reviewed active-round screenshots and ordinary shot; root-qualified8 complete logical submissions/1006.26ms=7.95 per second. One heavily instrumented cooperative sample; no physical, normal or sustained FPS claim.
+  Evidence: scratch/runs/20261003-moorhuhn2-logical-gameplay/result.json; scratch/runs/20261003-moorhuhn2-logical-gameplay/qualification.json; scratch/gameplay-moorhuhn2-counter-20261003/attempt6/root-evaluation.json
+
+- [ ] Gameplay screenshot and FPS: Moorhuhn 3
+  id: GAMEPLAY-moorhuhn-3
+  status: ready
+  candidate: moorhuhn-3
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-moorhuhn-3.json; scratch/runs/20261003-moorhuhn_3-gameplay-restored14/result.json
+
+- [ ] Gameplay screenshot and FPS: Moorhuhn 3 Bonus Puzzles
+  id: GAMEPLAY-moorhuhn-3-puzzles
+  status: ready
+  candidate: moorhuhn-3-puzzles
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Cover other puzzle variants and qualify complete-frame measurement; Fisch piece drag reviewed only.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-moorhuhn-3-puzzles.json; scratch/runs/20261003-moorhuhn_3_puzzle_fisch-gameplay-restored14/result.json
+
+- [ ] Gameplay screenshot and FPS: Moorhuhn Tennis
+  id: GAMEPLAY-moorhuhn-tennis
+  status: ready
+  candidate: moorhuhn-tennis
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-moorhuhn-tennis.json; scratch/runs/20261003-moorhuhn_tennis-gameplay-restored14/result.json
+
+- [x] Gameplay screenshot and FPS: Moorhuhn Winter-Edition
+  id: GAMEPLAY-moorhuhn-winter
+  status: done
+  candidate: moorhuhn-winter
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Retain qualified single-sample logical measurement and explicit cooperative/instrumentation limits; physical display FPS remains unknown.
+  Done: Reviewed active-round screenshots and ordinary shot; root-qualified37 complete logical submissions/1017.45ms=36.37 per second. One instrumented cooperative sample; no physical or sustained FPS claim.
+  Evidence: scratch/runs/20261003-moorhuhn-winter-logical-gameplay/result.json; ops/handoffs/moorhuhn-winter-frame-counter-plan-20261003.md
+
+- [ ] Gameplay screenshot and FPS: Morrowind (retail, own ISO)
+  id: GAMEPLAY-morrowind
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: morrowind
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-morrowind.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-morrowind.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Hearts
+  id: GAMEPLAY-mshearts16
+  status: ready
+
+  candidate: mshearts16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Dealer selection, ordinary setup, offline hand and three-card pass now reviewed. Qualify game-specific frame measurement; clipping tracked separately under WIN16-DIALOG-GEOMETRY.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-mshearts16.json; scratch/win16-dialog-worker-diagnostic-20261003/hearts-group/; ops/handoffs/win16-dialog-worker-trap-20261003.md
+
+- [ ] Gameplay screenshot and FPS: mw3
+  id: GAMEPLAY-mw3
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: mw3
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-mw3.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-mw3.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Need for Speed II Demo
+  id: GAMEPLAY-need-for-speed-2-demo
+  status: ready
+  candidate: need-for-speed-2-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during original software NFS2 gameplay; acceleration response reviewed, SE and NFS3 excluded.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-2-demo.json; scratch/runs/20261003-nfs2_demo-gameplay-restored16/result.json
+
+- [ ] Gameplay screenshot and FPS: Need for Speed II (retail CD)
+  id: GAMEPLAY-need-for-speed-2-full
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: need-for-speed-2-full
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-2-full.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-2-full.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Need for Speed II SE (retail CD)
+  id: GAMEPLAY-need-for-speed-2-se-full
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: need-for-speed-2-se-full
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-2-se-full.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-2-se-full.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [!] Gameplay screenshot and FPS: Need for Speed III: Hot Pursuit Demo
+  id: GAMEPLAY-need-for-speed-3-demo
+  status: blocked
+  candidate: need-for-speed-3-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Declared assets are present; complete the existing review gate before gameplay or FPS work.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-need-for-speed-3-demo.json
+  blocker: Renderer identity qualification previously failed; review ops/handoffs/nfs3-backend-review.md before new runtime/timing.
+  waiting-on: coordinator source/evidence review; no user decision
+
+- [ ] Gameplay screenshot and FPS: NetHack for Windows
+  id: GAMEPLAY-nethack-win32
+  status: ready
+  candidate: nethack-win32
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-nethack-win32.json; scratch/runs/20261003-nethack_win32-gameplay-restored11/result.json
+
+- [ ] Gameplay screenshot and FPS: Need for Speed II SE Demo
+  id: GAMEPLAY-nfs2se_glide_demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: nfs2se_glide_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-nfs2se_glide_demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-nfs2se_glide_demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: pawn
+  id: GAMEPLAY-pawn
+  status: ready
+  candidate: pawn
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No complete-game claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pawn.json; scratch/runs/20261003-pawn-gameplay-restored12/result.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Peaks
+  id: GAMEPLAY-peaks
+  status: ready
+  candidate: peaks
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: F2 opens name prompt; ordinary Player typing and OK closes it. Stock click changes face-up 4 diamonds to 2 hearts, Cards Left23 to22 and Credits0 to-5. One draw only. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-peaks.json; scratch/runs/20261003-peaks-gameplay-restored2/result.json
+
+- [ ] Gameplay screenshot and FPS: Pegged
+  id: GAMEPLAY-pegged
+  status: ready
+  candidate: pegged
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed legal drag from (509,387) to (509,461): source and jumped peg empty, landing filled; six visible blue pegs become five. Limited one-move route only; no FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pegged.json; scratch/runs/20261003-pegged-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Pinball
+  id: GAMEPLAY-pinball
+  status: ready
+  candidate: pinball
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed Space Cadet table with BALL 1 and score 0 after F2. Space held 1200ms and Z held 300ms; captures show changing table lights but no verified ball movement or flipper response. Gameplay scene only, no successful launch/control claim. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pinball.json; scratch/runs/20261003-pinball-gameplay-restored1/result.json
+
+- [ ] Gameplay screenshot and FPS: pinball_plus95
+  id: GAMEPLAY-pinball_plus95
+  status: ready
+  candidate: pinball_plus95
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pinball_plus95.json; scratch/runs/20261003-pinball_plus95-gameplay-restored10/result.json
+
+- [ ] Gameplay screenshot and FPS: Sid Meier's Pirates! (2004)
+  id: GAMEPLAY-pirates-2004
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: pirates-2004
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pirates-2004.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pirates-2004.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Pocket Tanks shareware installer
+  id: GAMEPLAY-pocket-tanks-installer
+  status: ready
+  candidate: pocket-tanks-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Waited for reviewed PLAYER1 HUD/terrain/tanks readiness. Ordinary Fire click produces visible crater in hill immediately right of red tank. One shot only, no match completion. FPS remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pocket-tanks-installer.json; scratch/runs/20261003-pocket_tanks-gameplay-restored4/result.json
+
+- [ ] Gameplay screenshot and FPS: Pyramid
+  id: GAMEPLAY-pyramid
+  status: ready
+  candidate: pyramid
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: After Start and real Game > New menu clicks, bottom-row second card (2 hearts) visibly inverts after ordinary click. Selection only, no pair removal/completed deal. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-pyramid.json; scratch/runs/20261003-pyramid-gameplay-restored2/result.json
+
+- [ ] Gameplay screenshot and FPS: Blackjack
+  id: GAMEPLAY-qblackjack
+  status: ready
+  candidate: qblackjack
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed; qualify complete-frame measurement before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-qblackjack.json; scratch/runs/20261003-qblackjack-gameplay-restored11/result.json
+
+- [ ] Gameplay screenshot and FPS: QBob
+  id: GAMEPLAY-qbob
+  status: ready
+  candidate: qbob
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-qbob.json; scratch/runs/20261003-qbob-gameplay-restored11/result.json
+
+- [ ] Gameplay screenshot and FPS: Quake II Demo
+  id: GAMEPLAY-quake-2-demo-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: quake-2-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-quake-2-demo-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-quake-2-demo-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: RollerCoaster Tycoon
+  id: GAMEPLAY-rct
+  status: ready
+  candidate: rct
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete-frame measurement during actual gameplay; retain narrow input scope from reviewed batch17 evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-rct.json; scratch/runs/20261003-rct-gameplay-restored17/result.json
+
+- [ ] Gameplay screenshot and FPS: Alien Shooter
+  id: GAMEPLAY-reflexive-alien-shooter
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: reflexive-alien-shooter
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-alien-shooter.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-alien-shooter.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [!] Gameplay screenshot and FPS: Collapse! Crunch
+  id: GAMEPLAY-reflexive-collapse-crunch
+  status: blocked
+  candidate: reflexive-collapse-crunch
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Declared assets are present; complete the existing review gate before gameplay or FPS work.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-collapse-crunch.json
+  blocker: Association integration and completed-frame semantics remain unaccepted; review ops/handoffs/serious-review-migration-freeze.md before runtime.
+  waiting-on: coordinator source/evidence review; no user decision
+
+- [ ] Gameplay screenshot and FPS: Crimsonland
+  id: GAMEPLAY-reflexive-crimsonland
+  status: ready
+  candidate: reflexive-crimsonland
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Localize observed early ExitProcess0 after launcher Play using saved guest/loader evidence, then repair and requalify gameplay.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-crimsonland.json; scratch/runs/20261003-crimsonland-gameplay-restored16/result.json
+
+- [ ] Gameplay screenshot and FPS: Ricochet Xtreme
+  id: GAMEPLAY-reflexive-ricochet-xtreme
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: reflexive-ricochet-xtreme
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-ricochet-xtreme.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-ricochet-xtreme.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Zuma Deluxe
+  id: GAMEPLAY-reflexive-zuma-deluxe
+  status: ready
+  candidate: reflexive-zuma-deluxe
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Diagnose loading-screen progress on actual owning threads; BASS startup failure cleared, fallback MSVCRT present. No active gameplay/FPS yet.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/runs/20261003-zuma-nested-loader-qualification/result.json; scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reflexive-zuma-deluxe.json
+
+- [ ] Gameplay screenshot and FPS: Reversi
+  id: GAMEPLAY-reversi
+  status: ready
+  candidate: reversi
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Ordinary click at (350,310) places a red disc; reviewed final board shows six discs including computer reply. One move/reply only; no completed match. Gameplay frame measurement remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-reversi.json; scratch/runs/20261003-reversi-gameplay-restored1/result.json
+
+- [ ] Gameplay screenshot and FPS: rodent2000
+  id: GAMEPLAY-rodent2000
+  status: ready
+  candidate: rodent2000
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No complete-game claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-rodent2000.json; scratch/runs/20261003-rodent2000-gameplay-runtime-restored/result.json
+
+- [ ] Gameplay screenshot and FPS: Runenlegen
+  id: GAMEPLAY-runenlegen
+  status: ready
+  candidate: runenlegen
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Use File New, select Beginner and OK; confirm player-controlled board with demo mode off, then legal rune placement. Diagnose clipped/smeared board separately; prior deadline is not a guest crash.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-runenlegen.json; scratch/runs/20261003-runenlegen-gameplay-restored13/result.json
+
+- [ ] Gameplay screenshot and FPS: ScummVM + Flight of the Amazon Queen
+  id: GAMEPLAY-scummvm-fotaq
+  status: ready
+  candidate: scummvm-fotaq
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No full-game compatibility claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-scummvm-fotaq.json; scratch/runs/20261003-scummvm_fotaq-gameplay-restored13/result.json
+
+- [ ] Gameplay screenshot and FPS: Serious Sam: The First Encounter Demo
+  id: GAMEPLAY-serious-sam-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: serious-sam-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-serious-sam-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-serious-sam-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: SimCity 2000 Demo
+  id: GAMEPLAY-simcity2000_demo
+  status: ready
+  candidate: simcity2000_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a complete-frame measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-simcity2000_demo.json; scratch/runs/20261003-simcity2000_demo-gameplay-restored11/result.json
+
+- [ ] Gameplay screenshot and FPS: SimCity 2000 Network Edition
+  id: GAMEPLAY-simcity2000_net
+  status: ready
+  candidate: simcity2000_net
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Prepare and review ordinary local virtual-peer browser route per ops/handoffs/gameplay-network-preparation-20261003.md, then capture actual gameplay; all declared files present.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-simcity2000_net.json
+
+- [ ] Gameplay screenshot and FPS: Sid Meier's SimGolf Demo
+  id: GAMEPLAY-simgolf-demo-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: simgolf-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-simgolf-demo-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-simgolf-demo-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: SkiFree
+  id: GAMEPLAY-ski32
+  status: ready
+  candidate: ski32
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed startup and steering captures. After ArrowRight, the title/instruction scene becomes a downhill playfield with skier, trees and slalom markers; HUD advances to distance 13m and speed 08m/s. Limited ordinary-key route only; no FPS measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-ski32.json; scratch/runs/20261003-ski32-gameplay-ready/result.json
+
+- [ ] Gameplay screenshot and FPS: Rattler
+  id: GAMEPLAY-snake
+  status: ready
+  candidate: snake
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Early route now captures living upward movement without life loss; steering remains unverified. Qualify ordinary steering and source-backed frame timing; prior failed run retained.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-snake.json; scratch/runs/20261003-snake-gameplay-early-route/result.json
+
+- [ ] Gameplay screenshot and FPS: Snood
+  id: GAMEPLAY-snood
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: snood
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-snood.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-snood.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Solitaire
+  id: GAMEPLAY-sol
+  status: ready
+  candidate: sol
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed initial tableau and post-click capture: stock click exposes three waste cards and timer reaches 1. F2 did not visibly change the deal, so re-deal is not claimed. Limited stock-draw route only; no FPS measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-sol.json; scratch/runs/20261003-sol-gameplay-ready/result.json
+
+- [ ] Gameplay screenshot and FPS: sol16
+  id: GAMEPLAY-sol16
+  status: ready
+  candidate: sol16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Initial seven-column tableau visible, but caption area is blank gray. Ordinary stock click exposes three waste cards. Limited stock draw works; caption defect remains, no complete-game or FPS claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-sol16.json; scratch/runs/20261003-sol16-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Spider
+  id: GAMEPLAY-spider
+  status: ready
+  candidate: spider
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No complete-game claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-spider.json; scratch/runs/20261003-spider-gameplay-restored12/result.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: StarCraft Shareware
+  id: GAMEPLAY-starcraft-shareware
+  status: ready
+  candidate: starcraft-shareware
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No full-game compatibility claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-starcraft-shareware.json; scratch/runs/20261003-starcraft_shareware-gameplay-restored13/result.json
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Taipei
+  id: GAMEPLAY-taipei
+  status: ready
+  candidate: taipei
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed title, populated Game #28753 board and ordinary click: top-left tile changes to magenta selection highlight. No matching pair removal or completed game is claimed; no FPS measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-taipei.json; scratch/runs/20261003-taipei-gameplay-ready/result.json
+
+- [ ] Gameplay screenshot and FPS: tetravex
+  id: GAMEPLAY-tetravex
+  status: ready
+  candidate: tetravex
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay board and clean ordinary tile-drag response reviewed. Define a meaningful complete-frame counter or document event-driven rendering limits; FPS remains unknown.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-tetravex.json; scratch/runs/20261003-tetravex-gameplay-drag-restored/result.json
+
+- [ ] Gameplay screenshot and FPS: TetriNET
+  id: GAMEPLAY-tetrinet
+  status: ready
+  candidate: tetrinet
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Qualify complete gameplay frame measurement. Local two-seat join and limited host Left/Space response reviewed; no external network, sustained-play or physical FPS claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-tetrinet.json; scratch/runs/20261003-tetrinet-local-gameplay/result.json
+
+- [ ] Gameplay screenshot and FPS: TicTactics
+  id: GAMEPLAY-tictac
+  status: ready
+  candidate: tictac
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed click at (236,339) places blue mark on lowest plane, followed by new red computer mark on upper plane. Existing red mark remains. Limited one-move route only; no full match or FPS claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-tictac.json; scratch/runs/20261003-tictac-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Total Annihilation Demo
+  id: GAMEPLAY-total_annihilation_demo
+  status: ready
+  candidate: total_annihilation_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-total_annihilation_demo.json; scratch/runs/20261003-total_annihilation_demo-gameplay-restored5/result.json
+
+- [ ] Gameplay screenshot and FPS: Tile World
+  id: GAMEPLAY-tworld
+  status: ready
+  candidate: tworld
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Enter initially leaves level picker; ordinary row click then Enter clears to black client. Final capture remains blank after additional2.5sec. No specific trap or missingDLL marker logged; route incomplete, no gameplay input. FPS remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-tworld.json; scratch/runs/20261003-tworld-gameplay-restored4/result.json
+
+- [ ] Gameplay screenshot and FPS: Unreal Special Edition OEM demo
+  id: GAMEPLAY-unreal-special-edition
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: unreal-special-edition
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-special-edition.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-special-edition.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Unreal Tournament 2003 demo
+  id: GAMEPLAY-unreal-tournament-2003-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: unreal-tournament-2003-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-2003-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-2003-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Unreal Tournament 2004 demo
+  id: GAMEPLAY-unreal-tournament-2004-demo
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: unreal-tournament-2004-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-2004-demo.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-2004-demo.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Unreal Tournament 3 demo installer
+  id: GAMEPLAY-unreal-tournament-3-demo-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: unreal-tournament-3-demo-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-3-demo-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-3-demo-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Unreal Tournament demo
+  id: GAMEPLAY-unreal-tournament-demo-348
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: unreal-tournament-demo-348
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-demo-348.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-unreal-tournament-demo-348.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: Warcraft III: Reign of Chaos Demo
+  id: GAMEPLAY-warcraft3-demo
+  status: ready
+  candidate: warcraft3-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Diagnose profile-screen guest wait using saved owning-thread state; no gameplay or FPS qualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-warcraft3-demo.json; scratch/runs/20261003-warcraft3-profile-stall/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_blakjak
+  id: GAMEPLAY-wep16_blakjak
+  status: ready
+  candidate: wep16_blakjak
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_blakjak.json; scratch/runs/20261003-wep16_blakjak-gameplay-restored9/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_chess
+  id: GAMEPLAY-wep16_chess
+  status: ready
+  candidate: wep16_chess
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_chess.json; scratch/runs/20261003-wep16_chess-gameplay-restored9/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_chips
+  id: GAMEPLAY-wep16_chips
+  status: ready
+  candidate: wep16_chips
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Personally reviewed active Lesson1 board after Enter; ordinary Right300ms changes Chip facing/position and horizontally scrolls board. No mouse auto-steering, no completed level. FPS remains unqualified.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_chips.json; scratch/runs/20261003-wep16_chips-gameplay-restored4/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_cruel
+  id: GAMEPLAY-wep16_cruel
+  status: ready
+  candidate: wep16_cruel
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_cruel.json; scratch/runs/20261003-wep16_cruel-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_freecell
+  id: GAMEPLAY-wep16_freecell
+  status: ready
+  candidate: wep16_freecell
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_freecell.json; scratch/runs/20261003-wep16_freecell-gameplay-restored10/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_fujigolf
+  id: GAMEPLAY-wep16_fujigolf
+  status: ready
+  candidate: wep16_fujigolf
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_fujigolf.json; scratch/runs/20261003-wep16_fujigolf-gameplay-restored10/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_gofigure
+  id: GAMEPLAY-wep16_gofigure
+  status: ready
+  candidate: wep16_gofigure
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_gofigure.json; scratch/runs/20261003-wep16_gofigure-gameplay-restored6/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_golf
+  id: GAMEPLAY-wep16_golf
+  status: ready
+  candidate: wep16_golf
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_golf.json; scratch/runs/20261003-wep16_golf-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_jezzball
+  id: GAMEPLAY-wep16_jezzball
+  status: ready
+  candidate: wep16_jezzball
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_jezzball.json; scratch/runs/20261003-wep16_jezzball-gameplay-restored6/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_jigsawed
+  id: GAMEPLAY-wep16_jigsawed
+  status: ready
+  candidate: wep16_jigsawed
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Capture originating instruction/stack for RuntimeError after About creation; ordinary capture does not prove close-click causality. All declared/import DLLs present; no missing guest path established.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_jigsawed.json; scratch/runs/20261003-wep16_jigsawed-gameplay-restored9/result.json; scratch/batch9-blocker-count-audit-20261003.json
+
+- [ ] Gameplay screenshot and FPS: wep16_klotski
+  id: GAMEPLAY-wep16_klotski
+  status: ready
+  candidate: wep16_klotski
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed active Daisy puzzle and one ordinary tile-move response on5ff4844e; qualify frame measurement separately, retain setup clipping and picking-offset caveats.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_klotski.json; scratch/runs/20261003-wep16_klotski-gameplay-modal-repaired/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_maxwell
+  id: GAMEPLAY-wep16_maxwell
+  status: ready
+  candidate: wep16_maxwell
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_maxwell.json; scratch/runs/20261003-wep16_maxwell-gameplay-restored6/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_pegged
+  id: GAMEPLAY-wep16_pegged
+  status: ready
+  candidate: wep16_pegged
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_pegged.json; scratch/runs/20261003-wep16_pegged-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_pipe
+  id: GAMEPLAY-wep16_pipe
+  status: ready
+  candidate: wep16_pipe
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_pipe.json; scratch/runs/20261003-wep16_pipe-gameplay-restored6/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_rattler
+  id: GAMEPLAY-wep16_rattler
+  status: ready
+  candidate: wep16_rattler
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_rattler.json; scratch/runs/20261003-wep16_rattler-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: Rodent's Revenge
+  id: GAMEPLAY-wep16_rodent
+  status: ready
+  candidate: wep16_rodent
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_rodent.json; scratch/runs/20261003-wep16_rodent-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_ski
+  id: GAMEPLAY-wep16_ski
+  status: ready
+  candidate: wep16_ski
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_ski.json; scratch/runs/20261003-wep16_ski-gameplay-restored9/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_stones
+  id: GAMEPLAY-wep16_stones
+  status: ready
+  candidate: wep16_stones
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_stones.json; scratch/runs/20261003-wep16_stones-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tetravex
+  id: GAMEPLAY-wep16_tetravex
+  status: ready
+  candidate: wep16_tetravex
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tetravex.json; scratch/runs/20261003-wep16_tetravex-gameplay-restored10/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tetris
+  id: GAMEPLAY-wep16_tetris
+  status: ready
+  candidate: wep16_tetris
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay/Left response and open-menu Escape repair reviewed. Qualify complete-frame measurement; separate TASKBAR-RESTORE-INPUT remains unproven.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tetris.json; scratch/runs/20261003-wep16_tetris-gameplay-menu-escape-repaired/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tic
+  id: GAMEPLAY-wep16_tic
+  status: ready
+  candidate: wep16_tic
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tic.json; scratch/runs/20261003-wep16_tic-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tictacdp
+  id: GAMEPLAY-wep16_tictacdp
+  status: ready
+  candidate: wep16_tictacdp
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Trace the preserved Sub or Function not defined error after ordinary piece drag; identify the guest call before another input qualification. Keep reviewed startup board scene, FPS unknown.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tictacdp.json; scratch/runs/20261003-wep16_tictacdp-gameplay-restored9/result.json; scratch/batch9-blocker-count-audit-20261003.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tp
+  id: GAMEPLAY-wep16_tp
+  status: ready
+  candidate: wep16_tp
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tp.json; scratch/runs/20261003-wep16_tp-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tripeaks
+  id: GAMEPLAY-wep16_tripeaks
+  status: ready
+  candidate: wep16_tripeaks
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tripeaks.json; scratch/runs/20261003-wep16_tripeaks-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_tutstomb
+  id: GAMEPLAY-wep16_tutstomb
+  status: ready
+  candidate: wep16_tutstomb
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene reviewed; complete ordinary control-response route and qualify a frame counter; retain scene-only evidence.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_tutstomb.json; scratch/runs/20261003-wep16_tutstomb-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_winmine
+  id: GAMEPLAY-wep16_winmine
+  status: ready
+  candidate: wep16_winmine
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_winmine.json; scratch/runs/20261003-wep16_winmine-gameplay-restored7/result.json
+
+- [ ] Gameplay screenshot and FPS: wep16_wordzap
+  id: GAMEPLAY-wep16_wordzap
+  status: ready
+  candidate: wep16_wordzap
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-wep16_wordzap.json; scratch/runs/20261003-wep16_wordzap-gameplay-restored8/result.json
+
+- [ ] Gameplay screenshot and FPS: winarc
+  id: GAMEPLAY-winarc
+  status: ready
+  candidate: winarc
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Cover remaining playable Winarc subgames and qualify complete-frame measurement; Memory single-card reveal reviewed only.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winarc.json; scratch/runs/20261003-winarc-gameplay-restored16/result.json
+
+- [ ] Gameplay screenshot and FPS: WinBoard installer
+  id: GAMEPLAY-winboard-installer
+  status: backlog
+  depends-on: MIG-FIXTURE-RESTORE
+  candidate: winboard-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Restore the exact missing fixture paths in the task evidence, then qualify the ordinary gameplay route.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winboard-installer.json
+  blocker: Required fixture files unavailable; exact paths and unknown manifest dependencies are listed in scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winboard-installer.json.
+  waiting-on: MIG-FIXTURE-RESTORE verification receipt; shared transfer dependency, no user decision
+  blocked-since: 2026-10-03T08:42:45.967Z
+
+- [ ] Gameplay screenshot and FPS: winmine
+  id: GAMEPLAY-winmine
+  status: ready
+  candidate: winmine
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Personally reviewed before/after: ordinary click reveals a connected board region with numbered cells and timer advancement. No mine hit in this capture. Limited cell-reveal route only; no FPS measurement.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winmine.json; scratch/runs/20261003-winmine-gameplay-ready/result.json
+
+- [ ] Gameplay screenshot and FPS: Minesweeper
+  id: GAMEPLAY-winmine_wep
+  status: ready
+  candidate: winmine_wep
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Gameplay scene and limited input response reviewed. Derive and independently qualify a complete gameplay-frame counter before reporting FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winmine_wep.json; scratch/runs/20261003-winmine_wep-gameplay-restored10/result.json
+
+- [ ] Gameplay screenshot and FPS: winmine16
+  id: GAMEPLAY-winmine16
+  status: ready
+  candidate: winmine16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed limited gameplay input and screenshots saved; qualify a game-specific frame counter before publishing FPS. Reviewed before/after: clicking a covered cell reveals a connected blank region and numbered cells. Limited reveal route only; no FPS.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-winmine16.json; scratch/runs/20261003-winmine16-gameplay-ready2/result.json
+
+- [ ] Gameplay screenshot and FPS: Worms 2 Demo
+  id: GAMEPLAY-worms-2-demo
+  status: ready
+  candidate: worms-2-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reviewed gameplay and limited input response; qualify complete-frame measurement. No full-game compatibility claim.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-worms-2-demo.json; scratch/runs/20261003-worms2_demo-gameplay-restored13/result.json
+
+## New gameplay failures — 2026-10-03
+
+- [x] Diagnose Win16 setup-dialog Worker trap in FreeCell and Hearts
+  id: WIN16-DIALOG-WORKER-TRAP
+  status: done
+  candidate: freecell16, mshearts16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:55:51.777Z
+  accepted: 2026-10-03T08:55:51.777Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete: worker-owned controls use their owning queue, GROUPBOX is transparent, modeless return requires pending handle. FreeCell setup/card move and Hearts setup/card pass reviewed; tests/build pass. Dialog clipping remains a separate backlog task.
+  Done: Both ordinary FreeCell Select Game and Hearts name/dealer setup complete without trap, with focused regression and reviewed gameplay input screenshots.
+  Evidence: ops/handoffs/win16-dialog-worker-trap-20261003.md; scratch/win16-dialog-worker-diagnostic-20261003/
+  Notes: FreeCell EIP0x12ff40 prev0x103393, Hearts EIP0x13ff40 prev0x109ccb. Both offsets match WIN16_DLG_PUMP0xFF40; this localizes the crash but does not prove its cause. Existing REP review block remains preserved; this task does not authorize retrying blocked REP validation.
+
+## Shared fixture restoration dependency
+
+- [~] Restore and verify missing game fixture sets
+  id: MIG-FIXTURE-RESTORE
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  accepted: 2026-10-03T09:34:17.069Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Continue exact-path selective recovery; wave3 restored 59 files for 2 game entries and 110 entries now have complete declared routes. Preserve2GiB free and existing files; dynamic gaps/review gates remain.
+  Done: Owner receipts verified and each dependent game either ready with all assets or carries exact remaining missing paths. Presence alone does not establish gameplay or FPS.
+  Evidence: scratch/selective-fixture-wave3-20261003/install-receipt.json; scratch/gameplay-coverage-20261003/tasks/; scratch/migration-transfer.json
+  Notes: Migration-owner bulk transfer complete with verified receipt. Coordinator now owns selective missing-fixture recovery and per-task reconciliation; exact absent archive members remain documented, no foreign services/jobs claimed.
+
+## Remaining visual correctness work
+
+- [x] Correct clipped Win16 setup-dialog geometry
+  id: WIN16-DIALOG-GEOMETRY
+  status: done
+  candidate: freecell16, mshearts16
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Shared owner geometry fix qualified by actual full About credits/visible OK and ordinary dismissal. Separate Escape host/shared visibility divergence remains WIN16-MENU-VISIBILITY; existing one-pixel NC/default-base-unit limitations documented.
+  Done: Setup dialog controls render within correct bounds and ordinary controls work without relying on a narrow visible edge; screenshot review and targeted geometry regression.
+  Evidence: scratch/win16-dialog-worker-diagnostic-20261003/hearts-group/controls-before.json; ops/handoffs/win16-dialog-worker-trap-20261003.md; scratch/klotski-qualification-20261003/attempt1/step-05-after.json; scratch/wep16-dialog-geometry-20261003/evidence.json; ops/handoffs/wep16-dialog-geometry-20261003.md; scratch/wep16-dialog-geometry-20261003/root-review.json; scratch/runs/20261003-wep16_tetris-dialog-dismissal-diagnostic/result.json
+
+## Restored-title runtime gaps
+
+- [x] Implement and validate TrackMouseEvent for Tetravex
+  id: WIN32-TRACKMOUSEEVENT
+  status: done
+  candidate: tetravex
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete narrow client-LEAVE repair: shared owner tracking/query/cancel, physical hit, queue retry and lifecycle regressions pass; canonical build and Tetravex New Game succeed. HOVER/NONCLIENT remain unsupported; drag rendering tracked separately.
+  Done: Ordinary New Game reaches numbered puzzle, mouse input works, requested tracking behavior is covered by regression and gameplay image review.
+  Evidence: ops/handoffs/tetravex-trackmouseevent-20261003.md; scratch/runs/20261003-tetravex-gameplay-trackmouseevent/result.json; scratch/track-mouse-event-20261003/build-completion.log
+
+- [x] Repair Tetravex tile-drag visual trails
+  id: TETRAVEX-DRAG-TRAILS
+  status: done
+  candidate: tetravex
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete. Reviewed ordinary drag on canonical939943d4 moves one tile cleanly, restores vacated path and preserves eight supply tiles. Pixel regression, before-source negative control and independent geometry review pass.
+  Done: Ordinary tile drag places one tile and restores the traversed background correctly; original degraded evidence preserved.
+  Evidence: ops/handoffs/tetravex-drag-trails-20261003.md; scratch/runs/20261003-tetravex-gameplay-drag-restored/result.json; scratch/tetravex-drag-repair-20261003/validation.json
+
+- [x] Implement RIFF chunk navigation for memory-backed MMIO streams
+  id: MMIO-MEMORY-RIFF
+  status: done
+  candidate: qbob
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete. Bounded memory RIFF/LIST traversal passes sparse/padding/malformed/ABI tests and independent review; canonical gates pass. Ordinary QBob reaches active pyramid past the recorded audio trap.
+  Done: Memory RIFF/WAVE nested chunk search/read/ascend, word padding, parent limits and malformed lengths pass meaningful regressions; ordinary QBob route advances past the recorded audio trap.
+  Evidence: ops/handoffs/mmio-memory-riff-20261003.md; scratch/runs/20261003-qbob-gameplay-mmio-riff/result.json; scratch/mmio-memory-riff-20261003/validation.json
+
+- [x] Preserve first-hit debugger stops when retargeting breakpoints
+  id: DEBUG-BREAKPOINT-RETARGET
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete. Changed-address/clear latch semantics fixed; real cold/warm-chain/marker tests pass on canonical2c22cb7d, old source fails first-hit assertion, all canonical build gates pass.
+  Done: Changed breakpoint stops on its first hit; unchanged breakpoint resumes once; clear/rearm has no stale skip. Private negative control detects old bug; canonical gates pass.
+  Evidence: ops/handoffs/debug-breakpoint-retarget-20261003.md; scratch/debug-breakpoint-retarget-20261003/validation.json
+
+- [x] Diagnose ordinary input delivery to Win16 modal MessageBox
+  id: WIN16-MODAL-QUEUE
+  status: done
+  candidate: wep16_klotski
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete separate Klotski gameplay route beyond puzzle selection/name prompt; input repair itself qualified by ordinary visible Welcome OK on canonical5ff4844e, full build and real two-instance tests.
+  Done: Ordinary visible OK dismisses Welcome through the owning modal instance with preserved input ordering and meaningful regression; or exact alternative route defect is proved and separately tracked.
+  Evidence: ops/handoffs/wep16-klotski-tetris-startup-20261003.md; scratch/wep16-modal-repair-20261003/validation.json; scratch/klotski-qualification-20261003/attempt1/commands.jsonl; scratch/klotski-qualification-20261003/attempt1/after-observation.png
+
+- [x] Diagnose Win16 menu Escape hiding the host window
+  id: WIN16-MENU-VISIBILITY
+  status: done
+  candidate: wep16_tetris
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete: focused real-instance tests, negative control, keyboard regressions and browser38746 verify menu Escape closes popup with active board retained. Separate menu-closed Escape intentionally minimizes. Taskbar restore observation tracked independently.
+  Done: Ordinary Game-menu Escape dismisses menu without unintended host/shared visibility divergence; preserve unrelated state and verify active-game input.
+  Evidence: scratch/runs/20261003-wep16_tetris-gameplay-menu-escape-repaired/result.json; scratch/menu-escape-repair-20261003/validation.json; ops/handoffs/wep16-dialog-geometry-20261003.md
+
+- [x] Diagnose clipped Little Fighter 2 windowed gameplay
+  id: DDRAW-WINDOWED-PRIMARY-SIZE
+  status: done
+  candidate: little-fighter-2-installer
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Complete: full arena personally reviewed on f76ee66e; actual primary1024x740/source794x550 and current mode recorded. Focused edge/scaling/retained-mode regressions and full build pass. Reduced roster and no FPS remain separate limitations.
+  Done: Correct windowed primary size and complete LF2 gameplay viewport, with preserved explicit fullscreen mode/thread semantics and meaningful regression; retain reduced-roster limitation.
+  Evidence: ops/handoffs/lf2-primary-sizing-20261003.md; ops/handoffs/lf2-primary-diagnostic-result-20261003.md; scratch/lf2-primary-sizing-20261003/root-review.json; scratch/lf2-repaired-qualification-20261003/attempt1
+
+- [ ] Investigate taskbar restore click after Tetris minimization
+  id: TASKBAR-RESTORE-INPUT
+  status: ready
+  candidate: wep16_tetris
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reproduce non-restoration before proposing a repair. Current actual physical click restores with stable DOM target and observed SC_RESTORE; historical cause remains unknown. No longer blocks independent coverage.
+  Done: Ordinary taskbar click restores the minimized game via owning guest command, with exact cause and meaningful regression, or documented input-target explanation.
+  Evidence: ops/handoffs/taskbar-restore-input-20261003.md; scratch/runs/20261003-wep16_tetris-taskbar-restore-diagnostic/result.json
+
+- [x] Implement bounded Unicode DirectPlay4 support
+  id: DPLAY4W-UNICODE
+  status: done
+  candidate: aoe2
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T16:45:43.583Z
+  Next: Completed bounded Unicode semantics and nine canonical regression suites; ordinary AoE2 clears previous DirectX rejection. Separate graphics initialization failure tracked under AOE2-GRAPHICS-INIT.
+  Done: Exact IID530 has meaningful tested Unicode semantics with stable shared COM identity, preserved ANSI behavior, correct byte sizes/callback ownership, explicit unsupported scope and no silent ANSI alias; accepted full build and game startup requalification.
+  Evidence: ops/handoffs/aoe2-directplay4w-private-draft-20261003.md; scratch/aoe2-directplay4w-private-20261003/canonical-build-receipt.json; scratch/aoe2-directplay4w-private-20261003/canonical-suites-receipt.json; scratch/aoe2-unicode-qualification-20261003/attempt1/root-review.json
+
+- [x] Preserve process ownership for queued keyboard input
+  id: INPUT-PROCESS-OWNERSHIP
+  status: done
+  candidate: tetrinet
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T16:57:01.457Z
+  Next: Completed: regression and ordinary two-seat typing pass; network join remains separate under GAMEPLAY-tetrinet.
+  Done: Foreign process cannot consume selected-owner key/char/up events with deferred HWND0 focus, same-process guest threads and legacy input remain correct, relevant regressions and ordinary two-seat browser qualification pass.
+  Evidence: scratch/tetrinet-keyboard-owner-20261003/integration-receipt.json; test/test-keyboard-process-owner.js; scratch/gameplay-network-preparation-20261003/tetrinet/attempt3/root-review.json; scratch/runs/20261003-tetrinet-local-typing-diagnostic/result.json
+
+- [x] Configure the main guest Worker with its preselected LAN address
+  id: VLAN-MAIN-WORKER-IP
+  status: done
+  candidate: tetrinet
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T17:40:15.511Z
+  Next: Completed: actual owning workers acknowledge distinct .1/.2 addresses; ordinary local join and host gameplay pass. Late room joins remain outside this repair.
+  Done: Main Worker acknowledges selected LAN address before init completes; future guest threads inherit it, cooperative/default/failure regressions pass, actual two-seat network route requalified or separate blocker identified.
+  Evidence: scratch/tetrinet-main-worker-ip-20261003/integration-receipt.json; test/test-browser-worker-vlan-address.js; scratch/runs/20261003-tetrinet-local-gameplay/result.json
+- [ ] Diagnose Age of Empires II graphics initialization failure
+  id: AOE2-GRAPHICS-INIT
+  status: active
+  candidate: aoe2
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T18:00:26.667Z
+  Next: Capture exact palette resource50500 lookup/parser/GDI outcome. Initial graphics setup returns1; later parent error17 follows palette stage. Installed interfac.drs contains resource50500; guest lookup/parser result still unknown.
+  Done: Exact rejection established, meaningful regression and reviewed fix if appropriate, ordinary startup requalified. Gameplay and FPS remain separate requirements.
+  Evidence: ops/handoffs/aoe2-graphics-refined-diagnostic-20261003.md; scratch/aoe2-graphics-refined-20261003/root-artifact-review.json; scratch/aoe2-palette-stage-20261003/plan.json
+
+
+- [x] Preserve nested LoadLibrary during Worker DLL initialization
+  id: WORKER-NESTED-DLL-INIT
+  status: done
+  candidate: zuma-deluxe
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T18:09:52.406Z
+  Next: Completed bounded repair: same owner resumes nested initializer, focused regressions pass, ordinary Zuma advances to loading. Remaining loading-screen diagnosis tracked separately; no gameplay/FPS claim.
+  Done: Same owning instance finishes bounded nested initialization without deadlock/reentrant corruption, meaningful owner/failure/cleanup regressions pass, ordinary Zuma startup requalified.
+  Evidence: scratch/zuma-startup-exit-20261003/repair/integration-receipt.json; scratch/runs/20261003-zuma-nested-loader-qualification/result.json
+
+- [x] Show unreleased games and release readiness in EXE corpus
+  id: OPS-RELEASE-READINESS
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T20:34:08.368Z
+  Next: Complete: live EXE corpus filters show103 confirmed unreleased game entries,60 reviewed-gameplay entries and0 complete release approvals. Continue individual release gates; no games deployed.
+  Done: Dashboard separates already-production/unreleased/unknown membership, exposes ready and remaining blockers with evidence, tests pass and serving behavior verified.
+  Evidence: ops/release-readiness.json; scratch/production-desktop-review-20261003/ui-validation.json; scratch/production-desktop-review-20261003/live-validation.json; ops/handoffs/release-readiness-audit-20261003.md
+
+- [x] Launch registered games directly from EXE corpus
+  id: OPS-CORPUS-LAUNCH
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T21:14:43.753Z
+  Next: Complete: authenticated emulator launch links live on cards/details; actual Icy Tower popup and public Solitaire runtime verified. Missing paths explicit; production link separate.
+  Done: Installed corpus entries open real emulator app in new tab; missing/unregistered route explicit; authenticated gateway preserved.
+
+- [ ] Push all safe source changes to GitHub
+  id: OPS-GITHUB-CHECKPOINT
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T21:14:43.754Z
+  Next: Audit inherited/new source changes, exclude secrets/fixtures/private artifacts, preserve newer remote history and push reviewed source checkpoint branch.
+  Done: Remote checkpoint commit contains reviewed explicit safe source manifest; push verified, unresolved runtime review gates preserved.

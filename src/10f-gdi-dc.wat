@@ -378,14 +378,21 @@
 
   (func $gdi_pixel_format_set (param $hdc i32) (param $format i32)
         (param $pfd i32) (result i32)
+    (local $current i32)
     (if (i32.or (i32.ne (local.get $format) (i32.const 1))
           (i32.eqz (call $gdi_pixel_format_choose (local.get $hdc) (local.get $pfd))))
       (then (return (i32.const 0))))
-    (if (i32.ne (call $gdi_dc_meta_get (local.get $hdc) (i32.const 16)
-          (i32.const 0)) (i32.const 0))
-      (then (return (i32.const 0))))
+    ;; Windows rejects a *change* of a surface's pixel format, not a repeat of
+    ;; the one already chosen -- a driver that has nothing to reconfigure
+    ;; succeeds.  Warcraft III runs its whole GL setup twice on one window, the
+    ;; second time for the resolution it settled on, and an unconditional
+    ;; failure here left it rendering into a context it never got to create.
+    (local.set $current
+      (call $gdi_dc_meta_get (local.get $hdc) (i32.const 16) (i32.const 0)))
+    (if (local.get $current)
+      (then (return (i32.eq (local.get $current) (local.get $format)))))
     (drop (call $gdi_dc_meta_set (local.get $hdc) (i32.const 16)
-      (i32.const 1) (i32.const 0)))
+      (local.get $format) (i32.const 0)))
     (i32.const 1))
 
   ;; A SaveDC node is 176 bytes in the guest heap:

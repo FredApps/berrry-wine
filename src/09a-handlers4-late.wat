@@ -112,6 +112,37 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
   )
 
+  ;; WriteProcessMemory: guarded copy into the current process, paired with
+  ;; ReadProcessMemory above. Validate both spans before changing any bytes.
+  (func $handle_WriteProcessMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $written_ptr i32)
+    (local.set $written_ptr (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+    (if (local.get $written_ptr)
+      (then
+        (if (call $ptr_range_access_bad (local.get $written_ptr) (i32.const 4) (i32.const 1))
+          (then
+            (global.set $last_error (i32.const 998)) ;; ERROR_NOACCESS
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+            (return)))
+        (call $gs32 (local.get $written_ptr) (i32.const 0))))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
+    (if (i32.or
+          (call $ptr_range_access_bad (local.get $arg1) (local.get $arg3) (i32.const 1))
+          (call $ptr_range_access_bad (local.get $arg2) (local.get $arg3) (i32.const 0)))
+      (then
+        (global.set $last_error (i32.const 299)) ;; ERROR_PARTIAL_COPY
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
+    (call $guest_memmove (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    (if (local.get $written_ptr) (then (call $gs32 (local.get $written_ptr) (local.get $arg3))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+  )
+
   ;; 345: SetUnhandledExceptionFilter(lpTopLevelFilter) -> previous filter.
   ;;
   ;; The comment used to say "store filter" while the body stored nothing and

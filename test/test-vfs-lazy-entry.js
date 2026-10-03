@@ -1142,6 +1142,29 @@ test('ChunkCache.tryRead returns null on a miss, never a partial buffer', () => 
   assert.strictEqual(cache.stats.misses, 1);
 });
 
+// Arcanum demo zip (2026-09-21): a readRange wider than the LRU bound evicted
+// its own leading chunks before the trailing ones landed, and the old
+// fill-then-tryRead threw "ChunkCache: fill did not satisfy read".
+test('ChunkCache.readRange satisfies a range wider than maxChunks', async () => {
+  const async_only = { size: SIZE,
+    readRange: (off, len) => Promise.resolve(BYTES.slice(off, off + len)) };
+  const cache = new bp.ChunkCache(async_only, { chunkSize: 4096, maxChunks: 4 });
+  const got = await cache.readRange(100, 64 * 1024);
+  assert(Buffer.compare(Buffer.from(got), Buffer.from(BYTES.subarray(100, 100 + 64 * 1024))) === 0);
+  assert(cache._chunks.size <= 4, 'LRU bound must still hold');
+});
+
+test('ChunkCache.readRange survives concurrent readers evicting its chunks', async () => {
+  const async_only = { size: SIZE,
+    readRange: (off, len) => new Promise(res =>
+      setTimeout(() => res(BYTES.slice(off, off + len)), (off >> 12) % 3)) };
+  const cache = new bp.ChunkCache(async_only, { chunkSize: 4096, maxChunks: 2 });
+  const offs = [0, 50000, 9000, 200000, 123456, 7000];
+  const all = await Promise.all(offs.map(o => cache.readRange(o, 6000)));
+  all.forEach((got, i) => assert(Buffer.compare(Buffer.from(got),
+    Buffer.from(BYTES.subarray(offs[i], offs[i] + 6000))) === 0, `read @${offs[i]}`));
+});
+
 test('SliceProvider windows a parent provider', async () => {
   const parent = new bp.BytesProvider(BYTES);
   const slice = new bp.SliceProvider(parent, 1000, 256);

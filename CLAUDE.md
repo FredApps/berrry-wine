@@ -402,6 +402,19 @@ build, route, and environment; keep unknown values explicit. Inspect evidence
 before marking it reviewed, and do not equate a screenshot with playability.
 Reference run IDs in task/investigation notes and your messageboard update.
 
+### Optimization variants: native disassembly required
+
+For every new interpreter/JIT optimization variant, including stacked variants,
+inspect the generated native disassembly from **both V8 and SpiderMonkey**
+alongside benchmarks. Compare against the matching control, and inspect both
+the laptop ARM64 and remote x86-64 code when measuring those architectures.
+Record module hashes, engine versions, compilation tier and capture commands.
+Use `tools/wasm-native.js` and the existing native-capture helpers. Check hot
+dispatch paths, register allocation, spills, FP state access and memory-helper
+calls before choosing the next optimization. Static disassembly shows code
+structure; use profiles to establish where time is spent. Explicitly report
+missing captures or engine/tier mismatches; do not treat an older variant's
+disassembly as evidence for a new one.
 
 ### Shared-agent message board
 

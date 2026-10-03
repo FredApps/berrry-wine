@@ -110,12 +110,16 @@ function validate(state) {
     const cpu = async () => (await system.send('SystemInfo.getProcessInfo')).processInfo;
     page = await browser.newPage();
     await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
+    const fatal = message => {
+      report.errors.push(message);
+      page.evaluate(() => { window.__mw3Fatal = true; }).catch(() => {});
+    };
     page.on('console', message => {
       const line = message.text();
       fs.appendFileSync(path.join(output, 'console.log'), line + '\n');
-      if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) report.errors.push(line);
+      if (/worker thread \d+ trapped|UNIMPLEMENTED API:|host import .* threw|\[launchApp\] failed:|FATAL:/.test(line)) fatal(line);
     });
-    page.on('pageerror', error => report.errors.push(String(error)));
+    page.on('pageerror', error => fatal(String(error)));
     await page.goto(`http://127.0.0.1:${server.address().port}/?debug&threads&d3d-renderer=webgl`, { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
     await page.evaluate(async () => {
@@ -135,8 +139,10 @@ function validate(state) {
       await launchApp();
       setRuntimeLogging(false);
     });
-    await page.waitForFunction(() => window.__mw3Presents > 120,
+    assert.equal(report.errors.length, 0, report.errors.join('\n'));
+    await page.waitForFunction(() => window.__mw3Fatal || window.__mw3Presents > 120,
       { timeout: 240000, polling: 500 });
+    assert.equal(report.errors.length, 0, report.errors.join('\n'));
     await pause(warmup);
     await gameplayRoute(page, output);
     await pause(5000);

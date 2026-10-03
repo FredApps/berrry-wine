@@ -1444,6 +1444,7 @@
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
         <optgroup label="Local Candidates">
+          <option value="pirates_2004">Sid Meier's Pirates! (experimental)</option>
           <option value="far_manager_170">Far Manager 1.70</option>
           <option value="winrar_310">WinRAR 3.10</option>
           <option value="cave_story">Cave Story</option>
@@ -1457,6 +1458,11 @@
           <option value="icy_tower_installer">Icy Tower Installer</option>
           <option value="snood">Snood 2.2W</option>
           <option value="snood_installer">Snood 2.2W Installer</option>
+          <option value="ricochet_xtreme">Ricochet Xtreme</option>
+          <option value="alien_shooter">Alien Shooter</option>
+          <option value="collapse_crunch">Collapse! Crunch</option>
+          <option value="zuma_deluxe">Zuma Deluxe (experimental)</option>
+          <option value="crimsonland">Crimsonland (experimental)</option>
           <option value="elasto_mania">Elasto Mania</option>
           <option value="jardinains">Jardinains!</option>
           <option value="jardinains_installer">Jardinains! Installer</option>
@@ -1585,12 +1591,12 @@
         <label title="Compile proven x87 expression regions and fold contiguous x87 islands. On by default; ?no-x87-fold starts it off. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" checked onchange="setX87Fusion(this.checked)">x87 fold</label>
         <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
         <label title="WebGL accelerates Direct3D and Glide when available, with software fallback. Choose Software to use CPU rendering. Relaunch the app after changing this.">GPU: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="software">Software</option></select></label>
+        <label title="Delay Direct3D surface readback until pixels are accessed. Applies to running apps using shared WebGL. Disable if a game shows stale graphics."><input id="lazy-sync-toggle" type="checkbox" checked onchange="setLazySync(this.checked)">Lazy sync</label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Real guest threads, on by default (?no-threads starts this page without them): the guest main thread and every CreateThread target run in Workers. Needs cross-origin isolation, which the page installs once (sw-coi.js) and reloads for. An app with `threads: false` in lib/apps.js always runs cooperatively."><input id="threads-toggle" type="checkbox" checked onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
       </span>
       <span class="debug-profile">
-        <label title="Delay Direct3D surface readback until pixels are accessed. Applies to running apps using shared WebGL. Disable if a game shows stale graphics."><input id="lazy-sync-toggle" type="checkbox" checked onchange="setLazySync(this.checked)">Lazy sync</label>
         <label title="Freeze the emulator: no slices run, no frames are drawn and the guest clock stops until somebody steps it. The browser twin of the headless CLI — an agent screenshots, clicks, steps, screenshots again, and the picture cannot change in between. Uncheck to go back to live; the guest sees no time jump either way."><input id="frozen-toggle" type="checkbox" onchange="setFrozenMode(this.checked)">Frozen</label>
         <button id="frozen-step-btn" onclick="frozenStepOnce(event)" title="Run one step's worth of guest work and stop again. Shift-click for 100 steps.">Step</button>
         <span id="frozen-status"></span>
@@ -2438,15 +2444,10 @@ Resource-aware Win98 emulator
         (q.has('d3dim-gpu') && /^(0|false|off)$/i.test(q.get('d3dim-gpu')) ? 'software' : 'webgl');
       window.WineD3D.renderer = wanted === 'software' ? 'software' : 'webgl';
       window.WINE_D3DIM_GPU = window.WineD3D.renderer === 'webgl';
-      window.addEventListener('load', syncD3DSelect);
-    })();
-    function setD3DRenderer(value) {
-      const mode = D3D_MODES[value];
-      if (!mode) return;
       window.WINE_D3DIM_LAZY_SYNC = !q.has('no-lazy-sync');
       document.getElementById('lazy-sync-toggle').checked = window.WINE_D3DIM_LAZY_SYNC;
-      window.WineD3D.renderer = mode.renderer;
-      window.WINE_D3DIM_GPU = mode.d3dim;
+      window.addEventListener('load', syncD3DSelect);
+    })();
     async function setLazySync(on) {
       window.WINE_D3DIM_LAZY_SYNC = !!on;
       document.getElementById('lazy-sync-toggle').checked = !!on;
@@ -2459,6 +2460,11 @@ Resource-aware Win98 emulator
         throw error;
       }
     }
+    function setD3DRenderer(value) {
+      const mode = D3D_MODES[value];
+      if (!mode) return;
+      window.WineD3D.renderer = mode.renderer;
+      window.WINE_D3DIM_GPU = mode.d3dim;
       syncD3DSelect();
       appendDebugLog(`[gpu] Glide and D3D8/9 on ${mode.renderer === 'software' ? 'the software backend' : 'WebGL'}, ` +
         `DX2-7 on ${mode.d3dim ? 'WebGL' : 'the WAT software rasterizer'}` +

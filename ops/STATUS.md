@@ -1,6 +1,6 @@
-updated: 2026-10-02T23:23:51.028480+00:00
-author: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+updated: 2026-10-03T21:21:24.615Z
+author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Migration checkpoint collection is complete. Jazz’s last local package job finished successfully, and all three workers released their work and resources. GTA2 never transferred or launched; its pending preflight was canceled. Unreal remains unlaunched. No conditional job will start.
+EXE corpus now has one-click private emulator launches and release readiness: 103 confirmed unreleased game entries, including 60 with reviewed gameplay. None has a complete release approval yet. Each entry separates production membership, gameplay evidence and remaining release gates; four measured candidates have detailed package and correctness reviews. No games were deployed.
 
-The migration handoff records exact artifacts, unfinished Ricochet and Collapse validation, NFS3’s backend-identity failure, and preserved ownership. This coordinator is now idle under the freeze. The migration owner handles Git reconciliation and private project/memory transfer; that transfer is not yet claimed complete. Foreign services, historical watchers and dirty files remain preserved. The five-game baseline and three-renderer comparison objectives remain unfinished.
+Gameplay screenshots cover 95 entries, with 74 limited responses across 107 attempted entries. Six games have qualified logical-frame measurements; physical display FPS remains unknown. All 241 EXE entries remain categorized. Zuma clears its DLL startup failure but stalls loading; AoE2 palette loading remains under diagnosis. No user decision is needed to continue ready work.

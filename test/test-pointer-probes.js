@@ -59,6 +59,14 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_esp") (result i32) (i32.load offset=16 (global.get $reg_base)))
+  (func (export "test_write_process") (param $handle i32) (param $dst i32)
+      (param $src i32) (param $size i32) (param $written i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
+    (call $gs32 (i32.const 0x00500014) (local.get $written))
+    (call $handle_WriteProcessMemory (local.get $handle) (local.get $dst)
+      (local.get $src) (local.get $size) (local.get $written) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_error") (result i32) (global.get $last_error))
 `;
 
 async function main() {
@@ -161,7 +169,37 @@ async function main() {
   assert.strictEqual(e.test_esp(), 0x0050000c,
     'two-argument string probes retain their stdcall stack contract');
 
-  console.log('PASS pointer probes honor sparse PAGE_* access and bounded strings');
+  const src = 0x00403000, count = 0x00404000;
+  e.guest_write8(src, 0xa5);
+  e.guest_write8(src + 1, 0x5a);
+  assert.strictEqual(e.test_write_process(-1, base, src, 2, count), 1);
+  assert.strictEqual(e.guest_read8(base), 0xa5);
+  assert.strictEqual(e.guest_read8(base + 1), 0x5a);
+  assert.strictEqual(e.guest_read32(count), 2);
+  assert.strictEqual(e.test_esp(), 0x00500018, 'five arguments and return address popped');
+  e.guest_write8(base + 0xfff, 0x7b);
+  assert.strictEqual(e.test_write_process(-1, base + 0xfff, src, 2, count), 0);
+  assert.strictEqual(e.test_error(), 299);
+  assert.strictEqual(e.guest_read32(count), 0);
+  assert.strictEqual(e.guest_read8(base + 0xfff), 0x7b,
+    'a write spanning an inaccessible page fails before touching the first page');
+  assert.strictEqual(e.test_write_process(-1, base + 0x2000, src, 2, count), 0,
+    'read-only destination fails');
+  assert.strictEqual(e.test_write_process(-1, base, base + 0x1000, 1, count), 0,
+    'unreadable source fails');
+  assert.strictEqual(e.test_write_process(0x1234, base, src, 1, count), 0);
+  assert.strictEqual(e.test_error(), 6);
+  assert.strictEqual(e.test_write_process(-1, base, src, 1, 0), 1,
+    'byte-count output is optional');
+  assert.strictEqual(e.test_write_process(-1, base, src, 1, base + 0x1000), 0);
+  assert.strictEqual(e.test_error(), 998);
+  assert.strictEqual(e.test_write_process(-1, 0, 0, 0, count), 1);
+  assert.strictEqual(e.guest_read32(count), 0);
+  const crossing = e.test_virtual_alloc(0x2000) >>> 0;
+  assert.strictEqual(e.test_write_process(-1, crossing + 0xfff, src, 2, count), 1);
+  assert.strictEqual(e.guest_read8(crossing + 0xfff), 0xa5);
+  assert.strictEqual(e.guest_read8(crossing + 0x1000), 0x5a);
+  console.log('PASS pointer probes and WriteProcessMemory honor PAGE_* access and complete spans');
 }
 
 main().catch(error => {

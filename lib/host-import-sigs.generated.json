@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 259,
+  "count": 262,
   "sigs": {
     "log": {
       "params": [
@@ -1982,6 +1982,33 @@
       "results": [
         "i32"
       ]
+    },
+    "queue_user_apc": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "dequeue_user_apc": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "set_apc_alertable": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": []
     },
     "set_thread_priority": {
       "params": [

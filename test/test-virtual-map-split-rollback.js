@@ -48,6 +48,12 @@ const extraWat = String.raw`
     (call $gs32 (local.get $guest) (local.get $value)))
   (func (export "test_read32") (param $guest i32) (result i32)
     (call $gl32 (local.get $guest)))
+  (func (export "test_decommit") (param $guest i32)
+    (call $virtual_map_decommit_zero (local.get $guest) (i32.const 0x1000)))
+  (func (export "test_protect") (param $guest i32) (result i32)
+    (call $guest_page_protect_range (local.get $guest) (i32.const 0x1000) (i32.const 0x02)))
+  (func (export "test_pte") (param $guest i32) (result i32)
+    (call $virtual_query_pte (local.get $guest)))
 `;
 
 async function main() {
@@ -76,14 +82,17 @@ async function main() {
   const reservation = wasm.test_reserve(0x20000) >>> 0;
   assert(reservation, 'fixture reservation');
   const oldPage = reservation + 0x8000;
-  assert.strictEqual(wasm.test_commit_at(oldPage, 0x1000) >>> 0, oldPage);
+  assert.strictEqual(wasm.test_commit_at(oldPage, 0x2000) >>> 0, oldPage);
   wasm.test_write32(oldPage, 0x53544f52); // "STOR"
+  wasm.test_protect(oldPage);
+  wasm.test_decommit(oldPage + 0x1000);
+  const oldPte = wasm.test_pte(oldPage);
   const oldBacking = wasm.guest_to_wasm(oldPage) >>> 0;
   assert.notStrictEqual(oldBacking, UNMAPPED);
 
   // Leave exactly 64KB free. The 128KB request places its first half over the
   // old page, then cannot place its second half and must roll the first back.
-  assert(wasm.test_alloc_commit((wasm.test_backing_size() - 0x11000) >>> 0) >>> 0,
+  assert(wasm.test_alloc_commit((wasm.test_backing_size() - (0x10000 + 2 * 0x1000)) >>> 0) >>> 0,
     'backing filler');
   const mapsBefore = state.getUint32(MAP_STATE, true);
   const reservesBefore = state.getUint32(MAP_STATE + 16, true);
@@ -98,6 +107,10 @@ async function main() {
     'older committed page keeps its translation');
   assert.strictEqual(wasm.test_read32(oldPage) >>> 0, 0x53544f52,
     'older committed page keeps its contents');
+  assert.strictEqual(wasm.test_pte(oldPage), oldPte,
+    'rollback preserves the old page protection');
+  assert.strictEqual(wasm.test_pte(oldPage + 0x1000), 0,
+    'rollback leaves an old decommitted page absent');
 
   console.log('PASS  failed split rollback preserves older committed pages');
 }

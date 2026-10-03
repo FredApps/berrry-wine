@@ -48,6 +48,7 @@
   ;;   31 pushad / popad (32-bit forms only; +12 0 pushad, 1 popad): O1 the
   ;;   lowest slot, [esp-32] / [esp]; the lowering walks its disp over the
   ;;   eight slots.
+  ;;   32 emms (unprefixed, $uc_mmx): no operands or integer flags.
   ;; ALU op: 0 add 1 or 2 adc 3 sbb 4 and 5 sub 6 xor 7 cmp; shift op:
   ;;   0 shl 1 shr 2 sar 3 rol 4 ror (rol/ror only by immediate, kind 11).
   ;; flags: 1 in loop, 2 leader, 4 seam, 8 flags live in, 16 cut, 32 back.
@@ -831,6 +832,8 @@
         ;; under 66, and F2/F3 never reach here.
         (if (i32.and (global.get $uc_mmx) (i32.eq (local.get $v) (i32.const 32)))
           (then
+            (if (i32.eq (local.get $b2) (i32.const 0x77))
+              (then (call $uc_fin (local.get $R) (i32.const 32) (local.get $p)) (return)))
             (if (i32.and (i32.ge_u (local.get $b2) (i32.const 0x71)) (i32.le_u (local.get $b2) (i32.const 0x73)))
               (then
                 (local.set $e (call $uc_modrm (local.get $p) (i32.const 64) (local.get $O0)))
@@ -2596,6 +2599,11 @@
     (local.set $O1 (i32.add (local.get $R) (i32.const 80)))
     (local.set $O2 (i32.add (local.get $R) (i32.const 104)))
     (if (i32.eq (local.get $k) (i32.const 7)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $k) (i32.const 32))
+      (then
+        (call $uc_emit (i32.const 79) (i32.const 0) (i64.const 0) (i64.const 0)
+          (i64.const 0) (i64.const 0) (i64.const 0) (i64.const 0) (i64.const 0))
+        (return (i32.const 0))))
     (if (i32.eq (local.get $k) (i32.const 29))
       (then
         ;; Both accesses can deopt at the original instruction. Do not move

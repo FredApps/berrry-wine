@@ -99,6 +99,23 @@ async function main() {
     version[0] === 4 && version[1] === 6 && version[2] === 3 && version[3] >= 0x204,
     version.join('.'));
 
+  for (const [name, expected] of [
+    ['d3d8.dll', [0x00040008, 0x00010385]],
+    ['d3d9.dll', [0x00040009, 0x00000388]],
+  ]) {
+    const handle = e.test_call_GetModuleHandleA(writeAscii(name)) >>> 0;
+    check(`${name} has its own static module handle`, handle !== 0 && handle !== hDPlay);
+    e.test_call_GetModuleFileNameA(handle, buf, 260);
+    check(`${name} module path matches`, readAscii(buf).toLowerCase().endsWith('\\' + name));
+    check(`${name} version resource is available`, e.test_call_GetFileVersionInfoSizeA(buf, 0) === size);
+    check(`${name} resource can be read`, e.test_call_GetFileVersionInfoA(buf, 0, size, block) === 1);
+    check(`${name} root query succeeds`, e.test_call_VerQueryValueA(block, writeAscii('\\'), outPtr, outLen) === 1);
+    const fixed = dv.getUint32(wa(outPtr), true);
+    check(`${name} reports its implemented component generation`,
+      dv.getUint32(wa(fixed) + 8, true) === expected[0] &&
+      dv.getUint32(wa(fixed) + 12, true) === expected[1]);
+  }
+
   // A file we do not dispatch statically must still read the EXE's own
   // resource, so this shortcut can't hide a missing RT_VERSION.
   check('a non-DirectX filename does not get the DirectX block',

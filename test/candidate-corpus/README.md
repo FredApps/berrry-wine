@@ -43,17 +43,31 @@ launch settings, and observed blockers. The survey mounts companion assets
 and seeds the listed DLLs; use the documented direct commands for the
 800×600 display and setup-dialog input needed by individual games.
 
-Ricochet Xtreme and Alien Shooter also have local app entries. After manually
+All five Reflexive titles have local app entries. After manually
 extracting their fixtures, regenerate the browser asset inventories with:
 
 ```sh
-node tools/fetch-candidate-corpus.js --id=reflexive-ricochet-xtreme,reflexive-alien-shooter --prepare
+node tools/fetch-candidate-corpus.js --id=reflexive-ricochet-xtreme,reflexive-alien-shooter,reflexive-collapse-crunch,reflexive-zuma-deluxe,reflexive-crimsonland --prepare
 ```
 
-They are selectable on localhost as `ricochet_xtreme` and `alien_shooter`,
-and the same entries work with `node test/run.js --app=ID --no-close`.
+They are selectable on localhost as `ricochet_xtreme`, `alien_shooter`,
+`collapse_crunch`, `zuma_deluxe`, and `crimsonland`. Zuma and Crimsonland are
+labelled experimental. The same entries work with
+`node test/run.js --app=ID --no-close`; retain the game's documented screen,
+clock and renderer options. Start the local launcher with
+`node tools/dev-server.js --port=58114 --isolate`.
 
 ## Run
+
+`pirates-2004` contains the archived **retail** Sid Meier's Pirates! (2004),
+not a verified demo or trial. Fetch with `--id=pirates-2004`; the recipe restores
+its MSI/cabinet layout and a GOG-derived community Inno repack, and prepares
+the local `pirates_2004` selector entry. Requires `7z` and `innoextract`.
+The default digital executable reaches new-game setup, sailing and the Port
+Royale town menu with WebGL and the reduced-effects profile. It remains
+experimental: terrain shading is incorrect, and the software renderer fails.
+The separate original disc executable stops in SafeDisc. See
+[source and compatibility evidence](../../docs/re-notes/pirates-2004.md).
 
 Run the local candidate survey in the CLI harness:
 

@@ -3299,3 +3299,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $mouse_buttons_swapped (i32.ne (local.get $arg0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
+  ;; Both import names implement the same tracking service. COMCTL32's
+  ;; underscore wrapper forwards to USER32 when that implementation exists.
+  (func $handle_TrackMouseEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (call $mouse_track_request (local.get $arg0) (local.get $name_ptr)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+  (func $handle__TrackMouseEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_TrackMouseEvent (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

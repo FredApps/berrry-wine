@@ -1350,6 +1350,13 @@ class WineAssembly {
       self._helpCtx = ctx;
       self.hostCtx = ctx;
     }
+    // A looping DirectSound ring is played by the AudioWorklet straight out
+    // of shared memory (lib/host-audio.js playRing) in both schedulers. The
+    // alternative, splicing a fresh AudioBufferSource in at every Unlock,
+    // leaves a seam per refresh, and a cooperative page that steps late
+    // turns the seam into a gap. ?live-ring=0 restores the splice for an A/B.
+    ctx.liveAudioRing = typeof location === 'undefined' ||
+      new URLSearchParams(location.search).get('live-ring') !== '0';
     const base = createHostImports(ctx);
     ctx.sharedGdi = base.gdi;
     const h = base.host;
@@ -1776,7 +1783,7 @@ class WineAssembly {
       };
       // Which queued events are this instance's to take. In multi-app mode
       // that is its own hwnd range; otherwise it is any window this WASM
-      // instance owns. An event with no hwnd belongs to whoever asks first.
+      // instance owns. A legacy event with no explicit owner belongs to whoever asks first.
       // The dequeue itself, and the async-key/repaint bookkeeping that has to
       // follow it, live in the renderer (renderer-input.js takeInput) -- this
       // used to be a second transcription of them that had already lost the
@@ -1804,7 +1811,15 @@ class WineAssembly {
           if (win && win.processId) return win.processId === self.processId;
           return !win || !win.wasm || win.wasm === ownerInstance;
         };
-      const evt = self.renderer.takeInput(owns);
+      // Browser keyboard events retain their originating process while HWND 0
+      // remains available for resolution against that guest's live focus.
+      // Legacy CLI/injected events without an owner retain the existing route.
+      const ownsKeyboard = e => {
+        if (!e || e.type !== 'key' || !e.keyboardOwner) return true;
+        if (e.keyboardProcessId) return e.keyboardProcessId === self.processId;
+        return e.keyboardOwner === ownerInstance || e.keyboardOwner === self.instance;
+      };
+      const evt = self.renderer.takeInput(e => ownsKeyboard(e) && owns(e));
       if (!evt) {
         if (self.renderer.inputQueue.length === 0) clearInactiveInput();
         return 0;
@@ -1878,6 +1893,13 @@ class WineAssembly {
       ? self.threadManager.getThreadLocale(tid) : 0x0409;
     h.set_thread_locale = (locale, tid) => self.threadManager
       ? self.threadManager.setThreadLocale(locale, tid) : 0;
+    h.queue_user_apc = (callback, handle, data, tid) => self.threadManager
+      ? self.threadManager.queueUserAPC(callback, handle, data, tid) : 6;
+    h.dequeue_user_apc = (tid, outWa) => self.threadManager
+      ? self.threadManager.dequeueUserAPC(tid, outWa) : 0;
+    h.set_apc_alertable = (tid, flag) => {
+      if (self.threadManager) self.threadManager.setAPCAlertable(tid, flag);
+    };
     h.com_initialize_thread = (reserved, flags, tid) => self.threadManager
       ? self.threadManager.initializeComApartment(reserved, flags, tid) : 0x8000FFFF;
     h.com_uninitialize_thread = (tid) => self.threadManager
@@ -1959,9 +1981,11 @@ class WineAssembly {
   // module it lives in. A raw runtime address is useless against a disassembly
   // -- every DLL is relocated -- and `module+0xVA` is the form every tool here
   // (disasm_fn, xrefs, --count, --break) already takes.
-  _exitSiteText() {
+  _exitSiteText(workerSlice) {
     const ex = this.instance && this.instance.exports;
-    if (!ex || !ex.get_dbg_prev_eip) return '';
+    const regs = workerSlice && workerSlice.regs;
+    if (workerSlice && !regs) return 'worker exit registers unavailable';
+    if (!regs && (!ex || !ex.get_dbg_prev_eip)) return '';
     const hex = v => '0x' + ((v >>> 0).toString(16).padStart(8, '0'));
     const name = addr => {
       let best = null;
@@ -1973,18 +1997,22 @@ class WineAssembly {
       if (!best) return hex(addr);
       return `${best.key}+${hex(addr - best.m.loadAddr + best.m.origBase)}`;
     };
-    const prev = ex.get_dbg_prev_eip() >>> 0;
-    const prev2 = ex.get_dbg_prev2_eip ? ex.get_dbg_prev2_eip() >>> 0 : 0;
+    const prev = regs ? regs.prevEip >>> 0 : ex.get_dbg_prev_eip() >>> 0;
+    const prev2 = regs ? regs.prev2Eip >>> 0 : ex.get_dbg_prev2_eip ? ex.get_dbg_prev2_eip() >>> 0 : 0;
     // The registers as the last block left them. A NULL call is almost always
     // an indirect one, so `this` and the table it was read through are what
     // says WHICH object was not set up -- and they are gone the moment
     // anything else runs.
-    const reg = (n, get) => (get ? ` ${n}=${hex(get.call(ex) >>> 0)}` : '');
+    const reg = n => regs ? ` ${n}=${hex(regs[n])}`
+      : ex['get_' + n] ? ` ${n}=${hex(ex['get_' + n]())}` : '';
     // Walk the EBP frame chain for the callers. The last block is usually a
     // two-instruction dispatch thunk shared by a hundred call sites, so it
     // names the mechanism and never the subsystem; the frames do.
     let frames = '';
-    if (ex.get_ebp && ex.guest_read32) {
+    if (regs) {
+      frames = (regs.frames || []).map((ret, i) =>
+        `\n    frame ${i}: ${hex(ret)} (${name(ret)})`).join('');
+    } else if (ex.get_ebp && ex.guest_read32) {
       const seen = [];
       let ebp = ex.get_ebp() >>> 0;
       for (let i = 0; i < 8 && ebp && !seen.includes(ebp); i++) {
@@ -1997,8 +2025,7 @@ class WineAssembly {
     }
     return `last block ${hex(prev)} (${name(prev)})` +
       (prev2 ? `, before it ${hex(prev2)} (${name(prev2)})` : '') +
-      reg('eax', ex.get_eax) + reg('ecx', ex.get_ecx) + reg('edx', ex.get_edx) +
-      reg('esi', ex.get_esi) + reg('esp', ex.get_esp) + frames;
+      reg('eax') + reg('ecx') + reg('edx') + reg('esi') + reg('esp') + frames;
   }
 
   logToUI(msg) {
@@ -2437,7 +2464,10 @@ class WineAssembly {
     // it the moment it opens a socket, so it has to be in place before the
     // program runs rather than when a connection is attempted.
     if (this.vlanLocalIp && this.instance.exports.set_vlan_local_ip) {
-      this.instance.exports.set_vlan_local_ip(this.vlanLocalIp | 0);
+      const ip = this.vlanLocalIp | 0;
+      this.instance.exports.set_vlan_local_ip(ip);
+      if (this.guestWorker) await this.callGuest('set_vlan_local_ip', ip);
+      this.threadManager.recordInheritedWasmGlobal('set_vlan_local_ip', ip);
     }
 
     if (canvas && !this.renderer) {
@@ -2757,6 +2787,7 @@ class WineAssembly {
         sigs,
         hostImports: this._mainImports.host,
         workerUrl: WineAssembly.versionedUrl('lib/guest-worker.js'),
+        resolveDllBytes: name => self._resolveDllBytes(name),
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         // Keep DirectDraw lock/unlock bookkeeping in the Worker (guest-rpc
         // dxTraceLocal) unless something on this page prints the dx trace.
@@ -2790,10 +2821,6 @@ class WineAssembly {
       // messages for slot 0 instead of calling exports on the idle instance.
       if (!this.renderer._guestWorkerWasms) this.renderer._guestWorkerWasms = new WeakSet();
       this.renderer._guestWorkerWasms.add(this.instance);
-      // Guest threads now run beside the page rather than inside its steps, so
-      // a DirectSound ring is kept full on its own and the AudioWorklet may
-      // play it straight out of shared memory (lib/host-audio.js playRing).
-      if (this.hostCtx) this.hostCtx.liveAudioRing = true;
       this.logToUI('[threads] guest main thread is running in a Worker');
     } catch (err) {
       this.guestWorker = null;
@@ -3133,6 +3160,9 @@ class WineAssembly {
           vfs.ensureParentDirs(vfsPath);
           if (asset.provider) vfs.setProviderFile(vfsPath, { provider: asset.provider });
           else vfs.files.set(vfsPath, { data, attrs: 0x20, decodedImage });
+          if (item && (item.creationTime || item.lastAccessTime || item.lastWriteTime)) {
+            vfs.applyFileMetadata(vfsPath, item);
+          }
         };
         if (explicitPaths && explicitPaths.length) {
           for (const p of explicitPaths) addFile(p);
@@ -3415,6 +3445,18 @@ class WineAssembly {
       return;
     }
     const res = await gw.loadLibrary(dllBytes, fileName, link);
+    for (const line of res?.loaderErrors || []) console.error('[LoadLibrary] ' + line);
+    if (res?.loaderErrorsDropped || res?.loaderLogsDropped) {
+      console.warn('[LoadLibrary] bounded diagnostics dropped',
+        res.loaderErrorsDropped || 0, res.loaderLogsDropped || 0);
+    }
+    for (const line of res?.loaderLogs || []) {
+      if (/WARNING|trapped/i.test(line)) console.warn('[LoadLibrary] ' + line);
+    }
+    for (const nested of res?.nestedLoaded || []) {
+      this.registerModule(nested.fileName, nested.loadAddr);
+      this._registerDllBitmapResources(nested.fileName, nested.bytes, nested.loadAddr);
+    }
     if (res && res.loadAddr) {
       console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
       this.registerModule(fileName, res.loadAddr);
@@ -4364,7 +4406,7 @@ class WineAssembly {
         self._presentAtBoundary(perf);
 
         if (!r.eip && !r.yield) {
-          self.logToUI(`--- Program exited (worker) --- ${self._exitSiteText()}`);
+          self.logToUI(`--- Program exited (worker) --- ${self._exitSiteText(r)}`);
           self.stop({ repaint: false });
           return;
         }
@@ -4689,6 +4731,14 @@ class WineAssembly {
     }, extra || {});
   }
 
+  // Only active guest workers may fence the process render owner; never make
+  // the idle page instance block on a shared surface's readback.
+  async setLazySync(on) {
+    if (!this.guestWorker) return false;
+    await this.guestWorker.setLazySync(on);
+    return true;
+  }
+
   // The debug toolbar's "uop tier" box, on a running app: every instance that
   // executes guest code -- this one, the guest Worker that owns the main
   // thread in real-thread mode, and each guest thread -- plus the setting
@@ -4707,14 +4757,6 @@ class WineAssembly {
 
   // Micro-op tier counters of the instance running the main thread: installs,
   // kills, enters, blocks run inside programs. Null while the tier is off or
-  // Only active guest workers may fence the process render owner; never make
-  // the idle page instance block on a shared surface's readback.
-  async setLazySync(on) {
-    if (!this.guestWorker) return false;
-    await this.guestWorker.setLazySync(on);
-    return true;
-  }
-
   // when a guest Worker owns the main thread (its counters live there).
   uopStats() {
     const ex = this.instance && this.instance.exports;

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// Browser pointer handlers run outside the guest's GetMessage/DispatchMessage
-// call stack. A dialog BUTTON must therefore be queued into that pump. If the
-// renderer invokes it synchronously and BN_CLICKED opens a nested DoModal, the
-// browser event cannot return to deliver input to the new dialog.
+// Registered x86 dialog children stay on GetMessage/DispatchMessage, but a
+// WAT BUTTON stays on dialog_route_mouse. Its built-in procedure only updates
+// local control state and queues BN_CLICKED for the parent, so no nested guest
+// dialog procedure runs on the browser event stack.
 
 const assert = require('assert');
 const { installInputHandlers } = require('../lib/renderer-input');
@@ -60,33 +60,11 @@ renderer.scheduleRepaint = () => {};
 renderer.repaint = () => {};
 
 assert.strictEqual(renderer._queueNativeDialogChildMouseDown(
-  dialog, 132, 79, 0x0201, 1), true,
-'WAT dialog BUTTON down should enter the guest queue');
+  dialog, 132, 79, 0x0201, 1), false,
+'WAT dialog BUTTON down should stay on dialog_route_mouse');
 assert.strictEqual(synchronousRoutes, 0,
-  'dialog BUTTON down must not synchronously enter its parent wndproc');
-assert.deepStrictEqual(renderer.inputQueue[0], {
-  type: 'mouse',
-  hwnd: 0x40002,
-  msg: 0x0201,
-  wParam: 1,
-  lParam: (19 << 16) | 32,
-  mouseX: 132,
-  mouseY: 79,
-  mouseButtons: 1,
-});
+  'classification alone must not synchronously enter the control');
+assert.deepStrictEqual(renderer.inputQueue, [],
+  'WAT BUTTON classification must not enqueue mouse messages');
 
-renderer.handleMouseUp(132, 79, 0);
-assert.strictEqual(synchronousRoutes, 0,
-  'dialog BUTTON up must not synchronously send BN_CLICKED');
-assert.deepStrictEqual(renderer.inputQueue[1], {
-  type: 'mouse',
-  hwnd: 0x40002,
-  msg: 0x0202,
-  wParam: 0,
-  lParam: (19 << 16) | 32,
-  mouseX: 132,
-  mouseY: 79,
-  mouseButtons: 0,
-});
-
-console.log('PASS  browser dialog BUTTON clicks stay on the guest message pump');
+console.log('PASS  WAT dialog BUTTONs stay on the built-in dialog router');

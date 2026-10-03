@@ -161,7 +161,28 @@ async function driveRounds(memory, i32, onRound) {
   console.log('WAT window and class tables, two OS threads\n');
   const { compileSrcWasm } = require('./compile-src');
   const SRC = path.join(__dirname, '..', 'src');
-  const wasmBytes = compileSrcWasm();
+  const wasmBytes = compileSrcWasm((file, source) => file === '13-exports.wat'
+    ? source + '\n(export "test_remove_window_slot" (func $wnd_table_remove))\n' : source);
+
+  {
+    const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+    const { exports: ex } = await bootInstance(wasmBytes, memory, 0);
+    const view = new DataView(memory.buffer);
+    ex.test_wnd_table_set(0x10001, 0x401000);
+    const header = RegionMap.BASE.WND_DLG_RECORDS;
+    view.setUint32(header, 123, true);
+    view.setUint32(header + 28, 2, true);
+    check(ex.dialog_ancestor(0x10001) === 0x10001,
+      'fixture starts with a recognized dialog');
+    ex.test_remove_window_slot(0x10001);
+    ex.test_wnd_table_set(0x10002, 0x402000);
+    check(view.getUint32(WND_RECORDS, true) === 0x10002,
+      'ordinary window reuses the retired dialog slot');
+    check(ex.dialog_ancestor(0x10002) === 0,
+      'recycled ordinary window does not consume Escape as a dialog');
+    check(new Uint8Array(memory.buffer, header, 32).every(byte => byte === 0),
+      'recycled window has no stale dialog template metadata');
+  }
 
   {
     // Both threads claim WINDOWS_PER_THREAD windows into an empty table, every

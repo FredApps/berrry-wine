@@ -1,0 +1,51 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),http=require('node:http');
+const {createEmulatorHandler,buildCatalog,privateIndex,rangeFor,launchFor,LOCAL_DESKTOP}=require('./emulator-server');
+async function fixture(){
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'emulator-server-'));
+ const files={'index.html':'<html>\n'+LOCAL_DESKTOP+'\n<script src="lib/apps.js"></script></html>','lib/apps.js':"module.exports={APPS:{game:{exe:'test/binaries/game/game.exe',localFileManifest:'test/binaries/game/files.json'},missing:{exe:'test/binaries/no.exe'}},DESKTOP_APPS:[['game','Game']]};",'lib/dll-registry.js':"module.exports={DLL_PATHS:{'msvcrt.dll':'test/binaries/msvcrt.dll'}};",'lib/guest-worker.js':'worker','host.js':'host','fonts/System.fon':'font','lib/host-import-sigs.generated.json':'{}','src/api_table.json':'[]','build/wine-assembly.wasm':'wasm','test/binaries/game/game.exe':'executable','test/binaries/game/files.json':JSON.stringify({files:[{url:'data.bin'}]}),'test/binaries/game/data.bin':'0123456789','test/binaries/msvcrt.dll':'crt','scratch/secret.txt':'secret','ops/access.json':'secret'};
+ for(const [name,content]of Object.entries(files)){await fs.mkdir(path.dirname(path.join(root,name)),{recursive:true});await fs.writeFile(path.join(root,name),content);}
+ return root;
+}
+function request(port,url,method='GET',headers={}){return new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:url,method,headers},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:Buffer.concat(chunks).toString()}));});req.on('error',reject);req.end();});}
+test('registered closure, private entry, GET/HEAD ranges, isolation and denied paths',async()=>{
+ const root=await fixture(),serve=createEmulatorHandler(root);const server=http.createServer(async(req,res)=>{try{if(!await serve(req,res)){res.writeHead(404);res.end();}}catch(e){res.writeHead(500);res.end(e.message);}});await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+ try{
+  const catalog=await buildCatalog(root);assert.equal(catalog.routes.find(r=>r.appId==='game').available,true);assert.equal(catalog.routes.find(r=>r.appId==='missing').available,false);
+  const index=await request(port,'/emulator/?app=game');assert.equal(index.status,200);assert(index.body.includes('const LOCAL_DESKTOP = true;'));assert.equal(index.headers['cross-origin-embedder-policy'],'require-corp');assert.equal(index.headers['cross-origin-opener-policy'],'same-origin');assert.equal((await fs.readFile(path.join(root,'index.html'),'utf8')).includes('LOCAL_DESKTOP = true'),false);
+  assert.equal((await request(port,'/emulator/?app=missing')).status,409);assert.equal((await request(port,'/emulator/?app=not_registered')).status,404);
+  for(const url of ['/emulator/scratch/secret.txt','/emulator/ops/access.json','/emulator/.git/config','/emulator/../scratch/secret.txt','/emulator/%2e%2e/scratch/secret.txt','/emulator/lib%2fapps.js','/emulator/%252e%252e/scratch/secret.txt'])assert.notEqual((await request(port,url)).status,200,url);
+  assert.equal((await request(port,'/emulator/lib/apps.js','POST')).status,405);
+  const ranged=await request(port,'/emulator/test/binaries/game/data.bin','GET',{Range:'bytes=2-5'});assert.equal(ranged.status,206);assert.equal(ranged.body,'2345');assert.equal(ranged.headers['content-range'],'bytes 2-5/10');
+  const head=await request(port,'/emulator/test/binaries/game/data.bin','HEAD',{Range:'bytes=-3'});assert.equal(head.status,206);assert.equal(head.body,'');assert.equal(head.headers['content-length'],'3');
+  assert.equal((await request(port,'/emulator/test/binaries/game/data.bin','GET',{Range:'bytes=99-100'})).status,416);
+  assert.equal((await request(port,'/emulator/test/binaries/msvcrt.dll')).body,'crt');
+  for(const file of ['fonts/System.fon','lib/host-import-sigs.generated.json','src/api_table.json'])assert.equal((await request(port,'/emulator/'+file)).status,200);
+  // Recheck realpath at serve time: replacing an approved file with a symlink
+  // outside the repo must not expose it, even with a cached allowlist.
+  await fs.unlink(path.join(root,'test/binaries/game/data.bin'));await fs.symlink('/etc/passwd',path.join(root,'test/binaries/game/data.bin'));assert.equal((await request(port,'/emulator/test/binaries/game/data.bin')).status,404);
+  await fs.unlink(path.join(root,'test/binaries/game/data.bin'));await fs.symlink(path.join(root,'ops/access.json'),path.join(root,'test/binaries/game/data.bin'));assert.equal((await request(port,'/emulator/test/binaries/game/data.bin')).status,404);
+ }finally{await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});}
+});
+test('index anchor, suffix ranges and production link provenance fail closed',()=>{
+ assert.throws(()=>privateIndex(Buffer.from('no anchor')),/anchor/);assert.throws(()=>privateIndex(Buffer.from(LOCAL_DESKTOP+LOCAL_DESKTOP)),/anchor/);
+ assert.equal(rangeFor('bytes=1-2,4-5',10),false);assert.equal(rangeFor('bytes=-0',10),false);assert.deepEqual(rangeFor('bytes=-99',10),{start:0,end:9});
+ const c={appIds:['game']},catalog={routes:[{appId:'game',label:'Game',available:true,url:'/emulator/?app=game'}]};assert.equal(launchFor(c,catalog,{status:'unknown',appIds:['game']}).productionRoutes.length,0);assert.equal(launchFor(c,catalog,{status:'verified',appIds:['game'],url:'https://example.test/lib/apps.js'}).productionRoutes[0].url,'https://example.test/?app=game');
+});
+
+test('existing authenticated gateway protects entry, worker and binary requests',async()=>{
+ const crypto=require('node:crypto'),{createGateway}=require('./hosting/public-server');
+ const root=await fixture(),handler=createEmulatorHandler(root);
+ const upstream=http.createServer(async(req,res)=>{if(!await handler(req,res)){res.writeHead(404);res.end();}});await new Promise(r=>upstream.listen(0,'127.0.0.1',r));
+ const config={origin:'https://private.example',salt:'11'.repeat(16),passwordHash:'22'.repeat(32),sessionKey:'33'.repeat(32)};
+ const gateway=createGateway(config,upstream.address().port);await new Promise(r=>gateway.listen(0,'127.0.0.1',r));
+ try{
+  const port=gateway.address().port;
+  for(const url of ['/emulator/?app=game','/emulator/lib/guest-worker.js','/emulator/test/binaries/game/game.exe'])assert.equal((await request(port,url,'GET',{Host:'private.example'})).status,401);
+  const value=(Date.now()+60000)+'.test',signature=crypto.createHmac('sha256',Buffer.from(config.sessionKey,'hex')).update(value).digest('hex');
+  const headers={Host:'private.example',Cookie:'__Host-wine_ops='+value+'.'+signature};
+  const good=await request(port,'/emulator/?app=game','GET',headers);assert.equal(good.status,200);assert.equal(good.headers['cross-origin-embedder-policy'],'require-corp');assert(good.body.includes('LOCAL_DESKTOP = true'));
+  const part=await request(port,'/emulator/test/binaries/game/data.bin','GET',{...headers,Range:'bytes=1-3'});assert.equal(part.status,206);assert.equal(part.body,'123');
+ }finally{await new Promise(r=>gateway.close(r));await new Promise(r=>upstream.close(r));await fs.rm(root,{recursive:true,force:true});}
+});

@@ -117,6 +117,95 @@ const { parseNativeTls, fixture } = require('./test-tls-native-fixture');
   assert.strictEqual(call(e, 'TlsFree', [dynamic]).result, 1);
   assert.strictEqual(call(e, 'TlsAlloc').result, dynamic);
   assert.strictEqual(e.guest_read32(staticVector + staticIndex * 4) >>> 0, template);
+
+  // A later thread copies the EXE template, not the parent's modified block or
+  // dynamic values. Use the same vector creation path as both thread backends.
+  e.guest_write32(template, 0x87654321);
+  call(e, 'TlsSetValue', [dynamic, 0x11223344]);
+  const thread = (await bootRenderHarness({ fonts: 'none', memory: loader.memory })).exports;
+  thread.init_thread(1, pe.imageBase, 0, 0, 0, 0, 0, 0);
+  const threadVector = thread.ensure_tls_slots() >>> 0;
+  const threadTemplate = thread.guest_read32(threadVector + staticIndex * 4) >>> 0;
+  assert(threadTemplate && threadTemplate !== template);
+  assert.strictEqual(thread.guest_read32(threadTemplate) >>> 0, 0x12345678);
+  assert.strictEqual(thread.guest_read32(threadTemplate + 4), 0);
+  assert.strictEqual(thread.guest_read32(threadVector + dynamic * 4), 0);
+  assert.strictEqual(e.guest_read32(template) >>> 0, 0x87654321);
+
+  // A synthetic DLL adds relocated TLS to already existing threads. Its small
+  // relocation block describes the three VA fields in the TLS directory; no
+  // guest code is executed from this fixture image.
+  const dll = Buffer.from(image);
+  dll.writeUInt16LE(dll.readUInt16LE(pe.peOff + 22) | 0x2000, pe.peOff + 22);
+  dll.writeUInt32LE(0xabcdef01, offset + 32);
+  dll.writeUInt32LE(rva + 64, pe.peOff + 24 + 96 + 5 * 8);
+  dll.writeUInt32LE(16, pe.peOff + 24 + 96 + 5 * 8 + 4);
+  dll.writeUInt32LE(rva & ~0xfff, offset + 64);
+  dll.writeUInt32LE(16, offset + 68);
+  for (let i = 0; i < 3; i++) dll.writeUInt16LE(0x3000 | ((rva + i * 4) & 0xfff), offset + 72 + i * 2);
+  dll.writeUInt16LE(0, offset + 78);
+  const dllBase = e.get_next_dll_addr() >>> 0;
+  const dllCount = e.get_dll_count();
+  new Uint8Array(loader.memory.buffer).set(dll, e.get_staging());
+  assert(e.load_dll(dll.length, dllBase), 'DLL with relocated TLS loads');
+  assert.strictEqual(e.get_dll_count(), dllCount + 1);
+  const dllIndex = e.guest_read32(dllBase + rva + 48) >>> 0;
+  assert.notStrictEqual(dllIndex, staticIndex);
+  assert.notStrictEqual(dllIndex, dynamic);
+  const dllMainData = e.guest_read32(staticVector + dllIndex * 4) >>> 0;
+  const dllThreadData = thread.guest_read32(threadVector + dllIndex * 4) >>> 0;
+  assert(dllMainData && dllThreadData && dllMainData !== dllThreadData);
+  for (const ptr of [dllMainData, dllThreadData]) {
+    assert.strictEqual(e.guest_read32(ptr) >>> 0, 0xabcdef01);
+    assert.strictEqual(e.guest_read32(ptr + 4), 0);
+    assert.strictEqual(e.guest_read32(ptr + 8), 0);
+  }
+  e.guest_write32(dllMainData, 0x55667788);
+  assert.strictEqual(thread.guest_read32(dllThreadData) >>> 0, 0xabcdef01);
+  const laterThread = (await bootRenderHarness({ fonts: 'none', memory: loader.memory })).exports;
+  laterThread.init_thread(2, pe.imageBase, 0, 0, 0, 0, 0, 0);
+  const laterVector = laterThread.ensure_tls_slots() >>> 0;
+  const laterDllData = laterThread.guest_read32(laterVector + dllIndex * 4) >>> 0;
+  assert(laterDllData && laterDllData !== dllMainData && laterDllData !== dllThreadData);
+  assert.strictEqual(laterThread.guest_read32(laterDllData) >>> 0, 0xabcdef01);
+  assert.strictEqual(laterThread.guest_read32(laterDllData + 8), 0);
+  assert.strictEqual(laterThread.guest_read32(laterThread.guest_read32(laterVector + staticIndex * 4)) >>> 0,
+    0x12345678, 'later thread gets both EXE and DLL templates');
+  assert.strictEqual(laterThread.ensure_tls_slots() >>> 0, laterVector);
+  assert.strictEqual(e.guest_read32(dllMainData) >>> 0, 0x55667788,
+    'ensuring TLS never reinitializes an existing block');
+
+  // An invalid TLS directory must not publish a DLL or consume a TLS index.
+  const malformed = Buffer.from(dll);
+  malformed.writeUInt32LE(malformed.readUInt32LE(pe.peOff + 80) - 8, pe.peOff + 24 + 96 + 9 * 8);
+  const nextIndex = e.get_tls_next_index();
+  new Uint8Array(loader.memory.buffer).set(malformed, e.get_staging());
+  assert.strictEqual(e.load_dll(malformed.length, e.get_next_dll_addr()), 0);
+  assert.strictEqual(e.get_dll_count(), dllCount + 1);
+  assert.strictEqual(e.get_tls_next_index(), nextIndex);
+  assert.strictEqual(e.test_call_GetLastError(), 193);
+  const { loadDll } = require('../lib/dll-loader');
+  assert.throws(() => loadDll(e, loader.memory.buffer, malformed), /DLL loader rejected/,
+    'host must not return a module handle for rejected TLS metadata');
+
+  const zeroOnly = Buffer.from(dll);
+  zeroOnly.writeUInt32LE(pe.imageBase + rva + 32, offset + 4);
+  zeroOnly.writeUInt32LE(12, offset + 16);
+  const zeroModule = loadDll(e, loader.memory.buffer, zeroOnly);
+  const zeroIndex = e.guest_read32(zeroModule.loadAddr + rva + 48) >>> 0;
+  for (const vector of [staticVector, threadVector, laterVector]) {
+    const data = e.guest_read32(vector + zeroIndex * 4) >>> 0;
+    assert(data, 'zero-only TLS has a real block in every existing thread');
+    for (let off = 0; off < 12; off += 4) assert.strictEqual(e.guest_read32(data + off), 0);
+  }
+  while (call(e, 'TlsAlloc').result !== 0xffffffff) {}
+  const fullCount = e.get_dll_count();
+  assert.throws(() => loadDll(e, loader.memory.buffer, dll), /DLL loader rejected/,
+    'TLS index exhaustion fails DLL loading');
+  assert.strictEqual(e.get_dll_count(), fullCount, 'failed TLS registration publishes no module');
+  assert.strictEqual(e.test_call_GetLastError(), 8);
+  assert.strictEqual(e.guest_read32(dllMainData) >>> 0, 0x55667788);
   console.log(`PASS ${compared} native TLS API observations, raw cross-thread clearing, stale spawn metadata and late-thread registration`);
   console.log('PASS static PE TLS template, zero fill and reservation survive dynamic index reuse');
+  console.log('PASS relocated DLL TLS, existing/new thread initialization, independent values and invalid-directory rejection');
 })().catch(error => { console.error(error.stack || error); process.exit(1); });

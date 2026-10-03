@@ -30,7 +30,7 @@ async function main(){
     const b=Buffer.from(raw);let p=0;const u=()=>{let x=0,s=0,v;do{v=b[p++];x|=(v&127)<<s;s+=7;}while(v&128);return x>>>0;};
     while(p<b.length){const kind=u(),size=u(),end=p+size;if(kind===1){const n=u();for(let i=0;i<n;i++){const idx=u(),len=u();names.set(idx,b.toString('utf8',p,p+len));p+=len;}}p=end;}
   }
-  const wanted=new Set(['x87_island_fast','x87_island_generic','x87_island_fuse_block','uop_fast']);const records=[];
+  const wanted=new Set(process.env.NATIVE_FUNCS ? process.env.NATIVE_FUNCS.split(',') : ['x87_island_fast','x87_island_generic','x87_island_fuse_block','uop_fast']);const records=[],allRecords=[];
   const objdump=process.env.OBJDUMP||'/opt/homebrew/opt/binutils/bin/objdump';
   for(const file of fs.readdirSync(out).filter(n=>/^jit-.*\.dump$/.test(n))){
     const b=fs.readFileSync(out+'/'+file);if(b.length<40)continue;assert.equal(b.readUInt32LE(0),0x4a695444);
@@ -41,6 +41,7 @@ async function main(){
       if(p+size>b.length){console.warn('truncated final record',file,p,size,b.length-p);break;}
       if(id===0){const addr=b.readBigUInt64LE(p+32),n=Number(b.readBigUInt64LE(p+40)),end=b.indexOf(0,p+56);assert(end>=p+56&&end<p+size);
         const label=b.toString('utf8',p+56,end),m=/wasm-function\[(\d+)\]/.exec(label);assert(end+1+n<=p+size);
+        if(m&&label.includes('turbofan'))allRecords.push({name:names.get(+m[1]),index:+m[1],address:'0x'+addr.toString(16),bytes:n,arch});
         if(m&&label.includes('turbofan')&&wanted.has(names.get(+m[1]))){const name=names.get(+m[1]),bin=out+'/'+name+'.bin';
           fs.writeFileSync(bin,b.subarray(end+1,end+1+n));
           const asm=cp.execFileSync(objdump,['-b','binary','-m',arch===62?'i386:x86-64':'aarch64','-D','--adjust-vma=0x'+addr.toString(16),bin],{encoding:'utf8',maxBuffer:16<<20});
@@ -50,6 +51,7 @@ async function main(){
     }
   }
   assert.equal(new Set(records.map(r=>r.name)).size,wanted.size,'all requested functions captured');
+  fs.writeFileSync(out+'/all-functions.json',JSON.stringify(allRecords,null,2));
   fs.writeFileSync(out+'/functions.json',JSON.stringify(records,null,2));console.log(records);
 }
 main().catch(e=>{console.error(e.stack);process.exitCode=1;});

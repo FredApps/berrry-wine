@@ -840,8 +840,48 @@
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
     (local.set $r (call $virtual_map_commit_locked
       (local.get $guest) (local.get $size) (local.get $protect) (i32.const 1)))
+    ;; Backing records survive decommit. Restore holes only once the complete
+    ;; request succeeds, not while a recursive tail/split can still fail.
+    (if (local.get $r)
+      (then (call $virtual_map_recommit_locked
+        (local.get $guest) (local.get $size) (local.get $protect))))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (local.get $r))
+
+  ;; A repeated MEM_COMMIT must preserve committed bytes and their current
+  ;; protection, including per-page VirtualProtect overrides. Only absent
+  ;; pages need their retained backing published with the requested protection.
+  ;; The caller holds LOCK_VIRTUAL_MAP and has completed backing allocation.
+  (func $virtual_map_recommit_locked
+      (param $guest i32) (param $size i32) (param $protect i32)
+    (local $end i32) (local $count i32) (local $i i32) (local $rec i32)
+    (local $base i32) (local $map_end i32) (local $cur i32) (local $limit i32)
+    (local.set $end (i32.add (local.get $guest) (local.get $size)))
+    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    (block $done (loop $maps
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
+        (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $base (i32.load (local.get $rec)))
+      (local.set $map_end (i32.add (local.get $base)
+        (i32.load offset=4 (local.get $rec))))
+      (local.set $cur (select (local.get $guest) (local.get $base)
+        (i32.gt_u (local.get $guest) (local.get $base))))
+      (local.set $limit (select (local.get $end) (local.get $map_end)
+        (i32.lt_u (local.get $end) (local.get $map_end))))
+      (block $mapped (loop $pages
+        (br_if $mapped (i32.ge_u (local.get $cur) (local.get $limit)))
+        (if (i32.eqz (i32.and (call $virtual_query_pte (local.get $cur))
+              (global.get $GUEST_PTE_PRESENT)))
+          (then (drop (call $guest_page_publish_range
+            (local.get $cur) (i32.const 0x1000)
+            (i32.add (i32.load offset=8 (local.get $rec))
+              (i32.sub (local.get $cur) (local.get $base)))
+            (local.get $protect)))))
+        (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
+        (br $pages)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $maps))))
 
   ;; One past the last byte of the extension backing window, or 0 when this
   ;; host did not create a memory large enough to have one. The import declares
@@ -991,6 +1031,7 @@
     (local $extended i32) (local $high_water i32)
     (local $candidate i32) (local $gap_end i32) (local $best i32)
     (local $best_size i32) (local $j i32) (local $covered i32) (local $ext i32)
+    (local $overlap_start i32) (local $count_before i32)
     (if (i32.gt_u (local.get $size) (call $virtual_backing_max_extent))
       (then (return (i32.const 0))))
     (local.set $guest_end (i32.add (local.get $guest) (local.get $size)))
@@ -1038,6 +1079,22 @@
     (if (i32.eqz (local.get $backing_ptr))
       (then (local.set $backing_ptr (global.get $VIRTUAL_BACKING_BASE))))
     (local.set $high_water (local.get $backing_ptr))
+
+    ;; Find the first future guest mapping before considering backing-tail
+    ;; coalescing; record order need not match guest address order.
+    (local.set $i (i32.const 0))
+    (block $boundaries_done (loop $boundaries
+      (br_if $boundaries_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $base (i32.load (i32.add (global.get $VIRTUAL_MAP_TABLE)
+        (i32.shl (local.get $i) (i32.const 4)))))
+      (if (i32.and (i32.gt_u (local.get $base) (local.get $guest))
+            (i32.lt_u (local.get $base) (local.get $guest_end)))
+        (then
+          (if (i32.or (i32.eqz (local.get $overlap_start))
+                (i32.lt_u (local.get $base) (local.get $overlap_start)))
+            (then (local.set $overlap_start (local.get $base))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $boundaries)))
 
     (local.set $i (i32.const 0))
     (block $scan_done (loop $scan
@@ -1097,7 +1154,7 @@
       ;; mission with ~2,700 records live, and that put 40% of its gameplay
       ;; CPU in $virtual_backing_conflicts (two-point profile on the quiet
       ;; box, 2026-09-18) -- more than $next and every handler together.
-      (if (i32.and (local.get $coalesce) (i32.and
+      (if (i32.and (i32.and (local.get $coalesce) (i32.eqz (local.get $overlap_start))) (i32.and
             (i32.and (i32.eq (local.get $guest) (local.get $map_end))
               (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
             (i32.le_u (i32.add (local.get $backing_ptr) (local.get $size))
@@ -1122,6 +1179,27 @@
           (return (local.get $guest))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+
+    (if (local.get $overlap_start)
+      (then
+        (local.set $count_before (i32.load (global.get $VIRTUAL_MAP_STATE)))
+        ;; Disable coalescing so every speculative addition is an appended
+        ;; record that rollback can remove without touching an older map.
+        (if (i32.eqz (call $virtual_map_commit_locked
+              (local.get $guest) (i32.sub (local.get $overlap_start) (local.get $guest))
+              (local.get $protect) (i32.const 0)))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (call $virtual_map_commit_locked
+              (local.get $overlap_start) (i32.sub (local.get $guest_end) (local.get $overlap_start))
+              (local.get $protect) (i32.const 0)))
+          (then
+            (call $virtual_map_rollback_since_locked
+              (local.get $count_before) (local.get $guest) (local.get $size))
+            (return (i32.const 0))))
+        (call $virtual_map_mark_continuations (local.get $guest) (local.get $size))
+        (call $virtual_shared_top_observe (local.get $guest))
+        (global.set $virtual_alloc_top (local.get $guest))
+        (return (local.get $guest))))
 
     (if (i32.ge_u (local.get $count) (global.get $MAX_VIRTUAL_MAPS))
       (then (return (i32.const 0))))
@@ -1326,40 +1404,19 @@
   ;;
   ;; Split children run with coalescing disabled, so every byte they add is in
   ;; an appended record and the pre-call count is a complete transaction mark.
-  ;; Removing an overlapping speculative record clears its PTEs; republish the
-  ;; surviving maps afterwards so older committed pages retain their original
-  ;; translations.
+  ;; New records never overlap older maps. Leave surviving PTEs untouched:
+  ;; reconstructing them from records would lose per-page protection overrides
+  ;; and resurrect holes left by MEM_DECOMMIT.
   (func $virtual_map_rollback_since_locked
       (param $count_before i32) (param $guest i32) (param $size i32)
-    (local $end i32) (local $count i32) (local $i i32) (local $rec i32)
-    (local $base i32) (local $map_size i32)
-    (local.set $end (i32.add (local.get $guest) (local.get $size)))
+    (local $count i32) (local $rec i32)
     (block $removed (loop $remove
       (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
       (br_if $removed (i32.le_u (local.get $count) (local.get $count_before)))
       (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
         (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 4))))
       (drop (call $virtual_map_release_one (i32.load (local.get $rec))))
-      (br $remove)))
-    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $restore
-      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
-        (i32.shl (local.get $i) (i32.const 4))))
-      (local.set $base (i32.load (local.get $rec)))
-      (local.set $map_size (i32.load offset=4 (local.get $rec)))
-      (if (i32.and
-            (i32.lt_u (local.get $base) (local.get $end))
-            (i32.gt_u (i32.add (local.get $base) (local.get $map_size))
-              (local.get $guest)))
-        (then
-          (drop (call $guest_page_publish_range
-            (local.get $base) (local.get $map_size)
-            (i32.load offset=8 (local.get $rec))
-            (i32.and (i32.load offset=12 (local.get $rec)) (i32.const 0x7FF))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $restore))))
+      (br $remove))))
 
   ;; MEM_DECOMMIT, honestly. Windows hands back zero-filled pages the next time
   ;; a decommitted range is committed, and the MSVC small-block heap leans on
@@ -1376,10 +1433,23 @@
   ;; the next commit is the same observable behaviour -- reading a decommitted
   ;; page is an access violation on Windows, so nothing may see the difference
   ;; -- and it costs nothing on the commit path.
+  ;; Withdraw PTEs as well: Serious Sam uses the resulting access fault to fill
+  ;; its stream buffer. Keeping a zero-filled translation suppresses that fault.
   (func $virtual_map_decommit_zero (param $guest i32) (param $size i32)
     (local $end i32) (local $count i32) (local $i i32) (local $rec i32)
     (local $base i32) (local $rec_end i32) (local $lo i32) (local $hi i32)
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (if (local.get $size)
+      (then
+        (local.set $end (i32.and
+          (i32.add (i32.add (local.get $guest) (local.get $size)) (i32.const 0xFFF))
+          (i32.const 0xFFFFF000))))
+      (else (local.set $end (call $virtual_allocation_end_locked (local.get $guest)))))
+    (if (i32.le_u (local.get $end) (local.get $guest))
+      (then
+        (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+        (return)))
+    (local.set $guest (i32.and (local.get $guest) (i32.const 0xFFFFF000)))
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -1389,23 +1459,47 @@
       (local.set $base (i32.load (local.get $rec)))
       (local.set $rec_end
         (i32.add (local.get $base) (i32.load offset=4 (local.get $rec))))
-      ;; A zero size means "to the end of the allocation at this base", the only
-      ;; form Windows accepts for a decommit that does not name a length.
-      (local.set $end (select (local.get $rec_end)
-        (i32.add (local.get $guest) (local.get $size))
-        (i32.eqz (local.get $size))))
       (local.set $lo (select (local.get $guest) (local.get $base)
         (i32.gt_u (local.get $guest) (local.get $base))))
       (local.set $hi (select (local.get $end) (local.get $rec_end)
         (i32.lt_u (local.get $end) (local.get $rec_end))))
       (if (i32.lt_u (local.get $lo) (local.get $hi))
-        (then (call $zero_memory
+        (then
+          (call $guest_page_clear_range
+            (local.get $lo) (i32.sub (local.get $hi) (local.get $lo)))
+          (call $zero_memory
           (i32.add (i32.load offset=8 (local.get $rec))
             (i32.sub (local.get $lo) (local.get $base)))
           (i32.sub (local.get $hi) (local.get $lo)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP)))
+
+  ;; Resolve the size==0 decommit form once, not once per backing record;
+  ;; otherwise every allocation above this base is accidentally decommitted.
+  (func $virtual_allocation_end_locked (param $guest i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32) (local $end i32)
+    (local.set $count (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE)))
+    (block $no_reserve (loop $reserves
+      (br_if $no_reserve (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_RESERVE_TABLE)
+        (i32.shl (local.get $i) (i32.const 3))))
+      (if (i32.eq (i32.and (i32.load (local.get $rec)) (i32.const 0xFFFFF000))
+            (local.get $guest))
+        (then (return (i32.add (local.get $guest) (i32.load offset=4 (local.get $rec))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $reserves)))
+    (local.set $rec (call $virtual_map_find_record (local.get $guest)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $end (i32.add (local.get $guest) (i32.load offset=4 (local.get $rec))))
+    (block $done (loop $chain
+      (local.set $rec (call $virtual_map_find_record (local.get $end)))
+      (br_if $done (i32.eqz (local.get $rec)))
+      (br_if $done (i32.eqz (i32.and (i32.load offset=12 (local.get $rec))
+        (i32.const 0x80000000))))
+      (local.set $end (i32.add (local.get $end) (i32.load offset=4 (local.get $rec))))
+      (br $chain)))
+    (local.get $end))
 
   ;; Look up the record whose base is exactly this guest address.
   (func $virtual_map_find_record (param $guest i32) (result i32)

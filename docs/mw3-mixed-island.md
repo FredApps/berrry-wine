@@ -4,6 +4,14 @@
 on both ARM64 and x86-64. The real-game ABBA does **not** establish an FPS
 improvement, so the change is not enabled in production.
 
+The [four-game follow-up](mixed-island-corpus.md) checks Heroes II/III,
+Quake II and Moorhuhn 3: matching final frames, no established broad speedup,
+and a possible small Moorhuhn regression in the reversed-order repeat.
+
+The [diagnostic follow-up](mixed-island-census.md) measures actual mixed
+coverage and tests `--split-pure`, which preserves the original evaluator for
+pure islands. It remains isolated; game-level gains are not established.
+
 ## Change and correctness boundary
 
 `tools/bench-mw3-mixed-build.js` reproduces frozen `837f0a74` byte-for-byte,

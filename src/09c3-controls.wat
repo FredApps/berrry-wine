@@ -692,6 +692,65 @@
     (i32.store16 offset=4 (local.get $a) (local.get $w))
     (i32.store16 offset=6 (local.get $a) (local.get $h)))
 
+  ;; A custom child's old visible rectangle belongs to the parent again after
+  ;; movement/shrink. Schedule guest painting; never brush-fill application
+  ;; content here. UPDATE_RECT stores a bounding box, so diagonal/L-shaped
+  ;; exposure conservatively includes the intervening pixels. The normal
+  ;; parent-paint path seeds only intersecting visible descendants afterward.
+  (func $ctrl_expose_custom_child
+      (param $hwnd i32) (param $l i32) (param $t i32)
+      (param $r i32) (param $b i32) (param $flags i32)
+    (local $parent i32) (local $cs i32) (local $cw i32) (local $ch i32)
+    (local $nl i32) (local $nt i32) (local $nr i32) (local $nb i32)
+    (local $wh i32)
+    (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd))
+                          (i32.const 0x40000000))) (then (return)))
+    ;; Called before SHOW/HIDE commits its style bits: only previously visible
+    ;; children could have left pixels on the old parent surface.
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd))) (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $cs (call $wnd_client_size_or_host (local.get $parent)))
+    (local.set $cw (i32.and (local.get $cs) (i32.const 0xFFFF)))
+    (local.set $ch (i32.shr_u (local.get $cs) (i32.const 16)))
+    ;; Old child coordinates are relative to the parent's client area.
+    (local.set $l (select (local.get $l) (i32.const 0) (i32.gt_s (local.get $l) (i32.const 0))))
+    (local.set $t (select (local.get $t) (i32.const 0) (i32.gt_s (local.get $t) (i32.const 0))))
+    (local.set $r (select (local.get $r) (local.get $cw) (i32.lt_s (local.get $r) (local.get $cw))))
+    (local.set $b (select (local.get $b) (local.get $ch) (i32.lt_s (local.get $b) (local.get $ch))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x80))) ;; !SWP_HIDEWINDOW
+      (then
+        (local.set $nl (call $ctrl_get_x_s (local.get $hwnd)))
+        (local.set $nt (call $ctrl_get_y_s (local.get $hwnd)))
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $nr (i32.add (local.get $nl) (i32.and (local.get $wh) (i32.const 0xFFFF))))
+        (local.set $nb (i32.add (local.get $nt) (i32.shr_u (local.get $wh) (i32.const 16))))
+        ;; Minimal bounding rectangle of old-minus-new. When the new rectangle
+        ;; spans an entire axis, remove its covered edge on the other axis.
+        (if (i32.and (i32.le_s (local.get $nt) (local.get $t))
+                     (i32.ge_s (local.get $nb) (local.get $b)))
+          (then
+            (if (i32.le_s (local.get $nl) (local.get $l))
+              (then (local.set $l (select (local.get $nr) (local.get $l) (i32.gt_s (local.get $nr) (local.get $l)))))
+              (else (if (i32.ge_s (local.get $nr) (local.get $r))
+                (then (local.set $r (select (local.get $nl) (local.get $r) (i32.lt_s (local.get $nl) (local.get $r))))))))))
+        (if (i32.and (i32.le_s (local.get $nl) (local.get $l))
+                     (i32.ge_s (local.get $nr) (local.get $r)))
+          (then
+            (if (i32.le_s (local.get $nt) (local.get $t))
+              (then (local.set $t (select (local.get $nb) (local.get $t) (i32.gt_s (local.get $nb) (local.get $t)))))
+              (else (if (i32.ge_s (local.get $nb) (local.get $b))
+                (then (local.set $b (select (local.get $nt) (local.get $b) (i32.lt_s (local.get $nt) (local.get $b))))))))))))
+    (if (i32.or (i32.ge_s (local.get $l) (local.get $r))
+                (i32.ge_s (local.get $t) (local.get $b))) (then (return)))
+    (call $update_invalidate_rect (local.get $parent)
+      (local.get $l) (local.get $t) (local.get $r) (local.get $b))
+    (call $nc_flags_set (local.get $parent) (i32.const 2))
+    (call $invalidate_erase_children (local.get $parent)
+      (local.get $l) (local.get $t) (local.get $r) (local.get $b))
+    (call $paint_flag_set (local.get $parent))
+    (call $host_invalidate (local.get $parent)))
+
   ;; Keep CONTROL_GEOM in sync with MoveWindow/SetWindowPos for WAT-managed
   ;; controls and child dialogs. $flags uses SWP_NOSIZE(1) / SWP_NOMOVE(2)
   ;; like SetWindowPos; MoveWindow callers pass 0. No-op only for true
@@ -753,6 +812,16 @@
     ;; deferred SetWindowPos batches share this path too.
     (if (i32.and (local.get $flags) (i32.const 0x0008))
       (then (return)))
+    (if (i32.and
+          (i32.and (i32.or (local.get $moved) (local.get $shrank))
+                   (i32.eqz (call $ctrl_table_get_class (local.get $hwnd))))
+          (i32.and (i32.gt_s (local.get $ow) (i32.const 0))
+                   (i32.gt_s (local.get $oh) (i32.const 0))))
+      (then
+        (call $ctrl_expose_custom_child (local.get $hwnd)
+          (local.get $ox) (local.get $oy)
+          (i32.add (local.get $ox) (local.get $ow))
+          (i32.add (local.get $oy) (local.get $oh)) (local.get $flags))))
     (if (i32.and
           (i32.and
             (i32.or (local.get $moved) (local.get $shrank))

@@ -332,10 +332,19 @@ paths are relative to that run folder; PNG/JPEG/WebP/JSON/text/log files are
 served. Escaping paths and symlinks outside the folder are rejected. A missing
 artifact is reported, not silently treated as a successful capture.
 
+For reviewed gameplay scenes, also record `verification: "reviewed"`, a named
+`gameplaySceneReview.reviewer`, and an explicit `gameplayScreenshots` image-name
+allowlist. The corpus prefers the newest such scene, labels it **Reviewed gameplay
+scene**, and identifies an earlier capture while retaining the latest run outcome.
+Only existing, safely contained screenshot artifacts qualify; diagrams and route
+text cannot promote an image. This records a review assertion, not automatic scene
+recognition or proof of controls/FPS. Without that metadata, ordinary captures
+remain visible without the gameplay badge.
+
 ### Visuals on Overview and Agents
 
-The EXE corpus prioritizes candidates linked to running tasks, then review,
-blocked, and queued tasks. Within those groups, failed/timeout/harness-error
+Within each category the EXE corpus prioritizes candidates linked to running
+tasks, then review, blocked, and queued tasks. Within those groups, failed/timeout/harness-error
 results come before untested, unknown, and passed results; names break ties.
 An In progress banner names the active task, with a matching filter. Completed
 and deferred tasks do not mark a candidate active. Task state and run outcome
@@ -495,14 +504,30 @@ session logs. `CHROME` can point to a Chrome executable.
 
 ## Corpus assessments, source groups and FPS
 
+EXE corpus groups candidates by an editorial genre/application category, with
+category counts and a category filter that combines with search, source group
+and evidence/status filters. Work and failure priority is retained within each
+category. `ops/corpus-categories.js` assigns exact candidate identities from the
+local manifest and registry; installer entries use the target title's category. New unmapped
+identities are explicitly **Unclassified**. Categories do not establish gameplay,
+compatibility or permission to distribute assets.
+
+The corpus includes registry-only entries from `lib/apps.js`, including WEP and
+community games. Exact app IDs and executable paths deduplicate them against the
+manifest using `ops/corpus-inventory.js`, shared with the gameplay coverage audit.
+Unknown registry entries stay visible for classification. Registered executable
+presence is reported separately from the original candidate fixture; neither
+proves companion assets or a playable route. Registry-only rows use the
+**Registry only** source group and retain their stable app ID for run association.
+
 `ops/corpus-status.json` contains a dated evidence assessment and next step for each
 candidate; `ops/corpus-status.md` is the readable audit. The dashboard separates
 this assessment from an individual run outcome and flags a newer run for review.
 Source groups and package/distribution notes are independent of compatibility.
-The 76-candidate manifest does not yet index the WEP and community-remake registry
+The manifest and registry are combined for display, including WEP and community
 collections. Do not treat a demo label as permission to publish its assets.
 
-To publish FPS, add `performance` to the existing run's `result.json`:
+To publish a recorded presentation-event rate, add `performance` to the existing run's `result.json`:
 
 ```json
 {"performance":{"metric":"guest-presents","measuredAt":"2026-10-02T00:00:00Z","renderer":"D3D / WebGL","scene":"Race cockpit","host":"Machine / CPU","gpu":"Actual renderer string","wasmSha256":"exact module hash","historical":false,"samples":[{"frames":600,"durationMs":10000,"p95FrameMs":21.4}],"notes":"Route and measurement conditions"}}
@@ -510,10 +535,13 @@ To publish FPS, add `performance` to the existing run's `result.json`:
 
 Capture counted guest presents/flips over wall time in a reviewed gameplay scene.
 Keep raw measurement output in the run's artifacts. Record hardware GPU versus
-SwiftShader explicitly. FPS is total counted frames / total sampled wall seconds;
-p95 is shown per sample, never averaged across samples. Zero FPS is valid, missing
-measurements are unknown. CLI batch counts, CPU-window seconds and browser rAF
-are not gameplay FPS. Historical FPS remains labelled with renderer and age.
+SwiftShader explicitly. The event rate is total counted events / total sampled wall
+seconds; p95 is shown per sample, never averaged across samples. A zero rate is
+valid; missing measurements are unknown. Legacy `guest-presents` records without
+a qualified frame discriminator display **guest presentation events/s** and
+**p95 presentation interval**, preserving their numbers without certifying FPS.
+CLI batch counts, CPU-window seconds and browser rAF are not gameplay FPS.
+Historical measurements remain labelled with renderer and age.
 Current archived measurements cover NFS3 and GTA2 under SwiftShader only; fresh
 hardware baselines are queued as `OPS-GAME-FPS-BASELINE` and `NFS3-RENDERER-BENCH`.
 
@@ -523,6 +551,16 @@ For an identified raw guest Flip collector, set optional
 numbers but represent event counts, events/second and successive Flip intervals.
 Cards and sample columns then say **guest Flip events/s** and **p95 Flip interval**.
 This discriminator does not certify unique logical frames or displayed FPS.
+
+Source-qualified game-specific render submissions use both `metric` and
+`counterKind` set to `guest-logical-frame-submissions`, with the same counted
+`frames`/`durationMs` samples. The reader requires `qualification.accepted: true`
+and nonempty `sceneReview`, `counterReview`, and `evidence` fields in that object.
+These identify the reviewers and the linked run receipt; they are documentary
+assertions, not automatic revalidation of the raw counter. Cards label this
+**logical gameplay frames/s**. Preserve raw observations, pinned binaries,
+temporal scene captures, counter proof, and instrumentation conditions in the
+run. Physical displayed FPS remains unknown; leave unavailable p95 values null.
 Unknown explicit counter kinds are rejected; omission preserves existing labels.
 The archived NFS3/GTA2 collectors count originating `dx_trace` kind6, not public
 frame callbacks; surface IDs and same-context arm/stop calibration were absent.
@@ -573,3 +611,42 @@ are displayed explicitly. Pending observations live in memory, not a database,
 and disappear when the dashboard server restarts.
 
 For private orchestrator chat and approval buttons, see [Telegram setup and watchdog](TELEGRAM.md).
+
+### Game release readiness
+
+EXE corpus has independent release filters: **Unreleased games**, **Ready for
+release**, and **Unreleased · gameplay reviewed**. The last includes games with
+remaining blockers. Candidate details show gameplay, input, correctness,
+performance, distribution and package gates, their evidence, and the next step.
+This view does not publish games.
+
+`ops/release-readiness.json` records the dated public desktop snapshot and explicit
+per-game reviews. Production membership comes from the archived deployed
+`DESKTOP_APPS`, with source and index hashes verified on read; local registry
+membership is separate. Missing or invalid provenance leaves membership unknown.
+Refresh the archived public index/apps and snapshot together after a deployment.
+
+Ready requires an explicit review tied to a reviewed gameplay run, current
+runtime source hashes, all required gates passed, and no associated open blocker.
+Only the performance gate can be marked not-required, with a documented reason.
+New failed gameplay or source changes invalidate readiness. A short instrumented
+logical-frame sample remains distinct from release performance qualification.
+To review another game, add a record following the existing records and retain
+exact evidence paths and package-specific limitations.
+
+### Launch from EXE corpus
+
+Each registered route with its declared files present has a **Launch in emulator**
+link on the corpus card and in its details. It opens `/emulator/?app=ID` in a new
+tab using this box's runtime and files. Missing routes show the missing paths;
+availability is separate from gameplay verification. **Open production** points
+to the public site only for an app in the verified production desktop snapshot.
+
+The private emulator uses the dashboard's existing authentication gateway. Its
+GET/HEAD handler serves only runtime resources and registered asset closures,
+including file manifests, shared DLLs and CUE dependencies. It supports byte ranges
+and cross-origin isolation for Workers. The private entry enables local candidates
+without changing the production desktop source. Arbitrary repository files,
+private configuration and other symlink targets are not served. The route catalog
+refreshes after 30 seconds; backend code changes require the scoped dashboard
+service restart described in the dashboard handoff.

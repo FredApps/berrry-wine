@@ -10,6 +10,42 @@ const { parseTasks, parseSession, createReader, logWindows } = require('./reader
 const { createServer } = require('./server');
 const { parseProcesses, parseOpenFiles, associate } = require('./processes');
 const { identify } = require('./backfill');
+const { classifyCandidate, groups } = require('./corpus-categories');
+
+test('corpus category assignments cover the manifest without guessing unknown titles', () => {
+  const candidates = require('../test/candidate-corpus/manifest.json').candidates;
+  assert.equal(new Set(groups.flatMap(g => g[2])).size, candidates.length);
+  for (const c of candidates) assert.notEqual(classifyCandidate(c).id, 'unclassified', c.id);
+  assert.equal(classifyCandidate({id:'unknown',name:'Need for Speed',kind:'game'}).id, 'unclassified');
+  assert.equal(classifyCandidate({id:'generally-track-editor'}).id, 'tools');
+  assert.equal(classifyCandidate({id:'quake-2-demo-installer'}).id, 'shooters');
+  assert.equal(classifyCandidate({id:'best-of-moorhuhn'}).id, 'collections');
+  assert.equal(classifyCandidate({id:'bricks'}).id, 'puzzle-board');
+  assert.equal(classifyCandidate({id:'winarc'}).id, 'collections');
+  assert.equal(classifyCandidate({id:'claass'}).id, 'tools');
+});
+
+test('registry-only corpus rows remain visible and exact app aliases share run evidence', async t => {
+  const f = await fixture(); t.after(() => fs.rm(f.root, {recursive:true,force:true}));
+  await f.write('lib/apps.js', `module.exports={APPS:{demo_alias:{exe:'binaries/candidates/demo/game.exe'},freecell:{exe:'binaries/freecell.exe'},unknown:{exe:'binaries/missing.exe'}},DESKTOP_APPS:[['freecell','FreeCell']]};`);
+  await f.write('test/binaries/freecell.exe','fixture');
+  await f.write('scratch/runs/alias/result.json',JSON.stringify({candidateId:'demo_alias',startedAt:'2026-10-03T01:00:00Z',outcome:'unknown'}));
+  const snapshot = await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
+  assert.equal(snapshot.candidates.length,3);
+  const demo = snapshot.candidates.find(c=>c.id==='demo');
+  assert.equal(demo.latestRun.candidateId,'demo_alias');
+  assert.equal(demo.registryOnly,false);
+  assert.deepEqual(demo.appIds,['demo_alias']);
+  const freecell = snapshot.candidates.find(c=>c.id==='freecell');
+  assert.equal(freecell.name,'FreeCell');
+  assert.equal(freecell.category.id,'puzzle-board');
+  assert.equal(freecell.sourceGroup,'Registry only');
+  assert.equal(freecell.fixtureStatus,'present');
+  const unknown = snapshot.candidates.find(c=>c.id==='unknown');
+  assert.equal(unknown.fixtureStatus,'missing');
+  assert.equal(unknown.category.id,'unclassified');
+  assert.ok(!snapshot.warnings.some(w=>w.includes('demo_alias')));
+});
 
 test('historical image association never treats prose as a candidate ID', () => {
   assert.equal(identify('This generally works; open build/caesar3-gameplay.png'), null);
@@ -194,8 +230,28 @@ test('Flip-event performance preserves historical arithmetic and labels without 
   performance.counterKind='unproven-fps';await save();
   assert.equal((await reader.snapshot()).candidates[0].performance,null);
   delete performance.counterKind;await save();normalized=(await reader.snapshot()).candidates[0].performance;
-  assert.equal(normalized.counterKind,undefined);assert.match(render({performance:normalized},true),/0\.0 FPS/);
-  assert.match(render({performance:normalized},true),/<th>p95 frame<\/th>/);
+  assert.doesNotMatch(render({performance:normalized}),/0\.0 FPS/);
+  assert.equal(normalized.counterKind,undefined);assert.match(render({performance:normalized},true),/0\.0 guest presentation events\/s/);
+  assert.match(render({performance:normalized},true),/<th>p95 presentation interval<\/th>/);
+});
+
+test('logical gameplay submissions require review receipts and retain a distinct display label', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const performance={metric:'guest-logical-frame-submissions',counterKind:'guest-logical-frame-submissions',measuredAt:'2026-10-03T00:00:00Z',renderer:'instrumented GDI',scene:'active gameplay',host:'fixture',samples:[{frames:157,durationMs:5120.1,p95FrameMs:null},{frames:155,durationMs:5104.28,p95FrameMs:null}]};
+  const save=()=>f.write('scratch/runs/LOGICAL/result.json',JSON.stringify({candidateId:'demo',startedAt:performance.measuredAt,outcome:'passed',performance}));
+  await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);
+  performance.qualification={accepted:true,sceneReview:'root',counterReview:'independent reviewer',evidence:'qualification.json'};
+  await save();const normalized=(await reader.snapshot()).candidates[0].performance;
+  assert.ok(Math.abs(normalized.fps-312000/10224.38)<1e-10);assert.equal(normalized.samples[0].p95FrameMs,null);
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const source=app.match(/function corpusFps\([\s\S]*?(?=\nfunction corpusView\()/)[0];
+  const render=require('node:vm').runInNewContext(source+'\ncorpusFps',{escape:String,age:()=>'<1m',when:String});
+  assert.match(render({performance:normalized},true),/logical gameplay frames\/s/);
+  assert.doesNotMatch(render({performance:normalized}),/30\.5 FPS/);
+  for(const key of ['sceneReview','counterReview','evidence']){const old=performance.qualification[key];delete performance.qualification[key];await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);performance.qualification[key]=old;}
+  performance.qualification.accepted='true';await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);
+  performance.qualification.accepted=true;performance.counterKind='guest-flip-events';await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);
 });
 
 test('session collection scopes to project, updates changed logs, and attaches explicit task ownership', async t => {
@@ -219,6 +275,27 @@ test('forked Codex logs keep the first worker identity instead of inherited pare
     {type:'session_meta',payload:{id:'parent',cwd:root}},
   ],'/logs/worker.jsonl',false,root);
   assert.equal(session.id,'codex:worker');
+});
+
+test('gameplay images require an explicit reviewed allowlist and remain distinct from newer diagnostics', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const png=await fs.readFile(path.join(f.root,'scratch/runs/R-1/screen.png'));
+  for(const name of ['menu.png','board.png','diagram.png']) await f.write('scratch/runs/R-1/'+name,png);
+  const raw={candidateId:'demo',startedAt:'2026-10-01T12:00:00Z',outcome:'unknown',verification:'reviewed',route:'gameplay',screenshots:['menu.png','board.png'],diagrams:['diagram.png'],gameplaySceneReview:{reviewer:'scene reviewer'},gameplayScreenshots:['board.png','diagram.png','missing.png','../../../secret.png']};
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const save=()=>f.write('scratch/runs/R-1/result.json',JSON.stringify(raw));
+  await save();let state=await reader.snapshot();
+  assert.deepEqual(state.runs[0].gameplayScreenshots.map(x=>x.name),['board.png']);
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const source=app.match(/function candidateCapture\([\s\S]*?(?=\nfunction corpusAssessment\()/)[0];
+  const newer={candidateId:'demo',key:'newer',screenshots:[{name:'error.png'}],gameplayScreenshots:[]};
+  state={runs:[newer,...state.runs]};
+  const capture=require('node:vm').runInNewContext(source+'\ncandidateCapture',{state});
+  const selected=capture({id:'demo',latestRun:newer});
+  assert.equal(selected.shot.name,'board.png');assert.equal(selected.gameplay,true);assert.equal(selected.older,true);
+  delete raw.gameplaySceneReview;await save();assert.equal((await reader.snapshot()).runs[0].gameplayScreenshots.length,0);
+  raw.gameplaySceneReview={reviewer:'reviewer'};raw.verification='unreviewed';await save();assert.equal((await reader.snapshot()).runs[0].gameplayScreenshots.length,0);
+  raw.verification='reviewed';raw.gameplayScreenshots=[];await save();assert.equal((await reader.snapshot()).runs[0].gameplayScreenshots.length,0,'route text cannot promote a menu');
 });
 
 test('visuals preserve explicit session attribution and keep diagrams out of candidate screenshots', async t => {

@@ -4154,11 +4154,11 @@
                 (select (i32.const 0) (i32.const 0x10000) (local.get $prefix_67))))))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA4)) ;; MOVSB
-        (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (i32.const 0))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))
+        (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (local.get $insn_start))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA5)) ;; MOVSD / MOVSW
         (then (if (local.get $prefix_66)
-          (then (if (local.get $prefix_rep) (then (call $te (i32.const 186) (i32.const 0))) (else (call $te (i32.const 183) (i32.const 0)))))
-          (else (if (local.get $prefix_rep) (then (call $te (i32.const 83) (i32.const 0))) (else (call $te (i32.const 87) (i32.const 0))))))
+          (then (if (local.get $prefix_rep) (then (call $te (i32.const 186) (local.get $insn_start))) (else (call $te (i32.const 183) (i32.const 0)))))
+          (else (if (local.get $prefix_rep) (then (call $te (i32.const 83) (local.get $insn_start))) (else (call $te (i32.const 87) (i32.const 0))))))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xAA)) ;; STOSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 84) (i32.const 0))) (else (call $te (i32.const 88) (i32.const 0)))) (br $decode)))

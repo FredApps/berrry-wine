@@ -9,6 +9,24 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+// Keep this regression's compile private; an optional before-source snapshot
+// supplies the negative control without replacing canonical worktree files.
+const compiler = require('./compile-src');
+const compileOriginal = compiler.compileSrcWasm;
+if (process.env.WINDOWPOS_EXPOSURE_BASELINE || process.env.WINDOWPOS_WASM_OUTPUT) compiler.compileSrcWasm = (transform, options) => {
+  const wasm = compileOriginal((file, source) => {
+    if (file === '09c3-controls.wat' && process.env.WINDOWPOS_EXPOSURE_BASELINE)
+      source = fs.readFileSync(process.env.WINDOWPOS_EXPOSURE_BASELINE, 'utf8');
+    return transform ? transform(file, source) : source;
+  }, options);
+  if (process.env.WINDOWPOS_WASM_OUTPUT) {
+    const output = process.env.WINDOWPOS_WASM_OUTPUT;
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, wasm);
+    fs.writeFileSync(output + '.sha256', require('crypto').createHash('sha256').update(wasm).digest('hex') + '\n');
+  }
+  return wasm;
+};
 const { bootRenderHarness } = require('./render-helper');
 
 const ROOT = path.join(__dirname, '..');
@@ -106,6 +124,52 @@ function makeWndProc(observed, changedFlags = SWP_NOZORDER | SWP_NOREDRAW) {
 }
 
 const extraWat = String.raw`
+  (func (export "exposure_create")
+      (param $proc i32) (param $parent i32) (param $x i32) (param $y i32)
+      (param $w i32) (param $h i32) (result i32)
+    (local $hwnd i32)
+    (if (local.get $parent)
+      (then
+        (local.set $hwnd (call $ctrl_create_child (local.get $parent)
+          (i32.const 0) (i32.const 111) (local.get $x) (local.get $y)
+          (local.get $w) (local.get $h) (i32.const 0x54000000) (i32.const 0))))
+      (else
+        (local.set $hwnd (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
+        (call $host_register_dialog_frame (local.get $hwnd) (i32.const 0)
+          (i32.const 0) (local.get $w) (local.get $h) (i32.const 0))
+        (call $wnd_table_set (local.get $hwnd) (local.get $proc))
+        (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x90000000)))))
+    (call $wnd_table_set (local.get $hwnd) (local.get $proc))
+    (call $client_rect_set (local.get $hwnd) (i32.const 0) (i32.const 0)
+      (local.get $w) (local.get $h))
+    (local.get $hwnd))
+  (func (export "exposure_clear") (param $hwnd i32)
+    (call $paint_clear_subtree (local.get $hwnd)))
+  (func (export "exposure_damage") (param $hwnd i32)
+    (call $paint_flag_set_inv (local.get $hwnd)))
+  (func (export "exposure_visible") (param $hwnd i32) (param $visible i32)
+    (drop (call $wnd_set_style (local.get $hwnd)
+      (i32.or (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF))
+        (select (i32.const 0x10000000) (i32.const 0) (local.get $visible))))))
+  (func (export "exposure_rect") (param $hwnd i32) (param $dst i32) (result i32)
+    (call $update_get_rect (local.get $hwnd) (call $g2w (local.get $dst))))
+  (func (export "exposure_erase") (param $hwnd i32) (result i32)
+    (i32.and (call $nc_flags_test (local.get $hwnd)) (i32.const 2)))
+  (func (export "exposure_pump_one") (result i32)
+    (local $hwnd i32)
+    (local.set $hwnd (call $paint_select_next_dirty))
+    (if (local.get $hwnd) (then (call $update_window_now (local.get $hwnd))))
+    (local.get $hwnd))
+  (func (export "exposure_thunk") (param $id i32) (result i32)
+    (local $p i32)
+    (global.set $thunk_guest_base (call $w2g (global.get $THUNK_BASE)))
+    (local.set $p (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))))
+    (i32.store (local.get $p) (i32.const 0))
+    (i32.store offset=4 (local.get $p) (local.get $id))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+    (call $update_thunk_end)
+    (call $w2g (local.get $p)))
   (func (export "test_retire") (param $hwnd i32) (call $wnd_table_remove (local.get $hwnd)))
   (func (export "test_last_error") (result i32) (global.get $last_error))
   (func (export "test_make_window") (param $proc i32) (result i32)
@@ -236,7 +300,8 @@ const extraWat = String.raw`
   const e = harness.exports;
   memory = harness.memory;
 
-  const fixture = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
+  const fixturePath = process.env.WINDOWPOS_FIXTURE || path.join(ROOT, 'test', 'binaries', 'calc.exe');
+  const fixture = fs.readFileSync(fixturePath);
   new Uint8Array(memory.buffer).set(fixture, e.get_staging());
   assert(e.load_pe(fixture.length), 'fixture PE initializes synchronous wndproc dispatch');
   e.init_dx_com_thunks();
@@ -381,7 +446,102 @@ const extraWat = String.raw`
   }
 
   console.log('PASS  WINDOWPOS changing/changed mutation and DefWindowProc geometry semantics');
+  await testCustomExposure();
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
 });
+
+async function testCustomExposure() {
+  const h = await bootRenderHarness({ extraWat, fonts: 'none' }), e = h.exports;
+  const api = require('../src/api_table.json');
+  const thunk = name => e.exposure_thunk(api.find(a => a.name === name).id) >>> 0;
+  const begin = thunk('BeginPaint'), fill = thunk('FillRect'), end = thunk('EndPaint');
+  const invalidate = thunk('InvalidateRect');
+  const order = e.guest_alloc(1024), rc = e.guest_alloc(16);
+  const brushes = [0x000000ff, 0x00ff0000, 0x0000ffff, 0x00ff00ff, 0x0000ff00].map(c => e.test_call_CreateSolidBrush(c));
+  const write = (addr, words) => words.forEach((v,i) => e.guest_write32(addr+i*4,v));
+  // Actual x86 stdcall wndprocs call BeginPaint/FillRect/EndPaint. No host
+  // callback paints for them; erase returns handled and the paint draws the
+  // parent's pattern or the child's two-color marker through its real DC.
+  function painter(rectangles) {
+    const ps = e.guest_alloc(64), code = [], fixups = [], labels = new Map();
+    const emit = (...b) => code.push(...b.map(v=>v&255));
+    const jcc = (op,label) => { emit(0x0f,op,0,0,0,0);fixups.push([code.length-4,label]); };
+    const call = addr => emit(0xb8,...u32(addr),0xff,0xd0);
+    emit(0x55,0x89,0xe5,0x53,0x56); // ebp frame, preserve ebx/esi
+    emit(0x83,0x7d,0x0c,0x0f);jcc(0x85,'other');
+    emit(0x8b,0x0d,...u32(order),0x8b,0x45,0x08,0x89,0x04,0x8d,...u32(order+4),0xff,0x05,...u32(order));
+    emit(0x68,...u32(ps),0xff,0x75,0x08);call(begin);emit(0x89,0xc6);
+    for(const [l,t,r,b,brush] of rectangles){const rect=e.guest_alloc(16);write(rect,[l,t,r,b]);emit(0x68,...u32(brush),0x68,...u32(rect),0x56);call(fill);}
+    emit(0x68,...u32(ps),0xff,0x75,0x08);call(end);
+    labels.set('other',code.length);
+    // The real VCL tile invalidates itself after its geometry notification.
+    // Exercise that guest behavior without having the test host paint it.
+    emit(0x83,0x7d,0x0c,0x47);jcc(0x85,'finish');
+    emit(0x6a,0,0x6a,0,0xff,0x75,0x08);call(invalidate);
+    labels.set('finish',code.length);emit(0xb8,1,0,0,0,0x5e,0x5b,0x5d,0xc2,16,0);
+    for(const [at,label] of fixups)u32(labels.get(label)-(at+4)).forEach((v,i)=>code[at+i]=v);
+    const proc=e.guest_alloc(code.length);code.forEach((b,i)=>e.guest_write8(proc+i,b));return proc;
+  }
+  const pattern=[];for(let x=0;x<160;x+=4)pattern.push([x,0,x+4,80,brushes[(x/4)%2]]);
+  const parent=e.exposure_create(painter(pattern),0,0,0,160,80)>>>0;
+  const tile=e.exposure_create(painter([[0,0,20,30,brushes[2]],[20,0,40,30,brushes[3]]]),parent,80,10,40,30)>>>0;
+  const sibling=e.exposure_create(painter([[0,0,12,30,brushes[4]]]),parent,100,10,12,30)>>>0;
+  const unrelated=e.exposure_create(painter([[0,0,10,10,brushes[4]]]),parent,140,60,10,10)>>>0;
+  assert.strictEqual(e.ctrl_get_class(tile),0,'regression uses guest custom child, not WAT Button');
+  const resetOrder=()=>e.guest_write32(order,0);
+  function pump(){const selected=[];for(let i=0;i<32;i++){const hwnd=e.exposure_pump_one()>>>0;if(!hwnd)return selected;selected.push(hwnd);}throw Error('paint did not drain');}
+  const rect=hwnd=>e.exposure_rect(hwnd,rc)?[0,1,2,3].map(i=>e.guest_read32(rc+i*4)|0):null;
+  e.exposure_damage(parent);pump();
+  const dc=e.test_call_GetDC(parent)>>>0;
+  const pixel=(x,y)=>e.test_call_GetPixel(dc,x,y)>>>0;
+  const expected=x=>(Math.floor(x/4)%2?0x00ff0000:0x000000ff);
+  const flags=0x14;
+  e.exposure_clear(parent);resetOrder();
+  assert.strictEqual(e.test_call_SetWindowPos(tile,60,10,40,30,flags),1);
+  const exposed=rect(parent), erase=e.exposure_erase(parent), selected=pump();
+  assert.strictEqual(pixel(116,20),expected(116),'vacated custom-child pixels restore patterned parent');
+  assert.deepStrictEqual(exposed,[100,10,120,40],'left move exposes only old right strip');
+  assert.strictEqual(erase,2,'exposure requests erase through BeginPaint');
+  assert.strictEqual(selected[0],parent,'parent guest paints before intersecting descendants');
+  assert(selected.includes(sibling),'overlapping exposed sibling is repainted');
+  assert(!selected.includes(unrelated),'unrelated sibling is not repainted');
+  assert.strictEqual(pixel(106,20),0x0000ff00,'overlapping sibling remains green');
+  assert.strictEqual(pixel(65,20),0x0000ffff,'moved child remains painted at new origin');
+  assert.strictEqual(pixel(145,65),0x0000ff00,'unrelated sibling pixels stay intact');
+  // Repeated small moves are the Tetravex failure trigger.
+  for(const x of [50,40,30]){e.test_call_SetWindowPos(tile,x,10,40,30,flags);pump();assert.strictEqual(pixel(x+45,20),expected(x+45));}
+  // Diagonal exposure forms an L: bounding-box painting includes part of the
+  // new child, which must repaint afterward instead of being brush-wiped.
+  e.exposure_clear(parent);e.test_call_SetWindowPos(tile,20,15,40,30,flags);
+  assert.deepStrictEqual(rect(parent),[30,10,70,40]);pump();
+  assert.strictEqual(pixel(25,20),0x0000ffff,'included new child survives parent L-shape bounding paint');
+  assert.strictEqual(pixel(65,20),expected(65));
+  // A pure shrink with NOMOVE is separate from movement.
+  e.exposure_clear(parent);e.test_call_SetWindowPos(tile,999,999,20,30,flags|2);
+  assert.deepStrictEqual(rect(parent),[40,15,60,45]);pump();
+  assert.strictEqual(pixel(55,20),expected(55));
+  e.exposure_clear(parent);e.test_call_SetWindowPos(tile,20,15,20,30,flags);
+  assert.strictEqual(rect(parent),null,'same position/size creates no exposure');
+  e.test_call_SetWindowPos(tile,20,15,30,35,flags);
+  assert.strictEqual(rect(parent),null,'pure growth at unchanged origin exposes no old parent pixels');
+  e.test_call_SetWindowPos(tile,20,15,20,30,flags|8);e.exposure_clear(parent);
+  e.test_call_SetWindowPos(tile,10,15,20,30,flags|8);
+  assert.strictEqual(rect(parent),null,'NOREDRAW commits geometry without parent damage');
+  e.exposure_visible(parent,0);e.test_call_SetWindowPos(tile,0,15,20,30,flags);
+  assert.strictEqual(rect(parent),null,'hidden ancestor suppresses exposure');
+  e.exposure_visible(parent,1);e.exposure_visible(tile,0);e.test_call_SetWindowPos(tile,5,15,20,30,flags);
+  assert.strictEqual(rect(parent),null,'hidden child suppresses exposure');
+  e.exposure_visible(tile,1);e.test_call_SetWindowPos(tile,-10,15,20,30,flags|8);e.exposure_clear(parent);
+  e.test_call_SetWindowPos(tile,-20,15,20,30,flags);
+  assert.deepStrictEqual(rect(parent),[0,15,10,45],'old exposure clips to parent client bounds');pump();
+  // A hide combined with movement exposes the whole old rectangle; the new
+  // invisible bounds must not be subtracted. Pure hide policy stays elsewhere.
+  e.test_call_SetWindowPos(tile,10,10,20,30,flags|8);e.exposure_clear(parent);
+  e.test_call_SetWindowPos(tile,15,10,20,30,flags|0x80);
+  assert.deepStrictEqual(rect(parent),[10,10,30,40],'move+hide exposes all formerly visible pixels');pump();
+  assert.strictEqual(pixel(25,20),expected(25),'hidden moved child cannot cover parent repaint');
+  e.test_call_ReleaseDC(parent,dc);
+  console.log('PASS  custom guest-child movement/shrink exposure, patterned pixels, sibling ordering, visibility and NOREDRAW');
+}

@@ -473,6 +473,28 @@ function makeManager(backend, extraOpts) {
 
   // --- net_wait -------------------------------------------------------------
   {
+    const backend = makeBackend([[{}]]);
+    const tm = makeManager(backend);
+    const h = tm.createThread(0x401500, 0, 0, 0);
+    await tm.runWorkerSlices(1000);
+    const link = backend.links[0];
+    link.slice = async () => {
+      backend.onRpcSlot(link.slot);
+      tm.exitThread(7);
+      backend.onRpcSlotEnd();
+      check(backend.dropped.length === 0,
+        'ExitThread keeps its Worker alive until the slice reply (DLL detach)');
+      return { eip: 0, yield: 2, ms: 1 };
+    };
+    await tm.runWorkerSlices(1000);
+    check(tm.getExitCodeThread(h) === 7, 'in-flight ExitThread retains its exit code');
+    check(backend.dropped.length === 1 && backend.dropped[0] === link.slot,
+      'in-flight ExitThread retires its Worker after the slice reply');
+    await tm.runWorkerSlices(1000);
+    check(backend.dropped.length === 1, 'exited Worker is retired only once');
+  }
+
+  {
     const backend = makeBackend([[{ yield: 8 }]]);
     const tm = makeManager(backend);
     tm.createThread(0x401500, 0, 0, 0);

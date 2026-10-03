@@ -414,6 +414,8 @@ function muldivExpected() {
 // only place the wasm engine's narrow stores and its missing reload/flush
 // meet a real program.
 let PASSES = null;
+// chain: the programs live in one E1 arena and link to each other (uop-live.js).
+let CHAIN = false;
 const OPT = require('../tools/toyvm/uop-opt');
 
 async function run(com, uop, sched = { sampleAfter: 1e6, profileFor: 2e6, every: 4e6 }) {
@@ -422,7 +424,7 @@ async function run(com, uop, sched = { sampleAfter: 1e6, profileFor: 2e6, every:
     budget: 200e6,
     slice: 5e4,
     log: () => {},
-    uop: uop ? { ...sched, passes: PASSES } : null,
+    uop: uop ? { ...sched, passes: PASSES, chain: CHAIN } : null,
   });
   const regs = r.vm.getAll();
   const ram = crypto.createHash('sha256')
@@ -452,7 +454,8 @@ async function check(name, bytes, want, keys) {
   assert.strictEqual(on.dispatched, off.dispatched,
     `${name}: the dispatch clock moved: ${on.dispatched} with the µop tier vs ${off.dispatched}`);
   console.log(`${name}: ok  ${off.dispatched} dispatches, ${(100 * u.steps / on.dispatched).toFixed(1)}% in µop, `
-    + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`);
+    + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`
+    + (CHAIN ? ` chains ${u.chains}` : ''));
   return on;
 }
 
@@ -486,6 +489,7 @@ async function checkSame(name, bytes, sched, { noBails = false, bails = false } 
   }
   console.log(`${name}: ok  ${off.dispatched} dispatches, ${(100 * u.steps / on.dispatched).toFixed(1)}% in µop, `
     + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`
+    + (CHAIN ? ` chains ${u.chains}` : '')
     + (bails ? ` ${JSON.stringify((u.heads || []).map((h) => h.bailAt))}` : ''));
 }
 
@@ -514,6 +518,10 @@ async function main() {
     console.log(`-- resident (${name}):`);
     await suite();
   }
+  PASSES = null;
+  CHAIN = true;
+  console.log('-- chained arena (allRP):');
+  await suite();
   console.log('test-toyvm-uop-live: ok');
 }
 

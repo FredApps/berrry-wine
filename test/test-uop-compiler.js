@@ -812,6 +812,26 @@ CASES.push({
 // absolute cell, reloaded inside the loop as the end bound, compared against
 // esi, and restored before ret.
 const MMX_SAVE = (a) => a.buf + 0x1F000;
+// Seed a live x87 tag before entering compiled code. EMMS must empty it
+// without changing TOP/status, MMX cells, GPRs, or the CMP flags SETB reads.
+// The pre arm is essential: a hot-only arm could clear tags while warming up
+// in threaded code and accidentally accept an EMMS lowered as a no-op.
+const EMMS_BODY = [[0x39, 0xF7], [0x0F, 0x77], [0x0F, 0x92, 0xC2]];
+CASES.push({ name: 'mmx-emms', regs: { ecx: N }, head: 'l', emms: true,
+  code: [[0xDB, 0xE3], [0xD9, 0xE8], L('l'), ...EMMS_BODY, 0x49, J(cc.NZ, 'l'), 0xC3] });
+CASES.push({ name: 'mmx-emms-trace', regs: { ecx: N }, head: 'f', emms: true, trace: true,
+  code: [[0xDB, 0xE3], [0xD9, 0xE8], JMP('main'), L('f'),
+    MM.rr(0xFC, 0, 1), MM.rr(0xF9, 2, 3), MM.rr(0xEF, 4, 5),
+    MM.rr(0x60, 6, 7), MM.rr(0xFD, 1, 2), ...EMMS_BODY,
+    J(cc.Z, 'ret'), 0x43, JMP('ret'), L('ret'), 0xC3,
+    // BSR prevents the surrounding loop from compiling; the callee must
+    // enter as a forward trace (at least eight supported instructions).
+    L('main'), CALL('f'), [0x0F, 0xBD, 0xD3], 0x49, J(cc.NZ, 'main'), 0xC3] });
+for (const [name, prefix, nommx] of [['gate', [], true], ['66', [0x66], false],
+  ['f2', [0xF2], false], ['f3', [0xF3], false]]) {
+  CASES.push({ name: 'mmx-emms-decline-' + name, regs: { ecx: N }, declines: true, nommx,
+    code: [L('l'), [...prefix, 0x0F, 0x77], 0x49, J(cc.NZ, 'l'), 0xC3] });
+}
 CASES.push({
   name: 'mmx-esp-bound', regs: { ecx: 0 }, head: 'l',
   setup: (mem, g2w, a) => new DataView(mem.buffer).setUint32(g2w(MMX_SAVE(a) + 4), a.buf + 8 * N, true),
@@ -988,6 +1008,7 @@ function runCase(inst, c, a, codeAddr, mode) {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
     regs: REGS.map((r) => e['get_' + r]() >>> 0),
     mmx: e.get_mmx ? [0, 1, 2, 3, 4, 5, 6, 7].map((k) => BigInt.asUintN(64, e.get_mmx(k)).toString(16)).join(',') : '',
+    fpu: c.emms ? [e.get_fpu_tags(), e.get_fpu_top(), e.get_fpu_sw()] : null,
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
     blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
     traces: e.uop_cstat(26) - before.traces,
@@ -1934,6 +1955,9 @@ async function main() {
       if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
       if (st.mem !== off.mem) diffs.push('memory differs');
       if (st.mmx !== off.mmx) diffs.push(`mmx ${st.mmx} vs ${off.mmx}`);
+      if (c.emms && (st.fpu[0] !== 0 || off.fpu[0] !== 0 || JSON.stringify(st.fpu) !== JSON.stringify(off.fpu))) {
+        diffs.push(`FPU tags/TOP/status ${st.fpu} vs ${off.fpu}; tags must be empty`);
+      }
       // Batch stops. Under the block clock the program charges the cuts
       // threaded code makes once it has split at every in-loop entry (steady
       // state); "pre" installs before threaded code has taken every path, so

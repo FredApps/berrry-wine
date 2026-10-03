@@ -4,6 +4,8 @@
 const fs=require('fs'),path=require('path'),cp=require('child_process'),vm=require('vm'),os=require('os'),crypto=require('crypto'),assert=require('assert');
 const [runnerArg,modulesArg,outArg,orderArg='p,pc,pc,p']=process.argv.slice(2);
 assert(outArg,'RUNNER MODULES OUT ORDER');
+const order=orderArg.split(',');
+assert(order.every(v=>['p','pc','pcm','pcp'].includes(v)), 'unknown variant');
 const runner=path.resolve(runnerArg),modules=path.resolve(modulesArg),out=path.resolve(outArg);
 assert(!fs.existsSync(out)||fs.readdirSync(out).length===0,'output must be a fresh directory');
 fs.mkdirSync(out,{recursive:true});
@@ -17,11 +19,11 @@ const meta={node:process.version,v8:process.versions.v8,cpu:os.cpus()[0].model,l
   profile:!!process.env.FP_PROFILE,clockAudit:!!process.env.FP_CLOCK_AUDIT,
   hashes:Object.fromEntries(['test/run.js','host.js','lib/apps.js','lib/filesystem.js','lib/worker-imports.js','lib/host-imports.js'].map(f=>[f,sha(path.join(runner,f))])),
   helpers:Object.fromEntries(['bench-mw3-repeat.js','bench-fp-filetime-pin.js'].map(f=>[f,sha(path.join(__dirname,f))])),
-  modules:Object.fromEntries(['p','pc'].map(v=>[v,sha(path.join(modules,v,'candidate.wasm'))]))};
+  modules:Object.fromEntries([...new Set(order)].map(v=>[v,sha(path.join(modules,v,'candidate.wasm'))]))};
 fs.writeFileSync(path.join(out,'host.json'),JSON.stringify(meta,null,2));
 const seen={};
-for(const arm of orderArg.split(',')){
-  assert(['p','pc'].includes(arm),arm);const tag=arm+(seen[arm]=(seen[arm]||0)+1),stem=path.join(out,tag);
+for(const arm of order){
+  const tag=arm+(seen[arm]=(seen[arm]||0)+1),stem=path.join(out,tag);
   const env={...process.env};if(process.env.FP_DIAG)env.FP_BATCH_TRACE=stem+'.batches.jsonl';
   // Keep normal tiering; preserve the actual game's generated native code.
   const nativeFlags=process.env.FP_PROFILE?['--perf-prof',`--perf-prof-path=${stem}.native`]:[];

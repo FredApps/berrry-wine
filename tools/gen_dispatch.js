@@ -275,6 +275,8 @@ const gpuApis = new Map([
   ['glActiveTextureARB', 1],
   ['glClientActiveTextureARB', 1],
   ['glMultiTexCoord2fARB', 3],
+  ['glGetTexLevelParameteriv', 4],
+  ['glClearDepth', 2],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 
@@ -460,6 +462,10 @@ comInterfaces.push({ prefix: 'IFtmMarshal', global: 'DX_VTBL_FTM_MARSHAL' });
 // registry-offset reason as every entry above.
 comInterfaces.push({ prefix: 'IDirectInputDevice7', global: 'DX_VTBL_DIDEV7', extends: 'IDirectInputDevice2' });
 comInterfaces.push({ prefix: 'IDirectSound8', global: 'DX_VTBL_DSOUND8', extends: 'IDirectSound' });
+
+// Separate Unicode DirectPlay4 interface; never aliases ANSI method semantics.
+comInterfaces.push({ prefix: 'IDirectPlay4W', global: 'DX_VTBL_DPLAY4W' });
+
 
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));

@@ -347,6 +347,92 @@ the way `aw-census.js` should have been.
 | 6 | **DONE** | The copied CLI client is `test/control-session.js` (`35a05fff`). One traversal- and symlink-safe `test/static-server.js` now serves all 39 browser-test consumers (`93ee1a34`, `7b45245a`, `a3ee4d48`), with explicit hooks for MIME overrides, cache policy, COOP/COEP, path rewrites and protocol routes. A recursive ratchet allows `http.createServer` only in that helper; its real-HTTP policy/path tests, the iOS custom-route browser test and the canonical/compat build pass. |
 | 7 | **PARTIAL** | `gen_dispatch.js` now emits 186 opt-in `test_call:true` wrappers from each API's `nargs`; the 63 helpers that synthesize guest stacks or carry other setup remain hand-written. The same table/generator owns 34 reviewed constant compatibility stubs (the BASS no-audio surface plus bounded OLE/structured-storage fallbacks) as explicit `{pop,ret}` data, and the silent-handler ratchet distinguishes those metadata stubs from its 363 remaining hand-written quiet handlers. `mixerOpen`/`mixerClose` now own distinct live handles with documented invalid-handle retirement; the related mixer queries validate device IDs, handles, flags, caller structure sizes and bounded capability copies; and `mixerMessage` reports invalid or unsupported private-driver requests instead of false success. Common-controls DPA/DSA destruction now validates and retires opaque handles and frees both handle and backing storage rather than leaking behind unconditional success. The adjacent Comctl32 allocator family now tracks live requested extents: `GetSize` is exact, `Free` retires storage, and `ReAlloc` preserves bounded owned bytes rather than over-reading the old block. `MenuHelp` now has the Win98 seven-argument ABI, resolves command/direct-popup/nested-popup RT_STRING ids, and swaps the status bar's transient simple pane without destroying its ordinary text. `ShowHideMenuCtl` now toggles its mapped control/menu visibility and check state and rejects absent mappings instead of returning unconditional success. `GetEffectiveClientRect` now begins with the same live client geometry as `GetClientRect`, skips the menu pair, and subtracts each mapped child's window rectangle according to its raw Win98 `WS_VISIBLE` state; the shared `SubtractRect` path now implements the documented one-axis bounding-box subtraction instead of containment-only behavior. `CreateMappedBitmap` now maps indexed resource palettes through caller-supplied or Win98's six default system-color entries, refreshes the browser's derived bitmap presentation, enforces the native 16-entry map cap, implements `CMB_MASKED` as Win98's double-width mapped-image/black-white-mask bitmap, and returns NULL for a missing resource instead of inventing a blank toolbar image. `CreatePropertySheetPageA` now validates and copies the caller-declared Win98 page structure into an owned, stale-safe handle; `DestroyPropertySheetPage` retires that storage; and `PropertySheetA` resolves both inline page arrays and transferred `HPROPSHEETPAGE` arrays instead of rejecting the latter. Callback-bearing pages still fail explicitly until their synchronous `PSPCB_CREATE`/`PSPCB_RELEASE` continuation is implemented. Migrating/reviewing the rest remains open. |
 | 8 | **PARTIAL** | The obsolete hash-cache fallback description is corrected (`2b82fe43`), and all 58 dated silent-handler transitions now live in `docs/silent-handler-inventory.md` instead of executable gate code (`fd88ad47`). The seven PNG inspector commands now share one decoder/pixel/histogram/crop implementation while retaining their historical CLI names and `png-crop-desktop` exports; structural and functional coverage exercises every entry point (`af3b4eec`). Browser and CLI named event/mutex imports share one bounded `lib/mem-utils.js` decoder and translate each guest pointer once (`5d524a8b`). All production JS-owned guest-pointer translators now converge on `guestToWasm`: the normal path uses the WAT export, the fallback uses direct/DIB/packed-PTE translation, and the renderer's legacy allocation-record scan is gone (`b3e6d430`). The debug picker no longer carries `OTHER_APP_IDS` / `OTHER_GAME_IDS`: the affected `APPS` entries own their picker-section metadata, and a regression requires exact coverage of the real `Other` optgroup (`fff0188e`). The 09a/09c3 split remains open at roughly 39,000 lines. |
+## Pass-5 addendum — 2026-09-09 verification tick
+
+*HEAD `c1c1ef56`, 58 commits since `8b114034` (204 files, +8,438 / −1,477).
+A detached worktree at HEAD builds clean: **exit 0**, 1,049,318 B, 233 data
+segments, no overlaps. Alongside main there is a 19-commit branch in the
+isolated worktree `/private/tmp/wa-page-access-bench` (base `ed89927e`, two
+commits behind HEAD; 68 files, +4,035 / −1,821) that carries most of the
+Pass-5 drain; it was read and its censuses re-run here, not built. The
+shared tree itself holds an uncommitted OLE/version-info lane (32 files,
++1,282) that belongs to another agent and was not reviewed.*
+
+**Landed on main.** The `--control-stdin` client is `test/control-session.js`
+(`35a05fff`): 17 files import it and **zero** copies of the reply parser
+remain. `MessageBoxA/W` share one body (`8f80e502`), and `aw-census.js
+--check` is a build ratchet (`76883d22`), so main reads DIVERGENT 14 with
+the count unable to grow. `wat-dup-census.js` is committed (`f50f1647`).
+The silent-handler pin fell 439 → 437. Run against this window's additions,
+the census finds **no** new exact group and no new near pair — the second
+window in a row where the new code does not copy itself.
+
+**On the branch, pending integration.** Read as closing Pass-5 items,
+with the branch's own status table (`0ba61159`) agreeing on every row:
+
+- Rec 1, **owners by symbol** — `25af708a` rewrites all 185 clauses to
+  `(owner "file:$symbol")`, `check-region-decls.js` resolves the symbol to
+  the actual top-level WAT form and demands a real region use inside it,
+  and the stale-owner baseline JSON shrinks to nothing. This is the fix
+  §P5-2.1 asked for, in the stricter of the two forms.
+- Rec 5, **`$guest_strdup`** — three commits (`fbf03c8a`, `9d3db910`,
+  `f351d065`, net −27 lines) give it 12 call sites; open-coded
+  `heap_alloc(len+1)` sites drop from 18 to 12, the rest being the wide and
+  length-bounded variants the helper does not cover.
+- Rec 4, **census as gate** — the branch's `wat-dup-census.js` alpha-
+  normalizes parameter and local names (the gap §P5-3 admitted) and runs
+  `--check` in `build.sh` at a 197-group / 928-member baseline; it reads
+  **195** on the branch. The A/W drain (`a3e45f5b` console title,
+  `e1012c2e` MCI string, `355740b2` user/computer name, `84b01e51`
+  clipboard format, `13dcec6b` CharLower, `a4a3b25d` fixed directories,
+  `f4b08f3c` LoadLibraryEx) takes DIVERGENT from 14 to **3**, all
+  intentional; mixer control details (`e138f4b8`), the CRT byte-compare
+  twins (`43052f9f`) and the legacy D3D `CreateLight`/`CreateViewport`
+  triplets (`dfd4f4a5`) are shared.
+- Rec 8, silent-handler history moved to `docs/silent-handler-inventory.md`
+  (`fd88ad47`); the `04-cache.wat` hash-cache comment corrected (`2b82fe43`).
+
+**Still open, and the churn tax is still being paid until the branch
+lands.** On main this window: `00-regions.wat` 15 of 17 commits anchor-only,
+`run-all.sh` 17 of 18 membership-only, `index.html` 11 of 13 bump-only,
+`test-process-boot-yields.js` 3 of 6. Recs 2 (one version source, now v296
+typed in three files) and 3 (tier membership by convention; 889 hand-listed
+entries) have no owner on either tree. Rec 7 (`stub`/`test_call` fields in
+`api_table.json`) has not started; the wrappers grew 246 → 249 (1,721
+lines).
+
+**New this window — the helper-exists-nobody-reaches-for-it pattern, again.**
+`tools/png-diff.js` exports `diffPng` and exactly **one** test imports it,
+while **16** test files define their own `pixelDiff` over `PNG.sync.read`.
+Four of the 16 arrived this window (`test-snood-candidate`,
+`test-worms2-candidate`, `test-rct-gameplay`, `test-nethack-win32`), and the
+Snood and Worms 2 files share 22 identical lines (sleep, a local `assert`,
+the PNG loader, the pixel loop). It is the control-session story one week
+later: a `test/png-helper.js` (or exporting from `render-helper.js`) is the
+same afternoon of work. Smaller: `test-win16-version` and
+`test-file-version-info` each build a `VS_VERSION_INFO` fixture by hand
+with five identical `writeUInt32LE` lines, while `tools/pe-version.js`
+already knows the layout; the builder belongs beside the parser.
+
+**Hygiene.** `git worktree list` shows **244** registered worktrees, 181 of
+them prunable — the isolated-worktree discipline Pass 4 asked for is now
+the norm and nobody runs `git worktree prune`. The Deus Ex integration
+(`c1c1ef56`) had to `--autostash` around another lane's uncommitted edits
+on the shared tree and restore them afterwards; that worked, and it is the
+P4-4 risk being handled by hand rather than removed.
+
+| | 09-05 (P5) | 09-09 main | 09-09 branch |
+|---|---|---|---|
+| `src/*.wat` lines | 211,546 | **213,414** | — |
+| `api_table.json` | 3,300 | **3,317** | — |
+| Silent-handler pin | 439 | **437** | — |
+| Test files | 845 | **871** | — |
+| Exact WAT duplicate groups | 204 | 205 | **195** (gated 197) |
+| A/W DIVERGENT / BOTH_STUB | 15 / 1 | **14 / 1** (gated) | **3 / 1** |
+| Open-coded `strdup` sites | 18 | 18 | **12** |
+| `(owner …)` form | `file:line` | `file:line` | **`file:$symbol`** |
+| `test_call_*` wrappers / lines | 246 / 1,704 | **249 / 1,721** | — |
+| Biggest parts | 09a 20,100 / 09c3 18,383 | **20,666 / 18,574** | — |
 
 Follow-up: the callback limitation recorded in row 7 is now closed in Win98's
 native order. Newer-sized records receive return-ignored `PSPCB_ADDREF` during

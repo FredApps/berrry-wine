@@ -88,6 +88,11 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
       (i32.load offset=0 (global.get $reg_base)))`).join('\n')}
     (func (export "back_bits") (param $d i32) (result i32)
       (load.field DxObject misc1 (call $d3ddev_rt_entry (local.get $d))))
+    (func (export "stretch") (param $d i32) (param $s i32) (param $sr i32) (param $t i32) (param $tr i32) (param $filter i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+      (call $gs32 (i32.const 0x074ff018) (local.get $filter))
+      (call $handle_IDirect3DDevice9_StretchRect (local.get $d) (local.get $s) (local.get $sr) (local.get $t) (local.get $tr) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))
     (func (export "blockers") (param $d i32) (result i32)
       (call $gl32 (i32.add (call $d3d9_program_state (local.get $d)) (i32.const 21772))))
   `});
@@ -156,18 +161,84 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     createSoftwareWorker:()=>new WorkerConsumer(new Worker(path.join(__dirname,'../lib/d3d-render-worker.js')),
       {module,memory,sigs,imageBase:e.get_image_base()>>>0,reclaimHeap:h=>e.d3d_render_adopt_free_list(h)})});
   const invoke=async(fn,...args)=>{let value=fn(...args);while(e.get_d3d_render_token()){
-    if([e.Device9_ColorFill,e.Device9_UpdateSurface,e.Surface9_GetDC,e.Surface9_ReleaseDC,e.Surface9_Release,e.Surface9_LockRect,e.Surface9_UnlockRect].includes(fn))
+    if([e.stretch,e.Device9_ColorFill,e.Device9_UpdateSurface,e.Surface9_GetDC,e.Surface9_ReleaseDC,e.Surface9_Release,e.Surface9_LockRect,e.Surface9_UnlockRect].includes(fn))
       assert.strictEqual(e.get_esp()>>>0,0x074ff000,'pending copy/fill/DC preserves stdcall stack');
     await bridge.wait(e.get_d3d_render_token());value=fn(...args);}
     if(fn===e.Device9_ColorFill)assert.strictEqual(e.get_esp()>>>0,0x074ff014,'completed ColorFill pops arguments once');
     if(fn===e.Surface9_GetDC||fn===e.Surface9_ReleaseDC)assert.strictEqual(e.get_esp()>>>0,0x074ff00c,'completed DC call pops once');
     if(fn===e.Surface9_LockRect)assert.strictEqual(e.get_esp()>>>0,0x074ff014,'completed LockRect pops once');
     if(fn===e.Surface9_UnlockRect)assert.strictEqual(e.get_esp()>>>0,0x074ff008,'completed UnlockRect pops once');
+    if(fn===e.stretch)assert.strictEqual(e.get_esp()>>>0,0x074ff01c,'completed StretchRect pops once');
     return value>>>0;};
   const aliases=async()=>{
     e.guest_write32(pp+44,0);
     ok(e.create_device(pp,out),'alias device');const ad=read(out);
     ok(e.Device9_GetRenderTarget(ad,0,out),'alias backbuffer');let ab=read(out);
+    // Real executor readback -> native resampling -> executor upload, on both
+    // synchronous and asynchronous backends. Four corners form a linear ramp.
+    ok(e.color(ad,2,2,21,1,out));const stretchSource=read(out);
+    ok(e.color(ad,6,6,21,1,out));const stretchDest=read(out);
+    const sr=alloc(16),dr=alloc(16);
+    ok(await invoke(e.Surface9_LockRect,stretchSource,lock,0,0));
+    const sb=read(lock+4),sp=read(lock);
+    for(let y=0;y<2;y++)for(let x=0;x<2;x++)e.guest_write32(sb+y*sp+x*4,(0xff000000+(y*160+x*80)*0x010101)>>>0);
+    ok(await invoke(e.Surface9_UnlockRect,stretchSource));
+    for(const filter of[0,1,2]){
+      ok(await invoke(e.Device9_ColorFill,ad,stretchDest,0,0xff112233));
+      write(sr,[0,0,2,2]);write(dr,[1,1,5,5]);
+      let result=e.stretch(ad,stretchSource,sr,stretchDest,dr,filter);
+      if(e.get_d3d_render_token()){
+        assert.strictEqual(e.get_esp()>>>0,0x074ff000);
+        // Neither rectangle nor the filter is reread after either park.
+        write(sr,[-1,0,999,999]);write(dr,[0,0,1,1]);
+        result=await invoke(e.stretch,ad,stretchSource,sr,stretchDest,dr,99);
+      }
+      ok(result,'filtered subrectangle StretchRect');
+      ok(await invoke(e.Surface9_LockRect,stretchDest,lock,0,16));
+      const db=read(lock+4),dp=read(lock),linear=[0,20,60,80];
+      for(let y=0;y<6;y++)for(let x=0;x<6;x++){
+        const inside=x>=1&&x<5&&y>=1&&y<5;
+        const v=inside?(filter===2?linear[x-1]+2*linear[y-1]:((x-1)>>1)*80+((y-1)>>1)*160):0;
+        assert.strictEqual(read(db+y*dp+x*4),inside?(0xff000000+v*0x010101)>>>0:0xff112233,
+          'StretchRect preserves exterior and samples at pixel centers');
+      }
+      ok(await invoke(e.Surface9_UnlockRect,stretchDest));
+    }
+    write(sr,[0,0,2,2]);write(dr,[0,0,1,1]);
+    ok(await invoke(e.stretch,ad,stretchSource,sr,stretchDest,dr,2),'bilinear downsample');
+    ok(await invoke(e.Surface9_LockRect,stretchDest,lock,0,16));
+    assert.strictEqual(read(read(lock+4)),0xff787878,'four corners average at destination center');
+    ok(await invoke(e.Surface9_UnlockRect,stretchDest));
+    write(sr,[1,0,2,2]);write(dr,[0,0,6,6]);
+    ok(await invoke(e.stretch,ad,stretchSource,sr,stretchDest,dr,2),'source subrectangle edge clamps');
+    ok(await invoke(e.Surface9_LockRect,stretchDest,lock,0,16));
+    assert.strictEqual(read(read(lock+4)),0xff505050);assert.strictEqual(read(read(lock+4)+5*read(lock)+20),0xfff0f0f0);
+    ok(await invoke(e.Surface9_UnlockRect,stretchDest));
+    write(sr,[-1,0,2,2]);bad(await invoke(e.stretch,ad,stretchSource,sr,stretchDest,0,2));
+    bad(await invoke(e.stretch,ad,stretchSource,0,stretchSource,0,0));
+    bad(await invoke(e.stretch,ad,stretchSource,0,stretchDest,0,3));
+    ok(await invoke(e.Surface9_LockRect,stretchSource,lock,0,16));
+    bad(await invoke(e.stretch,ad,stretchSource,0,stretchDest,0,1));
+    ok(await invoke(e.Surface9_UnlockRect,stretchSource));
+    ok(await invoke(e.clear,ad,0xff123456));
+    ok(await invoke(e.stretch,ad,ab,0,stretchDest,0,2),'implicit backbuffer source');
+    ok(await invoke(e.Surface9_LockRect,stretchDest,lock,0,16));assert.strictEqual(read(read(lock+4)),0xff123456);
+    ok(await invoke(e.Surface9_UnlockRect,stretchDest));
+    ok(await invoke(e.stretch,ad,stretchSource,0,ab,0,1),'implicit backbuffer destination');
+    assert.strictEqual(e.update_view(ab,ad,0,out),1);
+    const stretchBackWidth=read(out),stretchBackHeight=read(out+4);
+    ok(e.offscreen(ad,stretchBackWidth,stretchBackHeight,2,out,22));const stretchBackCopy=read(out);
+    ok(await invoke(e.Device9_GetRenderTargetData,ad,ab,stretchBackCopy));
+    ok(await invoke(e.Surface9_LockRect,stretchBackCopy,lock,0,16));
+    const backPixels=read(lock+4),backPitch=read(lock);
+    for(let y=0;y<stretchBackHeight;y++)for(let x=0;x<stretchBackWidth;x++){
+      const v=Math.floor((x+.5)*2/stretchBackWidth)*80+Math.floor((y+.5)*2/stretchBackHeight)*160;
+      assert.strictEqual(read(backPixels+y*backPitch+x*4),(0xff000000+v*0x010101)>>>0);
+    }
+    ok(await invoke(e.Surface9_UnlockRect,stretchBackCopy));
+    await invoke(e.Surface9_Release,stretchBackCopy);
+    await invoke(e.Surface9_Release,stretchSource);await invoke(e.Surface9_Release,stretchDest);e.guest_free(sr);e.guest_free(dr);
+    console.log('PASS StretchRect pixel centers, rectangle preservation, downsampling, backbuffers and suspend/resume');
     bad(e.Surface9_GetDevice(ab,0));
     ok(e.Surface9_GetDevice(ab,out),'implicit surface GetDevice');
     assert.strictEqual(read(out),ad,'implicit surface returns canonical device');

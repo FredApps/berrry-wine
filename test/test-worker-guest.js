@@ -388,14 +388,26 @@ async function comLoadDllProbe(browser, port) {
     { timeout: 30000 });
   await wait(6000);
 
+  await page.evaluate(() => runningApps[0].wine.setFrozen(true));
+  await page.waitForFunction(() => !!runningApps[0].wine._frozenStep, { timeout: 30000 });
   const result = await page.evaluate(async () => {
     const gw = runningApps[0].wine.guestWorker;
-    const read = async () => (await gw.readExports(['get_dll_count', 'get_yield_reason', 'get_esp', 'get_eax']));
+    const read = async () => (await gw.readExports(['get_dll_count', 'get_yield_reason', 'get_esp', 'get_eax', 'get_eip']));
     const before = await read();
     const bytes = new Uint8Array(await (await fetch('binaries/dlls/msvcrt.dll')).arrayBuffer());
     const hit = await gw.comLoadDll(bytes, 'msvcrt.dll', null);
     const afterHit = await read();
 
+    // Build a real stdcall frame while frozen. Failed activation must return
+    // to its caller, not retry the import thunk with an already-popped stack.
+    const esp = (afterHit.get_esp - 128) >>> 0;
+    const ppv = esp + 64;
+    const returnEip = 0x12345678;
+    await gw.callExport('guest_write32', esp, returnEip);
+    await gw.callExport('guest_write32', esp + 20, ppv);
+    await gw.callExport('guest_write32', ppv, 0xdeadbeef);
+    await gw.callExport('set_esp', esp);
+    await gw.callExport('set_eip', 0x87654321);
     // Miss path: no bytes at all, which is what a failed fetch produces.
     await gw.comLoadDll(null, 'nosuch.dll', null);
     const afterMiss = await read();
@@ -407,6 +419,12 @@ async function comLoadDllProbe(browser, port) {
       error: (hit && hit.error) || null,
       yieldAfter: afterHit.get_yield_reason,
       missYield: afterMiss.get_yield_reason,
+      missEax: afterMiss.get_eax >>> 0,
+      missEsp: afterMiss.get_esp >>> 0,
+      expectedEsp: esp + 24,
+      missEip: afterMiss.get_eip >>> 0,
+      returnEip,
+      missPpv: await gw.callExport('guest_read32', ppv),
     };
   });
   await page.close();
@@ -509,11 +527,9 @@ async function comLoadDllProbe(browser, port) {
       console.log('SKIP  winamp.exe not found — guest-thread probe needs a threading app');
     }
 
-    // The COM server load (yield reason 3) has no corpus app that reaches it —
-    // it needs a CLSID registered in HKCR pointing at a DLL that is not loaded,
-    // and nothing we ship does that. So drive the ported message path directly:
-    // it is the half that only exists in worker mode, and an untested branch
-    // there is what left worker mode stopping on this yield in the first place.
+    // Exercise COM loading without requiring the optional Pirates corpus.
+    // Pirates' Miles startup probes a missing a3dapi.dll server; a failure
+    // epilogue that forgets EIP makes that otherwise optional probe fatal.
     const com = await comLoadDllProbe(browser, port);
     check(com.dllCountBefore >= 0 && com.dllCountAfter === com.dllCountBefore + 1,
       'comLoadDll loads the server into the worker instance',
@@ -527,13 +543,10 @@ async function comLoadDllProbe(browser, port) {
       `yield=${com.yieldAfter}`);
     check(com.missYield !== 3, 'a COM server that cannot be fetched also unparks',
       `yield=${com.missYield}`);
-    // NOT asserted here: that the miss path returns REGDB_E_CLASSNOTREG in EAX
-    // and drops the return address plus 5 stdcall args. Both are only observable
-    // on a guest actually parked mid-CoCreateInstance, which needs an app that
-    // registers a COM server in HKCR for a DLL we do not preload — nothing in
-    // the corpus does. The 24-byte figure is taken from the synchronous error
-    // path in 09a7-handlers-dispatch.wat, which the WAT reaches for the same
-    // frame; if a COM app ever lands in the corpus, assert it here.
+    check(com.missEax === 0x80040154, 'missing COM server returns REGDB_E_CLASSNOTREG');
+    check(com.missEsp === com.expectedEsp, 'missing COM server pops the stdcall frame');
+    check(com.missEip === com.returnEip, 'missing COM server restores caller EIP');
+    check(com.missPpv === 0, 'missing COM server clears the interface output');
   } finally {
     await browser.close();
     server.close();

@@ -20,6 +20,9 @@
 //   click:X,Y     move, then press and release the left button
 //   tap:X,Y       a touchscreen tap (needs --touch); drives the touch bridge,
 //                 which `click` never reaches
+//   swipe:X1,Y1,X2,Y2  a one-finger touch drag between guest pixels (--touch)
+//   tapsel:CSS    a touchscreen tap on the centre of the first element that
+//                 matches the selector (shell/debug UI, not a guest pixel)
 //   down:X,Y      / up:X,Y   — the halves of a drag
 //   key:Name      keyboard press (puppeteer key name, e.g. Enter, KeyA); a
 //                 combo holds its modifiers: key:Alt+KeyS, key:Shift+F2
@@ -499,6 +502,30 @@ async function main() {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.touchscreen.tap(p.x, p.y);
+      } else if (kind === 'swipe') {
+        // One finger dragged in ten steps: the trackpad and drag paths, which
+        // a tap never exercises.
+        const [x1, y1, x2, y2] = rest.split(',').map(Number);
+        const a = await toPage(page, x1, y1);
+        const b = await toPage(page, x2, y2);
+        await page.touchscreen.touchStart(a.x, a.y);
+        for (let i = 1; i <= 10; i++) {
+          await page.touchscreen.touchMove(a.x + (b.x - a.x) * i / 10, a.y + (b.y - a.y) * i / 10);
+          await wait(16);
+        }
+        await page.touchscreen.touchEnd();
+      } else if (kind === 'tapsel') {
+        // A real finger on a page element (a debug checkbox, a shell button)
+        // rather than on a guest pixel: the centre of the first match.
+        const p = await page.evaluate(sel => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+        }, rest);
+        if (!p) throw new Error(`tapsel: no element matches ${rest}`);
+        await page.touchscreen.tap(p.x, p.y);
+        console.log(`tapsel ${rest} at ${Math.round(p.x)},${Math.round(p.y)} (${Math.round(p.w)}x${Math.round(p.h)})`);
       } else if (kind === 'move' || kind === 'click' || kind === 'dbl'
                  || kind === 'down' || kind === 'up') {
         const [gx, gy] = rest.split(',').map(Number);

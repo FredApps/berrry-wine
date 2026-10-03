@@ -324,3 +324,9 @@ Time, measured on the idle bench box (x86_64 V8, 2026-09-28): turning on
 (86.6 s vs 90.5 s; repeats agree to 0.03%), and the frames are identical.
 The main-thread gameplay slice does not change, as expected, since the saving
 is all on T1.
+
+The later **mixed integer/x87** prototype (2026-09-30) adds no established
+gain on the 5101-batch route: whole-process CPU 108.205 → 108.230 s (+0.02%),
+with four identical final frames. This is distinct from enabling pure x87
+fusion above. The main-only `--slice-split` omits cooperative T1 work; use
+process CPU for this comparison. See [cross-game measurements](../mixed-island-corpus.md).

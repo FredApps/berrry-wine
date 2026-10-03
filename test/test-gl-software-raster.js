@@ -262,6 +262,39 @@ async function main() {
   px = back();
   assert.strictEqual(pick(VP / 2, VP / 2), 0xFF00FF00,
     `the nearer green quad survives the farther red one; got 0x${pick(VP / 2, VP / 2).toString(16)}`);
+  const clearDepth = value => {
+    new DataView(memory.buffer).setFloat64(stack + 4, value, true);
+    e.gl_sw_observe(CALL_INDEX.glClearDepth, stack);
+  };
+  clearDepth(0.125);
+  glCall(CALL_INDEX.glClear, 0x4100);
+  px = back();
+  const clearedColor = pick(VP / 2, VP / 2);
+  quad(0.5, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), clearedColor,
+    'depth 0.25 fails against clear depth 0.125');
+  quad(0.875, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), 0xFF00FF00,
+    'depth 0.0625 passes against clear depth 0.125');
+  clearDepth(-1);
+  glCall(CALL_INDEX.glClear, 0x4100);
+  quad(0.875, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), clearedColor, 'negative clear depth clamps to zero');
+  clearDepth(2);
+  glCall(CALL_INDEX.glDepthMask, 0);
+  glCall(CALL_INDEX.glClear, 0x100);
+  glCall(CALL_INDEX.glDepthMask, 1);
+  quad(0.5, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), clearedColor, 'depth mask prevents a depth clear');
+  glCall(CALL_INDEX.glClear, 0x100);
+  quad(-0.5, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), 0xFFFF0000, 'clear depth above one clamps to one');
+  clearDepth(1);
   glCall(CALL_INDEX.glDisable, GL_DEPTH_TEST);
   quad(-0.5, [1, 0, 0, 1]);
   px = back();
