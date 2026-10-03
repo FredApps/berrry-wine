@@ -1,14 +1,6 @@
-updated: 2026-10-02T03:53:20Z
-author: ops-dashboard (read-only coordinator screen and benchmark worker log)
+updated: 2026-10-02T23:23:51.028480+00:00
+author: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
 
-# Coordinator is idle; benchmark results need reconciliation.
+Migration checkpoint collection is complete. Jazz’s last local package job finished successfully, and all three workers released their work and resources. GTA2 never transferred or launched; its pending preflight was canceled. Unreal remains unlaunched. No conditional job will start.
 
-## Current state
-- The command approval is no longer visible. The benchmark worker reports three correctness checks passed and is preparing its handoff; noisy timing does not establish a performance win.
-- The memory-copy fix stopped at automated review. This is not an approval the dashboard can override.
-
-## Next
-- Give the coordinator another turn through its terminal to review the handoff and refresh the queue. Its process is alive, but its main turn ended; there is no persistent dispatch loop.
-- The ledger still marks both tasks blocked. Treat that as stale reporting until reconciled.
-
-Detailed ownership and evidence: ops/handoffs/orchestrator-status.md. Claude migration remains deferred.
+The migration handoff records exact artifacts, unfinished Ricochet and Collapse validation, NFS3’s backend-identity failure, and preserved ownership. This coordinator is now idle under the freeze. The migration owner handles Git reconciliation and private project/memory transfer; that transfer is not yet claimed complete. Foreign services, historical watchers and dirty files remain preserved. The five-game baseline and three-renderer comparison objectives remain unfinished.

@@ -493,6 +493,60 @@ repository's existing Puppeteer installation for a small dashboard-only browser
 test with synthetic sources; it never launches an emulator or reads your real
 session logs. `CHROME` can point to a Chrome executable.
 
+## Corpus assessments, source groups and FPS
+
+`ops/corpus-status.json` contains a dated evidence assessment and next step for each
+candidate; `ops/corpus-status.md` is the readable audit. The dashboard separates
+this assessment from an individual run outcome and flags a newer run for review.
+Source groups and package/distribution notes are independent of compatibility.
+The 76-candidate manifest does not yet index the WEP and community-remake registry
+collections. Do not treat a demo label as permission to publish its assets.
+
+To publish FPS, add `performance` to the existing run's `result.json`:
+
+```json
+{"performance":{"metric":"guest-presents","measuredAt":"2026-10-02T00:00:00Z","renderer":"D3D / WebGL","scene":"Race cockpit","host":"Machine / CPU","gpu":"Actual renderer string","wasmSha256":"exact module hash","historical":false,"samples":[{"frames":600,"durationMs":10000,"p95FrameMs":21.4}],"notes":"Route and measurement conditions"}}
+```
+
+Capture counted guest presents/flips over wall time in a reviewed gameplay scene.
+Keep raw measurement output in the run's artifacts. Record hardware GPU versus
+SwiftShader explicitly. FPS is total counted frames / total sampled wall seconds;
+p95 is shown per sample, never averaged across samples. Zero FPS is valid, missing
+measurements are unknown. CLI batch counts, CPU-window seconds and browser rAF
+are not gameplay FPS. Historical FPS remains labelled with renderer and age.
+Current archived measurements cover NFS3 and GTA2 under SwiftShader only; fresh
+hardware baselines are queued as `OPS-GAME-FPS-BASELINE` and `NFS3-RENDERER-BENCH`.
+
+For an identified raw guest Flip collector, set optional
+`performance.counterKind: "guest-flip-events"`. The coarse metric remains
+`guest-presents`; existing `frames`, `fps` and `p95FrameMs` fields retain their
+numbers but represent event counts, events/second and successive Flip intervals.
+Cards and sample columns then say **guest Flip events/s** and **p95 Flip interval**.
+This discriminator does not certify unique logical frames or displayed FPS.
+Unknown explicit counter kinds are rejected; omission preserves existing labels.
+The archived NFS3/GTA2 collectors count originating `dx_trace` kind6, not public
+frame callbacks; surface IDs and same-context arm/stop calibration were absent.
+Their reported p95 uses sorted intervals at zero-based `floor(count*0.95)`;
+preserve that convention and each sample rather than averaging/recomputing it.
+See `ops/handoffs/ops-historical-fps-semantics.md` for exact collector evidence.
+
+## Reviewed historical screenshot recovery
+
+`node ops/recover-visuals.js` imports the explicitly reviewed associations in
+`ops/historical-visuals.json`. Each entry pins the image SHA-256, original path,
+timestamp basis, source test/log and a description of what is actually visible.
+Source files and quarantined bundles stay intact. Missing source files are
+reported; changed bytes are rejected. Imports remain historical and unreviewed
+as compatibility results, even when their visual association has been reviewed.
+This complements the conservative automatic backfill; it does not loosen its
+matching rules or turn image filenames into pass/fail results.
+
+Corpus displays linked screenshot coverage and filters for present/missing
+captures. Recorded evidence precedes unrecorded candidates after active work and
+failures. Queue previews show short summaries; full criteria remain in Details.
+Activity initially shows 25 entries with controls to reveal the remaining 150
+entry window. Narrow portrait and short landscape screens use compact navigation.
+
 ## Live command approvals
 
 Registered tmux panes are inspected on each dashboard refresh. A recognized
@@ -517,3 +571,5 @@ do not use this bridge to approve commands from untrusted terminal sessions.
 “Decision sent” confirms delivery only, not execution or success. Monitor failures
 are displayed explicitly. Pending observations live in memory, not a database,
 and disappear when the dashboard server restarts.
+
+For private orchestrator chat and approval buttons, see [Telegram setup and watchdog](TELEGRAM.md).

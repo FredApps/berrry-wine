@@ -32,6 +32,8 @@ function createServer(options = {}) {
       const url = new URL(req.url, `http://${host}`);
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
       if(req.method==='POST' && url.pathname==='/api/approval-decision') return await terminals.approvalDecision(req,res);
+      if(req.method==='POST' && url.pathname==='/api/orchestrator-chat') return await terminals.chat(req,res);
+      if(req.method==='GET' && url.pathname==='/api/orchestrator-screen') return await terminals.screen(req,res);
       if(req.method==='POST' && ['/api/tasks','/api/task-note'].includes(url.pathname)) {
         if(req.headers.origin!==`http://${host}`)return fail(403,'Same-origin request required');
         if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');

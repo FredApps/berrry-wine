@@ -9,7 +9,9 @@ function coordinatorButton() {
 function coordinatorBar() {
   const entry=coordinator(),agent=state.agents.find(a=>a.id===entry?.agentId);
   const status=agent ? health(agent)[0] : 'Session not observed';
-  return `<div class="coordinator-bar"><span>Coordinator · ${escape(status)}</span>${coordinatorButton()}<span class="sub">New tasks wait for pickup. Open the terminal to prompt an idle coordinator.</span></div>`;
+  const waiting=state.tasks.filter(t=>t.status==='ready' && t.pickup==='awaiting').length;
+  const message=waiting?`${waiting} queued task${waiting===1?'':'s'} awaiting acknowledgment.`:state.tasks.some(t=>t.status==='active')?'Assignments are in progress; see the queue below.':'No active assignment recorded. Open the terminal to request pickup.';
+  return `<div class="coordinator-bar"><span>Coordinator · ${escape(status)}</span>${coordinatorButton()}<span class="sub">${escape(message)}</span></div>`;
 }
 function pickupBadge(t) {
   if(!['ready','backlog'].includes(t.status))return '';

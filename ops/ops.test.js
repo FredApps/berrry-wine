@@ -137,6 +137,67 @@ test('file ingestion updates tasks, tolerates malformed runs and preserves last 
   assert.equal((await reader.snapshot()).tasks[0].status, 'done');
 });
 
+test('corpus assessments distinguish readiness from run outcome and flag newer evidence', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const initial=await reader.snapshot(),r=initial.candidates[0].latestRun;
+  await f.write('ops/corpus-status.json',JSON.stringify({reviewedAt:'2026-10-02T00:00:00Z',entries:[{id:'demo',status:'Startup only',summary:'Intro diagnostic only',next:'Verify gameplay',basedOnLatestRun:r.key,basedOnLatestStartedAt:r.startedAt}]}));
+  const reviewed=(await reader.snapshot()).candidates[0];
+  assert.equal(reviewed.assessment.status,'Startup only');
+  assert.equal(reviewed.latestRun.outcome,r.outcome);
+  assert.equal(reviewed.assessment.needsReview,false);
+  await f.write('scratch/runs/new/result.json',JSON.stringify({candidateId:'demo',startedAt:'2026-10-03T00:00:00Z',outcome:'failed'}));
+  assert.equal((await reader.snapshot()).candidates[0].assessment.needsReview,true);
+});
+
+test('FPS uses counted guest frames and wall duration, preserves zero, and rejects invalid samples', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const result={candidateId:'demo',startedAt:'2026-10-03T00:00:00Z',outcome:'unknown',performance:{metric:'guest-presents',measuredAt:'2026-10-03T00:00:00Z',renderer:'WebGL / SwiftShader',scene:'gameplay',host:'fixture',historical:true,samples:[{frames:60,durationMs:1000},{frames:0,durationMs:2000}]}};
+  const save=()=>f.write('scratch/runs/FPS/result.json',JSON.stringify(result));
+  await save();assert.equal((await reader.snapshot()).candidates[0].performance.fps,20);
+  result.performance.samples=[{frames:0,durationMs:1000}];await save();assert.equal((await reader.snapshot()).candidates[0].performance.fps,0);
+  result.performance.samples[0].durationMs=0;await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);
+  result.performance={fps:60};await save();assert.equal((await reader.snapshot()).candidates[0].performance,null);
+});
+
+test('Flip-event performance preserves historical arithmetic and labels without certifying game FPS', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const performance={metric:'guest-presents',counterKind:'guest-flip-events',measuredAt:'2026-10-03T00:00:00Z',
+    renderer:'Legacy WebGL / SwiftShader',scene:'historical race',host:'fixture',historical:true,
+    samples:[{frames:515,durationMs:15020.85498046875,p95FrameMs:54.219970703125},
+      {frames:504,durationMs:15029.994873046875,p95FrameMs:55.195068359375}]};
+  const save=()=>f.write('scratch/runs/FLIP/result.json',JSON.stringify({candidateId:'demo',startedAt:performance.measuredAt,outcome:'unknown',performance}));
+  await save();let normalized=(await reader.snapshot()).candidates[0].performance;
+  assert.equal(normalized.counterKind,'guest-flip-events');
+  assert.equal(normalized.fps,1019*1000/(15020.85498046875+15029.994873046875));
+  assert.deepEqual(normalized.samples.map(s=>s.p95FrameMs),[54.219970703125,55.195068359375]);
+  // Execute only the actual pure HTML renderer, without DOM, timers or HTTP.
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const renderSource=app.match(/function corpusFps\([\s\S]*?(?=\nfunction corpusView\()/)?.[0];
+  assert(renderSource,'corpusFps renderer found');
+  const render=require('node:vm').runInNewContext(renderSource+'\ncorpusFps',{
+    escape:value=>String(value ?? ''),age:()=>'<1m',when:value=>value});
+  const card=render({performance:normalized}),details=render({performance:normalized},true);
+  assert.match(card,/33\.9 guest Flip events\/s/);assert.doesNotMatch(card,/33\.9 FPS/);
+  assert.match(card,/Historical/);assert.match(card,/SwiftShader/);
+  assert.match(details,/<th>guest Flip events\/s<\/th>/);assert.match(details,/<th>p95 Flip interval<\/th>/);
+  assert.doesNotMatch(details,/p95 frame/);
+  performance.samples=[{frames:300,durationMs:10044.909912109375,p95FrameMs:40.340087890625}];
+  await save();normalized=(await reader.snapshot()).candidates[0].performance;
+  assert.equal(normalized.fps,300*1000/10044.909912109375);
+  assert.equal(normalized.samples[0].p95FrameMs,40.340087890625);
+  assert.match(render({performance:normalized}),/29\.9 guest Flip events\/s/);
+  performance.samples=[{frames:0,durationMs:1000}];await save();
+  assert.equal((await reader.snapshot()).candidates[0].performance.fps,0);
+  performance.counterKind='unproven-fps';await save();
+  assert.equal((await reader.snapshot()).candidates[0].performance,null);
+  delete performance.counterKind;await save();normalized=(await reader.snapshot()).candidates[0].performance;
+  assert.equal(normalized.counterKind,undefined);assert.match(render({performance:normalized},true),/0\.0 FPS/);
+  assert.match(render({performance:normalized},true),/<th>p95 frame<\/th>/);
+});
+
 test('session collection scopes to project, updates changed logs, and attaches explicit task ownership', async t => {
   const f = await fixture(); t.after(f.cleanup);
   const file = 'codex/one.jsonl';

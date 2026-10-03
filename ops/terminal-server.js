@@ -5,7 +5,8 @@ const crypto = require('node:crypto');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const exec = promisify(execFile);
-const {parseApproval}=require('./approval-prompt');
+const {parseApproval,approvalIdentity}=require('./approval-prompt');
+const {chatReady,hasCodexChild,chatSubmitKey}=require('./telegram-guard');
 
 function createTerminalBridge(server, options = {}) {
   const root = options.root || path.resolve(__dirname, '..');
@@ -28,7 +29,7 @@ function createTerminalBridge(server, options = {}) {
     for(const id of observed.keys())if(!targets.some(t=>t.id===id))observed.delete(id);
     for(const target of targets) {
       try {
-        const screen=await capture(target),prompt=parseApproval(screen),fingerprint=signature(JSON.stringify(target)+screen);
+        const screen=await capture(target),prompt=parseApproval(screen),fingerprint=prompt&&signature(JSON.stringify(target)+approvalIdentity(prompt.prompt));
         if(!prompt){observed.delete(target.id);continue;}
         let record=observed.get(target.id);
         if(!record || record.fingerprint!==fingerprint) {
@@ -48,7 +49,7 @@ function createTerminalBridge(server, options = {}) {
     const chunks=[];let size=0;
     for await(const chunk of req){size+=chunk.length;if(size>1024)return fail(413,'Request too large');chunks.push(chunk);}
     let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{return fail(400,'Invalid JSON');}
-    if(!['accept','decline'].includes(input?.decision))return fail(400,'Choose accept once or decline');
+    if(!['accept','decline','allow-rule'].includes(input?.decision))return fail(400,'Choose accept once, allow rule or decline');
     const record=[...observed.values()].find(r=>r.id===input.id);
     if(!record || record.sent || Date.now()-record.checkedAt>15000)return fail(409,'Prompt expired or already answered. Refresh and review again.');
     const id=record.target.id;
@@ -58,14 +59,52 @@ function createTerminalBridge(server, options = {}) {
       const target=(await mappings()).find(t=>t.id===id);
       if(!target || JSON.stringify(target)!==JSON.stringify(record.target))return fail(409,'Terminal registration changed. Refresh first.');
       const screen=await capture(target);
-      if(!parseApproval(screen) || signature(JSON.stringify(target)+screen)!==record.fingerprint)return fail(409,'Prompt changed. Refresh and review the current command.');
+      const prompt=parseApproval(screen);
+      if(!prompt || signature(JSON.stringify(target)+approvalIdentity(prompt.prompt))!==record.fingerprint)return fail(409,'Prompt changed. Refresh and review the current command.');
+      if(input.decision==='allow-rule'&&!prompt.allowRule)return fail(409,'This prompt has no persistent approval option');
       record.sent=true; // Never replay a decision, including after an ambiguous send failure.
-      await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,input.decision==='accept'?'y':'Escape'],{timeout:2000,maxBuffer:65536});
+      await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,input.decision==='accept'?'y':input.decision==='allow-rule'?'p':'Escape'],{timeout:2000,maxBuffer:65536});
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({sent:true}));
     }catch{return fail(409,'Could not confirm delivery. Inspect the terminal before trying again.');}
     finally{decisions.delete(id);}
   }
   const originOK = req => /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '') && req.headers.origin === `http://${req.headers.host}`;
+  async function screen(req,res) {
+    const target=(await mappings()).find(t=>t.id==='orchestrator');
+    try{if(!target)throw Error();const text=await capture(target);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({text,agentId:target.agentId}));}
+    catch{res.writeHead(409);res.end('Orchestrator pane unavailable');}
+  }
+  async function chat(req,res) {
+    const fail=(code,message)=>{res.writeHead(code,{'Content-Type':'text/plain'});res.end(message);};
+    if(!originOK(req))return fail(403,'Same-origin request required');
+    if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>20000)return fail(413,'Message too long');chunks.push(chunk);}
+    let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{return fail(400,'Invalid JSON');}
+    if(typeof input.message!=='string' || !input.message.trim() || input.message.length>4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.message))return fail(400,'Plain text of 1–4000 characters required');
+    const target=(await mappings()).find(t=>t.id==='orchestrator');
+    if(!target)return fail(409,'Orchestrator not registered');
+    if(controllers.has(target.id) || decisions.has(target.id))return fail(409,'Terminal is being controlled; retry when it is in View mode');
+    decisions.add(target.id);
+    try {
+      const processes=await exec('ps',['-ax','-o','pid=,ppid=,comm='],{timeout:2000,maxBuffer:2*1024*1024});
+      if(!hasCodexChild(processes.stdout,target.panePid))return fail(409,'Registered pane is not running Codex');
+      if(JSON.stringify((await mappings()).find(t=>t.id===target.id))!==JSON.stringify(target))return fail(409,'Orchestrator registration changed');
+      if(!chatReady(await capture(target)))return fail(409,'Orchestrator has a prompt or draft open. Resolve it before sending chat');
+      // One literal line, with a fixed prefix: never a slash command or terminal control sequence.
+      const message='[Telegram] '+input.message.replace(/\s+/g,' ').trim();
+      await exec(tmux,[...tmuxArgs,'send-keys','-l','-t',target.pane,'--',message],{timeout:2000,maxBuffer:65536});
+      // Let the TUI finish processing pasted text before choosing its submit key.
+      await new Promise(resolve=>setTimeout(resolve,300));
+      const key=chatSubmitKey(await capture(target),message);
+      if(!key)return fail(409,'Message entered but not submitted. Inspect the terminal before resending');
+      await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,key],{timeout:2000,maxBuffer:65536});
+      await new Promise(resolve=>setTimeout(resolve,300));
+      if(chatSubmitKey(await capture(target),message))return fail(409,'Message remains in the input box. Inspect the terminal before resending');
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({sent:true}));
+    }catch{return fail(409,'Delivery uncertain; inspect the terminal before resending');}
+    finally{decisions.delete(target.id);}
+  }
   async function mappings() {
     let data; try { data=JSON.parse(await fs.readFile(config,'utf8')); } catch { return []; }
     if(!Array.isArray(data.terminals)) return [];
@@ -193,6 +232,6 @@ function createTerminalBridge(server, options = {}) {
   }
   function close(){tickets.clear();for(const ws of connections)ws.terminate();wss?.close();}
   server.on('close',close);
-  return {list,ticket,close,approvals,approvalDecision};
+  return {list,ticket,close,approvals,approvalDecision,screen,chat};
 }
 module.exports={createTerminalBridge};

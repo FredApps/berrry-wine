@@ -15,6 +15,8 @@ function parseApproval(screen) {
   const command=lines.slice(commandStart,menu).join('\n').trim().slice(2);
   if(!command)return null;
   const field=name=>lines.slice(start,commandStart).find(line=>line.startsWith(name+':'))?.slice(name.length+1).trim() || '';
-  return {command,reason:field('Reason'),thread:field('Thread'),environment:field('Environment'),prompt};
+  const allowRule=/^[›>]?\s*2\. Yes, and don't ask again for commands that start with[\s\S]*?\(p\)\s*$/m.test(prompt);
+  return {command,reason:field('Reason'),thread:field('Thread'),environment:field('Environment'),prompt,allowRule};
 }
-module.exports={parseApproval};
+const approvalIdentity=prompt=>prompt.replace(/^[›>] */gm,'').trim();
+module.exports={parseApproval,approvalIdentity};

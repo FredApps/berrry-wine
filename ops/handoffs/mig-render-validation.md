@@ -33,3 +33,22 @@ fixed shader boundary before any further mutation. Root retains remote slot for
 sequential correctness validation; currently no test process running. Original
 analytical expected pixels must stay unchanged. Remaining renderer migration
 work and performance acceptance are still open.
+
+## Fog guard correction verified
+
+Read-only diagnosis found the guest COLOR1/fog guard also caught the fully
+generated fixed pair, whose secondary color and oFog are separate. Worker
+changed only backend guard and shared-worker regression in the private tree.
+Root froze both files, downloaded remote originals, and confirmed the diff
+contained only this correction plus its tests before transferring.
+
+- Backend SHA256: `b404b74dbf9d882e91cd9dd83e5dbe626380206a0facab8761af2f5aee01555c`.
+- Shared test SHA256: `64edeb62ba41f87d0792e73abc726add6831936e8cd52c67a264ce85bc046369`.
+- WAT module unchanged, hash above; no build or broader migration transfer.
+- Same shared-worker command PASS, exit0. Log `shared-worker-fog-fix.log`.
+- Actual WebGL and native software analytical pixels pass, including unchanged
+  fog/specular `[64,159,16,191]`. GeneratedVS/guestPS and guestVS/generatedPS
+  still reject with the original linkage guard. Version/oFog checks retained.
+
+MIG-RENDER and MIG-RENDER-FOG bounded checks complete. No merge, gameplay,
+performance, texture-registry or empty-quad acceptance follows from this pass.

@@ -12,6 +12,16 @@ const number = value => typeof value === 'number' && Number.isFinite(value) && v
 const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const inside = (root, file) => file === root || file.startsWith(root + path.sep);
 
+function normalizePerformance(p) {
+  if(!p || p.metric!=='guest-presents' || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
+  if(p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
+  if(p.samples.some(s=>!Number.isInteger(s.frames) || s.frames<0 || number(s.durationMs)===null || s.durationMs<=0))return null;
+  const samples=p.samples.map(s=>({frames:s.frames,durationMs:s.durationMs,fps:s.frames*1000/s.durationMs,p95FrameMs:number(s.p95FrameMs)}));
+  const fps=samples.reduce((n,s)=>n+s.frames,0)*1000/samples.reduce((n,s)=>n+s.durationMs,0);
+  if(!Number.isFinite(fps))return null;
+  return {fps,samples,metric:p.metric,counterKind:p.counterKind,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
+}
+
 async function safeFile(root, relative) {
   if (typeof relative !== 'string' || path.isAbsolute(relative) || relative.includes('\0')) return null;
   try {
@@ -285,6 +295,7 @@ function createReader(options = {}) {
             command: clip(r.command, 4000), build: clip(typeof r.build === 'string' ? r.build : JSON.stringify(r.build || {}), 2000),
             environment: clip(typeof r.environment === 'string' ? r.environment : JSON.stringify(r.environment || {}), 1000),
             summary: clip(r.summary, 2000), verification: r.verification === 'reviewed' ? 'reviewed' : 'unreviewed',
+            performance: normalizePerformance(r.performance),
             screenshots: [], visuals: [], artifacts: [] };
           const diagrams = new Set(Array.isArray(r.diagrams) ? r.diagrams.filter(v => typeof v === 'string') : []);
           const names = new Set(['result.json', 'output.log']);
@@ -380,11 +391,24 @@ function createReader(options = {}) {
       const task = ['active','blocked','review','ready'].map(status=>tasks.find(t=>t.owner===a.id && t.status===status)).find(Boolean);
       if (task) { a.taskId = task.id; a.taskTitle = task.title; a.taskStartedAt = task.startedAt; a.progressAt = task.progressAt; }
     }
+    let corpusReview = null;
+    try {
+      corpusReview = JSON.parse(await readText(path.join(root, 'ops/corpus-status.json'), MB));
+      if (!Array.isArray(corpusReview.entries) || !date(corpusReview.reviewedAt)) throw new Error('entries and reviewedAt are required');
+      sources.push('ops/corpus-status.json');
+    } catch (e) { if(e.code !== 'ENOENT') warnings.push(`Corpus status review: ${e.message}`); }
     for (const c of candidates) {
       c.taskIds = tasks.filter(t => t.candidateIds.includes(c.id)).map(t => t.id);
       const matching = runList.filter(r => r.candidateId === c.id);
       c.latestRun = matching[0] || null;
       c.lastVerifiedRun = matching.find(r => r.outcome === 'passed' && r.verification === 'reviewed') || null;
+      const measured=matching.find(r=>r.performance);
+      c.performance=measured?{...measured.performance,runKey:measured.key}:null;
+      const review = corpusReview?.entries?.find(e => e.id === c.id);
+      if(review)c.assessment={status:clip(review.status),summary:clip(review.summary,4000),next:clip(review.next,2000),
+        reviewedAt:date(corpusReview.reviewedAt),origin:clip(review.origin),distribution:clip(review.distribution),licenseNote:clip(review.licenseNote,2000),appIds:Array.isArray(review.appIds)?review.appIds.map(v=>clip(v)):[],
+        registeredExecutablePresent:Array.isArray(review.apps) && review.apps.some(a=>a.executablePresent),
+        needsReview:(review.basedOnLatestRun || null)!==(c.latestRun?.key || null) || (review.basedOnLatestStartedAt || null)!==(c.latestRun?.startedAt || null)};
     }
     return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,projectStatus,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),

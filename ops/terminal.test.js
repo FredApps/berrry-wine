@@ -91,6 +91,9 @@ test('approval parser refuses incomplete prompts and historical menus',()=>{
   const {parseApproval}=require('./approval-prompt');
   assert.equal(parseApproval(approvalScreen).command,'printf fixture');
   assert.equal(parseApproval(approvalScreen).reason,'Read the fixture');
+  assert.equal(parseApproval(approvalScreen).allowRule,false);
+  const ruleScreen=approvalScreen.replace("2. Yes, and don't ask again (p)","2. Yes, and don't ask again for commands that start with `printf` (p)");
+  assert.equal(parseApproval(ruleScreen).allowRule,true);
   assert.equal(parseApproval(approvalScreen+'\nCommand finished'),null);
   assert.equal(parseApproval(approvalScreen.replace('Yes, proceed (y)','Yes, proceed')),null);
   assert.equal(parseApproval('Execution stopped by automated security review'),null);
@@ -110,6 +113,7 @@ test('live approvals require a fresh unchanged pane and explicit decision; brows
   assert.equal((await post(p.id,'accept',null)).status,403);
   assert.equal((await post(p.id,'accept','http://evil.invalid')).status,403);
   assert.equal((await post(p.id,'always')).status,400);
+  assert.equal((await post(p.id,'allow-rule')).status,409);
   assert.equal((await post('missing')).status,409);
   f.tmux('send-keys','-t',f.pane,'s');
   await new Promise(r=>setTimeout(r,100));

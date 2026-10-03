@@ -24,6 +24,9 @@ const taskStates = [
 ];
 const expandedTaskGroups = new Map();
 let agentHistoryOpen=false;
+let activityLimit=25;
+let corpusGroup='all';
+let queueBriefingOpen=false;
 const taskState = status => taskStates.find(s => s[0] === status) || taskStates.at(-1);
 const sortedTasks = tasks => [...tasks].sort((a,b) => taskStates.indexOf(taskState(a.status)) - taskStates.indexOf(taskState(b.status)) || a.line - b.line);
 function taskEvidence(t) {
@@ -82,16 +85,24 @@ function processDetails(p) {
   return section('Associated local processes') + processSummary(p) + `<p class="source-note">${escape(p.note || 'Exact session-log handle or verified Claude registry match. Descendants belong to the host; they may serve other sessions. Missing matches do not prove a session has exited.')} Sampled ${escape(when(p.checkedAt))}.</p>` +
     (rows.length ? `<div class="process-table"><table><thead><tr><th>PID / parent</th><th>Process</th><th>CPU</th><th>Memory RSS</th><th>OS state / age</th><th>Association</th></tr></thead><tbody>${rows.map(m => `<tr><td>${m.pid} / ${m.ppid}</td><td>${escape(m.name)}</td><td>${cpuUsage(m.cpuPercent)}</td><td>${memoryUsage(m.rssBytes)}</td><td>${escape(m.state)} / ${escape(m.elapsed)}</td><td>${escape(m.relation)}</td></tr>`).join('')}</tbody></table></div><p class="source-note">CPU is the OS-reported process percentage, not a model-utilization measure; it can exceed 100%. RSS is resident memory; summed RSS may count shared pages more than once. Background means host descendants, including shells, tools and services; detached/reparented or remote jobs are not attributed. Shared-host values are not per-agent usage. OS state: R runnable, S sleeping, T stopped, Z zombie.${p.childCount > p.children.length ? ` Showing the busiest ${p.children.length} of ${p.childCount} descendants; totals include all observed descendants.` : ''}</p>` : '');
 }
-function agentCard(a) {
+function agentSignal(a) {
   const liveApproval=state.approvals?.items.some(p=>!p.sent && state.terminals?.some(t=>t.id===p.terminalId && t.agentId===a.id));
-  const blocked=state.tasks.some(t=>t.owner===a.id && t.status==='blocked');
-  const [label, color] = liveApproval?['Awaiting approval','warn']:blocked?['Task blocked','warn']:health(a);
+  const active=state.tasks.some(t=>t.owner===a.id && t.status==='active');
+  const blocked=!active && state.tasks.some(t=>t.owner===a.id && t.status==='blocked');
+  if(liveApproval)return {label:'Awaiting approval',color:'warn',rank:0,reason:'Review the live prompt to continue.'};
+  if(blocked)return {label:'Task blocked',color:'warn',rank:1,reason:'Read the blocker and required decision.'};
+  if(active && a.state==='idle')return {label:'Assigned · turn ended',color:'warn',rank:2,reason:'Check the handoff or next pickup; the task is still marked running.'};
+  const [label,color]=health(a);
+  return {label,color,rank:color==='warn'?2:3,reason:color==='warn'?'No recent session activity. Inspect the terminal; this alone does not prove a stall.':''};
+}
+function agentCard(a) {
+  const {label,color,reason,rank}=agentSignal(a);
   const latest = agentRuns(a).find(r => r.visuals?.length);
   const image = latest?.visuals.at(-1);
   const candidate = latest && state.candidates.find(c => c.id === latest.candidateId);
   const name = coordinator()?.agentId===a.id ? 'Coordinator' : a.taskTitle || (a.title && a.title !== a.id ? a.title : candidate?.name || 'Untitled session');
   const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
-  return `<article class="agent panel"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button><div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
+  return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
 function feedRows(rows, truncate = false) { return rows.map(row => `<div class="feed-row"><div class="sub">MESSAGEBOARD</div><div class="feed-text">${escape(truncate && row.text.length > 360 ? row.text.slice(0, 360) + '…' : row.text)}</div></div>`).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
@@ -115,16 +126,40 @@ function statusSummary(compact=false) {
   }).join('');
   return `<article class="briefing panel"><div class="briefing-top"><h2>// What matters now</h2>${link('/source?path=ops/STATUS.md','Source')}</div><p class="briefing-headline">${escape(headline)}</p><div class="briefing-meta sub">${escape(freshness)}${status.author?' · '+escape(status.author):''}${old?' · Review freshness':''} · Agent-written summary</div><div class="briefing-copy">${content || '<p class="sub">Agents can publish the current outcome, decisions needed, and next step in ops/STATUS.md.</p>'}</div></article>`;
 }
+function blockerDependencies(t) {
+  return state.tasks.filter(other=>other.id!==t.id && other.status==='blocked' && ((t.dependencies||[]).includes(other.id) || (t.waitingOn||'').split(/[^a-zA-Z0-9_.-]+/).includes(other.id)));
+}
+function blockerKind(t) {
+  if(blockerDependencies(t).length)return ['Dependency','neutral','View dependency'];
+  if(/automated.*review|review.*resolution/i.test(t.waitingOn+' '+t.blocker))return ['Review blocked','warn','Message owner'];
+  if(/host|capacity|CPU|GPU/i.test(t.waitingOn+' '+t.needs))return ['Capacity needed','warn','Provide capacity'];
+  return ['Needs follow-up','warn','Message owner'];
+}
+function blockerOwner(t) {
+  return state.terminals?.find(x=>x.agentId===t.owner)?.label || (t.owner?t.owner.split(':')[0]+' agent · '+t.owner.split(':').at(-1).slice(-6):'Unassigned');
+}
 function blockerRows(tasks) {
-  const kind=t=>/automated.*review/i.test(t.waitingOn || '')?'Review blocked':/approval/i.test(t.waitingOn || '')?'Approval reported':'Needs help';
-  return tasks.map(t => `<article class="blocker panel"><div class="blocker-heading">${taskButton(t)}${badge(t.replies?.length ? 'Reply posted · still blocked' : kind(t), 'warn')}</div><p>${escape(t.blocker || 'Blocker reason not recorded.')}</p>${t.needs ? `<p class="blocker-ask">Needs: ${escape(t.needs)}</p>` : ''}${kind(t)==='Review blocked'?'<p class="source-note">Automated review stopped execution. There is no web approval for this block.</p>':kind(t)==='Approval reported'?'<p class="source-note">Task report may lag. Review any live prompt above for the actual command.</p>':''}<div class="blocker-footer"><span class="sub">${escape(t.waitingOn || t.owner || 'No owner recorded')}${t.blockedAt ? ' · blocked ' + age(t.blockedAt) : ''}</span>${terminalLink({id:t.owner})}<button data-blocker="${escape(t.id)}">Discuss →</button></div></article>`).join('') || empty('No explicitly blocked tasks recorded.');
+  return [...tasks].sort((a,b)=>Number(blockerKind(a)[0]==='Review blocked')-Number(blockerKind(b)[0]==='Review blocked') || a.line-b.line).map(t=>{
+    const [kind,color,action]=blockerKind(t),dependencies=blockerDependencies(t);
+    const children=state.tasks.filter(x=>blockerDependencies(x).some(d=>d.id===t.id));
+    const owner=state.agents.find(a=>a.id===t.owner);
+    const ownerName=blockerOwner(t);
+    const next=dependencies.length?'Waiting for '+dependencies.map(d=>d.title).join('; '):kind==='Capacity needed'?(t.waitingOn||t.needs):t.needs||t.next||'Owner needs to record a concrete next step.';
+    return `<article class="blocker panel"><div class="blocker-heading">${taskButton(t)}${badge(kind,color)}</div><p class="blocker-ask">${escape(next)}</p>${kind==='Review blocked'?'<p class="source-note">Automated review stopped validation. No dashboard override.</p>':''}<div class="blocker-meta sub"><span title="${escape(t.owner)}">${escape(ownerName)}</span><span>${t.progressAt?'Task updated '+age(t.progressAt)+' ago':'Task update time not recorded'}</span>${t.blockedAt?`<span>Blocked ${age(t.blockedAt)}</span>`:''}</div>${t.replies?.length?'<p class="reply-pending">Reply posted · awaiting owner verification</p>':''}${children.length?`<div class="blocker-dependents"><span class="sub">Also holds up</span>${children.map(c=>`<button data-task="${escape(c.id)}">${escape(c.title)} →</button>`).join('')}</div>`:''}<details class="blocker-evidence"><summary>Evidence and background</summary><p>${escape(t.blocker||'Reason not recorded.')}</p>${t.needs?`<p>Needs: ${escape(t.needs)}</p>`:''}${dependencies.map(d=>`<p>Waiting on ${taskButton(d)}</p>`).join('')}</details><div class="blocker-footer">${terminalLink({id:t.owner})}${dependencies.length?`<button data-blocker="${escape(dependencies[0].id)}">View dependency →</button>`:''}<button data-blocker="${escape(t.id)}">${escape(dependencies.length?'Message owner':action)} →</button></div></article>`;
+  }).join('') || empty('No matching blockers.');
 }
 function blockersView() {
-  return title('Blockers', 'Decisions and help needed. Owners verify the fix before resuming.') + `<div class="blocker-list">${blockerRows(state.tasks.filter(t => t.status === 'blocked' && matches(t)))}</div>`;
+  const blocked=state.tasks.filter(t=>t.status==='blocked');
+  const relevant=blocked.filter(t=>matches(t)||blocked.some(c=>matches(c)&&blockerDependencies(c).some(d=>d.id===t.id)));
+  let roots=relevant.filter(t=>!blockerDependencies(t).length);if(!roots.length&&relevant.length)roots=relevant;
+  const approvals=(state.approvals?.items||[]).filter(p=>!p.sent);
+  return title('Blockers',`${approvals.length} live approval${approvals.length===1?'':'s'} · ${roots.length} primary blockers · ${relevant.length-roots.length} dependent task${relevant.length-roots.length===1?'':'s'}`) +
+    section('Your action')+(approvals.length?`<div class="blocker-list">${approvals.map(p=>`<article class="blocker panel blocker-action"><div class="blocker-heading"><strong>${escape(p.reason||'Command approval needed')}</strong>${badge('Live approval','warn')}</div><p class="sub">${escape(p.label)} · waiting ${age(p.firstSeenAt)} · checked against the live terminal</p><button data-approval="${escape(p.id)}">Review command →</button></article>`).join('')}</div>`:'<p class="sub">No live command approvals. Other requests and dependencies are below.</p>')+
+    section('Waiting / needs follow-up')+`<div class="blocker-list">${blockerRows(roots)}</div>`;
 }
 function blockerDetail(id) {
   const t = state.tasks.find(t => t.id === id); if (!t) return;
-  show('BLOCKER / ' + t.id, `<h1>${escape(t.title)}</h1><p>${escape(t.blocker || 'No blocker reason recorded.')}</p>${t.needs ? `<p><strong>Needs:</strong> ${escape(t.needs)}</p>` : ''}<p class="sub">Owner: ${escape(t.owner || 'unassigned')} · Waiting on: ${escape(t.waitingOn || 'unspecified')}</p>${t.replyAllowed ? `<form id="blocker-reply" data-task-id="${escape(t.id)}"><label for="reply-text">Decision or help for the owner</label><textarea id="reply-text" required maxlength="2000" rows="4" placeholder="What changed, what to try, or which decision to follow…"></textarea><p class="source-note">Posts to the shared messageboard as dashboard-user. The owner must verify and update the task; posting does not unblock it.</p><button type="submit">Post reply to messageboard</button><p id="reply-status" role="status"></p></form>` : '<p class="notice">Add an explicit id: to this task in TODOS.md before posting a reply.</p>'}${section('Recent replies')}<div class="panel">${feedRows(t.replies || [])}</div><details class="blocker-source"><summary>Task source</summary><pre>${escape(t.body)}</pre></details>`);
+  show('BLOCKER / ' + t.id, `<h1>${escape(t.title)}</h1><p>${escape(t.blocker || 'No blocker reason recorded.')}</p>${t.needs ? `<p><strong>Needs:</strong> ${escape(t.needs)}</p>` : ''}<p class="sub">Owner: ${escape(blockerOwner(t))} · Waiting on: ${escape(t.waitingOn || 'unspecified')}</p>${t.replyAllowed ? `<form id="blocker-reply" data-task-id="${escape(t.id)}"><label for="reply-text">Decision or help for the owner</label><textarea id="reply-text" required maxlength="2000" rows="4" placeholder="What changed, what to try, or which decision to follow…"></textarea><p class="source-note">Posts to the shared messageboard as dashboard-user. The owner must verify and update the task; posting does not unblock it.</p><button type="submit">Post reply to messageboard</button><p id="reply-status" role="status"></p></form>` : '<p class="notice">Add an explicit id: to this task in TODOS.md before posting a reply.</p>'}${section('Recent replies')}<div class="panel">${feedRows(t.replies || [])}</div><details class="blocker-source"><summary>Task source</summary><pre>${escape(t.body)}</pre></details>`);
 }
 function overview() {
   const tasks = sortedTasks(state.tasks.filter(t => !['done', 'deferred', 'unknown'].includes(t.status) && matches(t)));
@@ -133,8 +168,8 @@ function overview() {
     `<div class="stats">${['active','ready','blocked','review'].map(status=>`<a class="stat" href="#tasks"><div class="sub">${escape(taskState(status)[1])}</div><div class="value task-label-${status}">${state.tasks.filter(t=>t.status===status).length}</div><div class="sub">From the task ledger</div></a>`).join('')}</div>` +
     (state.tasks.some(t => t.status === 'blocked') ? section('Needs attention', 'blockers') + `<div class="blocker-list">${blockerRows(state.tasks.filter(t => t.status === 'blocked' && matches(t)).slice(0, 4))}</div>` : '') +
     section('Current agents', 'agents') + `<div class="agent-list">${currentAgents().filter(matches).slice(0, 4).map(agentCard).join('') || empty('No current project session logs found. Open Agents for history.')}</div>` +
-    section('Latest visuals', 'corpus') + visualCards(state.runs.filter(matches).filter((r, i, runs) => r.visuals?.length && !runs.slice(0, i).some(other => other.candidateId === r.candidateId && other.visuals?.length))) +
-    `<div class="columns"><div>${section('Tasks to review', 'tasks')}<div class="panel">${taskRows(tasks.slice(0, 6))}</div></div><div>${section('Latest activity', 'activity')}<div class="panel">${feedRows(state.activity.filter(matches).slice(0, 5), true)}</div></div></div>` + notice();
+    section('Current work and next steps', 'tasks') + `<div class="panel">${taskRows(tasks.slice(0, 6))}</div>` +
+    section('Latest visuals', 'corpus') + visualCards(state.runs.filter(matches).filter((r, i, runs) => r.visuals?.length && !runs.slice(0, i).some(other => other.candidateId === r.candidateId && other.visuals?.length))) + notice();
 }
 function tasksView() {
   const tasks = state.tasks.filter(t => matches(t) && (filter === 'all' || t.status === filter));
@@ -145,34 +180,53 @@ function tasksView() {
     const open = filter !== 'all' || query || (expandedTaskGroups.get(s) ?? ['active','ready','review','blocked'].includes(s));
     return `<details class="task-group task-group-${s}" data-task-group="${s}" ${open ? 'open' : ''}><summary><span class="task-label task-label-${s}">${symbol} ${label}</span><span class="group-count">${items.length}</span><span class="group-hint">${hint}</span></summary><div class="panel">${taskRows(items)}</div></details>`;
   }).join('');
-  return title('Task queue', 'Running first, then the next assignments. Status comes from the task ledger, not process activity.', '<div class="task-controls"><button id="todo-source">Read source</button><button id="new-task" class="primary-action">+ New task</button></div>') +statusSummary(true)+coordinatorBar()+
-    `<div class="queue-counts">${counts}</div><p id="task-queue-status" role="status"></p><div class="toolbar"><select id="filter" aria-label="Task status"><option value="all" ${filter === 'all' ? 'selected' : ''}>All statuses</option>${taskStates.map(([s,label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${tasks.length} items · source order; arrows reorder within a section</span></div>${groups || empty('No tasks match this view.')}`;
+  return title('Task queue', 'Running first, then the next assignments. Status comes from the task ledger, not process activity.', '<div class="task-controls"><button id="todo-source">Read source</button><button id="new-task" class="primary-action">+ New task</button></div>') +coordinatorBar()+
+    `<div class="queue-counts">${counts}</div><details class="queue-briefing" ${queueBriefingOpen?'open':''}><summary>Project TLDR</summary>${statusSummary(true)}</details><p id="task-queue-status" role="status"></p><div class="toolbar"><select id="filter" aria-label="Task status"><option value="all" ${filter === 'all' ? 'selected' : ''}>All statuses</option>${taskStates.map(([s,label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${tasks.length} items · source order; full criteria in Details</span></div>${groups || empty('No tasks match this view.')}`;
 }
 function candidateWork(c) {
   const order = ['active','review','blocked','ready'];
   return state.tasks.filter(t => c.taskIds.includes(t.id) && order.includes(t.status)).sort((a,b) => order.indexOf(a.status)-order.indexOf(b.status) || a.line-b.line)[0];
 }
+function candidateCapture(c) {
+  const run=c.latestRun?.screenshots.length?c.latestRun:state.runs.find(r=>r.candidateId===c.id && r.screenshots.length);
+  return {run,shot:run?.screenshots.at(-1),older:!!run && run.key!==c.latestRun?.key};
+}
+function corpusAssessment(c,details=false) {
+  const a=c.assessment;if(!a)return '';
+  const color=a.needsReview?'warn':a.status==='Needs repair'?'bad':['Strong next candidate','Strong local candidate'].includes(a.status)?'good':'';
+  return `<div class="corpus-assessment">${badge(a.needsReview?'New evidence · review needed':a.status,color)}${details?`<p>${escape(a.summary)}</p><p class="sub">${escape(a.origin)} · ${escape(a.distribution)}</p><p class="sub">${escape(a.licenseNote)}</p><p><strong>Next:</strong> ${escape(a.next)}</p><p class="sub">Evidence reviewed ${escape(when(a.reviewedAt))}; no fresh run implied.${a.appIds.length?' Registered apps: '+escape(a.appIds.join(', ')):''}</p>${a.registeredExecutablePresent && c.fixtureStatus!=='present'?'<p class="sub">A registered executable exists even though the original candidate fixture is incomplete. Assets and runtime still need verification.</p>':''}`:''}</div>`;
+}
+function corpusFps(c,details=false) {
+  if(!c.performance && !/game/i.test(c.kind) && !['Shareware / demos','Retail / archived games','Freeware / community'].includes(c.assessment?.origin))return '';
+  const p=c.performance;if(!p)return '<p class="sub corpus-fps">FPS — no linked measurement</p>';
+  const flipEvents=p.counterKind==='guest-flip-events',rateLabel=flipEvents?'guest Flip events/s':'FPS',intervalLabel=flipEvents?'p95 Flip interval':'p95 frame';
+  return `<div class="corpus-fps"><strong>${p.fps.toFixed(1)} ${rateLabel}</strong> <span class="sub">${p.historical?'Historical · ':''}${escape(p.renderer)} · ${age(p.measuredAt)} ago</span>${details?`<p>${escape(p.scene)} · ${escape(p.host)}</p><p class="sub">${escape(p.notes)} Measured ${escape(when(p.measuredAt))}.</p><div class="process-table"><table><tr><th>Sample</th><th>${rateLabel}</th><th>Duration</th><th>${intervalLabel}</th></tr>${p.samples.map((s,i)=>`<tr><td>${i+1}</td><td>${s.fps.toFixed(1)}</td><td>${(s.durationMs/1000).toFixed(1)}s</td><td>${s.p95FrameMs===null?'—':s.p95FrameMs.toFixed(1)+'ms'}</td></tr>`).join('')}</table></div><button data-run="${escape(p.runKey)}">Measurement source →</button>`:''}</div>`;
+}
 function corpusView() {
   const workRank = c => ({active:0,review:1,blocked:2,ready:3})[candidateWork(c)?.status] ?? 4;
-  const resultRank = c => ({failed:0,'harness-error':0,timeout:0,running:1,unknown:3,passed:4})[c.latestRun?.outcome] ?? 2;
-  const candidates = state.candidates.filter(c => matches(c) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'no-shot' && !c.latestRun?.screenshots.length || c.latestRun?.outcome === filter))
+  const resultRank = c => ({failed:0,'harness-error':0,timeout:0,running:1,unknown:2,passed:3})[c.latestRun?.outcome] ?? 4;
+  const candidates = state.candidates.filter(c => matches(c) && (corpusGroup==='all' || c.assessment?.origin===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
     .sort((a,b) => workRank(a)-workRank(b) || resultRank(a)-resultRank(b) || (a.name || a.id).localeCompare(b.name || b.id));
-  return title('EXE corpus', 'In progress → review → blocked → queued. Then failures, untested, unknown, and passed results.') +
-    `<div class="toolbar"><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['no-run', 'No recorded run'], ['no-shot', 'Needs screenshot'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><div class="corpus-grid">${candidates.map(c => {
-      const shot = c.latestRun?.screenshots.at(-1);
+  return title('EXE corpus', 'Current work first, then failures and recorded evidence. Unrecorded candidates follow.') +
+    `<div class="coverage-bar"><strong>${state.candidates.filter(c=>candidateCapture(c).shot).length} / ${state.candidates.length} with linked screenshots</strong><span>Historical images do not establish current compatibility.</span><button data-corpus-filter="with-shot">With screenshots</button><button data-corpus-filter="no-shot">Missing screenshots</button></div>`+
+    `<div class="toolbar"><select id="corpus-group" aria-label="Source group"><option value="all">All source groups</option>${[...new Set(state.candidates.map(c=>c.assessment?.origin).filter(Boolean))].sort().map(g=>`<option ${corpusGroup===g?'selected':''} value="${escape(g)}">${escape(g)}</option>`).join('')}</select><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['with-shot', 'With screenshots'], ['no-run', 'No recorded run'], ['no-shot', 'Missing screenshots'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><p class="sub">WEP and community-remake collections are not yet indexed here. Source group does not imply redistribution permission.</p><div class="corpus-grid">${candidates.map(c => {
+      const {shot,run:captureRun,older} = candidateCapture(c);
       const work = candidateWork(c);
-      return `<button class="candidate ${work?.status === 'active' ? 'candidate-working' : ''}" data-candidate="${escape(c.id)}">${work ? `<div class="candidate-work">${badge(work.status === 'active' ? '▶ In progress' : taskState(work.status)[1], 'task-label task-label-' + work.status)}<span>${escape(work.title)}</span></div>` : ''}<div class="thumbnail">${shot ? `<img src="${escape(shot.url)}" alt="Latest capture for ${escape(c.name)}: ${escape(shot.name)}" loading="lazy">` : 'NO CAPTURE YET'}</div><div class="candidate-info"><h3>${escape(c.name || c.id)}</h3><div class="sub">${escape(c.version || c.id)}</div><div class="candidate-bottom">${badge(c.latestRun ? 'Latest run: '+c.latestRun.outcome : 'Untested', tone(c.latestRun?.outcome))}<span class="sub">${c.taskIds.length} linked tasks</span></div>${c.latestRun?.route?`<div class="sub candidate-route" title="${escape(c.latestRun.route)}">${escape(c.latestRun.route)}</div>`:''}<div class="sub">Fixture ${escape(c.fixtureStatus)} · ${shot ? c.latestRun.verification + ' capture' : 'screenshot missing'}</div></div></button>`;
+      return `<button class="candidate ${shot?'':'candidate-no-capture'} ${work?.status === 'active' ? 'candidate-working' : ''}" data-candidate="${escape(c.id)}">${work ? `<div class="candidate-work">${badge(work.status === 'active' ? '▶ In progress' : taskState(work.status)[1], 'task-label task-label-' + work.status)}<span>${escape(work.title)}</span></div>` : ''}<div class="thumbnail">${shot ? `<img src="${escape(shot.url)}" alt="${older?'Earlier':'Latest'} capture for ${escape(c.name)}: ${escape(shot.name)}" loading="lazy">` : 'NO LINKED CAPTURE'}</div><div class="candidate-info">${corpusAssessment(c)}<div class="sub">${escape(c.assessment?.origin || 'Source unclassified')}${c.localOnly?' · Local only':''}</div><h3>${escape(c.name || c.id)}</h3><div class="sub">${escape(c.version || c.id)}</div>${corpusFps(c)}<div class="candidate-bottom">${badge(c.latestRun ? 'Latest run: '+c.latestRun.outcome : 'No recorded run', ['failed','harness-error'].includes(c.latestRun?.outcome)?'bad':'')}<span class="sub">${c.taskIds.length} linked tasks</span></div>${c.latestRun?.route?`<div class="sub candidate-route" title="${escape(c.latestRun.route)}">${escape(c.latestRun.route)}</div>`:''}<div class="sub">Fixture ${escape(c.fixtureStatus)} · ${shot ? (older?'Earlier capture · '+when(captureRun.startedAt):captureRun.verification + ' capture') : 'screenshot missing'}</div></div></button>`;
     }).join('') || empty('No matching candidates.')}</div>`;
 }
 function currentAgents() {
   const owners=new Set(state.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status)).map(t=>t.owner));
-  return state.agents.filter(a=>a.id===coordinator()?.agentId || owners.has(a.id) || a.provider!=='claude' && a.state!=='idle' && Date.now()-Date.parse(a.lastActivityAt)<15*60000).sort((a,b)=>Number(b.id===coordinator()?.agentId)-Number(a.id===coordinator()?.agentId));
+  return state.agents.filter(a=>a.id===coordinator()?.agentId || owners.has(a.id) || a.provider!=='claude' && a.state!=='idle' && Date.now()-Date.parse(a.lastActivityAt)<15*60000).sort((a,b)=>agentSignal(a).rank-agentSignal(b).rank || Number(b.id===coordinator()?.agentId)-Number(a.id===coordinator()?.agentId));
 }
 function agentsView() {
   const current=currentAgents(),ids=new Set(current.map(a=>a.id)),history=state.agents.filter(a=>!ids.has(a.id) && matches(a));
-  return title('Agents', 'Coordinator and current work first. Historical sessions and telemetry stay in details.') + `<div class="agent-list">${current.filter(matches).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
+  return title('Agents', 'Decisions and sessions needing a check first. Recent activity is not proof of task progress.') + `<div class="agent-list">${current.filter(matches).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
 }
-function activityView() { return title('Activity', 'Latest 150 nonempty messageboard entries, newest first.') + `<div class="panel">${feedRows(state.activity.filter(matches))}</div>`; }
+function activityView() {
+  const rows=state.activity.filter(matches);
+  return title('Activity', 'Latest 150 nonempty messageboard entries, newest first.')+`<p class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</p><div class="panel">${feedRows(rows.slice(0,activityLimit))}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="150">Show all matching entries</button></div>':''}`;
+}
 function render() {
   if (!state) return;
   renderApprovals();
@@ -186,8 +240,8 @@ function show(label, html) { currentTaskId=null;$('#detail-label').textContent =
 function runRows(runs) { return runs.map(r => `<div class="run"><div class="run-head"><button data-run="${escape(r.key)}">${escape(r.id)} · ${escape(r.route || 'route unspecified')}</button>${badge(r.outcome, tone(r.outcome))}</div><div class="sub">${escape(when(r.startedAt))} · ${escape(r.verification)} · ${escape(r.source)}</div></div>`).join('') || empty('No run folders recorded yet. See ops/README.md.'); }
 function candidateDetail(id) {
   const c = state.candidates.find(c => c.id === id); if (!c) return;
-  const shot = c.latestRun?.screenshots.at(-1);
-  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p><div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="Latest run capture"><p class="sub">Latest attempt · ${escape(c.latestRun.verification)} · ${escape(when(c.latestRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id))}</div>`);
+  const {shot,run:captureRun,older} = candidateCapture(c);
+  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${corpusAssessment(c,true)}${corpusFps(c,true)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt has no screenshot':'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id))}</div>`);
 }
 function agentDetail(id) {
   const a = state.agents.find(a => a.id === id); if (!a) return;
@@ -211,8 +265,11 @@ async function fetchState() {
     if (!state) $('#main').innerHTML = empty(`Could not read project data: ${e.message}. Start node ops/server.js.`);
   }
 }
+document.addEventListener('change',event=>{if(event.target.id==='corpus-group'){corpusGroup=event.target.value;render();}});
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
+  if(el.dataset.corpusFilter){filter=el.dataset.corpusFilter;render();}
+  if(el.dataset.moreActivity){activityLimit+=Number(el.dataset.moreActivity);render();}
   if (el.dataset.terminal) { const entry=state.terminals?.find(t=>t.id===el.dataset.terminal);if(entry?.available)window.OpsTerminal.open(entry); }
   if (el.dataset.statusSummary) show('PROJECT / TLDR',statusSummary());
   if (el.dataset.taskFilter) { filter = filter === el.dataset.taskFilter ? 'all' : el.dataset.taskFilter; render(); }
@@ -226,6 +283,7 @@ document.addEventListener('click', event => {
 $('#close-detail').onclick = () => $('#detail').close();
 document.addEventListener('toggle', event => {
   if(event.target.matches?.('.agent-history') && event.target.isConnected && !query)agentHistoryOpen=event.target.open;
+  if(event.target.matches?.('.queue-briefing') && event.target.isConnected)queueBriefingOpen=event.target.open;
   if (event.target.matches?.('details[data-task-group]') && !query && filter === 'all') expandedTaskGroups.set(event.target.dataset.taskGroup, event.target.open);
 }, true);
 document.addEventListener('submit', async event => {

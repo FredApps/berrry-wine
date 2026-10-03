@@ -1,0 +1,85 @@
+#!/usr/bin/env node
+'use strict';
+const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
+const {createBot,hash}=require('./telegram-core');
+const replies=require('./telegram-replies');
+const root=path.resolve(__dirname,'..'),dir=path.join(root,'scratch/telegram');
+const base=process.env.OPS_URL||'http://127.0.0.1:8098';
+if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base))throw Error('OPS_URL must be loopback HTTP');
+async function atomic(file,data){await fs.writeFile(file+'.tmp',JSON.stringify(data,null,2)+'\n',{mode:0o600});await fs.rename(file+'.tmp',file);}
+async function findLog(agentId){
+  const id=agentId?.replace(/^codex:/,'');if(!/^[a-f0-9-]{36}$/.test(id||''))return null;
+  const start=process.env.CODEX_SESSIONS_ROOT||path.join(os.homedir(),'.codex/sessions');
+  async function walk(d,depth){if(depth>4)return null;for(const e of await fs.readdir(d,{withFileTypes:true})){const f=path.join(d,e.name);if(e.isFile()&&e.name.endsWith(id+'.jsonl'))return f;if(e.isDirectory()){const found=await walk(f,depth+1);if(found)return found;}}return null;}
+  return walk(start,0);
+}
+async function main(){
+  await fs.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,'state.json');
+  let state;try{state=JSON.parse(await fs.readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;state={offset:0};}
+  if(process.argv.includes('--pair')){
+    if(state.owner)throw Error('Already paired. Stop the service and remove owner from local state to re-pair.');
+    const code=crypto.randomBytes(16).toString('hex');state.pairing={hash:hash(code),expires:Date.now()+30*60000};await atomic(file,state);
+    console.log('Pair in Telegram: /start '+code);return;
+  }
+  const token=(await fs.readFile(process.env.TELEGRAM_TOKEN_FILE||path.join(root,'scratch/telegram-token.txt'),'utf8')).trim();
+  if(!/^\d+:[A-Za-z0-9_-]+$/.test(token))throw Error('Invalid bot token file');
+  async function telegram(method,body){
+    let response;try{response=await fetch('https://api.telegram.org/bot'+token+'/'+method,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});}catch{throw Error('Telegram request timed out or unavailable');}
+    const data=await response.json();if(!data.ok)throw Error('Telegram '+method+' failed ('+response.status+')');return data.result;
+  }
+  async function local(endpoint,body){
+    let r;try{r=await fetch(base+endpoint,{method:body?'POST':'GET',headers:{Origin:base,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(8000)});}catch{throw Error('Local dashboard unavailable');}
+    if(!r.ok){const error=Error((await r.text()).slice(0,300));error.status=r.status;throw error;}return r.json();
+  }
+  const save=()=>atomic(file,state),bot=createBot({state,save,telegram,local});
+  if(state.replyPolicyVersion!==2){state.replyQueue=(state.replyQueue||[]).filter(x=>x.direct);state.replyPolicyVersion=2;state.replyDeliveryVersion=1;await save();}
+  const me=await telegram('getMe',{});console.log('Telegram bridge connected: @'+me.username);
+  const webhook=await telegram('getWebhookInfo',{});if(webhook.url)throw Error('Bot has a webhook configured; remove it before long polling');
+  await telegram('setMyCommands',{commands:[{command:'status',description:'Current work and blockers'},{command:'screen',description:'Orchestrator terminal'},{command:'approvals',description:'Review pending approval'},{command:'queue',description:'Waiting messages'},{command:'cancel',description:'Cancel waiting messages'},{command:'help',description:'Chat and approval help'}]});
+  let log=null,logId=null;
+  const typingTimer=setInterval(()=>{void bot.typing();},4000);typingTimer.unref();
+  while(true){
+    try {
+      const updates=await telegram('getUpdates',{offset:state.offset,timeout:5,allowed_updates:['message','callback_query']});
+      for(const update of updates){state.offset=update.update_id+1;await save();try{await bot.handle(update);}catch{if(state.owner)await bot.send('Bridge request failed. Use /status or /screen to check; actions are not automatically replayed.').catch(()=>{});}}
+      if(state.owner){
+        await bot.drainChat();
+        // Approval monitoring must not hold up replies when the dashboard is unavailable.
+        try{
+          const snapshot=await local('/api/state');
+          const prompts=snapshot.approvals?.items||[];
+          for(const p of prompts)await bot.notifyApproval(p);
+          if(!prompts.some(p=>p.terminalId==='orchestrator')&&!snapshot.approvals?.warnings?.length){
+            if(state.pending?.messageId)await telegram('editMessageReplyMarkup',{chat_id:state.owner.chatId,message_id:state.pending.messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
+            state.pending=null;state.notified=null;await save();
+          }
+        }catch(e){state.approvalError={at:Date.now(),message:e.message};await save();}
+        const terminal=JSON.parse(await fs.readFile(path.join(root,'ops/terminals.json'),'utf8')).terminals?.find(t=>t.id==='orchestrator');
+        if(terminal?.agentId!==logId){logId=terminal?.agentId;log=await findLog(logId);if(state.logId!==logId){state.logId=logId;state.logOffset=log?(await fs.stat(log)).size:0;}await save();}
+        if(log){
+          const size=(await fs.stat(log)).size;
+          // Recover recent Telegram turn identities without replaying historical output.
+          if(state.replySeedLogId!==logId){
+            const handle=await fs.open(log,'r'),start=Math.max(0,size-8*1024*1024),buffer=Buffer.alloc(size-start);
+            try{await handle.read(buffer,0,buffer.length,start);}finally{await handle.close();}
+            for(const line of buffer.toString().split('\n')){try{const r=JSON.parse(line);if(r.payload?.role==='user')replies.enqueue(state,r);}catch{}}
+            state.replySeedLogId=logId;await save();
+          }
+          if(size<state.logOffset){state.logOffset=size;await save();}
+          if(size>state.logOffset){
+            const handle=await fs.open(log,'r');let buffer;
+            try{buffer=Buffer.alloc(Math.min(size-state.logOffset,2*1024*1024));const {bytesRead}=await handle.read(buffer,0,buffer.length,state.logOffset);buffer=buffer.subarray(0,bytesRead);}finally{await handle.close();}
+            const end=buffer.lastIndexOf(10);
+            if(end>=0){for(const line of buffer.subarray(0,end).toString().split('\n')){try{replies.enqueue(state,JSON.parse(line));}catch{}}state.logOffset+=end+1;await save();}
+            else if(buffer.length===2*1024*1024){state.logOffset+=buffer.length;state.replyError={at:Date.now(),message:'Skipped oversized session record'};await save();}
+          }
+        }
+        await replies.flush(state,save,bot.send);
+      }
+      process.send?.({type:'heartbeat'});
+      await atomic(path.join(dir,'health.json'),{pid:process.pid,updatedAt:new Date().toISOString(),paired:!!state.owner,status:'running'});
+    }catch{console.error(new Date().toISOString()+' Bridge connection unavailable; retrying.');process.send?.({type:'heartbeat'});await new Promise(r=>setTimeout(r,3000));}
+  }
+}
+main().catch(()=>{console.error('Telegram bridge startup failed; check token, state, local dashboard and network.');process.exitCode=1;});
