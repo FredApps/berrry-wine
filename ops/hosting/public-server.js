@@ -6,10 +6,14 @@ const crypto=require('node:crypto');
 const {promisify}=require('node:util');
 const scrypt=promisify(crypto.scrypt);
 const cookieName='__Host-wine_ops';
-// Avoid native form submission: Safari 26.4 can abort in its credential-save
-// prompt on this password-only login. The password still travels only by POST.
+// Safari 26.4 aborts in credential-saving both on submit and navigation.
+// Use a CSS-masked text input and fetch; browsers lacking masking fall back to
+// a native password field before enabling input. Credentials travel only by POST.
 const loginScript=`'use strict';
-const input=document.getElementById('password'),button=document.getElementById('sign-in'),status=document.getElementById('login-status');
+const input=document.getElementById('access-key'),button=document.getElementById('sign-in'),status=document.getElementById('login-status');
+// Never expose typed text on browsers without CSS masking.
+if(!CSS.supports('-webkit-text-security','disc'))input.type='password';
+input.disabled=false;
 async function signIn(){
   if(button.disabled)return;
   if(!input.value){input.focus();return;}
@@ -40,7 +44,7 @@ function createGateway(config,upstreamPort=8098){
   // HTML form POSTs need their same-origin Origin header. no-referrer makes
   // browsers send Origin: null for this navigation; foreign origins stay denied.
   const baseHeaders={'Cache-Control':'no-store','Referrer-Policy':'same-origin','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};
-  const login=message=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wine / Ops · Sign in</title><style>body{margin:0;background:#08120e;color:#dcebd7;font:18px monospace;display:grid;place-items:center;min-height:100dvh}main{max-width:24rem;padding:2rem;border:1px solid #365440;margin:1rem}h1{color:#b0ef65}label,input,button{display:block;box-sizing:border-box;width:100%;margin-top:1rem}input,button{padding:.8rem;font:inherit;border:1px solid #739c5f;background:#102217;color:inherit}button{background:#b0ef65;color:#08120e;cursor:pointer}p{color:#a9b8ae;font-size:14px}</style><main><p>PRIVATE OPERATIONS CONSOLE</p><h1>WINE / OPS</h1><div id="login-controls"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="off" required autofocus maxlength="256"><button type="button" id="sign-in">Sign in →</button></div><p id="login-status" role="status">${message||'Tasks · agents · corpus · approvals'}</p><noscript>JavaScript is required to sign in.</noscript></main><script src="/login.js" defer></script></html>`;
+  const login=message=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wine / Ops · Sign in</title><style>body{margin:0;background:#08120e;color:#dcebd7;font:18px monospace;display:grid;place-items:center;min-height:100dvh}main{max-width:24rem;padding:2rem;border:1px solid #365440;margin:1rem}h1{color:#b0ef65}label,input,button{display:block;box-sizing:border-box;width:100%;margin-top:1rem}input,button{padding:.8rem;font:inherit;border:1px solid #739c5f;background:#102217;color:inherit}button{background:#b0ef65;color:#08120e;cursor:pointer}#access-key{-webkit-text-security:disc}p{color:#a9b8ae;font-size:14px}</style><main><p>PRIVATE OPERATIONS CONSOLE</p><h1>WINE / OPS</h1><div id="login-controls"><label for="access-key">Access key</label><input id="access-key" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" disabled required autofocus maxlength="256"><button type="button" id="sign-in">Sign in →</button></div><p id="login-status" role="status">${message||'Use your dashboard password. Password saving is disabled on this page.'}</p><noscript>JavaScript is required to sign in.</noscript></main><script src="/login.js" defer></script></html>`;
   const send=(res,status,body,headers={})=>{res.writeHead(status,{...baseHeaders,...headers});res.end(body);};
   const cookie=(value,age)=>`${cookieName}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${age}`;
   let epoch=0,attempts=0,inFlight=0;

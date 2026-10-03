@@ -24,6 +24,9 @@ test('public gate protects HTTP, writes and WebSockets; forwards only the exact 
   const headers={origin:config.origin,'content-type':'application/x-www-form-urlencoded'};
   const login=await request('/login');
   assert.doesNotMatch(login.text,/<form\b/i);
+  assert.doesNotMatch(login.text,/type="password"/);
+  assert.match(login.text,/-webkit-text-security:disc/);
+  assert.match(login.text,/<input id="access-key"[^>]+disabled/);
   assert.match(login.text,/src="\/login.js"/);
   assert.match(login.headers['content-security-policy'],/form-action 'none'/);
   const script=await request('/login.js');assert.equal(script.status,200);
