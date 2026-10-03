@@ -3296,13 +3296,30 @@ Ready means assets are present, not gameplay or counter correctness.
   Next: Complete: prominent Launchable now filter shows127 exact available cards. Broken Sword sibling-manifest paths fixed. Public Puppeteer desktop/mobile/card-to-Solitaire runtime PASS;60ops tests PASS.
   Done: Installed corpus entries open real emulator app in new tab; missing/unregistered route explicit; authenticated gateway preserved.
 
-- [ ] Push all safe source changes to GitHub
+- [x] Push all safe source changes to GitHub
   id: OPS-GITHUB-CHECKPOINT
-  status: blocked
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T21:14:43.754Z
-  Next: Complete GitHub device login on this box, then push checkpoint/migrated-source-dashboard-20261003 including latest launchability correction; local checkpoint receipt records exact commit. HTTPS push lacks credentials.
+  Next: Complete: checkpoint/migrated-source-dashboard-20261003 pushed via installed repository deploy key; remote4a3bc78e verified. Private artifacts/fixtures/logs excluded; inherited review gates retained.
   Done: Remote checkpoint commit contains reviewed explicit safe source manifest; push verified, unresolved runtime review gates preserved.
-  blocker: No GitHub authentication on migrated box; gh auth status confirms no logged-in hosts. User device sign-in required; do not paste tokens into chat.
-  waiting-on: user GitHub device authentication
   Evidence: ops/handoffs/github-source-checkpoint-20261003.md; scratch/github-publication-audit-20261003/checkpoint.json
+
+- [ ] Diagnose Monkey Island demo audio issues
+  id: COMI-AUDIO-DIAG
+  candidate: curse_monkey_island_demo
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T22:38:28.752Z
+  Next: Trace owning main Worker around COMI425030/4230e0 to distinguish guest pacing, execution budget and mixing cost. Reproduced waveOut starvation;19gaps859ms with priorDONE observed31–47ms before refill. No speculative scheduler fix.
+  Done: Concrete audio issue diagnosed, meaningful regression/fix if supported, ordinary playback requalified with honest limits.
+  Evidence: docs/re-notes/curse-monkey-island-demo.md; scratch/comi-audio-investigation-20261003/
+
+- [ ] Restore missing files for existing EXE corpus routes
+  id: CORPUS-MISSING-RESTORE
+  status: active
+  owner: ops-dashboard migration owner; coordinator inventory
+  created: 2026-10-03T22:48:41.992Z
+  Next: Restore exact inventory using owner-managed disk-safe transfer:96entries missing2267paths;16missing manifests leave further dependencies unknown.18entries need registry routes.
+  Done: Existing registered fixture closures restored and launch availability checked; gameplay qualification remains separate.
+  Evidence: ops/handoffs/corpus-missing-paths-20261003.md; scratch/corpus-missing-paths-20261003/missing-files.txt
