@@ -137,19 +137,16 @@ function statusSummary(compact=false) {
   return `<article class="briefing panel"><div class="briefing-top"><h2>// What matters now</h2>${link('/source?path=ops/STATUS.md','Source')}</div><p class="briefing-headline">${escape(headline)}</p><div class="briefing-meta sub">${escape(freshness)}${status.author?' · '+escape(status.author):''}${old?' · Review freshness':''} · Agent-written summary</div><div class="briefing-copy">${content || '<p class="sub">Agents can publish the current outcome, decisions needed, and next step in ops/STATUS.md.</p>'}</div></article>`;
 }
 function blockerDependencies(t) {
-  return state.tasks.filter(other=>other.id!==t.id && other.status==='blocked' && ((t.dependencies||[]).includes(other.id) || (t.waitingOn||'').split(/[^a-zA-Z0-9_.-]+/).includes(other.id)));
+  return BlockerModel.dependencies(state,t);
 }
 function blockerKind(t) {
-  if(blockerDependencies(t).length)return ['Dependency','neutral','View dependency'];
-  if(/automated.*review|review.*resolution/i.test(t.waitingOn+' '+t.blocker))return ['Review blocked','warn','Message owner'];
-  if(/host|capacity|CPU|GPU/i.test(t.waitingOn+' '+t.needs))return ['Capacity needed','warn','Provide capacity'];
-  return ['Needs follow-up','warn','Message owner'];
+  return BlockerModel.kind(state,t);
 }
 function blockerOwner(t) {
   return state.terminals?.find(x=>x.agentId===t.owner)?.label || (t.owner?t.owner.split(':')[0]+' agent · '+t.owner.split(':').at(-1).slice(-6):'Unassigned');
 }
 function blockerRows(tasks) {
-  return [...tasks].sort((a,b)=>Number(blockerKind(a)[0]==='Review blocked')-Number(blockerKind(b)[0]==='Review blocked') || a.line-b.line).map(t=>{
+  return BlockerModel.order(state,tasks).map(t=>{
     const [kind,color,action]=blockerKind(t),dependencies=blockerDependencies(t);
     const children=state.tasks.filter(x=>blockerDependencies(x).some(d=>d.id===t.id));
     const owner=state.agents.find(a=>a.id===t.owner);
@@ -159,10 +156,9 @@ function blockerRows(tasks) {
   }).join('') || empty('No matching blockers.');
 }
 function blockersView() {
-  const blocked=state.tasks.filter(t=>t.status==='blocked');
+  const {blocked,approvals}=BlockerModel.blockerSummary(state);
   const relevant=blocked.filter(t=>matches(t)||blocked.some(c=>matches(c)&&blockerDependencies(c).some(d=>d.id===t.id)));
-  let roots=relevant.filter(t=>!blockerDependencies(t).length);if(!roots.length&&relevant.length)roots=relevant;
-  const approvals=(state.approvals?.items||[]).filter(p=>!p.sent);
+  const roots=BlockerModel.primaryRoots(state,relevant);
   return title('Blockers',`${approvals.length} live approval${approvals.length===1?'':'s'} · ${roots.length} primary blockers · ${relevant.length-roots.length} dependent task${relevant.length-roots.length===1?'':'s'}`) +
     section('Your action')+(approvals.length?`<div class="blocker-list">${approvals.map(p=>`<article class="blocker panel blocker-action"><div class="blocker-heading"><strong>${escape(p.reason||'Command approval needed')}</strong>${badge('Live approval','warn')}</div><p class="sub">${escape(p.label)} · waiting ${age(p.firstSeenAt)} · checked against the live terminal</p><button data-approval="${escape(p.id)}">Review command →</button></article>`).join('')}</div>`:'<p class="sub">No live command approvals. Other requests and dependencies are below.</p>')+
     section('Waiting / needs follow-up')+`<div class="blocker-list">${blockerRows(roots)}</div>`;

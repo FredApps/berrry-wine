@@ -3341,3 +3341,30 @@ Ready means assets are present, not gameplay or counter correctness.
   created: 2026-10-03T23:16:31.625Z
   Next: Complete: live mixed activity and All/Commits/Messages filter,150 unique local-ref commits;28 tests and public Puppeteer desktop/mobile/search/pagination/refresh PASS.
   Done: Live activity shows recent unique commits with date/author/hash/link; filters and search work on desktop/mobile.
+
+
+## Claude launch experience
+
+- [~] Improve single-app and desktop app loading UX — approve design first
+  id: CLAUDE-LAUNCH-UX
+  status: blocked
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  accepted: 2026-10-03T23:32:35.471Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-03T23:32:35.471Z
+  created-by: user
+  blocker: Awaiting user approval of loading UX design
+  waiting-on: user
+  needs: Approve proposal sent in Telegram or request changes
+  next: Only after explicit user approval relayed via claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256, implement per ops/handoffs/claude-launch-ux-design-20261003.md section 5 (direct-launch gate, lib/launch-progress.js dialog, host.js byte/cache/abort progress, unit + Puppeteer network tests); silence is not approval.
+  done: After user approves design, direct app URLs show no desktop flash or desktop startup work, fetch only selected-app assets plus required shared runtime, and show responsive loading feedback; desktop/multi-app mode uses the same loading dialog without disrupting other apps. Validate cache, slow network, errors, cancellation, mobile portrait and landscape, and asset request scope.
+  notes: DESIGN ONLY until explicit user approval. Busy cursor alone is insufficient. Show honest download/preparation/startup states; no fabricated progress. Images must be labelled design mockups. Codex retains shared coordination; Claude owns this task.
+  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z
+
+- [x] Match Telegram blockers command to dashboard
+  id: OPS-TELEGRAM-BLOCKERS
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T23:38:00.490Z
+  Next: Complete: /blockers registered live, shared web grouping and read-only snapshot;52tests plus browser/live formatter parity and getMyCommands verification PASS.
+  Done: /blockers reads same dashboard task/approval snapshot; help/menu expose it and access controls remain intact.

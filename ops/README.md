@@ -655,3 +655,7 @@ without changing the production desktop source. Arbitrary repository files,
 private configuration and other symlink targets are not served. The route catalog
 refreshes after 30 seconds; backend code changes require the scoped dashboard
 service restart described in the dashboard handoff.
+
+## Telegram blocker parity
+
+`/blockers` reads the same `/api/state` snapshot as the dashboard and uses the shared `blocker-model.js` for primary blockers, dependent tasks, ordering and live approvals. It lists the next action, reason, owner and dependent titles without changing tasks or answering approvals. `/approvals` remains the command for reviewing an orchestrator approval. The bot menu and `/help` are generated from one command catalog in `telegram-core.js`.
