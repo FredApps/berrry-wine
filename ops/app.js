@@ -99,6 +99,16 @@ function agentSignal(a) {
   const [label,color]=health(a);
   return {label,color,rank:color==='warn'?2:3,reason:color==='warn'?'No recent session activity. Inspect the terminal; this alone does not prove a stall.':''};
 }
+function subagentSummary(a) {
+  const children = state.agents.filter(child => child.parentAgentId === a.id && child.id !== a.id)
+    .sort((x, y) => (y.lastActivityAt || '').localeCompare(x.lastActivityAt || ''));
+  if (!children.length) return '';
+  const rows = children.map(child => {
+    const signal = agentSignal(child);
+    return `<li><div class="subagent-heading"><button data-agent="${escape(child.id)}">${escape(child.taskTitle || child.title || child.id)}</button>${badge(signal.label, signal.color)}</div><p>${escape(child.summary || child.lastEvent || 'No summary recorded')}</p><span class="sub">${escape(child.lastEvent || 'Unknown operation')} · Activity ${age(child.lastActivityAt)} ago</span></li>`;
+  });
+  return `<section class="subagent-summary" aria-label="Subagents"><h3>Subagents (${children.length})</h3><ul>${rows.slice(0, 3).join('')}</ul>${rows.length > 3 ? `<details><summary>Show ${rows.length - 3} more subagents</summary><ul>${rows.slice(3).join('')}</ul></details>` : ''}<p class="sub">From observed session logs; activity is not proof of progress.</p></section>`;
+}
 function agentCard(a) {
   const {label,color,reason,rank}=agentSignal(a);
   const latest = agentRuns(a).find(r => r.visuals?.length);
@@ -106,7 +116,7 @@ function agentCard(a) {
   const candidate = latest && state.candidates.find(c => c.id === latest.candidateId);
   const name = coordinator()?.agentId===a.id ? 'Coordinator' : a.taskTitle || (a.title && a.title !== a.id ? a.title : candidate?.name || 'Untitled session');
   const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
-  return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
+  return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div>${subagentSummary(a)}<div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
 function feedRows(rows, truncate = false) { return rows.map(row => {
   const commit=row.type==='commit',text=String(commit?(row.subject || row.text || 'Untitled commit'):(row.text || ''));
@@ -304,7 +314,7 @@ function agentDetail(id) {
   const fields = [['Session', a.id], ['Model', a.model || 'unknown'], ['Worktree', a.cwd], ['Assigned task', a.taskId || 'unknown — no explicit owner match'], ['On task', age(a.taskStartedAt)], ['Current turn started', when(a.turnStartedAt)], ['Latest activity', when(a.lastActivityAt)], ['Last progress', when(a.progressAt)], ['Observed state', a.state], ['Process health', 'unknown — no process attachment'], ['Last operation', a.lastEvent], ['Last-request input', num(a.inputTokens)], ['Last-request output', num(a.outputTokens)], ['Cache read', num(a.cacheReadTokens)], ['Cache write', num(a.cacheWriteTokens)], ['Reported context limit', num(a.contextLimit)], ['Session total tokens', num(a.totalTokens)], ['Usage observed', when(a.usageAt)], ['Compactions observed', a.compactions + (a.partial ? ' in sampled log windows' : '')], ['Log coverage', a.partial ? 'head + tail only; history may be incomplete' : 'complete file']];
   fields.find(f => f[0] === 'Process health')[1] = 'unknown — PID presence does not establish responsiveness';
   fields.push(['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
-  show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
+  show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${subagentSummary(a)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
 }
 let activeRefresh=null;
 function refresh() {
