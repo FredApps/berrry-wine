@@ -11,3 +11,5 @@ Exact commands/logs/source hashes and unchanged WASM f40d4ca3…5b49063: scratch
 Known unrelated limits: fullscreen rotation test fails identically on the valid pre-task baseline; one existing double-tap test raced visible-window readiness. Those are not claimed fixed. Cache provenance behind a service worker remains unknown. Unabortable decode/initialization must settle before memory release; a replacement waits safely and remains cancellable.
 
 Publication: reviewed source goes to checkpoint/migrated-source-dashboard-20261003; source checkpoint only, no main promotion/public game deployment.
+
+Verified GitHub source commit:5a381fd2e131243723cfd220c00fe7e6b3dfe21a on checkpoint/migrated-source-dashboard-20261003.

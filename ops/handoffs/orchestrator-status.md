@@ -1,5 +1,11 @@
 # Orchestrator status
 
+## Current persistent-box checkpoint (2026-10-04)
+
+Coordinator: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5, /root in wine-orchestrator. Core migration hold released by migration-core-ready-20261003.md. Approved launch UX complete and reviewed; source pushed5a381fd2, no public game deployment. Root browser/server work is closed; no canonical build or benchmark running for this task. Claude1863d2b5 released implementation at00:40:22; ops-dashboard owns its persistent terminal migration and bulk fixture restore. Exact review receipts: launch-ux-coordinator-review-20261004.md. Existing REP automatic-review restriction and audio/gameplay blockers remain.
+
+## Historical pre-migration checkpoint
+
 - Session: `codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0` (`/root`).
 - tmux: `wine-orchestrator` (inherited TMUX socket confirms tmux launch).
 - Startup registration: 2026-10-01T23:44:20Z.

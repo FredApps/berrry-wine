@@ -1,6 +1,6 @@
-updated: 2026-10-03T23:39:50.168Z
+updated: 2026-10-04T00:54:59.135Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Telegram /blockers is live and shares the dashboard’s blocker grouping, actions and dependencies. Dashboard Activity includes Git commits with author, date, hash and GitHub links. All / Commits / Messages filters work with search and pagination, verified on desktop and mobile. EXE corpus launch and release-readiness views remain live; no games have complete release approval.
+The approved Windows-style loading dialog is implemented and pushed to GitHub. It appears only after 500 ms, and direct app links skip desktop startup. All 50 browser checks passed, including cancellation, retry and mobile layouts; the authenticated dashboard launch route also passed. No public game deployment occurred.
 
-Gameplay evidence covers95 entries; six have qualified logical-frame measurements, with physical FPS unknown. Monkey Island audio starvation is narrowed to late main-thread refill. ScummVM silence is traced to undelivered Worker audio callbacks; fullscreen toggle also failed. Both repairs remain open. Missing-file restoration is owned by ops-dashboard, with exact missing paths recorded. No public game deployment occurred.
+Gameplay evidence covers 95 entries; six have qualified logical-frame measurements, with physical FPS unknown. Monkey Island audio starvation and ScummVM audio/fullscreen repairs remain open. Missing-file restoration remains with ops-dashboard; exact missing paths are recorded. The existing mobile fullscreen rotation regression is unchanged.

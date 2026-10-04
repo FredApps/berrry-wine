@@ -3320,7 +3320,7 @@ Ready means assets are present, not gameplay or counter correctness.
   status: active
   owner: ops-dashboard migration owner; coordinator inventory
   created: 2026-10-03T22:48:41.992Z
-  Next: Restore exact inventory using owner-managed disk-safe transfer:96entries missing2267paths;16missing manifests leave further dependencies unknown.18entries need registry routes.
+  Next: ops-dashboard restores exact remaining paths. Latest audit202declared/20missing/18unregistered; NFS2SE metadata reporting fixed and reviewed (5tests), exposes72missing assets instead of invalid-route. Patch pushed e105787d; service activation deferred until launch browser owner releases. See scratch/local-owner-restore-listed/report.json and scratch/nfs2se-route-metadata-20261003/manifest-audit.json.
   Done: Existing registered fixture closures restored and launch availability checked; gameplay qualification remains separate.
   Evidence: ops/handoffs/corpus-missing-paths-20261003.md; scratch/corpus-missing-paths-20261003/missing-files.txt
 
@@ -3345,21 +3345,18 @@ Ready means assets are present, not gameplay or counter correctness.
 
 ## Claude launch experience
 
-- [~] Improve single-app and desktop app loading UX — approve design first
+- [x] Implement approved Windows-style launch dialog with 500 ms reveal delay
   id: CLAUDE-LAUNCH-UX
-  status: blocked
+  status: done
   owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
   accepted: 2026-10-03T23:32:35.471Z
   accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
   created: 2026-10-03T23:32:35.471Z
   created-by: user
-  blocker: Awaiting user approval of revision-2 loading UX design (Win98 File Download style)
-  waiting-on: user
-  needs: Approve revision-2 proposal sent in Telegram (msgs 291-294) or request changes
-  next: Only after explicit user approval relayed via claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256, implement per ops/handoffs/claude-launch-ux-design-20261003.md sections 3R, 3D and 5 (direct-launch gate, single 500ms reveal delay, lib/launch-progress.js dialog, host.js byte/cache/abort progress, unit + Puppeteer network tests); silence is not approval.
+  next: Complete: coordinator review corrections accepted;50browser checks and authenticated dashboard Solitaire route pass,28controller and6host cases pass. Pushed5a381fd2 to checkpoint/migrated-source-dashboard-20261003. No public game deployment. Existing fullscreen rotation issue remains separate.
   done: After user approves design, direct app URLs show no desktop flash or desktop startup work, fetch only selected-app assets plus required shared runtime, and show responsive loading feedback; desktop/multi-app mode uses the same loading dialog without disrupting other apps; the dialog appears only if the launch is still pending 500ms after launch initiation (one deadline, never shown or flashed for faster launches, stale timers cannot reopen it, closes on readiness with no minimum time). Validate cache, slow network, errors, cancellation, 500ms boundary/race cases, repeated launches, mobile portrait and landscape, and asset request scope.
-  notes: DESIGN ONLY until explicit user approval. User correction 2026-10-03 adds "only displays if load takes more than 0.5 s" (handoff section 3D, text-only, no resend). Known-size progress examples require every required file size known (coordinator review). Busy cursor alone is insufficient. Show honest download/preparation/startup states; no fabricated progress. Images must be labelled design mockups. Codex retains shared coordination; Claude owns this task.
-  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z (revision 1, superseded by user correction "more like windows file downloading dialog"); revision 2 scratch/claude-launch-ux/revision-2/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups), receipt scratch/claude-launch-ux/revision-2/telegram-delivery.json msgs 291-294 at 2026-10-03T23:45:48Z
+  notes: User explicitly approved implementation via Telegram: "let's go with this UX looks good". User correction 2026-10-03 adds "only displays if load takes more than 0.5 s" (handoff section 3D, text-only, no resend). Known-size progress examples require every required file size known (coordinator review). Busy cursor alone is insufficient. Show honest download/preparation/startup states; no fabricated progress. Images must be labelled design mockups. Codex retains shared coordination; Claude owns this task.
+  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z (revision 1, superseded by user correction "more like windows file downloading dialog"); revision 2 scratch/claude-launch-ux/revision-2/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups), receipt scratch/claude-launch-ux/revision-2/telegram-delivery.json msgs 291-294 at 2026-10-03T23:45:48Z; IMPLEMENTATION 2026-10-04: scratch/claude-launch-ux/implementation/evidence/ (pins.txt with source sha256s + served wasm f40d4ca3, diffs/ vs pre-task snapshot, browser-receipt.json, screens/*.png inspected, logs/ incl. BASELINE runs); node test/test-launch-progress.js exit 0 (23 cases); node test/test-web-direct-launch.js exit 0 (42/42, headless Chrome 151 on loopback); cache-version, test-manifest, host-import-sigs, js-copies gates OK; launch-related web/unit regressions pass except pre-existing test-web-page-fullscreen (baseline fails identically) and one flaky double-tap run; ops/handoffs/launch-ux-coordinator-review-20261004.md; scratch/claude-launch-ux/implementation/{review-final-pins.json,review-final-browser-receipt.json,private-route-review.json,publication.json}
 
 - [x] Match Telegram blockers command to dashboard
   id: OPS-TELEGRAM-BLOCKERS
