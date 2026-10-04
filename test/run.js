@@ -2507,6 +2507,14 @@ async function main() {
     verbose: VERBOSE,
     _debugReadFile: TRACE_API,
     _debugFindFile: TRACE_API,
+    // Appended to every traced ReadFile (--trace-fs): the batch and the MAIN
+    // thread's synchronous-message depth. A read made while that depth is
+    // nonzero -- by main itself, or by a worker the cooperative scheduler runs
+    // inline from a nested wait -- cannot park on a lazy byte range, because
+    // the recursive $wnd_send_message frame cannot return to the host to await
+    // the fetch. That is what decides which ranges a lazy mount must preload.
+    ioTraceTag: () => `b=${traceGateBatch} mainDepth=${
+      instance.exports.get_sync_msg_depth ? instance.exports.get_sync_msg_depth() | 0 : 0}`,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
@@ -4439,6 +4447,7 @@ async function main() {
       hostCensus: HOST_CENSUS,
       exports: workerExportsProxy,
       _debugReadFile: TRACE_API,
+      ioTraceTag: ctx.ioTraceTag,
       sharedGdi: base.gdi,  // the live GDI table, not the copy in ctx
       g2w: (addr) => translateGuest(addr, instance.exports.get_image_base(), memory.buffer),
     });
