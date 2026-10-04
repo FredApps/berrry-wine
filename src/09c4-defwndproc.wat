@@ -48,11 +48,14 @@
   ;; Three call sites must agree — the frame painter, WM_NCCALCSIZE and
   ;; WM_NCHITTEST — or the chrome, the client origin and the resize bands
   ;; drift apart.
-  (func $defwndproc_frame_width (param $hwnd i32) (result i32)
+  (func $defwndproc_style_frame_width (param $style i32) (result i32)
     (select (i32.const 4) (i32.const 3)
       (i32.ne
-        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00040000))
+        (i32.and (local.get $style) (i32.const 0x00040000))
         (i32.const 0))))
+
+  (func $defwndproc_frame_width (param $hwnd i32) (result i32)
+    (call $defwndproc_style_frame_width (call $wnd_get_style (local.get $hwnd))))
 
   ;; One Win98 caption-style system button, 16x14 at ($x,$y): $kind 0 close,
   ;; 1 maximize, 2 restore, 3 minimize. $brush draws the max/restore/min

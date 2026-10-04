@@ -159,6 +159,12 @@
 
   ;; 289: DefWindowProcW — same as DefWindowProcA
   (func $handle_DefWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0046))
+      (then
+        (call $windowpos_defproc_minmax (local.get $arg0) (local.get $arg3))
+        (i32.store (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
     (if (i32.eq (local.get $arg1) (i32.const 0x0047))
       (then
         (call $windowpos_defproc_geometry (local.get $arg0) (local.get $arg3))

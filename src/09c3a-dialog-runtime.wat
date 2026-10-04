@@ -17,10 +17,14 @@
   ;; sends a message, and whatever that paints takes scratch slots of its own.
   ;; Marking here and resetting on the way out recycles everything the inner
   ;; frame took while leaving the caller's slots (taken before the mark) alone.
+  ;; Completion of the immediately returned synchronous send, not its LRESULT.
+  ;; Consumers of temporary output structs must reject a bounded-run timeout.
+  (global $wnd_send_completed (mut i32) (i32.const 0))
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $mark i32) (local $r i32)
     (local.set $mark (call $paint_scratch_mark))
+    (global.set $wnd_send_completed (i32.const 1))
     (local.set $r (call $wnd_send_message_inner
       (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
     (call $paint_scratch_reset (local.get $mark))
@@ -140,6 +144,7 @@
     ;; src/09e-win16-api.wat for the path that does call it.
     (if (global.get $code16)
       (then
+        (global.set $wnd_send_completed (i32.const 0))
         ;; Only for a procedure the task could actually be entered at. A
         ;; sentinel below 0xFFFF0000 — the built-in default, which is what a
         ;; window whose class went unresolved is given — is not one, and
@@ -206,6 +211,7 @@
           (br $sync_done)))
       (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    (global.set $wnd_send_completed (i32.eqz (global.get $eip)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (i32.load offset=0 (global.get $reg_base)))
     (global.set $eip (local.get $old_eip))
