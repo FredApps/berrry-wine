@@ -610,6 +610,35 @@ class WineAssembly {
   static FROZEN_STALL_MS = 5000;
   static _nextProcessId = 1000;
 
+  // An HTTP-range provider for `url`, or for the deployer's parts of it
+  // (url.part000, url.part001, ...) when the release host stores it split, as
+  // fetchAssetBytes already handles for whole-file loads. A part shorter than
+  // ASSET_PART_SIZE is the last one. Rejects with the original error when
+  // neither form exists, so loadFiles keeps its whole-file fallback.
+  static async _openRangeProvider(url, options, providers = window.byteProvider) {
+    const notFound = error => /HEAD .* → 404/.test(String(error && error.message));
+    try {
+      return await providers.HttpRangeProvider.open(url, options);
+    } catch (error) {
+      if (!notFound(error)) throw error;
+      const parts = [];
+      for (let index = 0; ; index++) {
+        let part;
+        try {
+          part = await providers.HttpRangeProvider.open(WineAssembly._assetPartUrl(url, index), options);
+        } catch (partError) {
+          if (index === 0) throw error;
+          if (notFound(partError)) break;
+          throw partError;
+        }
+        parts.push(part);
+        if (part.size < WineAssembly.ASSET_PART_SIZE) break;
+      }
+      return parts.length === 1 ? parts[0]
+        : new providers.ConcatProvider(parts, String(url).replace(/^.*\//, ''));
+    }
+  }
+
   static _assetPartUrl(url, index) {
     const match = String(url).match(/^([^?#]*)(.*)$/);
     return match[1] + '.part' + String(index).padStart(3, '0') + match[2];
@@ -3289,7 +3318,7 @@ class WineAssembly {
           assetLoads.set(key, (async () => {
             if (useRange) {
               try {
-                const provider = await window.byteProvider.HttpRangeProvider.open(url, {
+                const provider = await WineAssembly._openRangeProvider(url, {
                   // Only launch-time discovery belongs to this AbortSignal.
                   // The provider retains this adapter for later gameplay GETs;
                   // those must remain usable after the launch controller ends.
@@ -3302,7 +3331,41 @@ class WineAssembly {
                   },
                 });
                 checkCancelled();
-                return { provider: window.byteProvider.cached(provider) };
+                const cache = window.byteProvider.cached(provider);
+                if (item.preloadRanges) {
+                  // Some of this file is read where the guest cannot park
+                  // (Diablo: Storm's UI art, read inside a synchronous
+                  // WM_INITDIALOG). Those measured ranges are part of the
+                  // launch and stay resident; the rest streams in play.
+                  let ranges = null;
+                  try {
+                    ranges = window.byteProvider.preloadRangesFor(item.preloadRanges, provider.size);
+                  } catch (error) {
+                    // Measured on other bytes: the ranges would pin the wrong
+                    // data, so take the whole file, as before ranges existed.
+                    console.warn(`[files] ${url}: ${error.message}; loading the whole file`);
+                  }
+                  if (!ranges) return { data: await fetchWithRetry(url) };
+                  const transfer = WineAssembly._beginTransfer(url,
+                    { ...transferOpts, transferId: ++WineAssembly._transferSeq });
+                  try {
+                    const done = await cache.preload(ranges, {
+                      signal: transferOpts.signal,
+                      concurrency: 4,
+                      onProgress: ({ loaded, total }) => transfer.emit('progress', loaded, total, 'network'),
+                    });
+                    transfer.emit('done', done.bytes, done.bytes, 'network');
+                  } catch (error) {
+                    if (error && typeof error === 'object' && error.name !== 'AbortError') {
+                      error.isDownloadError = true;
+                      if (!error.assetUrl) error.assetUrl = url;
+                    }
+                    transfer.emit('error', transfer.loaded, null, null, error);
+                    throw error;
+                  }
+                  checkCancelled();
+                }
+                return { provider: cache };
               } catch (error) {
                 checkCancelled();
                 // A static host without Range support keeps the eager path.
