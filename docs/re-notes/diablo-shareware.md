@@ -3074,3 +3074,39 @@ not the DirectDraw object. The 0x320 immediates in `.text` are `sub edi,
 only the `[NetMsg]` hot-key texts. There is no resolution setting to honour:
 640x480 is the whole answer, and the emulator fit-scales that exclusive
 primary to whatever canvas the host has.
+
+## spawn.mpq streams by HTTP range with a measured preload (2026-10-04)
+
+Why it had to be eager (2026-09-18 section above), now pinned in source:
+in cooperative mode a wait reached from inside a synchronous message
+(`$wnd_send_message`'s nested `$run`, e.g. WM_INITDIALOG) goes to
+`ThreadManager.waitMultipleCooperative`, which pumps Storm's worker with the
+synchronous `runSlice`. A worker read that misses a lazy range parks on
+io_wait; its fill is a promise that cannot settle before the loop gives up
+(zero-step slice), so the wait returns WAIT_FAILED and Storm decodes an empty
+buffer. A miss by the main thread itself at depth > 0 is worse: `$io_block`
+yields inside the nested `$run`, which retries 64 rounds and abandons the
+wndproc. Worker mode (browser `?threads`) blocks the main guest Worker in
+`Atomics.wait` (lib/guest-rpc.js) while the page fills the worker's read, so
+worker reads are safe there; main-thread reads at depth > 0 are not, in
+either mode.
+
+Measured (`run.js --trace-fs`, which now tags each read with `tid`, batch and
+the main thread's `sync_msg_depth`; `tools/io-range-census.js`), route menu ->
+new Warrior -> Tristram, 3420 batches: 2302 spawn.mpq reads, 15.2 MB unique;
+77 reads in nested context (14 main, 63 Storm worker), 0.61 MB. Preload set =
+MPQ header + hash/block tables + every file diabloui.dll names
+(`--names-from`) + every block read in nested context (adds
+`music\sintro.wav`, block 937, the menu music streamed by T2): 8 ranges,
+4.6 MB (21 chunks / 5.4 MB). Registered in lib/apps.js as `preloadRanges`.
+
+CLI A/B with `--lazy-ranges=5`: without the preload `[io] needs-preload` fires
+at spawn.mpq@628142 and the title/menu art is broken (route derails); with it
+the menu/class/name frames are byte-identical to eager and Tristram is
+reached. Browser (test-diablo-shareware-browser-web.js, cold, `?threads` on an
+isolated server, injected 800/1500 ms latency, injected 503s with Retry): all
+six stages pass; 63 chunks / 16.5 MB of the 50.3 MB archive fetched by
+gameplay. Re-measure the ranges if spawn.mpq changes; a size mismatch loads
+the whole file. `run.js --threads` cannot run Diablo at all on origin/main
+(batch 666: run.js `wait_multiple` calls `waitMultipleCooperative` under the
+worker backend) -- pre-existing, unrelated.
