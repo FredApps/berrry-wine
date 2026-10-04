@@ -7,6 +7,34 @@ function fixture(){const state={owner:{userId:10,chatId:10}},calls=[],actions=[]
  const bot=createBot({state,save:async()=>{},telegram:async(method,body)=>{calls.push({method,body});return {message_id:20};},local:async(url,body)=>{if(url==='/api/state')return {tasks:[],approvals:{items:live?[live]:[]}};actions.push({url,body});return {sent:true};}});
  return {state,bot,calls,actions,live:p=>live=p};}
 const message=(text,id=10,type='private')=>({message:{text,date:Date.now()/1000,from:{id},chat:{id,type}}});
+test('/blockers matches dashboard grouping and stays read-only for authorized users',async()=>{
+ const snapshot={tasks:[
+  {id:'root',title:'Restore game files',status:'blocked',line:1,needs:'Restore archive',blocker:'Files absent',owner:'codex:one'},
+  {id:'child',title:'Verify game',status:'blocked',line:2,dependencies:['root']},
+  {id:'done',title:'Old blocker',status:'done',blocker:'Resolved'},
+  {id:'review',title:'Review validation',status:'blocked',line:3,waitingOn:'Automated review',blocker:'Review stopped execution'},
+ ],approvals:{items:[{reason:'Check exact command',terminalId:'orchestrator'},{reason:'Old approval',sent:true}]},terminals:[{agentId:'codex:one',label:'Fixture owner'}]};
+ const calls=[],reads=[],state={owner:{userId:10,chatId:10}};
+ const bot=createBot({state,save:async()=>{},telegram:async(method,body)=>{calls.push({method,body});return{};},local:async(url,body)=>{assert.equal(body,undefined);reads.push(url);return snapshot;}});
+ await bot.handle(message('/blockers',11));await bot.handle(message('/blockers',10,'group'));
+ assert.equal(reads.length,0);
+ await bot.handle(message('/blockers@wine_bot'));
+ assert.deepEqual(reads,['/api/state']);assert.equal(state.chatQueue,undefined);
+ const text=calls.map(x=>x.body.text).join('\n');
+ assert.match(text,/1 live approvals · 2 primary blockers · 1 dependent tasks/);
+ assert.match(text,/Next: Restore archive/);assert.match(text,/Reason: Files absent/);assert.match(text,/Owner: Fixture owner/);
+ assert.match(text,/Also holds up: Verify game \[child\]/);assert.match(text,/No dashboard override/);
+ assert(!text.includes('Old blocker'));assert(!text.includes('Old approval'));
+});
+test('/blockers empty state and command menu/help share the command catalog',async()=>{
+ const f=fixture();f.live(null);await f.bot.handle(message('/blockers'));
+ assert.match(f.calls.at(-1).body.text,/No blocked tasks recorded/);
+ await f.bot.handle(message('/help'));
+ const {COMMANDS}=require('./telegram-core');
+ assert(COMMANDS.some(x=>x.command==='blockers'));
+ for(const c of COMMANDS)assert(f.calls.at(-1).body.text.includes('/'+c.command+' — '+c.description));
+ assert.equal(f.actions.length,0);
+});
 test('Remote Codex capitalized model footer permits an empty prompt and exact chat submission',()=>{
  assert(chatReady('› Ask Codex to do anything\n\n  GPT-6-Astra medium · ~/wine-assembly'));
  assert.equal(chatSubmitKey('› [Telegram] hello\n\n  GPT-6-Astra medium · ~/wine-assembly','[Telegram] hello'),'Enter');

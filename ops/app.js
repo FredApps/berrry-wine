@@ -25,7 +25,11 @@ const taskStates = [
 const expandedTaskGroups = new Map();
 let agentHistoryOpen=false;
 let activityLimit=25;
+let activityFilter='all';
 let corpusGroup='all';
+let corpusCategory='all';
+let corpusRelease='all';
+let corpusLaunch='all';
 let queueBriefingOpen=false;
 const taskState = status => taskStates.find(s => s[0] === status) || taskStates.at(-1);
 const sortedTasks = tasks => [...tasks].sort((a,b) => taskStates.indexOf(taskState(a.status)) - taskStates.indexOf(taskState(b.status)) || a.line - b.line);
@@ -104,7 +108,13 @@ function agentCard(a) {
   const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
   return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div><div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
 }
-function feedRows(rows, truncate = false) { return rows.map(row => `<div class="feed-row"><div class="sub">MESSAGEBOARD</div><div class="feed-text">${escape(truncate && row.text.length > 360 ? row.text.slice(0, 360) + '…' : row.text)}</div></div>`).join('') || empty('No messageboard entries.'); }
+function feedRows(rows, truncate = false) { return rows.map(row => {
+  const commit=row.type==='commit',text=String(commit?(row.subject || row.text || 'Untitled commit'):(row.text || ''));
+  const date=row.time && Number.isFinite(Date.parse(row.time)) ? `<time datetime="${escape(row.time)}">${escape(when(row.time))}</time>` : '<span>Date not recorded</span>';
+  const metadata=commit?`<code>${escape(row.shortHash || row.hash?.slice(0,8) || 'unknown')}</code><span>${escape(row.author || 'Unknown author')}</span>`:'';
+  const github=commit && typeof row.url==='string' && /^https:\/\/github\.com\//i.test(row.url) && !/[\u0000-\u0020]/.test(row.url)?`<a class="commit-link" href="${escape(row.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open commit '+(row.shortHash || row.hash || '')+' on GitHub')}">GitHub ↗</a>`:'';
+  return `<div class="feed-row${commit?' feed-commit':''}"><div class="sub activity-meta"><span>${commit?'COMMIT':'MESSAGEBOARD'}</span>${metadata}${date}${github}</div><div class="feed-text${commit?' commit-subject':''}">${escape(truncate && text.length>360?text.slice(0,360)+'…':text)}</div></div>`;
+}).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
 function section(name, target) { return `<div class="section-head"><h2>${name}</h2>${target ? `<a href="#${target}">View all →</a>` : ''}</div>`; }
 function notice() { return state.warnings.length ? `<div class="notice"><details><summary>${state.warnings.length} source notices</summary><ul>${state.warnings.map(w => `<li>${escape(w)}</li>`).join('')}</ul></details></div>` : ''; }
@@ -127,19 +137,16 @@ function statusSummary(compact=false) {
   return `<article class="briefing panel"><div class="briefing-top"><h2>// What matters now</h2>${link('/source?path=ops/STATUS.md','Source')}</div><p class="briefing-headline">${escape(headline)}</p><div class="briefing-meta sub">${escape(freshness)}${status.author?' · '+escape(status.author):''}${old?' · Review freshness':''} · Agent-written summary</div><div class="briefing-copy">${content || '<p class="sub">Agents can publish the current outcome, decisions needed, and next step in ops/STATUS.md.</p>'}</div></article>`;
 }
 function blockerDependencies(t) {
-  return state.tasks.filter(other=>other.id!==t.id && other.status==='blocked' && ((t.dependencies||[]).includes(other.id) || (t.waitingOn||'').split(/[^a-zA-Z0-9_.-]+/).includes(other.id)));
+  return BlockerModel.dependencies(state,t);
 }
 function blockerKind(t) {
-  if(blockerDependencies(t).length)return ['Dependency','neutral','View dependency'];
-  if(/automated.*review|review.*resolution/i.test(t.waitingOn+' '+t.blocker))return ['Review blocked','warn','Message owner'];
-  if(/host|capacity|CPU|GPU/i.test(t.waitingOn+' '+t.needs))return ['Capacity needed','warn','Provide capacity'];
-  return ['Needs follow-up','warn','Message owner'];
+  return BlockerModel.kind(state,t);
 }
 function blockerOwner(t) {
   return state.terminals?.find(x=>x.agentId===t.owner)?.label || (t.owner?t.owner.split(':')[0]+' agent · '+t.owner.split(':').at(-1).slice(-6):'Unassigned');
 }
 function blockerRows(tasks) {
-  return [...tasks].sort((a,b)=>Number(blockerKind(a)[0]==='Review blocked')-Number(blockerKind(b)[0]==='Review blocked') || a.line-b.line).map(t=>{
+  return BlockerModel.order(state,tasks).map(t=>{
     const [kind,color,action]=blockerKind(t),dependencies=blockerDependencies(t);
     const children=state.tasks.filter(x=>blockerDependencies(x).some(d=>d.id===t.id));
     const owner=state.agents.find(a=>a.id===t.owner);
@@ -149,10 +156,9 @@ function blockerRows(tasks) {
   }).join('') || empty('No matching blockers.');
 }
 function blockersView() {
-  const blocked=state.tasks.filter(t=>t.status==='blocked');
+  const {blocked,approvals}=BlockerModel.blockerSummary(state);
   const relevant=blocked.filter(t=>matches(t)||blocked.some(c=>matches(c)&&blockerDependencies(c).some(d=>d.id===t.id)));
-  let roots=relevant.filter(t=>!blockerDependencies(t).length);if(!roots.length&&relevant.length)roots=relevant;
-  const approvals=(state.approvals?.items||[]).filter(p=>!p.sent);
+  const roots=BlockerModel.primaryRoots(state,relevant);
   return title('Blockers',`${approvals.length} live approval${approvals.length===1?'':'s'} · ${roots.length} primary blockers · ${relevant.length-roots.length} dependent task${relevant.length-roots.length===1?'':'s'}`) +
     section('Your action')+(approvals.length?`<div class="blocker-list">${approvals.map(p=>`<article class="blocker panel blocker-action"><div class="blocker-heading"><strong>${escape(p.reason||'Command approval needed')}</strong>${badge('Live approval','warn')}</div><p class="sub">${escape(p.label)} · waiting ${age(p.firstSeenAt)} · checked against the live terminal</p><button data-approval="${escape(p.id)}">Review command →</button></article>`).join('')}</div>`:'<p class="sub">No live command approvals. Other requests and dependencies are below.</p>')+
     section('Waiting / needs follow-up')+`<div class="blocker-list">${blockerRows(roots)}</div>`;
@@ -188,8 +194,10 @@ function candidateWork(c) {
   return state.tasks.filter(t => c.taskIds.includes(t.id) && order.includes(t.status)).sort((a,b) => order.indexOf(a.status)-order.indexOf(b.status) || a.line-b.line)[0];
 }
 function candidateCapture(c) {
-  const run=c.latestRun?.screenshots.length?c.latestRun:state.runs.find(r=>r.candidateId===c.id && r.screenshots.length);
-  return {run,shot:run?.screenshots.at(-1),older:!!run && run.key!==c.latestRun?.key};
+  const matching=state.runs.filter(r=>r.candidateId===c.id || c.appIds?.includes(r.candidateId));
+  const gameplayRun=matching.find(r=>r.gameplayScreenshots?.length);
+  const run=gameplayRun || (c.latestRun?.screenshots.length?c.latestRun:matching.find(r=>r.screenshots.length));
+  return {run,shot:gameplayRun?run.gameplayScreenshots.at(-1):run?.screenshots.at(-1),gameplay:!!gameplayRun,older:!!run && run.key!==c.latestRun?.key};
 }
 function corpusAssessment(c,details=false) {
   const a=c.assessment;if(!a)return '';
@@ -197,23 +205,70 @@ function corpusAssessment(c,details=false) {
   return `<div class="corpus-assessment">${badge(a.needsReview?'New evidence · review needed':a.status,color)}${details?`<p>${escape(a.summary)}</p><p class="sub">${escape(a.origin)} · ${escape(a.distribution)}</p><p class="sub">${escape(a.licenseNote)}</p><p><strong>Next:</strong> ${escape(a.next)}</p><p class="sub">Evidence reviewed ${escape(when(a.reviewedAt))}; no fresh run implied.${a.appIds.length?' Registered apps: '+escape(a.appIds.join(', ')):''}</p>${a.registeredExecutablePresent && c.fixtureStatus!=='present'?'<p class="sub">A registered executable exists even though the original candidate fixture is incomplete. Assets and runtime still need verification.</p>':''}`:''}</div>`;
 }
 function corpusFps(c,details=false) {
-  if(!c.performance && !/game/i.test(c.kind) && !['Shareware / demos','Retail / archived games','Freeware / community'].includes(c.assessment?.origin))return '';
+  const gameCategory = c.category && !['tools','graphics-demos','unclassified','collections'].includes(c.category.id);
+  if(!c.performance && !gameCategory && !/game/i.test(c.kind) && !['Shareware / demos','Retail / archived games','Freeware / community'].includes(c.assessment?.origin))return '';
   const p=c.performance;if(!p)return '<p class="sub corpus-fps">FPS — no linked measurement</p>';
-  const flipEvents=p.counterKind==='guest-flip-events',rateLabel=flipEvents?'guest Flip events/s':'FPS',intervalLabel=flipEvents?'p95 Flip interval':'p95 frame';
+  const flipEvents=p.counterKind==='guest-flip-events',logical=p.metric==='guest-logical-frame-submissions',rateLabel=logical?'logical gameplay frames/s':flipEvents?'guest Flip events/s':'guest presentation events/s',intervalLabel=logical?'p95 submission interval':flipEvents?'p95 Flip interval':'p95 presentation interval';
   return `<div class="corpus-fps"><strong>${p.fps.toFixed(1)} ${rateLabel}</strong> <span class="sub">${p.historical?'Historical · ':''}${escape(p.renderer)} · ${age(p.measuredAt)} ago</span>${details?`<p>${escape(p.scene)} · ${escape(p.host)}</p><p class="sub">${escape(p.notes)} Measured ${escape(when(p.measuredAt))}.</p><div class="process-table"><table><tr><th>Sample</th><th>${rateLabel}</th><th>Duration</th><th>${intervalLabel}</th></tr>${p.samples.map((s,i)=>`<tr><td>${i+1}</td><td>${s.fps.toFixed(1)}</td><td>${(s.durationMs/1000).toFixed(1)}s</td><td>${s.p95FrameMs===null?'—':s.p95FrameMs.toFixed(1)+'ms'}</td></tr>`).join('')}</table></div><button data-run="${escape(p.runKey)}">Measurement source →</button>`:''}</div>`;
+}
+const releaseStates = [['ready','Ready for release','good'],['review-needed','Release review needed','warn'],['blocked','Release blocked','bad'],['unknown','Release readiness unknown',''],['already-production','Already in production','']];
+function releaseState(c) { return releaseStates.find(([id])=>id===c.releaseReadiness?.status) || releaseStates[3]; }
+function matchesRelease(c,selection=corpusRelease) {
+  if(selection==='all')return true;
+  const r=c.releaseReadiness;
+  if(r?.scope!=='game')return false;
+  if(selection==='gameplay-reviewed')return r.productionMembership==='no' && ['gameplay-reviewed','evidence-complete'].includes(r.prospect);
+  return selection==='unreleased' ? r.productionMembership==='no' : releaseState(c)[0]===selection;
+}
+function corpusReleaseReview(c,details=false) {
+  const r=c.releaseReadiness;
+  if(r?.scope==='non-game')return details?'<p class="sub">Release review scope: non-game.</p>':'';
+  const [,label,color]=releaseState(c),membership=({yes:'In production',no:'Not in production',unknown:'Production membership unknown'})[r?.productionMembership] || 'Production membership unknown';
+  const heading=`<div class="release-heading">${badge(label,color)}<span class="sub">${escape(membership)}</span></div>`;
+  if(!details)return `<div class="corpus-release">${heading}${r?.summary?`<p class="sub release-summary">${escape(r.summary)}</p>`:''}</div>`;
+  const gates=Object.entries(r?.gates||{}),blockers=r?.blockers||[];
+  const performanceStatus=({'recorded-review-needs-release-qualification':'Recorded measurement; release qualification still needed','not-measured':'No measurement recorded'})[r?.performance?.status] || 'Review status unknown';
+  const performanceMetric=({'guest-logical-frame-submissions':'Logical gameplay frame submissions','guest-flip-events':'Guest Flip events','guest-presentation-events':'Guest presentation events'})[r?.performance?.metric];
+  return `<section class="corpus-release release-detail"><h2>Release readiness</h2>${heading}<p>${escape(r?.summary || 'No release review recorded.')}</p>${r?.next?`<p><strong>Next:</strong> ${escape(r.next)}</p>`:''}${blockers.length?`<h3>Release blockers</h3><ul>${blockers.map(b=>`<li>${escape(b.summary)}${b.source?`<div class="sub">${escape(b.source)}</div>`:''}</li>`).join('')}</ul>`:''}${gates.length?`<div class="release-gates">${gates.map(([name,g])=>`<div><strong>${escape(name)}</strong>${badge(String(g.status || 'unknown').replaceAll('-',' '),g.status==='blocked'?'bad':g.status==='passed'?'good':'')}<p>${escape(g.summary)}</p>${g.source?`<p class="sub">${escape(g.source)}</p>`:''}</div>`).join('')}</div>`:''}${r?.reviewedGameplay?.runKey?`<button data-run="${escape(r.reviewedGameplay.runKey)}">Reviewed gameplay evidence →</button>`:''}${r?.performance?`<p class="sub">Performance review: ${escape(performanceStatus)}${performanceMetric?' · '+escape(performanceMetric):''}</p>`:''}<p class="sub">Release review: ${escape(when(r?.reviewedAt))}. Gameplay screenshots and successful runs alone do not establish release readiness.</p></section>`;
+}
+function corpusReleaseBar() {
+  const games=state.candidates.filter(c=>c.releaseReadiness?.scope==='game'),production=state.releaseReadiness?.production;
+  const choices=[['ready','Ready for release'],['unreleased','Unreleased games'],['gameplay-reviewed','Unreleased · gameplay reviewed'],['blocked','Blocked']];
+  return `<section class="release-bar" aria-label="Game release readiness"><div><strong>Game release readiness</strong><span class="sub">All ${games.length} game entries</span></div><div class="release-counts">${choices.map(([id,label])=>`<button data-release-filter="${id}" aria-pressed="${corpusRelease===id}"><strong>${games.filter(c=>matchesRelease(c,id)).length}</strong> ${label}</button>`).join('')}</div><p class="sub">${production?.status==='verified'?`Production snapshot checked ${escape(when(production.checkedAt))}.`:'Production membership is unverified; unknown entries are not counted as unreleased.'} ${games.filter(c=>c.releaseReadiness.productionMembership==='unknown').length} with unknown production membership.${production?.source?` Source: ${escape(production.source)}.`:''}</p></section>`;
+}
+function corpusLaunchActions(c,details=false) {
+  const launch=c.launch, routes=launch?.routes || [], production=launch?.productionRoutes || [];
+  const safeUrl=value=>typeof value==='string' && (/^\/[^/\\]/.test(value) || /^https?:\/\//i.test(value)) && !/[\u0000-\u0020\\]/.test(value);
+  const actions=routes.map(route=> {
+    const label=routes.length>1 ? 'Launch in emulator · '+(route.label || route.appId) : 'Launch in emulator';
+    if(route.available===true && safeUrl(route.url))return `<a class="emulator-launch" href="${escape(route.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(label+' — '+(c.name || c.id))}">${escape(label)} ↗</a>`;
+    return `<div class="launch-unavailable"><span>${routes.length>1?escape(route.label || route.appId)+': ':''}Launch unavailable</span><p class="sub">${escape(route.reason || 'No verified local launch route.')}</p>${details && route.missingPaths?.length?`<details><summary>Missing files (${route.missingPaths.length})</summary><pre>${escape(route.missingPaths.join('\n'))}</pre></details>`:''}</div>`;
+  }).join('');
+  const publicLinks=production.filter(route=>safeUrl(route.url)).map(route=>`<a class="production-launch" href="${escape(route.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open production — '+(route.label || c.name || route.appId))}">Open production${production.length>1?' · '+escape(route.label || route.appId):''} ↗</a>`).join('');
+  return `<div class="corpus-launch${details?' launch-detail':''}" aria-label="Launch options">${actions || `<p class="sub">Launch unavailable: ${escape(launch?.reason || 'No verified local launch route.')}</p>`}${publicLinks}${details?'<p class="sub">Opens in a new tab. Launch availability does not establish gameplay compatibility or release readiness.</p>':''}</div>`;
+}
+function launchableCandidate(c) { return c.launch?.routes?.some(route=>route.available===true) === true; }
+function corpusLaunchBar() {
+  const count=state.candidates.filter(launchableCandidate).length;
+  return `<div class="launch-availability" aria-label="Emulator launch availability"><button data-launch-filter="available" aria-pressed="${corpusLaunch==='available'}"><strong>${count}</strong> Launchable now</button><span class="sub">${state.candidates.length-count} without an available local route. Launch availability is separate from gameplay verification.</span>${corpusLaunch==='available'?'<button data-launch-filter="all">Show all launch states</button>':''}</div>`;
 }
 function corpusView() {
   const workRank = c => ({active:0,review:1,blocked:2,ready:3})[candidateWork(c)?.status] ?? 4;
   const resultRank = c => ({failed:0,'harness-error':0,timeout:0,running:1,unknown:2,passed:3})[c.latestRun?.outcome] ?? 4;
-  const candidates = state.candidates.filter(c => matches(c) && (corpusGroup==='all' || c.assessment?.origin===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
-    .sort((a,b) => workRank(a)-workRank(b) || resultRank(a)-resultRank(b) || (a.name || a.id).localeCompare(b.name || b.id));
-  return title('EXE corpus', 'Current work first, then failures and recorded evidence. Unrecorded candidates follow.') +
+  const categories = [...new Map(state.candidates.map(c => [c.category?.id || 'unclassified', c.category || {id:'unclassified',label:'Unclassified'}])).values()].sort((a,b) => Number(a.id==='unclassified')-Number(b.id==='unclassified') || a.label.localeCompare(b.label));
+  const candidates = state.candidates.filter(c => matches(c) && matchesRelease(c) && (corpusLaunch==='all' || launchableCandidate(c)) && (corpusCategory==='all' || (c.category?.id || 'unclassified')===corpusCategory) && (corpusGroup==='all' || c.sourceGroup===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
+    .sort((a,b) => (corpusRelease==='all'?0:(a.releaseReadiness?.rank??999)-(b.releaseReadiness?.rank??999)) || workRank(a)-workRank(b) || resultRank(a)-resultRank(b) || (a.name || a.id).localeCompare(b.name || b.id));
+  return title('EXE corpus', 'Browse by category, release readiness and recorded evidence.') + corpusLaunchBar() + corpusReleaseBar() +
     `<div class="coverage-bar"><strong>${state.candidates.filter(c=>candidateCapture(c).shot).length} / ${state.candidates.length} with linked screenshots</strong><span>Historical images do not establish current compatibility.</span><button data-corpus-filter="with-shot">With screenshots</button><button data-corpus-filter="no-shot">Missing screenshots</button></div>`+
-    `<div class="toolbar"><select id="corpus-group" aria-label="Source group"><option value="all">All source groups</option>${[...new Set(state.candidates.map(c=>c.assessment?.origin).filter(Boolean))].sort().map(g=>`<option ${corpusGroup===g?'selected':''} value="${escape(g)}">${escape(g)}</option>`).join('')}</select><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['with-shot', 'With screenshots'], ['no-run', 'No recorded run'], ['no-shot', 'Missing screenshots'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><p class="sub">WEP and community-remake collections are not yet indexed here. Source group does not imply redistribution permission.</p><div class="corpus-grid">${candidates.map(c => {
-      const {shot,run:captureRun,older} = candidateCapture(c);
+    `<div class="toolbar"><select id="corpus-launch" aria-label="Launch availability"><option value="all" ${corpusLaunch==='all'?'selected':''}>All launch states</option><option value="available" ${corpusLaunch==='available'?'selected':''}>Launchable now</option></select><select id="corpus-release" aria-label="Release readiness">${[['all','All release states'],['unreleased','Unreleased games'],['gameplay-reviewed','Unreleased · gameplay reviewed'],...releaseStates.map(([id,label])=>[id,label])].map(([id,label])=>`<option value="${id}" ${corpusRelease===id?'selected':''}>${escape(label)}</option>`).join('')}</select><select id="corpus-category" aria-label="Category"><option value="all">All categories</option>${categories.map(g=>`<option value="${escape(g.id)}" ${corpusCategory===g.id?'selected':''}>${escape(g.label)} (${state.candidates.filter(c=>(c.category?.id || 'unclassified')===g.id).length})</option>`).join('')}</select><select id="corpus-group" aria-label="Source group"><option value="all">All source groups</option>${[...new Set(state.candidates.map(c=>c.sourceGroup).filter(Boolean))].sort().map(g=>`<option ${corpusGroup===g?'selected':''} value="${escape(g)}">${escape(g)}</option>`).join('')}</select><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['with-shot', 'With screenshots'], ['no-run', 'No recorded run'], ['no-shot', 'Missing screenshots'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><p class="sub">Includes manifest and registered apps. Unclassified entries need category review. Source group does not imply redistribution permission.</p>${categories.map(category => {
+      const members = candidates.filter(c => (c.category?.id || 'unclassified') === category.id);
+      if (!members.length) return '';
+      return `<section class="corpus-category" data-category="${escape(category.id)}"><h2>${escape(category.label)} <span class="sub">(${members.length})</span></h2><div class="corpus-grid">${members.map(c => {
+      const {shot,run:captureRun,older,gameplay} = candidateCapture(c);
       const work = candidateWork(c);
-      return `<button class="candidate ${shot?'':'candidate-no-capture'} ${work?.status === 'active' ? 'candidate-working' : ''}" data-candidate="${escape(c.id)}">${work ? `<div class="candidate-work">${badge(work.status === 'active' ? '▶ In progress' : taskState(work.status)[1], 'task-label task-label-' + work.status)}<span>${escape(work.title)}</span></div>` : ''}<div class="thumbnail">${shot ? `<img src="${escape(shot.url)}" alt="${older?'Earlier':'Latest'} capture for ${escape(c.name)}: ${escape(shot.name)}" loading="lazy">` : 'NO LINKED CAPTURE'}</div><div class="candidate-info">${corpusAssessment(c)}<div class="sub">${escape(c.assessment?.origin || 'Source unclassified')}${c.localOnly?' · Local only':''}</div><h3>${escape(c.name || c.id)}</h3><div class="sub">${escape(c.version || c.id)}</div>${corpusFps(c)}<div class="candidate-bottom">${badge(c.latestRun ? 'Latest run: '+c.latestRun.outcome : 'No recorded run', ['failed','harness-error'].includes(c.latestRun?.outcome)?'bad':'')}<span class="sub">${c.taskIds.length} linked tasks</span></div>${c.latestRun?.route?`<div class="sub candidate-route" title="${escape(c.latestRun.route)}">${escape(c.latestRun.route)}</div>`:''}<div class="sub">Fixture ${escape(c.fixtureStatus)} · ${shot ? (older?'Earlier capture · '+when(captureRun.startedAt):captureRun.verification + ' capture') : 'screenshot missing'}</div></div></button>`;
-    }).join('') || empty('No matching candidates.')}</div>`;
+      return `<div class="candidate-shell"><button class="candidate ${shot?'':'candidate-no-capture'} ${work?.status === 'active' ? 'candidate-working' : ''}" data-candidate="${escape(c.id)}">${work ? `<div class="candidate-work">${badge(work.status === 'active' ? '▶ In progress' : taskState(work.status)[1], 'task-label task-label-' + work.status)}<span>${escape(work.title)}</span></div>` : ''}<div class="thumbnail">${shot ? `<img src="${escape(shot.url)}" alt="${older?'Earlier':'Latest'} capture for ${escape(c.name)}: ${escape(shot.name)}" loading="lazy">` : 'NO LINKED CAPTURE'}</div><div class="candidate-info">${corpusReleaseReview(c)}${corpusAssessment(c)}<div class="sub">${escape(c.sourceGroup || 'Source unclassified')}${c.localOnly?' · Local only':''}</div><h3>${escape(c.name || c.id)}</h3><div class="sub">${escape(c.version || c.id)}</div>${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c)}<div class="candidate-bottom">${badge(c.latestRun ? 'Latest run: '+c.latestRun.outcome : 'No recorded run', ['failed','harness-error'].includes(c.latestRun?.outcome)?'bad':'')}<span class="sub">${c.taskIds.length} linked tasks</span></div>${c.latestRun?.route?`<div class="sub candidate-route" title="${escape(c.latestRun.route)}">${escape(c.latestRun.route)}</div>`:''}<div class="sub">Fixture ${escape(c.fixtureStatus)} · ${shot ? (older?'Earlier capture · '+when(captureRun.startedAt):captureRun.verification + ' capture') : 'screenshot missing'}</div></div></button>${corpusLaunchActions(c)}</div>`;
+    }).join('')}</div></section>`;
+    }).join('') || empty('No matching candidates.')}`;
 }
 function currentAgents() {
   const owners=new Set(state.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status)).map(t=>t.owner));
@@ -224,9 +279,10 @@ function agentsView() {
   return title('Agents', 'Decisions and sessions needing a check first. Recent activity is not proof of task progress.') + `<div class="agent-list">${current.filter(matches).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
 }
 function activityView() {
-  const rows=state.activity.filter(matches);
-  return title('Activity', 'Latest 150 nonempty messageboard entries, newest first.')+`<p class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</p><div class="panel">${feedRows(rows.slice(0,activityLimit))}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="150">Show all matching entries</button></div>':''}`;
+  const rows=matchingActivity();
+  return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
 }
+function matchingActivity() { return (state.activity || []).filter(row=>matches(row) && (activityFilter==='all' || (row.type==='commit'?'commit':'message')===activityFilter)); }
 function render() {
   if (!state) return;
   renderApprovals();
@@ -240,8 +296,8 @@ function show(label, html) { currentTaskId=null;$('#detail-label').textContent =
 function runRows(runs) { return runs.map(r => `<div class="run"><div class="run-head"><button data-run="${escape(r.key)}">${escape(r.id)} · ${escape(r.route || 'route unspecified')}</button>${badge(r.outcome, tone(r.outcome))}</div><div class="sub">${escape(when(r.startedAt))} · ${escape(r.verification)} · ${escape(r.source)}</div></div>`).join('') || empty('No run folders recorded yet. See ops/README.md.'); }
 function candidateDetail(id) {
   const c = state.candidates.find(c => c.id === id); if (!c) return;
-  const {shot,run:captureRun,older} = candidateCapture(c);
-  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${corpusAssessment(c,true)}${corpusFps(c,true)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt has no screenshot':'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id))}</div>`);
+  const {shot,run:captureRun,older,gameplay} = candidateCapture(c);
+  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${badge(c.category?.label || 'Unclassified')}<p class="sub">${escape(c.category?.basis)}</p>${corpusLaunchActions(c,true)}${corpusReleaseReview(c,true)}${corpusAssessment(c,true)}${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c,true)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt: '+escape(c.latestRun?.outcome || 'unknown'):'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id || c.appIds?.includes(r.candidateId)))}</div>`);
 }
 function agentDetail(id) {
   const a = state.agents.find(a => a.id === id); if (!a) return;
@@ -265,11 +321,17 @@ async function fetchState() {
     if (!state) $('#main').innerHTML = empty(`Could not read project data: ${e.message}. Start node ops/server.js.`);
   }
 }
+document.addEventListener('change',event=>{if(event.target.id==='activity-filter'){activityFilter=event.target.value;activityLimit=25;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-group'){corpusGroup=event.target.value;render();}});
+document.addEventListener('change',event=>{if(event.target.id==='corpus-launch'){corpusLaunch=event.target.value;render();}});
+document.addEventListener('change',event=>{if(event.target.id==='corpus-release'){corpusRelease=event.target.value;render();}});
+document.addEventListener('change',event=>{if(event.target.id==='corpus-category'){corpusCategory=event.target.value;render();}});
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
+  if(el.dataset.launchFilter){corpusLaunch=el.dataset.launchFilter;render();}
+  if(el.dataset.releaseFilter){corpusRelease=el.dataset.releaseFilter;corpusCategory='all';corpusGroup='all';filter='all';query='';$('#search').value='';render();}
   if(el.dataset.corpusFilter){filter=el.dataset.corpusFilter;render();}
-  if(el.dataset.moreActivity){activityLimit+=Number(el.dataset.moreActivity);render();}
+  if(el.dataset.moreActivity){activityLimit=el.dataset.moreActivity==='all'?matchingActivity().length:activityLimit+Number(el.dataset.moreActivity);render();}
   if (el.dataset.terminal) { const entry=state.terminals?.find(t=>t.id===el.dataset.terminal);if(entry?.available)window.OpsTerminal.open(entry); }
   if (el.dataset.statusSummary) show('PROJECT / TLDR',statusSummary());
   if (el.dataset.taskFilter) { filter = filter === el.dataset.taskFilter ? 'all' : el.dataset.taskFilter; render(); }
@@ -301,7 +363,7 @@ document.addEventListener('submit', async event => {
   } catch (e) { status.textContent = `Could not confirm posting: ${e.message}. Check Activity before retrying.`; button.disabled = false; }
 });
 $('#refresh').onclick = refresh;
-$('#search').addEventListener('input', e => { query = e.target.value.toLowerCase(); render(); });
+$('#search').addEventListener('input', e => { query = e.target.value.toLowerCase(); activityLimit=25; render(); });
 document.addEventListener('change', e => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 window.addEventListener('hashchange', () => { view = location.hash.slice(1) || 'overview'; filter = 'all'; query = ''; $('#search').value = ''; render(); });
 refresh();

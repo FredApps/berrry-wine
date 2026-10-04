@@ -3,6 +3,73 @@
   "assetRoot": "test/binaries/candidates",
   "candidates": [
     {
+      "id": "pirates-2004",
+      "name": "Sid Meier's Pirates! (2004)",
+      "kind": "game",
+      "version": "1.0.2 (30927), GOG-derived English archive plus Sold Out UK DVD",
+      "executables": ["digital/app/Pirates!.exe"],
+      "sourcePage": "https://archive.org/details/sid-meiers-pirates-pc-windows-iso",
+      "license": "proprietary retail release; local compatibility fixture, not a demo",
+      "localOnly": true,
+      "packages": [{
+        "url": "https://archive.org/download/pirates_202510/PIRATES.iso",
+        "sha1": "bfaadb137428c16d1e0df408d0f840a91df591d4",
+        "type": "file",
+        "destination": "sources/PIRATES.iso"
+      }, {
+        "url": "https://archive.org/download/sid-meiers-pirates-pc-windows-iso/Sid%20Meiers%20Pirates%20PC%20Windows%20ISO.iso",
+        "sha1": "e7ba887ddaee4e7b81c612ea13c23261af18a1cc",
+        "type": "file",
+        "destination": "sources/alternate.iso"
+      }],
+      "postExtract": [
+        { "type": "extractArchive", "archive": "sources/PIRATES.iso", "into": "disc" },
+        { "type": "extractArchive", "archive": "disc/Progra~1.cab", "into": "cab" },
+        { "type": "extractArchive", "archive": "disc/Disk2A~1.cab", "into": "cab2" },
+        { "type": "extractArchive", "archive": "disc/Language.cab", "into": "cab3" },
+        { "type": "copyTree", "from": "cab2", "into": "cab" },
+        { "type": "copyTree", "from": "cab3", "into": "cab" },
+        {
+          "type": "msiFiles", "msi": "disc/Sid Meier's Pirates!.msi",
+          "cabinets": "cab", "source": "disc", "into": "installed",
+          "directoryAliases": { "SystemFolder": "." }
+        },
+        { "type": "extractArchive", "archive": "sources/alternate.iso", "into": "alternate" },
+        { "type": "innoextract", "installer": "alternate/setup.exe", "into": "digital", "language": "english" },
+        { "type": "extractArchive", "archive": "disc/directx/DirectX.cab", "into": "dx9" },
+        {
+          "type": "writeText", "file": "local-config.ini",
+          "text": "[User Settings]\r\nWindowWidth = 800\r\nWindowHeight = 600\r\nWaterDetail = 0\r\nWorldDetail = 0\r\nDisableShaders = 0\r\nAdvancedLighting = 0\r\nDisplayShadows = 0\r\nIsSlowMachine = 1\r\nSkipIntro = 1\r\nSkipMovie = 1\r\n"
+        }
+      ],
+      "browser": { "fileRoot": "digital/app", "exe": "digital/app/Pirates!.exe" },
+      "cli": { "maxBatches": 2000, "batchSize": 20000, "timeoutMs": 60000, "vfsInclude": ["**/*"], "dlls": ["digital/app/msvcr71.dll", "digital/app/msvcp71.dll"] },
+      "notes": "Identified from oldyzach status 2105358263252402508. No verified Windows demo/trial found. Default payload is a community Inno repack with GOG gameId 1445250653, not an authenticated original GOG installer. Original DVD retained separately under installed/; its SafeDisc driver blocks startup. Local profile selects low-detail graphics. Reproduction and current compatibility evidence: docs/re-notes/pirates-2004.md."
+    },
+    {
+      "id": "serious-sam-demo",
+      "name": "Serious Sam: The First Encounter Demo",
+      "kind": "game",
+      "version": "1.00c Windows demo (2001)",
+      "executables": ["package/Disk1/Bin/SeriousSam.exe"],
+      "sourcePage": "https://archive.org/details/SeriousSamDemo",
+      "license": "original Croteam playable demo; local compatibility fixture",
+      "localOnly": true,
+      "packages": [{
+        "url": "https://archive.org/download/SeriousSamDemo/SeriousSamDemo.exe",
+        "sha1": "9ba3a09da86754d27470c049a89e127959d1ecbe",
+        "type": "archive",
+        "into": "package"
+      }],
+      "browser": { "fileRoot": "package/Disk1", "exe": "package/Disk1/Bin/SeriousSam.exe" },
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 10000,
+        "dlls": ["package/Disk1/Bin/Engine.dll", "package/Disk1/Bin/Game.dll", "package/Disk1/Bin/Entities.dll"]
+      },
+      "notes": "Original final demo package, 82531165 bytes. The CAB self-extractor contains the game tree directly under Disk1. Gameplay investigation and full-root CLI mounting recipe: docs/re-notes/serious-sam.md. Startup currently under investigation; corpus survey alone does not prove gameplay."
+    },
+    {
       "id": "need-for-speed-2-demo",
       "name": "Need for Speed II Demo",
       "kind": "game",
@@ -382,6 +449,67 @@
       "cli": {
         "maxBatches": 100,
         "batchSize": 10000
+      }
+    },
+    {
+      "id": "simgolf-demo-installer",
+      "name": "Sid Meier's SimGolf Demo",
+      "kind": "game",
+      "version": "2002 demo",
+      "executables": [
+        "installed/golf.exe"
+      ],
+      "sourcePage": "https://archive.org/details/Simgolfdemo",
+      "license": "commercial demo; bundled EULA prohibits copying without prior written consent, so keep as a local ignored fixture and do not redistribute or deploy",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/Simgolfdemo/simgolfdemo.exe",
+          "sha1": "81b72aea22cb147979cb3068588cab8b024f8cea",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "unshield",
+          "cab": "Disk1/data1.cab",
+          "into": "installed-extracted",
+          "group": "Program Executable"
+        },
+        {
+          "type": "unshield",
+          "cab": "Disk1/data1.cab",
+          "into": "installed-extracted",
+          "group": "Program Files"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Program_Executable",
+          "into": "installed"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Program_Files",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/golf.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 50000,
+        "dlls": [
+          "installed/Terrain.dll",
+          "installed/jgl.dll",
+          "installed/sound.dll",
+          "installed/Mss32.dll",
+          "installed/binkw32.dll"
+        ],
+        "vfsInclude": [
+          "**/*"
+        ]
       }
     },
     {
@@ -1520,6 +1648,212 @@
       }
     },
     {
+      "id": "unreal-special-edition",
+      "name": "Unreal Special Edition OEM demo",
+      "kind": "game",
+      "version": "1998 Special Edition",
+      "executables": [
+        "installed/system/unreal.exe"
+      ],
+      "sourcePage": "https://archive.org/details/unreal-special-edition.-7z",
+      "license": "proprietary OEM demo; local ignored compatibility fixture only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/unreal-special-edition.-7z/Unreal%20Special%20Edition.7z",
+          "sha1": "f3f25896a51cbf37dcdb94833198b86f394d8853",
+          "type": "archive",
+          "into": "media"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "installUnrealDemo",
+          "id": "unreal-special",
+          "source": "media",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/system/unreal.exe"
+      },
+      "cli": {
+        "maxBatches": 3000,
+        "batchSize": 50000,
+        "dlls": [
+          "installed/system/core.dll",
+          "installed/system/engine.dll",
+          "installed/system/window.dll",
+          "installed/system/msvcrt.dll"
+        ],
+        "vfsInclude": [
+          "installed/**/*"
+        ]
+      }
+    },
+    {
+      "id": "unreal-tournament-demo-348",
+      "name": "Unreal Tournament demo",
+      "kind": "game",
+      "version": "348 demo",
+      "executables": [
+        "installed/system/unrealtournament.exe"
+      ],
+      "sourcePage": "https://archive.org/details/unreal-tournament-demo-version-348",
+      "license": "proprietary commercial demo; local ignored compatibility fixture only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/unreal-tournament-demo-version-348/UTDEMO348.EXE",
+          "sha1": "faf2c18852a1a53c59db490e044e0d3e100e8fed",
+          "type": "archive",
+          "into": "media"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "installUnrealDemo",
+          "id": "ut99",
+          "source": "media",
+          "into": "installed"
+        }
+      ],
+      "cli": {
+        "maxBatches": 3000,
+        "batchSize": 50000,
+        "dlls": [
+          "installed/system/core.dll",
+          "installed/system/window.dll",
+          "installed/system/msvcrt.dll"
+        ],
+        "vfsInclude": [
+          "installed/**/*"
+        ]
+      }
+    },
+    {
+      "id": "unreal-tournament-2003-demo",
+      "name": "Unreal Tournament 2003 demo",
+      "kind": "Direct3D 8 game",
+      "version": "2206 demo",
+      "executables": [
+        "installed/system/ut2003.exe"
+      ],
+      "sourcePage": "https://archive.org/details/UT2K3Demo",
+      "license": "proprietary commercial demo; local ignored compatibility fixture only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/UT2K3Demo/UT2003Demo2206.exe",
+          "sha1": "372a8b712cb7f2b1539af72430923d290a67e701",
+          "type": "archive",
+          "into": "media"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "installUnrealDemo",
+          "id": "ut2003",
+          "source": "media",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/system/ut2003.exe"
+      },
+      "notes": "Authentic Setup completes with its bundled MSVCR70.dll. With OpenGL selected, the executable still probes Direct3DCreate8 before renderer load; a NULL factory produces a C++ exception and exit."
+    },
+    {
+      "id": "unreal-tournament-2004-demo",
+      "name": "Unreal Tournament 2004 demo",
+      "kind": "Direct3D 8 game",
+      "version": "new demo",
+      "executables": [
+        "installed/system/ut2004.exe"
+      ],
+      "sourcePage": "https://archive.org/details/UnrealTournament2004Demo",
+      "license": "proprietary commercial demo; local ignored compatibility fixture only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/UnrealTournament2004Demo/Ut2004-NewDemo.exe",
+          "sha1": "5e224a3de711da9085cddd9929499789690043c7",
+          "type": "archive",
+          "into": "media"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "installUnrealDemo",
+          "id": "ut2004",
+          "source": "media",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/system/ut2004.exe"
+      },
+      "notes": "Authentic Setup completes with its bundled MSVCR71.dll. With OpenGL selected, the executable still probes Direct3DCreate8 before renderer load; a NULL factory produces a C++ exception, then its crash reporter reaches MiniDumpWriteDump."
+    },
+    {
+      "id": "unreal-tournament-3-demo-installer",
+      "name": "Unreal Tournament 3 demo installer",
+      "kind": "installer analysis",
+      "version": "fixed demo installer",
+      "executables": [
+        "setuput3demo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/setuput3demo",
+      "license": "proprietary commercial demo; retain the original installer only as a local ignored analysis fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/setuput3demo/setuput3demo.exe",
+          "sha1": "86d4bad740d0c25438a65c48939ee6dcfc88bb02",
+          "type": "file",
+          "destination": "setuput3demo.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 50000
+      },
+      "notes": "Analysis-only: verified first runtime blocker is UuidToStringA; no UT3 API implementation is part of this candidate."
+    },
+    {
+      "id": "warcraft3-demo",
+      "name": "Warcraft III: Reign of Chaos Demo",
+      "kind": "OpenGL game demo",
+      "version": "Demo (self-extracting installer)",
+      "executables": [
+        "War3Demo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/wc3-demo",
+      "license": "Blizzard demo; redistribution of the extracted install tree is not granted, so keep this a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/wc3-demo/W3Demo.exe",
+          "sha1": "7e4ed3a32289f1293f5bc132ce7c525301631a73",
+          "sha256": "3a1b83900c33f0ba671941905d36b9442ab05654c9d5f8d464cbdf9db14f2c6f",
+          "size": 104680620,
+          "type": "file",
+          "destination": "W3Demo.exe"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractArchive",
+          "archive": "W3Demo.exe",
+          "into": "."
+        }
+      ],
+      "notes": "Runs through the OpenGL path only (-opengl -window); the DirectX path wants d3d8, which the emulator does not have. War3Demo.exe is also the import provider for Game.dll."
+    },
+    {
       "id": "arcanum-demo",
       "name": "Arcanum: Of Steamworks & Magick Obscura Demo",
       "kind": "game demo",
@@ -1753,10 +2087,7 @@
     {
       "id": "reflexive-ricochet-xtreme",
       "name": "Ricochet Xtreme",
-      "browser": {
-        "fileRoot": "game",
-        "exe": "game/Ricochet.exe"
-      },
+      "browser": { "fileRoot": "game", "exe": "game/Ricochet.exe" },
       "kind": "game",
       "version": "1.4 build 75 (Reflexive, unwrapped)",
       "executables": [
@@ -1783,6 +2114,7 @@
     {
       "id": "reflexive-zuma-deluxe",
       "name": "Zuma Deluxe",
+      "browser": { "fileRoot": "game", "exe": "game/Zuma.exe" },
       "kind": "game",
       "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
       "executables": [
@@ -1801,11 +2133,12 @@
           "**/*"
         ]
       },
-      "notes": "2026-09-29: Bundled bass.dll reports missing QueueUserAPC (KERNEL32.dll), then guest calls through NULL. No confirmed gameplay. See docs/re-notes/reflexive.md."
+      "notes": "2026-09-29: QueueUserAPC and nested DLL-initialization fixes advance bundled BASS past its original startup failures. Bounded CLI run reaches loading beyond8197 batches; gameplay remains unverified. See docs/re-notes/reflexive.md."
     },
     {
       "id": "reflexive-crimsonland",
       "name": "Crimsonland",
+      "browser": { "fileRoot": "game", "exe": "game/crimsonland.exe" },
       "kind": "game",
       "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
       "executables": [
@@ -1830,11 +2163,12 @@
           "game/ogg.dll"
         ]
       },
-      "notes": "2026-09-29: Stops at DirectX8.1 detection; seeding bundled DLLs and overriding DirectX Version did not resolve it. No confirmed gameplay. See docs/re-notes/reflexive.md."
+      "notes": "2026-09-29: D3D8/D3D9 module identities and version metadata fix DirectX detection. Browser reaches renderer options and the game loading artwork; gameplay not yet confirmed. Seed bundled grim/vorbis/vorbisfile/ogg DLLs. See docs/re-notes/reflexive.md."
     },
     {
       "id": "reflexive-collapse-crunch",
       "name": "Collapse! Crunch",
+      "browser": { "fileRoot": "game", "exe": "game/Collapse3.exe" },
       "kind": "game",
       "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
       "executables": [
@@ -1853,15 +2187,12 @@
           "**/*"
         ]
       },
-      "notes": "2026-09-29: Direct launch requires --screen=800x600 (survey defaults to 640x480). Renders loading screen at 800x600, then reports NULL call at batch 317. No confirmed gameplay. See docs/re-notes/reflexive.md."
+      "notes": "2026-09-29: CLI and browser Crunch gameplay verified with the multimedia event-timer fix. Browser click clears blocks and increases score to26. CLI needs --screen=800x600 and a small guest clock step (1–5ms per batch). See docs/re-notes/reflexive.md."
     },
     {
       "id": "reflexive-alien-shooter",
       "name": "Alien Shooter",
-      "browser": {
-        "fileRoot": "game",
-        "exe": "game/AlienShooter.exe"
-      },
+      "browser": { "fileRoot": "game", "exe": "game/AlienShooter.exe" },
       "kind": "game",
       "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
       "executables": [

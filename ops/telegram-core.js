@@ -3,10 +3,12 @@ const crypto=require('node:crypto');
 const {approvalIdentity}=require('./approval-prompt');
 const formatting=require('./telegram-format');
 const {statusText}=require('./telegram-status');
+const {blockersText}=require('./telegram-blockers');
+const COMMANDS=[{command:'status',description:'Current task summary'},{command:'blockers',description:'Blockers and actions from the dashboard'},{command:'screen',description:'Orchestrator terminal'},{command:'approvals',description:'Review pending approval'},{command:'queue',description:'Waiting messages'},{command:'cancel',description:'Cancel waiting messages'},{command:'help',description:'Chat and approval help'}];
 const hash=text=>crypto.createHash('sha256').update(text).digest('hex');
 const promptHash=p=>hash(p.terminalId+'\n'+approvalIdentity(p.prompt));
 const isStatusQuestion=text=>/^(?:\/status|status|(?:ascii(?: art)? )?tldr(?: status)?|(?:what['’]?s|whats['’]?|whtas['’]?) (?:the )?latest|any updates?|sup|hi|hey)[?!.]*$/i.test(text.trim());
-const HELP='Send text to chat with the orchestrator.\n/status — task summary\n/screen — current terminal\n/approvals — pending command\n/queue — waiting messages\n/cancel — cancel waiting messages\n/help — this help\n\nApproval buttons accept once, decline, or allow the displayed persistent rule when supported. Plain chat never answers a permission prompt. Direct answers and explicit milestones are forwarded; routine progress stays on the dashboard.';
+const HELP='Send text to chat with the orchestrator.\n'+COMMANDS.map(c=>'/'+c.command+' — '+c.description).join('\n')+'\n\nApproval buttons accept once, decline, or allow the displayed persistent rule when supported. Plain chat never answers a permission prompt. Direct answers and explicit milestones are forwarded; routine progress stays on the dashboard.';
 function createBot({state,save,telegram,local,now=Date.now}) {
   let typingBusy=false,lastTyping=0;
   async function typing(){
@@ -83,6 +85,7 @@ function createBot({state,save,telegram,local,now=Date.now}) {
     if(text==='/queue')return send(state.chatQueue?.length?state.chatQueue.map((x,i)=>`${i+1}. ${x.text}`).join('\n'):'No messages waiting.');
     if(text==='/cancel'){state.chatQueue=[];await save();return send('Waiting messages cancelled.');}
     if(text==='/screen'){const s=await local('/api/orchestrator-screen');for(const part of formatting.chunks([{text:s.text,type:'pre'}]))await send(part.text,{entities:part.entities});return;}
+    if(/^\/blockers(?:@[A-Za-z0-9_]+)?$/.test(text))return send(blockersText(await local('/api/state')));
     if(isStatusQuestion(text))return sendStatus({ascii:/\bascii\b/i.test(text)});
     if(text==='/approvals'){const s=await local('/api/state');const p=s.approvals?.items.find(p=>p.terminalId==='orchestrator'&&!p.sent);if(!p)return send('No supported live command-approval prompt. /screen shows other prompts.');state.notified=null;return notifyApproval(p);}
     if(text.startsWith('/'))return send(HELP);
@@ -111,4 +114,4 @@ function createBot({state,save,telegram,local,now=Date.now}) {
   }
   return {handle,notifyApproval,send,sendStatus,drainChat,typing};
 }
-module.exports={createBot,hash};
+module.exports={createBot,hash,COMMANDS};

@@ -209,6 +209,33 @@ function runPostExtract(candidate, destination) {
         const detail = `${result.stdout || ''}\n${result.stderr || ''}`.trim().split('\n').slice(-8).join('\n');
         throw new Error(`InstallShield extraction failed (${unavailable ? 'unshield unavailable' : `exit ${result.status}`})${detail ? `:\n${detail}` : ''}`);
       }
+    } else if (step.type === 'innoextract') {
+      assertSafeRelative(step.installer, `${candidate.id}.postExtract[${index}].installer`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      if (typeof step.language !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(step.language)) {
+        throw new Error(`${candidate.id}.postExtract[${index}].language is required`);
+      }
+      const result = spawnSync('innoextract', [
+        '--language', step.language, '--exclude-temp', '--silent',
+        '-d', path.join(destination, step.into), path.join(destination, step.installer),
+      ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      if (result.status !== 0) {
+        throw new Error(`Inno extraction failed: ${result.error || result.stderr || result.stdout}`);
+      }
+    } else if (step.type === 'msiFiles') {
+      for (const key of ['msi', 'cabinets', 'source', 'into']) {
+        assertSafeRelative(step[key], `${candidate.id}.postExtract[${index}].${key}`);
+      }
+      const { installMsiFiles } = require('./msi-file-layout');
+      const count = installMsiFiles({
+        msiFile: path.join(destination, step.msi),
+        cabinetRoot: path.join(destination, step.cabinets),
+        sourceRoot: path.join(destination, step.source),
+        destination: path.join(destination, step.into),
+        rootDirectory: step.rootDirectory,
+        directoryAliases: step.directoryAliases,
+      });
+      console.log(`MSI    ${candidate.id}: ${count} payload files`);
     } else if (step.type === 'copyTree') {
       assertSafeRelative(step.from, `${candidate.id}.postExtract[${index}].from`);
       assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
@@ -403,7 +430,7 @@ function walkBrowserFiles(directory, relative = '', output = []) {
 
 // Browser app entries cannot enumerate an ignored retail tree at runtime.
 // Preparation therefore writes a tiny, untracked inventory beside the local
-// fixture. It contains paths and sizes only; no proprietary bytes enter git.
+// fixture. It contains paths and optional file metadata; no proprietary bytes enter git.
 function writeBrowserManifest(candidate, destination) {
   const browser = candidate.browser;
   if (!browser) return;
@@ -427,6 +454,11 @@ function writeBrowserManifest(candidate, destination) {
   // disc, for a game that proves its CD is present by opening a file there.
   // Aliases of one URL share a single fetch, so the mirror costs no bytes.
   const cdMirror = browser.cdMirror || null;
+  // Prepared caches may retain exact FILETIME values from a save bundle.
+  // Keep this optional sidecar local alongside the ignored fixture bytes.
+  const metadataPath = path.join(destination, '.wine-assembly-file-metadata.json');
+  const fileMetadata = fs.existsSync(metadataPath)
+    ? JSON.parse(fs.readFileSync(metadataPath, 'utf8')) : {};
   const files = walkBrowserFiles(fileRoot).sort((a, b) => a.localeCompare(b))
     .map(relative => {
       const fixtureRelative = path.join(browser.fileRoot, relative);
@@ -437,7 +469,12 @@ function writeBrowserManifest(candidate, destination) {
       }
       const key = relative.split(path.sep).join('/');
       const vfsPath = vfsPaths[key] || 'c:\\' + relative.split(path.sep).join('\\');
-      return onDisc ? { url, vfsPaths: [vfsPath, onDisc] } : { url, vfsPath };
+      const metadata = fileMetadata[url] || {};
+      const times = {};
+      for (const key of ['creationTime', 'lastAccessTime', 'lastWriteTime']) {
+        if (metadata[key] !== undefined) times[key] = metadata[key];
+      }
+      return onDisc ? { url, vfsPaths: [vfsPath, onDisc], ...times } : { url, vfsPath, ...times };
     }).filter(Boolean);
 
   const trackSizes = {};

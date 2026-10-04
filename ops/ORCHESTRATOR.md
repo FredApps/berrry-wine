@@ -129,3 +129,12 @@ Never terminate old agent roots automatically. They should checkpoint and stop
 accepting new tasks; only their owners may safely stop their own jobs. Keep their
 transcripts and handoffs as references. Subagents are new workers, not reparented
 old processes.
+
+
+## Standing priority: two new games
+
+User instruction, 2026-10-03: continuously maintain at least TWO distinct new-game lanes owned by Codex/workers, moving toward an actual launch route, player-controlled gameplay and a reviewed gameplay screenshot. This is a rolling pipeline, not a one-off pair. Refill a slot as soon as a game qualifies or becomes blocked; record blocked work honestly and select another actionable candidate. Verify the current public DESKTOP_APPS list before selection: existing public games and alternate renderer variants do not count as new titles. Prefer recognizable freeware/shareware/demos with locally available assets. Do not count already-qualified screenshots as new work.
+
+Each lane must name its candidate, exact next action and owner in TODOS.md and STATUS. Done requires a working launch route, reviewed visible gameplay (not installer/menu/intro/black frame), ordinary input response, and linked screenshot + run/source identity. Record FPS separately when measured; never invent performance or release approval. Launchability does not authorize public distribution or deployment. Maintain two active investigation lanes while serializing browser/benchmark resources on the shared host.
+
+At each task completion, queue check, and user interaction, replenish the two lanes. Do not stop solely because an unrelated dashboard/UX task completed. If fewer than two candidates are actionable, document the concrete pool-wide blocker and what input resolves it; do not create fake active tasks or retry automated-review rejections. Keep the recurring NEW-GAMES-PIPELINE task active until the user pauses or changes this policy.

@@ -236,7 +236,11 @@ async function main() {
       await page.evaluate(() => { document.getElementById('desktop-icons').scrollTop = 0; });
     }
 
-    // And the desktop has to work, not just appear.
+    // And the desktop has to work, not just appear. The exclusive verdict
+    // pinned on the shared renderer above belonged to Minesweeper; left in
+    // place it would call Notepad's window exclusive too, and the windowed
+    // checks below could never hold.
+    await page.evaluate(() => { delete sharedRenderer._isExclusiveFullscreenWindow; });
     await page.evaluate(() => {
       const icon = [...document.querySelectorAll('.desktop-icon')]
         .find(el => el.dataset.app === 'notepad');

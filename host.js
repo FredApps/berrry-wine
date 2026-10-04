@@ -628,28 +628,188 @@ class WineAssembly {
 
   // Keep split assets a transport detail. Normal files take one request; only
   // a 404 tries the deployer's name.part000, name.part001, ... convention.
-  static async fetchAssetBytes(url) {
+  //
+  // `options` is the launch window's view of a download (lib/launch-progress.js):
+  //   signal      aborts the request (Cancel)
+  //   onTransfer  {kind:'start'|'progress'|'done'|'error', id, url, loaded,
+  //               total, source} -- total is null unless the server said how
+  //               big the body is; source is 'cache' only when Resource Timing
+  //               says the browser cache answered
+  //   retained    Map url -> bytes: a Retry's already-downloaded files
+  // Without options this is the plain one-request path the CLI has always used.
+  static async fetchAssetBytes(url, options = {}) {
+    WineAssembly._throwIfAssetAborted(options.signal);
+    const transfer = WineAssembly._beginTransfer(url, options);
+    const kept = options.retained && options.retained.get(url);
+    if (kept) {
+      transfer.emit('progress', kept.length, kept.length, 'kept');
+      WineAssembly._throwIfAssetAborted(options.signal);
+      transfer.emit('done', kept.length, kept.length, 'kept');
+      // Retention owns source bytes. Callers (notably writable VFS mounts)
+      // receive their own storage, including on every retry.
+      return kept.slice();
+    }
     try {
-      return await WineAssembly._fetchAssetCandidate(url);
+      let bytes;
+      try {
+        bytes = await WineAssembly._fetchAssetCandidate(url, options, transfer);
+      } catch (e) {
+        const alt = WineAssembly._spaceFreeUrl(url);
+        if (!alt || !/HTTP 404$/.test(String(e && e.message))) throw e;
+        transfer.reset();
+        bytes = await WineAssembly._fetchAssetCandidate(alt, options, transfer);
+      }
+      WineAssembly._throwIfAssetAborted(options.signal);
+      if (options.retained) options.retained.set(url, bytes.slice());
+      transfer.emit('done', bytes.length, bytes.length, transfer.source);
+      return bytes;
     } catch (e) {
-      const alt = WineAssembly._spaceFreeUrl(url);
-      if (!alt || !/HTTP 404$/.test(String(e && e.message))) throw e;
-      return await WineAssembly._fetchAssetCandidate(alt);
+      // Tag the failure so a launch can tell "a file did not download" (the
+      // launch window's Retry) from everything else (the crash report).
+      if (e && typeof e === 'object' && e.name !== 'AbortError') {
+        e.isDownloadError = true;
+        if (!e.assetUrl) e.assetUrl = url;
+      }
+      transfer.emit('error', transfer.loaded, null, null, e);
+      throw e;
     }
   }
 
-  static async _fetchAssetCandidate(url) {
-    const direct = await fetch(url);
-    if (direct.ok) return new Uint8Array(await direct.arrayBuffer());
+  static _transferSeq = 0;
+
+  static _throwIfAssetAborted(signal) {
+    if (!signal || !signal.aborted) return;
+    const error = new Error('Asset loading cancelled');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  static _beginTransfer(url, options) {
+    const on = options && options.onTransfer;
+    const t = {
+      id: options && options.transferId ? options.transferId : ++WineAssembly._transferSeq,
+      loaded: 0,
+      total: null,
+      source: null,
+      started: false,
+      emit(kind, loaded, total, source, error) {
+        if (!on) return;
+        if (kind !== 'start' && !t.started) t.emit('start', 0, t.total, null);
+        if (kind === 'start') t.started = true;
+        try {
+          on({ kind, id: t.id, url, loaded, total: total === undefined ? t.total : total,
+            source: source || null, reason: error ? WineAssembly._downloadReason(error) : null });
+        } catch (_) { /* a progress view must never fail a download */ }
+      },
+      reset() { t.loaded = 0; t.total = null; },
+    };
+    return t;
+  }
+
+  static _downloadReason(error) {
+    const message = String(error && error.message || error || '');
+    const http = message.match(/HTTP (\d{3})$/);
+    if (http) {
+      const code = Number(http[1]);
+      if (code === 404) return 'not found on the server (HTTP 404)';
+      if (code >= 500) return `server error (HTTP ${code})`;
+      return `HTTP ${code}`;
+    }
+    if (/missing .*\.part\d+/.test(message)) return 'part of the file is missing on the server';
+    return 'network error';
+  }
+
+  // Was this response answered by the browser's HTTP cache? Only claimed when
+  // Resource Timing can actually say so: same origin (cross-origin entries
+  // report transferSize 0 without Timing-Allow-Origin) and no service worker
+  // in between (sw-coi.js answers every fetch, so its entries say nothing
+  // about the HTTP cache either).
+  static _cacheSource(url) {
+    if (typeof performance === 'undefined' || !performance.getEntriesByName ||
+        typeof location === 'undefined') return null;
+    try {
+      const abs = new URL(url, location.href);
+      if (abs.origin !== location.origin) return null;
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker &&
+          navigator.serviceWorker.controller) return null;
+      const entries = performance.getEntriesByName(abs.href);
+      const entry = entries[entries.length - 1];
+      if (!entry || !('transferSize' in entry)) return null;
+      if (entry.transferSize === 0 && entry.decodedBodySize > 0) return 'cache';
+      return entry.transferSize > 0 ? 'network' : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // The Resource Timing entry for a fetch is queued after its body completes,
+  // not before the last read resolves; give it two short turns to land. No
+  // entry means "not known", never "network".
+  static async _cacheSourceSettled(url) {
+    for (const wait of [0, 0, 25]) {
+      const source = WineAssembly._cacheSource(url);
+      if (source) return source;
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+    return WineAssembly._cacheSource(url);
+  }
+
+  // Read a response body, reporting bytes as they arrive when a launch window
+  // is listening. The size is trusted only when the server sent it for the
+  // bytes we will actually read (no content coding in between).
+  static async _readBody(response, transfer, partial) {
+    if (!response.body || !response.body.getReader) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      transfer.loaded += bytes.length;
+      transfer.emit('progress', transfer.loaded, partial ? null : bytes.length, null);
+      return bytes;
+    }
+    const lengthHeader = response.headers.get('content-length');
+    const coding = (response.headers.get('content-encoding') || 'identity').toLowerCase();
+    const declared = lengthHeader != null && /^\d+$/.test(lengthHeader) && coding === 'identity'
+      ? Number(lengthHeader) : null;
+    if (!partial) transfer.total = declared;
+    transfer.emit('start', transfer.loaded, transfer.total, null);
+    const reader = response.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      transfer.loaded += value.length;
+      if (transfer.total != null && transfer.loaded > transfer.total) transfer.total = null;
+      transfer.emit('progress', transfer.loaded, transfer.total, null);
+    }
+    const out = new Uint8Array(got);
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.length; }
+    return out;
+  }
+
+  static async _fetchAssetCandidate(url, options = {}, transfer = null) {
+    const init = options.signal ? { signal: options.signal } : undefined;
+    const listening = !!(options && options.onTransfer);
+    const direct = await fetch(url, init);
+    if (direct.ok) {
+      const bytes = listening
+        ? await WineAssembly._readBody(direct, transfer, false)
+        : new Uint8Array(await direct.arrayBuffer());
+      if (listening) transfer.source = await WineAssembly._cacheSourceSettled(direct.url || url);
+      return bytes;
+    }
     if (direct.status !== 404) {
       throw new Error(`Unable to load ${url}: HTTP ${direct.status}`);
     }
 
+    // A split asset's whole size is not known until its last part arrives.
+    if (listening) transfer.total = null;
     const parts = [];
     let total = 0;
     for (let index = 0; ; index++) {
       const partUrl = WineAssembly._assetPartUrl(url, index);
-      const response = await fetch(partUrl);
+      const response = await fetch(partUrl, init);
       if (response.status === 404) {
         if (index === 0) throw new Error(`Unable to load ${url}: HTTP 404`);
         throw new Error(`Unable to load ${url}: missing ${partUrl}`);
@@ -657,7 +817,9 @@ class WineAssembly {
       if (!response.ok) {
         throw new Error(`Unable to load ${partUrl}: HTTP ${response.status}`);
       }
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = listening
+        ? await WineAssembly._readBody(response, transfer, true)
+        : new Uint8Array(await response.arrayBuffer());
       parts.push(bytes);
       total += bytes.length;
       if (bytes.length < WineAssembly.ASSET_PART_SIZE) break;
@@ -2076,7 +2238,12 @@ class WineAssembly {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     let showTimeout = null;
     const cacheWarm = !!WineAssembly._wasmModulePromise;
-    if (compileEl && !cacheWarm) {
+    // A launch with a launch window (lib/launch-progress.js) already says
+    // "Preparing emulator" -- and only after 500ms; this box would flash at
+    // 100ms on top of it.
+    const launchUi = typeof globalThis !== 'undefined' ? globalThis.wineLaunchUi : null;
+    const launchWindowOwns = !!(launchUi && launchUi.current && launchUi.current.status === 'pending');
+    if (compileEl && !cacheWarm && !launchWindowOwns) {
       showTimeout = setTimeout(() => {
         compileEl.style.display = 'block';
       }, 100);
@@ -2813,7 +2980,7 @@ class WineAssembly {
     // program came off a dropped zip/ISO or out of the OPFS library, so there
     // is no URL to fetch and `url` is only the name the guest should see for
     // itself. Everything below treats the two identically.
-    const exeBytes = opts.bytes || await WineAssembly.fetchAssetBytes(url);
+    const exeBytes = opts.bytes || await WineAssembly.fetchAssetBytes(url, this._launchTransfer || {});
     this._exeBytes = exeBytes;
 
     // Resource parsing lives in WAT ($find_resource, $dlg_load,
@@ -3068,6 +3235,9 @@ class WineAssembly {
   }
 
   async loadFiles(urls, options = {}) {
+    const transferOpts = options.transfer || {};
+    const checkCancelled = () => WineAssembly._throwIfAssetAborted(transferOpts.signal);
+    checkCancelled();
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
     const concurrency = Math.max(1, options.concurrency || 6);
@@ -3075,15 +3245,24 @@ class WineAssembly {
     const failures = [];
     const assetLoads = new Map();
     const total = urls.length;
+    // The launch window's listener and Cancel, passed by the launch that owns
+    // this file list (lib/browser-shell.js); internal lists such as the boot
+    // fonts are not the app's download and are not reported.
     const fetchWithRetry = async (url) => {
+      // One id for every attempt, so the launch window shows one file being
+      // retried rather than a failed file and a new one.
+      const transferId = ++WineAssembly._transferSeq;
       for (let attempt = 0; ; attempt++) {
+        checkCancelled();
         try {
-          return await WineAssembly.fetchAssetBytes(url);
+          return await WineAssembly.fetchAssetBytes(url, { ...transferOpts, transferId });
         } catch (error) {
+          if (transferOpts.signal && transferOpts.signal.aborted) throw error;
           const reason = String(error && error.message || error);
           const http = reason.match(/HTTP (\d{3})$/);
           const retryable = (!http || [408, 429].includes(Number(http[1])) ||
             Number(http[1]) >= 500) && !/missing .*\.part\d+|out of memory/i.test(reason);
+          if (error && typeof error === 'object') error.attempts = attempt + 1;
           if (!retryable || attempt >= 2) throw error;
           // Mobile Safari sometimes drops a LAN response while several large
           // game archives are being loaded. Retry only that file, leaving
@@ -3099,6 +3278,7 @@ class WineAssembly {
       const explicit = (typeof item === 'object') ? item.vfsPath : null;
       const explicitPaths = (typeof item === 'object' && Array.isArray(item.vfsPaths)) ? item.vfsPaths : null;
       try {
+        checkCancelled();
         // Keep large read-only archives on the server. The VFS parks a guest
         // read on a cache miss and fetches only the needed HTTP byte range.
         // Duplicate URL aliases share one load and one cache.
@@ -3109,9 +3289,22 @@ class WineAssembly {
           assetLoads.set(key, (async () => {
             if (useRange) {
               try {
-                const provider = await window.byteProvider.HttpRangeProvider.open(url);
+                const provider = await window.byteProvider.HttpRangeProvider.open(url, {
+                  // Only launch-time discovery belongs to this AbortSignal.
+                  // The provider retains this adapter for later gameplay GETs;
+                  // those must remain usable after the launch controller ends.
+                  fetch: (source, init = {}) => {
+                    if (init.method === 'HEAD') {
+                      checkCancelled();
+                      return fetch(source, { ...init, signal: transferOpts.signal });
+                    }
+                    return fetch(source, init);
+                  },
+                });
+                checkCancelled();
                 return { provider: window.byteProvider.cached(provider) };
               } catch (error) {
+                checkCancelled();
                 // A static host without Range support keeps the eager path.
                 if (!/does not advertise Accept-Ranges|HEAD .* → (?:404|405|501)/.test(
                   String(error && error.message))) throw error;
@@ -3121,11 +3314,14 @@ class WineAssembly {
           })());
         }
         const asset = await assetLoads.get(key);
+        checkCancelled();
         const data = asset.data;
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await this._decodeMountedImage(data, url)
           : null;
+        checkCancelled();
         const addFile = (rawPath) => {
+          checkCancelled();
           let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
           if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
           // Also register the drive root and every parent directory so CD
@@ -3155,6 +3351,8 @@ class WineAssembly {
         }
         loaded++;
       } catch (error) {
+        // Cancel is not a missing file: stop the whole list.
+        if (transferOpts.signal && transferOpts.signal.aborted) throw error;
         // {optional: true}: a component a real install may or may not have
         // put there (Civ2's Indeo codec). Its absence is the app's to handle,
         // so it neither fails a requiredFiles launch nor counts as a failure.
@@ -3162,7 +3360,8 @@ class WineAssembly {
           console.log(`[files] optional ${url} not loaded: ${error && error.message || error}`);
         } else {
           failed++;
-          failures.push({ url, reason: String(error && error.message || error) });
+          failures.push({ url, reason: String(error && error.message || error),
+            attempts: (error && error.attempts) || 1, error });
         }
       } finally {
         if (options.onProgress) options.onProgress({ loaded, failed, total, url });
@@ -3171,16 +3370,30 @@ class WineAssembly {
 
     const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
       while (next < total) {
+        checkCancelled();
         const item = urls[next++];
         await loadOne(item);
       }
     });
-    await Promise.all(workers);
+    // A rejection is not proof that sibling HEAD/decode work has unwound.
+    // Do not let callers clean up the instance while another worker can still
+    // resume and touch its VFS. Post-await guards above prevent late mounts.
+    const settled = await Promise.allSettled(workers);
+    checkCancelled();
+    const rejected = settled.find(result => result.status === 'rejected');
+    if (rejected) throw rejected.reason;
     if (failed && options.required) {
       const details = failures.slice(0, 5).map(({ url, reason }) =>
         `${url}: ${reason}`).join('; ');
       const more = failures.length > 5 ? `; ${failures.length - 5} more` : '';
-      throw new Error(`failed to load ${failed} of ${total} data files: ${details}${more}`);
+      const error = new Error(`failed to load ${failed} of ${total} data files: ${details}${more}`);
+      const first = failures[0];
+      error.isDownloadError = !!(first.error && first.error.isDownloadError);
+      error.assetUrl = first.url;
+      error.attempts = first.attempts;
+      error.downloadReason = WineAssembly._downloadReason(first.error || first.reason);
+      error.failedFiles = failures.length;
+      throw error;
     }
   }
 
@@ -3206,7 +3419,7 @@ class WineAssembly {
       if (typeof item === 'string') {
         let bytes;
         try {
-          bytes = await WineAssembly.fetchAssetBytes(item);
+          bytes = await WineAssembly.fetchAssetBytes(item, this._launchTransfer || {});
         } catch (_) {
           console.error('Failed to fetch DLL:', item);
           return null;

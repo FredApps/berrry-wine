@@ -73,6 +73,26 @@ test('tmux bridge authenticates, enforces view mode, controls fixture only, and 
 
 module.exports={fixture};
 
+test('Claude live and ended panes have lifecycle status without Codex approval alarms', {timeout:15000},async t=>{
+  const f=await fixture();t.after(()=>f.close());
+  const file=path.join(f.root,'ops/terminals.json');
+  const config=JSON.parse(await fs.readFile(file,'utf8'));
+  config.terminals[0].agentId='claude:test';config.terminals[0].permissionMode='bypass';
+  await fs.writeFile(file,JSON.stringify(config));
+  let state=await(await fetch(f.base+'/api/state')).json();
+  assert.equal(state.terminals[0].available,true);
+  assert.equal(state.terminals[0].provider,'claude');
+  assert.equal(state.terminals[0].approvalMode,'disabled');
+  assert.deepEqual(state.approvals.warnings,[]);
+  config.terminals[0].panePid+=100000;await fs.writeFile(file,JSON.stringify(config));
+  state=await(await fetch(f.base+'/api/state')).json();
+  assert.equal(state.terminals[0].available,false);
+  assert.equal(state.terminals[0].state,'ended-or-changed');
+  assert.match(state.terminals[0].reason,/Session ended/);
+  assert.deepEqual(state.approvals.warnings,[]);
+  assert.deepEqual(state.approvals.items,[]);
+});
+
 const approvalScreen=`Would you like to run the following command?
 
 Thread: Agent (test)

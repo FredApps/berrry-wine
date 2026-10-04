@@ -7,9 +7,11 @@ const path = require('node:path');
 const { createReader, safeFile, parseTasks } = require('./readers');
 const { createTerminalBridge } = require('./terminal-server');
 const { createTaskStore } = require('./task-store');
+const { createEmulatorHandler } = require('./emulator-server');
 
 function createServer(options = {}) {
   const reader = createReader(options);
+  const serveEmulator = createEmulatorHandler(reader.root);
   const taskStore=createTaskStore(reader.root);
   let cached, refreshedAt = 0, pending;
   let appendQueue = Promise.resolve();
@@ -29,6 +31,7 @@ function createServer(options = {}) {
     if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return fail(403, 'Loopback host required');
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin requests only');
     try {
+      if (await serveEmulator(req,res)) return;
       const url = new URL(req.url, `http://${host}`);
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
       if(req.method==='POST' && url.pathname==='/api/approval-decision') return await terminals.approvalDecision(req,res);
@@ -94,7 +97,7 @@ function createServer(options = {}) {
         return res.end(req.method === 'HEAD' ? undefined : JSON.stringify({...data,terminals:await terminals.list(),approvals:await terminals.approvals()}));
       }
       let file, type = 'text/plain; charset=utf-8';
-      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
+      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/blocker-model.js': ['blocker-model.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],

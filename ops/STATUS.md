@@ -1,6 +1,8 @@
-updated: 2026-10-02T23:23:51.028480+00:00
-author: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+updated: 2026-10-04T06:06:46.407Z
+author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Migration checkpoint collection is complete. Jazz’s last local package job finished successfully, and all three workers released their work and resources. GTA2 never transferred or launched; its pending preflight was canceled. Unreal remains unlaunched. No conditional job will start.
+Two active lanes: **Runenlegen** — restore_evidence owns bounded sizing capture for clipped board after reviewed player placement. **Tile World** — coverage_audit is refreshing public exclusion/assets and preparing keyboard-only level selection and gameplay proof.
 
-The migration handoff records exact artifacts, unfinished Ricochet and Collapse validation, NFS3’s backend-identity failure, and preserved ownership. This coordinator is now idle under the freeze. The migration owner handles Git reconciliation and private project/memory transfer; that transfer is not yet claimed complete. Foreign services, historical watchers and dirty files remain preserved. The five-game baseline and three-renderer comparison objectives remain unfinished.
+**Crimsonland** now reaches player-controlled tutorial on private repaired build fa783563. Root reviewed before/after arrow movement and tutorial progression; screenshots sent to Telegram. Pause-menu pointer alignment, full combat and FPS remain unverified. Canonical build unchanged; repair integration pending. **Zuma** previously qualified with reviewed aim/fire/scoring. FPS remains unmeasured for both.
+
+Refill continues on qualification/blocker. Browser/build resources serialized; ops-dashboard exclusively owns main integration.

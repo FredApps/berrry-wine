@@ -610,8 +610,17 @@ p {
 .feed-text {
   white-space:pre-wrap;
 }
+.activity-meta { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.feed-row .activity-meta::before { content:none; }
+.activity-meta > span:first-child { color:var(--cyan); }
+.activity-meta code { color:var(--ink); font-size:11px; }
+.activity-meta time { white-space:normal; }
+.activity-meta .commit-link { margin-left:auto; padding:5px 0; }
+.commit-subject { font-weight:600; line-height:1.5; }
+.feed-commit { border-left:2px solid var(--cyan); }
 .toolbar {
   display:flex;
+  flex-wrap:wrap;
   gap:10px;
   align-items:center;
   margin:22px 0;
@@ -632,6 +641,8 @@ p {
   grid-template-columns:repeat(3,minmax(0,1fr));
   gap:19px;
 }
+.corpus-category { margin-top:26px; }
+.corpus-category > h2 { font-size:18px; margin-bottom:14px; }
 .visual-grid {
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));
@@ -1123,9 +1134,44 @@ dd {
 .stat:has(.value.task-label-review) { border-top-color:#d0acff; }
 .section-head h2 { color:#c0d0c6; }
 .corpus-assessment { margin:0 0 10px; }
+.release-bar { margin-top:20px; padding:16px; border:1px solid var(--line); background:var(--paper); }
+.release-bar > div:first-child, .release-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; }
+.release-counts { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.release-counts button { display:flex; align-items:center; gap:8px; padding:9px 12px; }
+.release-counts strong { font-size:18px; color:var(--cyan); }
+.toolbar #corpus-release { max-width:100%; }
+.release-counts button[aria-pressed="true"] { border-color:var(--cyan); background:#102c24; }
+.release-bar > p { margin:0; overflow-wrap:anywhere; }
+.corpus-release { margin:0 0 12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+.release-summary { margin:6px 0 0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.release-detail { margin:20px 0; }
+.release-detail li { margin:8px 0; }
+.release-gates { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr)); gap:10px; margin:16px 0; }
+.release-gates > div { border:1px solid var(--line); padding:12px; min-width:0; overflow-wrap:anywhere; }
+.release-gates strong { display:inline-block; margin-right:10px; text-transform:capitalize; }
+.release-gates p { margin:8px 0 0; }
 .corpus-fps { margin:10px 0; font-size:12px; }
 .corpus-fps strong { color:var(--cyan); }
 .candidate { align-self:start; }
+.candidate-shell { min-width:0; align-self:start; }
+.corpus-launch { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-top:0; background:var(--paper); }
+.corpus-launch a { display:inline-flex; align-items:center; min-height:40px; padding:8px 12px; border:1px solid var(--line); text-decoration:none; overflow-wrap:anywhere; }
+.corpus-launch .emulator-launch { color:var(--cyan); border-color:var(--cyan); }
+.corpus-launch .production-launch { color:var(--muted); }
+.corpus-launch a:hover { background:#183328; }
+.corpus-launch a:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+.corpus-launch p { margin:0; }
+.launch-unavailable { width:100%; font-size:12px; }
+.launch-unavailable > p { margin-top:4px; }
+.launch-unavailable details { margin-top:8px; }
+.launch-unavailable pre { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.launch-detail { border-top:1px solid var(--line); margin:16px 0; }
+.launch-detail > p:last-child { flex-basis:100%; }
+.launch-availability { display:flex; align-items:center; flex-wrap:wrap; gap:12px 18px; padding:16px; margin-top:20px; border:1px solid var(--cyan); background:var(--paper); }
+.launch-availability > button:first-child { display:flex; align-items:center; gap:10px; min-height:44px; color:var(--cyan); }
+.launch-availability strong { font-size:22px; }
+.launch-availability > .sub { flex:1 1 250px; }
+.launch-availability button[aria-pressed="true"] { background:#183328; border-color:var(--cyan); }
 #urgent-approvals { position: sticky; top: 0; z-index: 12; margin: 20px 32px 0; border: 1px solid #e8ae54; background: #261f12; padding: 16px 20px; }
 .stat .value.task-label-blocked { color: var(--red); }
 .stat .value.task-label-review { color: var(--amber); }

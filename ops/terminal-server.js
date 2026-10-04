@@ -29,6 +29,11 @@ function createTerminalBridge(server, options = {}) {
     for(const id of observed.keys())if(!targets.some(t=>t.id===id))observed.delete(id);
     for(const target of targets) {
       try {
+        // Ended workers are terminal lifecycle state, not urgent approvals.
+        // Never interpret Claude's screen using Codex's menu/key protocol.
+        if(!await exists(target) || provider(target)!=='codex' || target.permissionMode==='bypass') {
+          observed.delete(target.id);continue;
+        }
         const screen=await capture(target),prompt=parseApproval(screen),fingerprint=prompt&&signature(JSON.stringify(target)+approvalIdentity(prompt.prompt));
         if(!prompt){observed.delete(target.id);continue;}
         let record=observed.get(target.id);
@@ -58,6 +63,7 @@ function createTerminalBridge(server, options = {}) {
     try {
       const target=(await mappings()).find(t=>t.id===id);
       if(!target || JSON.stringify(target)!==JSON.stringify(record.target))return fail(409,'Terminal registration changed. Refresh first.');
+      if(provider(target)!=='codex' || target.permissionMode==='bypass')return fail(409,'This terminal does not use Codex command approvals');
       const screen=await capture(target);
       const prompt=parseApproval(screen);
       if(!prompt || signature(JSON.stringify(target)+approvalIdentity(prompt.prompt))!==record.fingerprint)return fail(409,'Prompt changed. Refresh and review the current command.');
@@ -120,9 +126,15 @@ function createTerminalBridge(server, options = {}) {
       return stdout.split('\n').some(line=>line===`${t.pane}\t${t.panePid}\t0`);
     } catch {return false;}
   }
+  const provider=t=>t.agentId.startsWith('claude:')?'claude':t.agentId.startsWith('codex:')?'codex':'unknown';
   async function list() {
-    return Promise.all((await mappings()).map(async t=>({id:t.id,agentId:t.agentId,label:t.label || t.session,session:t.session,
-      available:!!wss && await exists(t),reason:!wss?'Run npm ci --prefix ops':'Registered pane must still match its PID'})));
+    return Promise.all((await mappings()).map(async t=>{
+      const live=await exists(t),kind=provider(t);
+      return {id:t.id,agentId:t.agentId,label:t.label || t.session,session:t.session,provider:kind,
+        state:live?'live':'ended-or-changed',permissionMode:t.permissionMode==='bypass'?'bypass':'default',
+        approvalMode:t.permissionMode==='bypass'?'disabled':kind==='codex'?'command-menu':'terminal',
+        available:!!wss && live,reason:!wss?'Run npm ci --prefix ops':!live?'Session ended or pane changed; resume the agent and register its current pane.':null};
+    }));
   }
   async function ticket(req,res) {
     const fail=(code,message)=>{res.writeHead(code,{'Content-Type':'text/plain'});res.end(message);};

@@ -54,6 +54,7 @@ const { createServer } = require('./server');
     assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-line', el => el.textContent), /2\.5% CPU · 128 MiB RSS/);
     assert.match(await page.$eval('.agent:has([data-agent="codex:one"]) .process-background', el => el.textContent), /Background 1 · 120\.0% CPU · 1\.0 GiB RSS/);
     await page.locator('a[data-view="agents"]').click();
+    await page.waitForSelector('.agent-history');
     assert.equal(await page.$eval('.agent-history',el=>el.open),false);
     await page.locator('.agent-history > summary').click();
     assert.match(await page.$eval('.agent:has([data-agent="claude:two"]) .process-line', el => el.textContent), /PID not matched/);
@@ -178,7 +179,8 @@ const { createServer } = require('./server');
     assert.match(await page.$eval('[data-candidate="demo"]',el=>el.textContent),/Latest run: harness-error/);
     assert.ok(await page.$eval('[data-candidate="demo"] img',el=>el.complete && el.naturalWidth>0));
     await page.locator('[data-candidate="demo"]').click();
-    assert.match(await page.$eval('#detail-body',el=>el.textContent),/Earlier capture; latest attempt has no screenshot/);
+    assert.match(await page.$eval('#detail-body',el=>el.textContent),/Earlier capture; latest attempt: harness-error/);
+    assert.equal(await page.$eval('.detail-shot',el=>el.alt),'Earlier run capture');
     await page.locator('#close-detail').click();
     await page.select('#filter','working');
     assert.equal(await page.$$eval('.candidate',els=>els.length),1);
@@ -238,6 +240,30 @@ const { createServer } = require('./server');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.screenshot({path:path.join(shots,'task-create-mobile.png'),fullPage:true});
     await page.locator('#task-editor-cancel').click();
+    await write('test/candidate-corpus/manifest.json', JSON.stringify({candidates:[
+      {id:'generally',name:'GeneRally'}, {id:'dxball',name:'DX-Ball'},
+      {id:'jardinains',name:'Jardinains'}, {id:'new-game',name:'New game'},
+    ]}));
+    await write('ops/corpus-status.json',JSON.stringify({reviewedAt:now,entries:[
+      {id:'dxball',origin:'Freeware'}, {id:'jardinains',origin:'Demo'},
+    ]}));
+    await page.locator('a[data-view="corpus"]').click();
+    await page.waitForSelector('[data-category="arcade"]',{timeout:15000});
+    assert.deepEqual(await page.$$eval('.corpus-category',els=>els.map(e=>e.dataset.category)),['arcade','racing','unclassified']);
+    await page.select('#corpus-category','arcade');
+    assert.deepEqual(await page.$$eval('.candidate',els=>els.map(e=>e.dataset.candidate)),['dxball','jardinains']);
+    await page.select('#corpus-group','Freeware');
+    assert.equal(await page.$$eval('.candidate',els=>els.length),1);
+    await page.select('#filter','with-shot');
+    assert.equal(await page.$$eval('.candidate',els=>els.length),0);
+    assert.match(await page.$eval('#main',el=>el.textContent),/No matching candidates/);
+    await page.select('#filter','all');
+    await page.select('#corpus-group','all');
+    await page.select('#corpus-category','all');
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(shots,'corpus-categories-mobile.png'),fullPage:true});
+    await page.setViewport({width:1440,height:1000});
+    await page.screenshot({path:path.join(shots,'corpus-categories.png'),fullPage:true});
     assert.deepEqual(errors,[]);
     console.log(`PASS dashboard navigation, evidence, task creation/edit conflicts/discussion/pickup/reorder/defer, mobile layout and live file refresh\nScreenshots: ${shots}`);
   } finally {
