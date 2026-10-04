@@ -131,6 +131,53 @@ function makeWine() {
   assert.strictEqual(mounted.size, 0);
   assert.strictEqual(wine._helpCtx.vfs.files.get('c:\\spawn.mpq').data.length, 70);
 
+  // A parked read of game data: quiet retries, then Retry/Quit while parked.
+  {
+    const GameWait = require('../lib/game-wait');
+    context.window.GameWait = GameWait;
+    const wine = Object.create(WA.prototype);
+    wine.running = true;
+    wine.logToUI = () => {};
+    let stopped = 0;
+    wine.stop = () => { stopped++; wine.running = false; };
+    let failuresLeft = 3;
+    const fills = [];
+    const cache = { gameData: true, chunkSize: 262144,
+      fill: async (off, len) => { fills.push(off); if (failuresLeft-- > 0) throw new Error('x answered 503, expected 206'); } };
+    let vfsFills = 0;
+    const vfs = { fillPendingRead: async () => { vfsFills++; return true; } };
+    const pending = { provider: cache, path: 'c:\\spawn.mpq', offset: 300000, length: 16 };
+    const result = wine._fillParkedRead(vfs, pending);
+    // Two quiet retries (250 + 500 ms), then the question.
+    for (let i = 0; i < 40 && !(wine._gameWait && wine._gameWait.current && wine._gameWait.current.state === 'error'); i++) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.strictEqual(wine._gameWait.current.state, 'error');
+    assert.strictEqual(wine._gameWait.current.file, 'spawn.mpq');
+    assert.strictEqual(vfsFills, 0, 'the guest stays parked while the player decides');
+    wine._gameWait.action('retry');
+    assert.strictEqual(await result, true);
+    assert.deepStrictEqual(fills, [300000, 300000, 300000, 300000]);
+    assert.strictEqual(vfsFills, 1);
+    assert.strictEqual(stopped, 0);
+
+    failuresLeft = 99;
+    const quitting = wine._fillParkedRead(vfs, pending);
+    for (let i = 0; i < 40 && !(wine._gameWait.current && wine._gameWait.current.state === 'error'); i++) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+    wine._gameWait.action('quit');
+    assert.strictEqual(await quitting, false);
+    assert.strictEqual(stopped, 1);
+    assert.strictEqual(vfsFills, 1, 'no late commit after Quit');
+
+    // Not game data (a dropped File): the plain VFS contract.
+    const plain = { provider: { fill: async () => {} } };
+    wine.running = true;
+    assert.strictEqual(await wine._fillParkedRead(vfs, plain), true);
+    assert.strictEqual(vfsFills, 2);
+  }
+
   console.log('PASS  range preload launch: pinned ranges, split parts, honest fallbacks');
 })().catch(error => {
   console.error(error);
