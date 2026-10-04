@@ -1120,3 +1120,51 @@ in the interleaved runs after the handler clears it. The old build spent the
 whole budget in its first run. So on this route those flags read 77ms/batch
 against 0.00ms for identical menu frames, which says nothing about cost. Use
 user CPU at fixed batches for spin A/Bs.
+
+## 2026-10-04: Glide menu freeze and repeating audio investigation
+
+The user reports frozen menu animation and repeating sound in
+`diablo2_glide_demo`. The corrected local observation did **not reproduce
+the menu freeze**. Audio continuity and quality remain unverified; this is
+not a repair or a resolution of the user report.
+
+The registered route inherits the installed demo and sets VideoConfig
+`Render=3` in both registry hives. It dynamically loads D2Glide. All 25
+registered files were present (135,378,002 bytes). The observed module was
+`f40d4ca3382279ff9b826188573f8acd9272eaa2dc5024dcbb69aecc35b49063`
+(1,664,777 bytes); current JavaScript was pinned separately, without claiming
+that later WAT source changes were included in this module.
+
+Attempt 1 ended with normal ExitProcess(0) after an Escape key sent without
+a fresh visual gate. It is preserved as a harness route failure, not a game
+crash or a freeze reproduction. Attempt 2 prohibited Escape, captured state
+before input, and reached the Shareware 1.04 menu through an ordinary click
+on the visible title screen.
+
+During the 10.3793-second quiet menu interval, Glide host presentation events
+increased from 1,539 to 1,812. The logo flames visibly changed between the
+first and last images; the coordinator independently confirmed this in
+`scratch/diablo2-glide-menu-20261004/root-visual-review.json`. These transport
+counts are diagnostic evidence of progress, not qualified game or display FPS.
+
+The AudioContext was running and advanced from 37.883 to 48.263 seconds.
+Three later read-only observations of DirectSound worklet voice 720898 showed
+an advancing cursor, descriptor sequence 758/770/780, and three different
+262,144-byte ring hashes over 4.01 seconds. These concurrent memory snapshots
+show producer activity, not an atomic audio recording or proof of seamless
+output. Shared waveOut callback registration was zero and its completion
+queues were empty; this observation does not support the separate Tile World
+or FOTAQ pending-function-callback diagnosis.
+
+Evidence is in `scratch/runs/20261004-diablo2-glide-menu-observation`
+(182 hashed artifacts), with raw `analysis.json`, `rings.json`, timed images,
+owner samples and the actual served files. All 147 unique served file copies
+passed their recorded hashes. The browser was headful Chrome 151 with explicit
+`--disable-gpu` and SwiftShader, so this is not proof of parity with the user's
+device. Browser session 35990 and its read-only attachment both exited 0;
+browser and server closed at 16:29:06.090 UTC.
+
+Next, compare the affected URL, build, browser/device and onset route with
+this local identity, then capture output audio if the complaint persists.
+No guest state, engine code or pacing was changed, and no gameplay, FPS or
+release-readiness claim follows from this menu observation.
