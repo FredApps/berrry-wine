@@ -25,6 +25,9 @@
 // --mpq labels every range with the MPQ block(s) it falls in and widens the
 // unsafe set to whole blocks (a dialog that reads part of an art file reads all
 // of it on the next visit, possibly from another offset into the same block).
+// --names-from=PE[,PE] adds, to that widened set, every archive file a binary
+// names as a `dir\\file.ext` literal (diabloui.dll names all of its dialog art):
+// a route the trace did not take reads them in the same nested dialogs.
 // --emit writes the unsafe set as {path,size,chunkSize,ranges,blocks} JSON.
 
 const fs = require('fs');
@@ -158,6 +161,22 @@ function widenToMpqBlocks(ranges, archive) {
   return { blocks: [...touched.keys()].sort((a, b) => a - b), ranges: widened };
 }
 
+// `dir\\file.ext` string literals in a binary, as MPQ lookup candidates.
+function archiveNamesIn(buf) {
+  const names = new Set();
+  let start = -1;
+  for (let i = 0; i <= buf.length; i++) {
+    const c = i < buf.length ? buf[i] : 0;
+    if (c >= 0x20 && c < 0x7f) { if (start < 0) start = i; continue; }
+    if (start >= 0 && i - start >= 6) {
+      const text = buf.toString('latin1', start, i);
+      if (/^[a-z0-9_]+(?:\\[a-z0-9_]+)*\\[a-z0-9_]+\.[a-z0-9]{3}$/i.test(text)) names.add(text);
+    }
+    start = -1;
+  }
+  return [...names];
+}
+
 function fmtMB(n) { return (n / 1048576).toFixed(2) + ' MB'; }
 
 function main() {
@@ -194,6 +213,23 @@ function main() {
     result.fileSize = archive.buf.length;
     result.allBlocks = widenToMpqBlocks(result.ranges, archive);
     result.unsafeBlocks = widenToMpqBlocks(result.unsafeRanges, archive);
+    const namesFrom = (arg('names-from') || '').split(',').filter(Boolean);
+    if (namesFrom.length) {
+      const { lookupName } = require('./mpq');
+      const named = [];
+      result.namedFiles = [];
+      for (const pe of namesFrom) {
+        for (const name of archiveNamesIn(fs.readFileSync(pe))) {
+          const hit = lookupName(archive, name);
+          if (!hit) continue;
+          const b = archive.blocks[hit.blockIndex];
+          if (!b || !b.cSize) continue;
+          result.namedFiles.push({ name, block: hit.blockIndex, bytes: b.cSize });
+          named.push([archive.base + b.filePos, archive.base + b.filePos + b.cSize]);
+        }
+      }
+      result.unsafeBlocks = widenToMpqBlocks(mergeRanges([...result.unsafeRanges, ...named]), archive);
+    }
   }
   const emit = arg('emit');
   if (emit) {
@@ -225,10 +261,11 @@ function main() {
   if (result.unsafeBlocks) {
     console.log(`non-parkable widened to MPQ blocks: ${result.unsafeBlocks.blocks.length} blocks, ` +
       `${fmtMB(rangeBytes(result.unsafeBlocks.ranges))} in ${result.unsafeBlocks.ranges.length} ranges ` +
-      `(${chunkSet(result.unsafeBlocks.ranges, chunkSize).size} chunks) of ${fmtMB(result.fileSize)}`);
+      `(${chunkSet(result.unsafeBlocks.ranges, chunkSize).size} chunks) of ${fmtMB(result.fileSize)}` +
+      (result.namedFiles ? `; includes ${result.namedFiles.length} files named by --names-from` : ''));
   }
 }
 
 if (require.main === module) main();
 
-module.exports = { parseLine, mergeRanges, rangeBytes, chunkSet, census, widenToMpqBlocks };
+module.exports = { parseLine, mergeRanges, rangeBytes, chunkSet, census, widenToMpqBlocks, archiveNamesIn };
