@@ -422,6 +422,15 @@ if (TRACE_GL_RAW) {
 }
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
+// --lazy-ranges[=MS]: mount a registry entry's `httpRange` files the way the
+// page does -- provider-backed, async-only, MS of latency per chunk read -- so
+// a headless run parks on cache misses exactly like a browser on HTTP ranges.
+// Its `preloadRanges` are fetched and pinned before the guest starts, as in
+// host.js; --no-preload-ranges skips them (the control arm that shows why a
+// file needs them). Without the flag those files are plain eager mounts.
+const LAZY_RANGES = hasFlag('lazy-ranges') || argHas('lazy-ranges');
+const LAZY_RANGES_MS = Math.max(0, Number(getArg('lazy-ranges', '0')) || 0);
+const NO_PRELOAD_RANGES = hasFlag('no-preload-ranges');
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
@@ -5026,6 +5035,30 @@ async function main() {
         const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
+        if (LAZY_RANGES && typeof item === 'object' && item.httpRange) {
+          const bp = require('../lib/byte-provider');
+          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }));
+          let preloaded = 'no preload ranges';
+          if (item.preloadRanges && !NO_PRELOAD_RANGES) {
+            const r = await cache.preload(bp.preloadRangesFor(item.preloadRanges, cache.size));
+            preloaded = `preloaded ${r.chunks} chunks (${r.bytes} bytes)`;
+          } else if (item.preloadRanges) {
+            preloaded = 'preload ranges SKIPPED (--no-preload-ranges)';
+          }
+          for (const p of paths) {
+            let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
+            if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+            ctx.vfs.ensureParentDirs(vfsPath);
+            ctx.vfs.setProviderFile(vfsPath, { provider: cache });
+          }
+          console.log(`[lazy] ${url}: ${size} bytes provider-backed, ${LAZY_RANGES_MS}ms/chunk, ${preloaded}`);
+          process.on('exit', () => {
+            const st = cache.stats;
+            console.log(`[lazy] ${url}: fetched ${st.fetches} chunks / ${st.bytesFetched} bytes ` +
+              `(pinned ${st.pinnedChunks} / ${st.pinnedBytes}), hits ${st.hits}, misses ${st.misses}`);
+          });
+          continue;
+        }
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await decodeMountedImage(hostPath)
           : null;
