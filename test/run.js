@@ -6603,6 +6603,12 @@ async function main() {
     // server's socket callbacks fire and settled replies flush. Without this
     // the loop is synchronous end to end — the same mechanism that keeps
     // SIGTERM queued forever (see the timeout -s KILL note in CLAUDE.md).
+    // --lazy-ranges: a spawned thread parked on a lazy read waits for a fill
+    // that only an event-loop turn can deliver (the page gets one every step).
+    if (LAZY_RANGES && threadManager && threadManager.hasIoFillInFlight &&
+        threadManager.hasIoFillInFlight()) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
     if (control) {
       finishPreviousControlBatch();
       await new Promise(resolve => setImmediate(resolve));

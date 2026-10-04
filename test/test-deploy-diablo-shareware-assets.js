@@ -23,8 +23,16 @@ for (const file of required) {
   assert(fs.existsSync(path.join(__dirname, '..', file)), `local asset is missing: ${file}`);
 }
 const mpq = app.files.find(file => appFileUrl(file).endsWith('/spawn.mpq'));
-assert(mpq && !mpq.httpRange,
-  'Diablo needs a resident MPQ before synchronous dialog art reads');
+// The archive streams by HTTP range, but the ranges read inside synchronous
+// dialogs (where a cooperative wait cannot await a fetch) must preload, and the
+// list must describe these exact bytes or host.js falls back to the whole file.
+assert(mpq && mpq.httpRange && mpq.preloadRanges,
+  'Diablo needs its dialog-art ranges resident before synchronous dialog reads');
+const { preloadRangesFor } = require('../lib/byte-provider');
+const mpqSize = fs.statSync(path.join(__dirname, '..', appFileUrl(mpq))).size;
+const ranges = preloadRangesFor(mpq.preloadRanges, mpqSize);
+assert(ranges.length > 0 && ranges[0][0] === 0, 'the MPQ header must preload');
+assert(ranges.some(([, end]) => end === mpqSize), 'the MPQ hash/block tables at the end must preload');
 assert(fs.statSync(path.join(__dirname, '..', appFileUrl(mpq))).size > SERVER_MAX_FILE_SIZE,
   'the release deployer must split the MPQ into parts');
 
