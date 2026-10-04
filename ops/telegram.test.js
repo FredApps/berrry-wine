@@ -59,9 +59,9 @@ test('Plain start explains pairing without granting access',async()=>{
  assert.match(f.calls[0].body.text,/not paired yet/);
  assert.equal(f.calls[0].body.chat_id,10);
 });
-test('Chat submission follows the busy queue footer and requires the exact draft',()=>{
+test('Chat steers a busy turn instead of queuing behind it and requires the exact draft',()=>{
  const busy='Working\n› [Telegram] status\n\n  tab to queue message 69% context left';
- assert.equal(chatSubmitKey(busy,'[Telegram] status'),'Tab');
+ assert.equal(chatSubmitKey(busy,'[Telegram] status'),'Enter');
  assert.equal(chatSubmitKey(busy,'different draft'),null);
  assert.equal(chatSubmitKey('Would you like to run the following command?\n'+busy,'[Telegram] status'),null);
  assert.equal(chatSubmitKey('› [Telegram] status\n\n gpt-6-astra medium','[Telegram] status'),'Enter');

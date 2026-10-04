@@ -25,7 +25,8 @@ function chatSubmitKey(screen,message) {
   for(let i=index;i<lines.length;i++){const line=lines[i].replace(i===index?/^\s*›\s?/:/^/,'');if(!line.trim())break;draft.push(line);}
   if(draft.join('').replace(/\s/g,'')!==message.replace(/\s/g,''))return null;
   const footer=lines.slice(index+draft.length).join('\n');
-  if(/tab to queue message/i.test(footer))return 'Tab';
+  // Enter steers the running turn; Tab defers chat until that turn finishes.
+  if(/tab to queue message/i.test(footer))return 'Enter';
   return /\bgpt-[\w.-]+\b|\d+% context left/i.test(footer)?'Enter':null;
 }
 module.exports={chatReady,hasCodexChild,chatSubmitKey};
