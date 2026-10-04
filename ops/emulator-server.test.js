@@ -66,3 +66,63 @@ test('existing authenticated gateway protects entry, worker and binary requests'
   const part=await request(port,'/emulator/test/binaries/game/data.bin','GET',{...headers,Range:'bytes=1-3'});assert.equal(part.status,206);assert.equal(part.body,'123');
  }finally{await new Promise(r=>gateway.close(r));await new Promise(r=>upstream.close(r));await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('NFS2SE build manifest exception binds exact registry identity and reports missing assets', async () => {
+  const root = await fixture();
+  const registryPath = path.join(root, 'lib/apps.js');
+  const manifest = 'build/nfs2se-browser.json';
+  const exe = 'build/nfs2se-demo/NFS2SEA.EXE';
+  const asset = 'build/nfs2se-demo/FEDATA/TITLE.QFS';
+  const missing = 'build/nfs2se-demo/EACSND.DLL';
+  const write = async (name, value) => {
+    await fs.mkdir(path.dirname(path.join(root, name)), {recursive:true});
+    await fs.writeFile(path.join(root, name), value);
+  };
+  const register = async (id = 'nfs2se_glide_demo', app = {exe, localFileManifest:manifest}) => {
+    await write('lib/apps.js', 'module.exports=' + JSON.stringify({APPS:{[id]:app}}));
+    delete require.cache[registryPath];
+  };
+  const setFiles = files => write(manifest, JSON.stringify({schemaVersion:1, files:files.map(url => ({url}))}));
+  try {
+    await write(exe, 'exe'); await write(asset, 'fixture');
+    await register();
+    await setFiles(['nfs2se-demo/NFS2SEA.EXE', 'nfs2se-demo/FEDATA/TITLE.QFS', 'nfs2se-demo/EACSND.DLL']);
+    let catalog = await buildCatalog(root);
+    assert.equal(catalog.routes[0].available, false);
+    assert.equal(catalog.routes[0].reason, 'Registered files are missing.');
+    assert.deepEqual(catalog.routes[0].missingPaths, [missing]);
+    await write(missing, 'dll');
+    catalog = await buildCatalog(root);
+    assert.equal(catalog.routes[0].available, true);
+    assert(catalog.allowed.has(asset));
+    assert(!catalog.allowed.has('build/private.log'));
+
+    for (const url of ['../ops/access.json', 'private.log', 'nfs2se-demo/../private.log',
+      'nfs2se-demo-other/private.log', '/etc/passwd', 'https://example.test/data',
+      'nfs2se-demo/data?secret', 'nfs2se-demo/data#fragment', 'nfs2se-demo/evil\\path', 'nfs2se-demo/\0data']) {
+      await setFiles([url]);
+      catalog = await buildCatalog(root);
+      assert.equal(catalog.routes[0].available, false, url);
+      assert.equal(catalog.routes[0].reason, 'Unsupported manifest asset path', url);
+      assert(!catalog.allowed.has('ops/access.json'));
+      assert(!catalog.allowed.has('build/private.log'));
+    }
+    await setFiles(['nfs2se-demo/FEDATA/TITLE.QFS']);
+    await register('other_app');
+    assert.equal((await buildCatalog(root)).routes[0].reason, 'Unsupported manifest asset path');
+    await register('nfs2se_glide_demo', {exe:'build/nfs2se-demo/OTHER.EXE', localFileManifest:manifest});
+    assert.equal((await buildCatalog(root)).routes[0].reason, 'Unsupported manifest asset path');
+    await write('build/other-manifest.json', JSON.stringify({files:[{url:'nfs2se-demo/FEDATA/TITLE.QFS'}]}));
+    await register('nfs2se_glide_demo', {exe, localFileManifest:'build/other-manifest.json'});
+    assert.equal((await buildCatalog(root)).routes[0].reason, 'Unsupported manifest asset path');
+    await register();
+    await fs.unlink(path.join(root, asset));
+    await fs.symlink(path.join(root, 'ops/access.json'), path.join(root, asset));
+    catalog = await buildCatalog(root);
+    assert.equal(catalog.routes[0].available, false);
+    assert.deepEqual(catalog.routes[0].missingPaths, [asset]);
+  } finally {
+    delete require.cache[registryPath];
+    await fs.rm(root, {recursive:true, force:true});
+  }
+});

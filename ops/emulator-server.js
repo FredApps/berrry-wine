@@ -14,13 +14,20 @@ function localPath(value) {
   return value;
 }
 function fileUrl(value) { return typeof value === 'string' ? value : value?.url; }
-function manifestAsset(manifest, value) {
+function manifestAsset(manifest, value, appId, app) {
   const name = fileUrl(value);
   if (typeof name !== 'string' || !name || /[\\\0?#]/.test(name) || path.posix.isAbsolute(name) || /^[a-z]+:/i.test(name)) return null;
   // Installed manifests can explicitly name sibling MUSIC/SPEECH directories.
   // Resolve those declarations before validation, but never leave fixture roots.
   const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(manifest), name));
-  return /^(?:test\/)?binaries\//.test(resolved) ? localPath(resolved) : null;
+  // This legacy demo is deliberately packaged in build/ (see the NFS renderer
+  // notes). Bind the exception to the exact registry identity and fixture;
+  // neither arbitrary build files nor a manifest-selected root are trusted.
+  const nfsFixture = appId === 'nfs2se_glide_demo' &&
+    manifest === 'build/nfs2se-browser.json' &&
+    app.exe === 'build/nfs2se-demo/NFS2SEA.EXE' &&
+    resolved.startsWith('build/nfs2se-demo/');
+  return /^(?:test\/)?binaries\//.test(resolved) || nfsFixture ? localPath(resolved) : null;
 }
 async function realFile(root, relative) {
   if (!localPath(relative)) return null;
@@ -69,7 +76,7 @@ async function buildCatalog(inputRoot) {
           const manifest = JSON.parse(await fsp.readFile(manifestFile, 'utf8'));
           if (!Array.isArray(manifest.files)) throw Error('Expected files array');
           for (const value of manifest.files) {
-            const name = manifestAsset(app.localFileManifest, value);
+            const name = manifestAsset(app.localFileManifest, value, appId, app);
             if (!name) { invalid.push('Unsupported manifest asset path'); continue; }
             add(name);
           }
