@@ -1245,3 +1245,10 @@ dd {
 .missing-files { overflow-wrap:anywhere; color:var(--amber); }
 .build-differs { color:var(--amber); }
 .build-match { color:var(--green); }
+.subagent-summary { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #444); border-radius: 6px; }
+.subagent-summary h3 { margin: 0 0 8px; font-size: 13px; }
+.subagent-summary ul { list-style: none; padding: 0; margin: 0; }
+.subagent-summary li + li { border-top: 1px solid var(--border, #444); margin-top: 10px; padding-top: 10px; }
+.subagent-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.subagent-heading button { text-align: left; overflow-wrap: anywhere; flex: 1 1 180px; }
+.subagent-summary p { margin: 6px 0; overflow-wrap: anywhere; }

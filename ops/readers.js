@@ -130,6 +130,9 @@ function parseSession(provider, records, file, partial, root) {
     cwd: null, startedAt: null, turnStartedAt: null, lastActivityAt: null, lastEvent: 'Unknown', state: 'unknown',
     inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, contextLimit: null,
     totalTokens: null, usageAt: null, compactions: 0, partial, progressAt: null, taskId: null };
+  session.parentAgentId = provider === 'claude' && path.basename(path.dirname(file)) === 'subagents'
+    ? `claude:${path.basename(path.dirname(path.dirname(file)))}` : null;
+  session.summary = null;
   let projectMatch = false;
   let usageAtCompaction = false;
   let hasSessionMeta = false;
@@ -152,6 +155,8 @@ function parseSession(provider, records, file, partial, root) {
         session.id = `codex:${p.id || p.session_id || path.basename(file, '.jsonl')}`;
         session.startedAt = date(p.timestamp) || time;
         session.contextLimit = number(p.context_window);
+        const parent = p.source?.subagent?.thread_spawn?.parent_thread_id;
+        if (typeof parent === 'string' && parent) session.parentAgentId = `codex:${parent}`;
       }
       if (e.type === 'turn_context') session.model = clip(p.model) || session.model;
       if (e.type === 'event_msg') {
@@ -168,6 +173,10 @@ function parseSession(provider, records, file, partial, root) {
         }
       }
       if (e.type === 'response_item') {
+        if (p.type === 'message' && p.role === 'assistant') {
+          const summary = Array.isArray(p.content) && p.content.filter(c => c.type === 'output_text').map(c => c.text || '').join(' ');
+          if (summary) session.summary = clip(summary, 240);
+        }
         if (p.type === 'message' && p.role === 'user' && Array.isArray(p.content)) {
           const message = p.content.filter(c => ['input_text', 'text'].includes(c.type)).map(c => c.text || '').join('\n').trim();
           if (message && !/^(?:<|# AGENTS\.md|# .*instructions)/i.test(message)) session.title = clip(message, 160);
@@ -191,6 +200,8 @@ function parseSession(provider, records, file, partial, root) {
       }
       if (e.type === 'assistant') {
         const m = e.message || {}, u = m.usage;
+        const summary = Array.isArray(m.content) && m.content.filter(c => c.type === 'text').map(c => c.text || '').join(' ');
+        if (summary) session.summary = clip(summary, 240);
         session.model = clip(m.model) || session.model;
         const tool = Array.isArray(m.content) && m.content.find(c => c.type === 'tool_use');
         session.lastEvent = tool ? `Tool: ${clip(tool.name, 70)}` : 'Assistant message';
