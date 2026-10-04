@@ -1019,7 +1019,10 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
     const pa = vfs.readFile(a, new Uint8Array(4), 4).pending;
     const pb = vfs.readFile(b, new Uint8Array(4), 4).pending;
     vfs.pendingRead = pa;
-    const running = service({ _helpCtx: { vfs }, logToUI: message => { throw Error(message); } }, { vfs }, false);
+    // _fillParkedRead (host.js) ends in the same vfs.fillPendingRead; for a
+    // provider that is not loadFiles game data it is exactly that call.
+    const running = service({ _helpCtx: { vfs }, logToUI: message => { throw Error(message); },
+      _fillParkedRead: (v, p) => v.fillPendingRead(p) }, { vfs }, false);
     vfs.pendingRead = pb;
     complete();
     await running;
