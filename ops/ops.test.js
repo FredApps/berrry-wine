@@ -9,6 +9,29 @@ const http = require('node:http');
 const { parseTasks, parseSession, createReader, logWindows } = require('./readers');
 const { createServer } = require('./server');
 const { parseProcesses, parseOpenFiles, associate } = require('./processes');
+
+test('Claude persistent launch requires explicit identity and explicit permission bypass',()=>{
+  const {options}=require('./claude-tmux');
+  const args=['--session-id','1863d2b5-bc58-4c0b-9c15-00fc951f0256','--id','claude-launch-ux','--tmux','wine-claude-launch-ux'];
+  assert.equal(options(args).bypass,false);
+  assert.equal(options([...args,'--dangerously-skip-permissions']).bypass,true);
+  assert.throws(()=>options(['--session-id','bad']));
+});
+
+test('Claude Linux registry proves machine, namespace, start ticks and wall start before matching PID',()=>{
+  const {registryMatchesProcess,linuxStartTicks}=require('./processes');
+  const started=new Date(Date.now()-3600000).toUTCString().replace(/^[^,]+, (\d+) (\w+) (\d+) (\S+) GMT$/,(_m,day,month,year,time)=>`Sat ${month} ${day} ${time} ${year}`),startedAt=Date.parse(started+' UTC')+434;
+  const p={pid:123,name:'claude',started,startTicks:'9114166',pidDomain:'linux:machine:pid:[4026531836]'};
+  const r={pid:123,sessionId:'linux-session',procStart:'9114166',pidDomain:p.pidDomain,startedAt};
+  assert.equal(registryMatchesProcess(r,p),true);
+  assert.equal(registryMatchesProcess({...r,startedAt:startedAt+15*60000},p),true,'trust setup can delay session registration');
+  assert.equal(registryMatchesProcess({...r,startedAt:Date.now()+60000},p),false);
+  for(const change of [{pidDomain:'linux:other:pid:[4026531836]'},{pidDomain:'linux:machine:pid:[99]'},{procStart:'9114167'},{startedAt:startedAt-86400000},{startedAt:undefined}])assert.equal(registryMatchesProcess({...r,...change},p),false);
+  const a={id:'claude:linux-session',provider:'claude',logFile:'/logs/claude.jsonl'};
+  assert.equal(associate([a],[p],new Map(),[r],null).get(a).matches[0].pid,123);
+  const fields=['S',...Array(18).fill('0'),'9114166','0'];
+  assert.equal(linuxStartTicks('123 (claude (worker)) '+fields.join(' ')),'9114166');
+});
 const { identify } = require('./backfill');
 const { classifyCandidate, groups } = require('./corpus-categories');
 

@@ -95,6 +95,31 @@ of gameplay. Fixture **present** means the named executable files exist, not
 that their checksums or behavior have been verified. Candidate IDs are exact;
 they are not inferred from executable basenames.
 
+## Persistent Claude terminals on the Linux box
+
+Run `node ops/claude-tmux.js --session-id UUID --id claude-worker --tmux wine-claude-worker --label 'Claude worker' --wait`
+to resume an existing conversation interactively and register its current pane
+and PID. Unlike `claude -p`, the interactive session stays available after a
+turn. The launcher waits for an existing run of the same session to finish;
+it never kills or duplicates that run. Use this launcher for subsequent resumes
+instead of starting headless copies of a session that already has a terminal.
+
+On the dedicated box, the user explicitly requested Claude permission bypass.
+Pass `--dangerously-skip-permissions` to the launcher for that mode; the default
+does not bypass permissions. This controls tool permission prompts, not task
+decisions: design approval, release decisions, and existing review blockers
+still require their recorded resolution.
+
+Terminal records expose provider, lifecycle state, and permission mode. Ended
+panes remain unavailable until resumed and registered; they do not generate
+urgent approval-monitor warnings. Codex's menu parser and y/p/Escape controls
+are not applied to Claude. Claude in normal permission mode is operated through
+the terminal; automated Claude approval-menu buttons are not implemented.
+Telegram chat currently routes to the Codex coordinator, which must relay
+Claude task feedback through its persistent terminal. Linux Claude process
+matching validates machine/namespace, kernel start ticks and wall-clock start
+before showing PID, CPU, RSS and descendants.
+
 ## Tasks: use the existing Markdown file
 
 **Tasks → + New task** collects a title, done criteria, optional candidate, and

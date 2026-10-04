@@ -40,7 +40,7 @@ function associate(agents, processes, files, registry, checkedAt, error = null) 
       const parent = a.logFile.includes(`${path.sep}subagents${path.sep}`) ? path.basename(path.dirname(path.dirname(a.logFile))) : null;
       for (const r of registry) {
         const p = live.get(r.pid);
-        if (p?.name !== 'claude' || r.pidDomain !== process.platform || typeof r.procStart !== 'string' || r.procStart.replace(/\s+/g, ' ').trim() !== p.started) continue;
+        if (p?.name !== 'claude' || !registryMatchesProcess(r, p)) continue;
         if (`claude:${r.sessionId}` === a.id || (parent && r.sessionId === parent)) {
           matches.set(p.pid, { ...p, evidence: parent ? 'Parent session host (shared)' : 'Claude session registry + process start', shared: !!parent });
         }
@@ -68,6 +68,23 @@ function associate(agents, processes, files, registry, checkedAt, error = null) 
   return result;
 }
 
+// New Claude Linux registries use /proc start ticks and a machine/namespace
+// domain, rather than the macOS ps date. Validate both, never PID alone.
+function registryMatchesProcess(r,p) {
+  if(typeof r.procStart!=='string')return false;
+  if(r.pidDomain===process.platform)return r.procStart.replace(/\s+/g,' ').trim()===p.started;
+  return typeof p.pidDomain==='string' && p.pidDomain.startsWith('linux:') &&
+    r.pidDomain===p.pidDomain && /^\d+$/.test(r.procStart) && r.procStart===p.startTicks &&
+    // Registration happens after interactive trust/setup, possibly much later
+    // than process creation. It must not predate this process or be in future.
+    Number.isFinite(r.startedAt) && r.startedAt>=Date.parse(p.started+' UTC')-1000 && r.startedAt<=Date.now()+2000;
+}
+function linuxStartTicks(stat) {
+  // comm may contain spaces or parentheses; field 22 is index 19 after it.
+  const fields=stat.slice(stat.lastIndexOf(')')+2).trim().split(/\s+/);
+  return /^\d+$/.test(fields[19]||'')?fields[19]:null;
+}
+
 function createProcessObserver(options = {}) {
   let cached, pending;
   const registryRoot = options.claudeRegistryRoot || path.join(os.homedir(), '.claude', 'sessions');
@@ -77,6 +94,16 @@ function createProcessObserver(options = {}) {
       const processes = parseProcesses(await run('ps', ['-axww', '-o', 'pid=,ppid=,stat=,etime=,%cpu=,rss=,lstart=,comm=']));
       if (!processes.length) throw new Error('empty process table');
       const providers = processes.filter(p => ['codex', 'claude'].includes(p.name)).slice(0, 128);
+      if(process.platform==='linux') {
+        try {
+          const machine=(await fs.readFile('/etc/machine-id','utf8')).trim();
+          const namespace=await fs.readlink('/proc/self/ns/pid');
+          const domain=`linux:${machine}:${namespace}`;
+          await Promise.all(providers.filter(p=>p.name==='claude').map(async p=>{
+            try{p.startTicks=linuxStartTicks(await fs.readFile(`/proc/${p.pid}/stat`,'utf8'));p.pidDomain=domain;}catch{}
+          }));
+        }catch{ /* Missing kernel identity is unknown, never a PID-only match. */ }
+      }
       let files = new Map(), note = null;
       const registry = [];
       await Promise.all([
@@ -90,7 +117,7 @@ function createProcessObserver(options = {}) {
             const file = path.join(registryRoot, `${p.pid}.json`);
             if ((await fs.stat(file)).size > 64 * 1024) return;
             const r = JSON.parse(await fs.readFile(file, 'utf8'));
-            if (r.pid === p.pid) registry.push({ pid: r.pid, sessionId: r.sessionId, procStart: r.procStart, pidDomain: r.pidDomain });
+            if (r.pid === p.pid) registry.push({ pid: r.pid, sessionId: r.sessionId, procStart: r.procStart, pidDomain: r.pidDomain, startedAt:r.startedAt });
           } catch { /* Registry is optional and may disappear on exit. */ }
         }),
       ]);
@@ -107,4 +134,4 @@ function createProcessObserver(options = {}) {
   };
 }
 
-module.exports = { createProcessObserver, parseProcesses, parseOpenFiles, associate };
+module.exports = { createProcessObserver, parseProcesses, parseOpenFiles, associate, registryMatchesProcess, linuxStartTicks };
