@@ -1,7 +1,122 @@
-# CLAUDE-LAUNCH-UX — launch/loading UX design (PROPOSAL, not implemented)
+# CLAUDE-LAUNCH-UX — launch/loading UX design and implementation
 
-Owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 · 2026-10-03 · status: **awaiting user approval of revision 2**.
-Nothing in this file has been built. All mockups are labelled design proposals, not evidence of behaviour.
+Owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 · status: **implemented and coordinator-reviewed** (2026-10-04).
+User approved revision 2 + the 500ms rule on 2026-10-03T23:52:33Z ("let's go with this UX looks good",
+`scratch/claude-launch-ux/implementation/approval.json`). Coordinator corrections and final50-check/browser acceptance are recorded in
+[launch-ux-coordinator-review-20261004.md](launch-ux-coordinator-review-20261004.md). Source checkpoint publication only; no public game deployment. The mockups below stay labelled proposals; implementation evidence is in section 0.
+
+## 0. Implementation (2026-10-04)
+
+**What a visitor now gets**
+- `?app=ID` (without `?debug`): a head script marks `html.direct-launch` before first paint; CSS hides
+  the desktop icons, taskbar, Start menu, Read Me, build stamp, debug chrome and `#compile-status`
+  on a black page. `initDesktop()` and the rest of the desktop work (~90 icon PNGs, the 7
+  "runtime" EXEs fetched for icons, `lib/app-icon-manifest.json`, the 10 Start-menu PNGs, the account
+  probe, the kept-media catalog) run only in `ensureDesktop()`: at DOMContentLoaded on a normal visit,
+  and on a direct link only when the program exits or the visitor picks Show desktop. The launch
+  starts at DOMContentLoaded, not `load`.
+- One launch window, the Win98 "File Download" shell of 3R, in every mode: `NN% of SOL.EXE` /
+  `Downloading Solitaire` / `Preparing …` / `Starting …`; globe→page→folder art; a segmented bar filled
+  by real bytes only when every file of the current batch has started and reported its size;
+  `Not known (N copied)` otherwise; time left and transfer rate only after 2 s of non-cache bytes;
+  `Waiting — no data for N sec` + "the network is slow" after 8 s; `From cache: N of M` only when
+  Resource Timing proves it; Details lists each file (name, size or `?`, cache/done/NN%/failed).
+- 500 ms rule (3D): one deadline from the launch request (navigation start for a direct link); no
+  window, taskbar button, focus or announcement before it; fast launches never show it; stale timers
+  re-check their own token; closes on the frame the first top-level window appears, no minimum.
+- Download failure: the window becomes `Download error` with file + HTTP status + attempts and Retry
+  (bytes already fetched are reused by Retry) / Close (direct link: Show desktop). Shown at once when
+  it happens before 500 ms, never preceded by a loading window. Other launch failures still go to the
+  crash report, unchanged.
+- Cancel in every phase: aborts in-flight fetches, releases the instance, stops an app already
+  registered but still windowless. A direct link then shows "Starting X was cancelled" with Show
+  desktop / Start again; on the desktop the window just goes.
+- Desktop: non-modal (`aria-modal=false`), never takes keyboard focus, draggable, minimizable to its
+  own taskbar button (`#launch-task-buttons`), other apps keep running and keep keys; asking to launch
+  again during a boot brings the window forward. Direct link/phone: modal, focus on the default
+  button, Esc = Cancel, 44px touch buttons, landscape drops the art to fit, reduced motion stops
+  the animation, polite live region announces phase changes and errors only.
+- An `?app=` id that names nothing: "There is no program called “x”" with Show desktop.
+- Frozen pages (`?frozen`) treat "registered" as ready so the window never sits over agent screenshots.
+
+**Files changed** (diffs vs the pre-task snapshot in `scratch/claude-launch-ux/implementation/evidence/diffs/`)
+- `lib/launch-progress.js` (new): pure controller (injectable clock/timers/view) + DOM view.
+- `index.html`: head direct-link script; direct-launch + window CSS; `#launch-task-buttons`;
+  Start-menu icons `src`→`data-src` (loaded by `ensureDesktop`); `lib/launch-progress.js` second in
+  `WINE_RUNTIME_SCRIPTS`; `?app=` launcher at DOMContentLoaded adopting the head-script launch;
+  `ensureDesktop`/`appLabelFor`/`appIconFor`/`restoreMediaLibrary`; shell deps.
+- `host.js`: `fetchAssetBytes(url, {signal, onTransfer, retained, transferId})` (streamed byte
+  progress, `Content-Length` trusted only without content coding, split assets = unknown size,
+  Resource-Timing cache detection refused behind a service worker or cross-origin, download errors
+  tagged `isDownloadError`); `loadFiles({transfer})` with one id per retried file, abort not retried
+  or swallowed as optional, aggregate error carries file/attempts; `loadExe`/`loadDlls` use
+  `this._launchTransfer`; `#compile-status` suppressed while a launch window owns the launch.
+  The default (no options) path is the old one; the CLI only imports shell-path helpers from host.js.
+- `lib/browser-shell.js`: launch context (window, AbortController, Retry bytes), phases/batches
+  (exe, files excluding `httpRange`, DLL graph = open-ended batch), LAN cards hold the reveal,
+  checkpoints after non-abortable awaits, quiet cancel, download errors → window not crash report,
+  rAF + 100 ms first-window detection, launch-window-aware canvas focus, `settleLaunchWindow`.
+- `lib/browser-input.js`: 3 lines — keys whose target is inside `[data-wine-page-dialog]` are not
+  sent to the guest. (The same file also carries an inherited `onmouseleave` hunk that is not mine.)
+- `test/test-launch-progress.js` (new, unit), `test/test-web-direct-launch.js` (new, e2e by naming
+  convention); `tools/test-tiers.js` needed no change.
+- `test/test-web-single-app-quit.js`: 1-line fix — remove the exclusive-verdict pin the test put on
+  the shared renderer before launching Notepad (pre-existing failure, see below).
+- `lib/resources-icon.js`: unchanged (`preExtractedIconUrl` already sufficed).
+
+**Validation** (local loopback, sole browser slot, headless Chrome 151.0.7922.108, Node v24.18.1,
+puppeteer 25.7.0, served wasm sha256 f40d4ca3…5b49063 unchanged; pins in `evidence/pins.txt`)
+- `node test/test-launch-progress.js` → exit 0, 23 cases: 499/500/501 ms boundaries, ready exactly at
+  the deadline before the timer runs, no reset on phase change, startedAt-relative deadline, cancel
+  then timer, direct-link cancel card, failure before 500 ms, stale timer vs next launch, ready A /
+  slow B, superseded launch, prompt hold, Retry adoption (slow and fast), unknown sizes, not all
+  files started, rate only after 2 s, cache counted not timed, 8 s stall, monotonic percent,
+  starting = status line, action routing.
+- `node test/test-web-direct-launch.js` → exit 0, 42/42 checks, ~20 s (evidence run; also 40/40 ×2
+  before the last two checks were added). Server-forced states: slow with size, no size + 9.5 s
+  stall, 503, 404, slow for Cancel, cacheable headers. Covers: zero desktop-icon/taskbar frames
+  before the program on a direct link; request set limited to runtime + sol.exe, cards.dll, sol.hlp,
+  sol.png + msvcrt.dll from the DLL graph + the page's PWA icon + the local-only shared stdole2.tlb;
+  no icon manifest / other icons / Start-menu art; window first visible ≥ 500 ms; real percentage
+  with known size; closes within one sampled frame of the first app window; unknown size and stall
+  wording, landscape fit, 44px buttons, dialog/modal/live region, focus on Cancel, Esc cancels;
+  error never painted over, Retry refetches and starts; unknown id; Cancel stops requests and
+  memory, cancel card, Show desktop builds the desktop; desktop non-modal, keys reach running
+  Minesweeper, taskbar button, Details rows, Minimize/restore, reduced motion, cancel leaves the
+  other app; warm relaunch (ready 162–392 ms across runs) never revealed; fast failure (79–146 ms)
+  shows the error first, no crash report, Close keeps running apps; cache hits reported without a
+  service worker, none claimed on a cold load or behind `sw-coi.js`. Receipt
+  `evidence/browser-receipt.json`; screenshots `evidence/screens/*.png` (inspected).
+- Gates: `tools/check-browser-cache-versions.js` OK (+ `--self-test`), `tools/check-test-manifest.sh`
+  OK (test tiers + timeouts), `tools/gen-host-import-sigs.js --check` OK,
+  `tools/region-census.js --js-copies` OK. No WAT changed; no canonical build run.
+- Regressions (logs in `evidence/logs/`): pass — test-web-failed-launch-recovers,
+  test-web-notepad-close-desktop, test-web-app-close-frees-memory, test-web-agent-frozen,
+  test-single-app-keep-aspect, test-web-shutdown, test-funtris-web-launch, test-web-single-app-quit
+  (after its 1-line fix), and Node: test-boot-cursor, test-shell-execute-launch, test-asset-parts,
+  test-system-data-files, test-single-app-mode, test-cd-audio-mci, test-vfs-persistence,
+  test-vfs-overlay, test-browser-worker-vlan-address and others; `node test/run.js --app=sol
+  --max-batches=300` exit 0.
+
+**Outstanding / limits (not claimed)**
+- `test/test-web-page-fullscreen.js` fails at its final rotation section *also on the pre-task
+  baseline* (`evidence/logs/BASELINE-test-web-page-fullscreen.log`): the scroll-collapse gutter is
+  only armed by `enterPageFullscreen()`, which also shows the close chip, so "gutter visible and no
+  chip" cannot hold with committed `lib/page-viewport.js`; plus a read-before-resize race. Not
+  touched (another owner's area).
+- `test/test-web-double-tap-single-launch.js` failed 1 of 3 runs on its own race (it checks any
+  window in `renderer.windows` while the boot cursor waits for a *visible* top-level window, the
+  same condition as before); passed on reruns.
+- Unrelated pre-existing unit failures seen while sweeping: test-debug-dropdown-manifests (missing
+  corpus file), test-debug-game-apps (`lib/apps.js` dropdown membership), test-blobby-touch-keys
+  (gameplay pixel band). None read the launch path.
+- Cache hits are invisible behind a service worker: the live site installs `sw-coi.js` after the
+  first visit, so there "From cache" will usually be absent (reported as unknown, never as network).
+- Totals are per download batch (exe, then data files, then DLLs, which never has a total because the
+  graph is discovered as it is walked), so the bar can restart between batches; no size manifest.
+- `#compile-status` stays for launches without a launch window (none in the shipped pages).
+- The 86-script runtime is still loaded whole (lazy GL/D3D/VLAN loading remains a separate follow-up).
+- Not exercised in a real phone browser or Safari; headless Chrome only. No public deployment.
 
 - Revision 1 (step-checklist dialog): `scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png}`,
   Telegram msgs 284–287 (`telegram-delivery.json`). Superseded by user correction
@@ -265,8 +380,9 @@ Out of scope: ScummVM/audio runtime work, deployment, lazy script loading (follo
 
 ## 6. Approval
 
-Needs explicit user approval of the **revision 2** dialog and direct-launch behaviour (via Telegram →
-Codex → `claude --resume 1863d2b5-bc58-4c0b-9c15-00fc951f0256`). No response is not approval.
+Approved by the user on 2026-10-03T23:52:33Z (revision 2 + 500 ms rule), relayed by Codex;
+receipt `scratch/claude-launch-ux/implementation/approval.json`. Implemented per section 0.
+Deployment was not part of the approval.
 
 ## Coordinator visual review of revision 2
 
