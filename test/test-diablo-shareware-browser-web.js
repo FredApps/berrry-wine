@@ -19,6 +19,46 @@ const BASE_URL = process.env.BASE_URL || '';
 // WA_QUERY='?uop-trace-heads': the same route with page switches on.
 const QUERY = process.env.WA_QUERY || '';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+// spawn.mpq streams by HTTP range (lib/apps.js preloadRanges). Opt-in knobs
+// for the lazy-loading evidence, each recorded in OUT/receipt.json:
+//   WA_DIABLO_THROTTLE=KBPS:LATENCY_MS  CDP network throttling for the run
+//   WA_DIABLO_FAIL=N    after character selection, answer the next N
+//                       spawn.mpq range requests with 503 (the in-game wait
+//                       window must offer Retry; the test presses it)
+//   WA_DIABLO_PROFILE=DIR  persistent Chrome profile (a second run is warm)
+const THROTTLE = process.env.WA_DIABLO_THROTTLE || '';
+const FAIL_COUNT = Number(process.env.WA_DIABLO_FAIL || 0);
+// WA_DIABLO_DELAY_MS=N: after character selection, hold every spawn.mpq range
+// response N ms in the page (CDP throttling does not reach the page's service
+// worker fetches, so it cannot produce an in-game wait on its own).
+const DELAY_MS = Number(process.env.WA_DIABLO_DELAY_MS || 0);
+const PROFILE = process.env.WA_DIABLO_PROFILE || '';
+const failState = { armed: false, left: FAIL_COUNT, failed: 0, retries: 0, dialogs: 0 };
+
+// The in-game wait window, when showing its error body: capture it once and
+// press Retry, as a player would.
+async function serviceWaitWindow(page) {
+  const state = await page.evaluate(() => {
+    const el = document.querySelector('.wa-game-wait');
+    if (!el || el.hidden) return null;
+    const retry = el.querySelector('.wa-game-wait-retry');
+    return { error: !!(retry && !retry.hidden), text: el.innerText };
+  });
+  if (state && !state.error && !failState.loadingShot) {
+    failState.loadingShot = true;
+    await page.screenshot({ path: path.join(OUT, '05w-wait-loading.png') });
+    console.log(`captured 05w-wait-loading: ${state.text.replace(/\s+/g, ' ')}`);
+  }
+  if (!state || !state.error) return false;
+  if (!failState.dialogs++) {
+    await page.screenshot({ path: path.join(OUT, '05x-wait-error.png') });
+    fs.writeFileSync(path.join(OUT, '05x-wait-error.json'), JSON.stringify(state, null, 2));
+    console.log(`captured 05x-wait-error: ${state.text.replace(/\s+/g, ' ')}`);
+  }
+  await page.click('.wa-game-wait-retry');
+  failState.retries++;
+  return true;
+}
 
 if (!fs.existsSync(CHROME) || !fs.existsSync(MPQ)) {
   console.log('SKIP  Chrome or Diablo Shareware install missing');
@@ -157,13 +197,51 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: CHROME, headless: true, protocolTimeout: 240000,
     args: ['--no-sandbox', '--no-first-run', '--disable-gpu'],
+    ...(PROFILE ? { userDataDir: PROFILE } : {}),
   });
+  const startedAt = Date.now();
+  const stageAt = {};
   let page;
   try {
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     const errors = [];
     page.on('pageerror', e => errors.push(e.stack || String(e)));
+    // Keep every spawn.mpq range request in the receipt (default buffer: 250).
+    await page.evaluateOnNewDocument(() => performance.setResourceTimingBufferSize(100000));
+    if (THROTTLE) {
+      const [kbps, latency] = THROTTLE.split(':').map(Number);
+      const cdp = await page.target().createCDPSession();
+      await cdp.send('Network.enable');
+      await cdp.send('Network.emulateNetworkConditions', {
+        offline: false, latency: latency || 0,
+        downloadThroughput: kbps * 1024 / 8, uploadThroughput: kbps * 1024 / 8,
+      });
+    }
+    if (FAIL_COUNT || DELAY_MS) {
+      // In the page, not through request interception: the page's service
+      // worker (sw-coi.js) issues the network request, which the page-level
+      // interceptor never sees.
+      await page.evaluateOnNewDocument(() => {
+        const real = window.fetch.bind(window);
+        window.__spawnFail = { left: 0, failed: 0, delayMs: 0 };
+        window.fetch = (input, init) => {
+          const url = String(input && input.url || input);
+          const headers = init && init.headers;
+          const range = headers && (headers.Range || headers.range);
+          if (window.__spawnFail.left > 0 && /spawn\.mpq/.test(url) && range) {
+            window.__spawnFail.left--;
+            window.__spawnFail.failed++;
+            return Promise.resolve(new Response('injected failure', { status: 503 }));
+          }
+          if (window.__spawnFail.delayMs > 0 && /spawn\.mpq/.test(url) && range) {
+            return new Promise(resolve => setTimeout(resolve, window.__spawnFail.delayMs))
+              .then(() => real(input, init));
+          }
+          return real(input, init);
+        };
+      });
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(() => typeof launchApp === 'function' &&
       document.querySelector('.desktop-icon[data-app="diablo_shareware"]'), { timeout: 60000 });
@@ -261,6 +339,14 @@ async function main() {
     await clickGuest(page, 420, 298); // Warrior
     await waitForPortrait(page);
     const character = await capture(page, '04-character-selection');
+    stageAt.character = Date.now() - startedAt;
+    if (FAIL_COUNT || DELAY_MS) {
+      failState.armed = true;
+      await page.evaluate((n, ms) => {
+        window.__spawnFail.left = n;
+        window.__spawnFail.delayMs = ms;
+      }, FAIL_COUNT, DELAY_MS);
+    }
     assertSceneChanged(menu, character, 'main menu to character selection');
 
     await clickGuest(page, 348, 446); // OK
@@ -270,11 +356,23 @@ async function main() {
     await clickGuest(page, 425, 331);
     await page.keyboard.type('GAL');
     await clickGuest(page, 348, 446);
+    if (FAIL_COUNT || DELAY_MS) {
+      const until = Date.now() + 120000;
+      while (Date.now() < until && !(await page.evaluate(() => {
+        const visible = Object.values(sharedRenderer.windows).filter(w => w && w.visible);
+        return visible.some(w => w.className === 'DIABLO') &&
+          !visible.some(w => w.className === 'SDlgDialog');
+      }))) {
+        await serviceWaitWindow(page);
+        await wait(100);
+      }
+    }
     await waitNoDialogs(page);
     let loadingBytes;
     let loadingSeenAt = 0, loadingBrightness = -1;
     const loadingDeadline = Date.now() + 30000;
     while (Date.now() < loadingDeadline) {
+      if (await serviceWaitWindow(page)) continue;
       const bytes = await page.screenshot();
       const png = PNG.sync.read(bytes);
       if (loadingBorderPixels(png, 785) > 450 && loadingBorderPixels(png, 839) > 350) {
@@ -308,6 +406,7 @@ async function main() {
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
       await wait(2000);
+      if (await serviceWaitWindow(page)) continue;
       const png = await capture(page, '06-gameplay');
       const red = await orbColour(page, png, 148, 400, 0);
       const blue = await orbColour(page, png, 492, 400, 2);
@@ -317,6 +416,33 @@ async function main() {
       }
     }
     assert(gameplay, 'Diablo did not reach gameplay with both HUD orbs');
+    stageAt.gameplay = Date.now() - startedAt;
+    const receipt = await page.evaluate(() => {
+      const entries = performance.getEntriesByType('resource')
+        .filter(e => /spawn\.mpq/.test(e.name));
+      const app = runningApps.find(a => a && a.name === 'diablo_shareware');
+      const wine = app && app.wine;
+      const entry = wine && wine._helpCtx && wine._helpCtx.vfs.files.get('c:\\spawn.mpq');
+      const cache = entry && entry._provider;
+      return {
+        // transferSize reads 0 whenever the page's service worker (sw-coi.js)
+        // answers, so it is a network figure only on an --isolate server.
+        mpqRequests: entries.length,
+        mpqTransferBytes: entries.reduce((n, e) => n + (e.transferSize || 0), 0),
+        mpqBodyBytes: entries.reduce((n, e) => n + (e.encodedBodySize || 0), 0),
+        mounted: cache ? 'provider-backed (lazy)' : (entry && entry.data ? 'resident (eager)' : 'missing'),
+        cacheStats: cache && cache.stats ? { ...cache.stats } : null,
+        gameWait: wine && wine._gameWait ? { ...wine._gameWait.stats } : null,
+        threads: !!(wine && wine.threadManager && wine.threadManager.backend === 'worker'),
+      };
+    });
+    if (FAIL_COUNT) failState.failed = await page.evaluate(() => window.__spawnFail.failed);
+    Object.assign(receipt, { throttle: THROTTLE || null, injectedDelayMs: DELAY_MS || null, injectedFailures: failState.failed,
+      retriesPressed: failState.retries, warmProfile: !!PROFILE, query: QUERY || null, stageMs: stageAt });
+    fs.writeFileSync(path.join(OUT, 'receipt.json'), JSON.stringify(receipt, null, 2));
+    console.log(`receipt: ${JSON.stringify(receipt)}`);
+    if (FAIL_COUNT) assert(failState.failed > 0 && failState.retries > 0,
+      'injected range failures never reached the in-game Retry');
     assert(!errors.length, `browser page error: ${errors[0]}`);
     console.log(`PASS  Diablo browser flow: six stages captured; orbs ${JSON.stringify(gameplay)}`);
   } catch (error) {
