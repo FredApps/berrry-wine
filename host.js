@@ -639,6 +639,75 @@ class WineAssembly {
     }
   }
 
+  // Satisfy a guest read parked on a lazy byte range (io_wait), on whichever
+  // guest thread parked it. Game data fetched over HTTP ranges (a provider
+  // loadFiles marked `gameData`) gets the in-game wait window
+  // (lib/game-wait.js): nothing for a wait under 500 ms, a Loading window
+  // after that, and on a fetch that still fails after two quiet retries a
+  // Retry/Quit question while the guest stays parked on the same call. Any
+  // other provider (a dropped File, a mounted ISO) keeps the VFS contract: a
+  // failed fill becomes ERROR_READ_FAULT for the guest.
+  async _fillParkedRead(vfs, pending) {
+    const cache = pending && pending.provider;
+    const GW = typeof window !== 'undefined' && window.GameWait;
+    if (!cache || !cache.gameData || typeof cache.fill !== 'function') {
+      return vfs.fillPendingRead(pending);
+    }
+    if (!this._gameWait && GW) {
+      const doc = typeof document !== 'undefined' ? document : null;
+      this._gameWait = GW.createGameWaitController({});
+      if (doc) {
+        this._gameWait.setView(GW.createDomView(doc, {
+          onAction: name => this._gameWait.action(name),
+          anchor: () => {
+            const canvas = this.renderer && this.renderer.canvas;
+            return canvas && canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+          },
+        }));
+      }
+    }
+    const wait = this._gameWait || null;
+    const chunk = cache.chunkSize || 0;
+    const first = chunk ? Math.floor(pending.offset / chunk) : 0;
+    const last = chunk ? Math.floor((pending.offset + Math.max(1, pending.length) - 1) / chunk) : 0;
+    const total = chunk ? (last - first + 1) * chunk : null;
+    const token = wait ? wait.begin({
+      label: this._gameDataLabel || 'The game',
+      file: String(pending.path || '').replace(/^.*\\/, ''),
+      total,
+    }) : 0;
+    let attempt = 0;
+    try {
+      for (;;) {
+        try {
+          await cache.fill(pending.offset, pending.length);
+          if (wait) wait.progress(token, total || 0);
+          break;
+        } catch (error) {
+          if (!this.running) throw error;
+          if (attempt++ < 2) {
+            await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+            continue;
+          }
+          this.logToUI(`[io] ${pending.path}: ${error && error.message}`);
+          const answer = wait ? await wait.fail(token, error) : 'quit';
+          if (answer === 'retry' && this.running) { attempt = 0; continue; }
+          // Quit: leave the guest parked and stop it. The desktop shell's
+          // ordinary close path tears the instance down.
+          this.logToUI(`--- ${this._gameDataLabel || 'Program'} closed while loading game data ---`);
+          if (this._onGameDataQuit) this._onGameDataQuit();
+          else this.stop();
+          return false;
+        }
+      }
+      // The bytes are resident now; this takes the cache hit and retires the
+      // parked request through the VFS's identity checks.
+      return await vfs.fillPendingRead(pending);
+    } finally {
+      if (wait) wait.end(token);
+    }
+  }
+
   static _assetPartUrl(url, index) {
     const match = String(url).match(/^([^?#]*)(.*)$/);
     return match[1] + '.part' + String(index).padStart(3, '0') + match[2];
@@ -2582,6 +2651,7 @@ class WineAssembly {
       // ReadFile off a mounted ISO). Read late: the VFS is attached to the
       // help context after init().
       getVfs: () => (self._helpCtx && self._helpCtx.vfs) || null,
+      fillIoRead: (vfs, pending) => self._fillParkedRead(vfs, pending),
       onRenderWait: token => self.hostCtx.waitD3DRender(token),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
@@ -3332,6 +3402,9 @@ class WineAssembly {
                 });
                 checkCancelled();
                 const cache = window.byteProvider.cached(provider);
+                // Game data on the server: a parked read of it gets the
+                // in-game wait window and Retry (see _fillParkedRead).
+                cache.gameData = true;
                 if (item.preloadRanges) {
                   // Some of this file is read where the guest cannot park
                   // (Diablo: Storm's UI art, read inside a synchronous
@@ -4728,7 +4801,7 @@ class WineAssembly {
           const pvfs = self._helpCtx && self._helpCtx.vfs;
           const pending = pvfs && pvfs.getPendingRead(1);
           if (pending) {
-            try { await pvfs.fillPendingRead(pending); }
+            try { await self._fillParkedRead(pvfs, pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
             // fillPendingRead owns identity-guarded cleanup; a peer may have
             // published a different request while this await was suspended.
@@ -5818,7 +5891,7 @@ class WineAssembly {
           const vfs = self._helpCtx && self._helpCtx.vfs;
           const pending = vfs && vfs.getPendingRead(1);
           if (pending) {
-            try { await vfs.fillPendingRead(pending); }
+            try { await self._fillParkedRead(vfs, pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
             // The VFS retires only this fill's pending record, never a newer one.
           }
