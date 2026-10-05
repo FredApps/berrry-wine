@@ -33,3 +33,11 @@ Scoped sourceee432681 on c12a57a6 adds real Unicode shell path handling and shar
 Evidence: `scratch/runs/20261005-dredmor-lazy-main-menu`; source/test limitations and exact identity distinctions: `ops/handoffs/dredmor-wide-path-apis-20261005.md`. Visible wait/retry UI, active gameplay and performance remain unqualified.
 
 Merged45e3f361/module40cc834b ordinary attempt3 also naturally displayed the existing Loading window and automatically resumed to the main menu. Evidence: `scratch/runs/20261005-dredmor-natural-loading-ui` (26 hashed artifacts plus their hash manifest). No fault injection was used; actual failed-read Retry remains a separate pending diagnostic. New Game was clicked near the180second guard, so active gameplay remains unqualified. The apparent lack of setup after an instantaneous click is not yet a diagnosed game/input failure.
+
+## 2026-10-05 transient range recovery and ordinary New Game input
+
+Published immutable evidence: `scratch/runs/20261005-dredmor-transient-range-recovery` (37 hashed entries,38 total files including hash manifest;97 verified served source/assets pins). Source45e3f361/module40cc834b, runtime75629 exited0 with browser/server closed11:29:05.677Z, cleanup errors empty.
+
+A private HTTP-only fault delayed the exact manTemplateDB.xml range bytes0-6562 by2500ms and returned503 once. The unchanged provider automatically retried255ms later and loading resumed into the menu. This did **not** exercise user Retry: provider defaults to two retries (three attempts total), so the prepared next diagnostic must fail exactly those three requests before allowing original bytes. Samples at142ms and946ms after request respectively show no overlay and Loading; they are sequential observations, not an exact500ms threshold measurement.
+
+After recovery, one ordinary150ms held click on visible New Game reached **Choose Your Difficulty** (`new-game-held.png`, root independently reviewed). This is setup/input evidence, not player-controlled gameplay, and comes from a fault-recovered diagnostic rather than a pristine route. It disproves a blanket claim that New Game is unusable; previous instantaneous clicks remain insufficiently diagnosed. Next ordinary route uses the verified hold and advances difficulty/skills. No FPS/audio claim.
