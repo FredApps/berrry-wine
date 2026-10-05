@@ -121,6 +121,7 @@
   (import "host" "set_mouse_position" (func $host_set_mouse_position (param i32 i32)))
   ;; set_mouse_position(x, y) — update the renderer's virtual cursor
   (import "host" "get_mouse_buttons" (func $host_get_mouse_buttons (result i32)))
+  (import "host" "get_mouse_buttons_live" (func $host_get_mouse_buttons_live (result i32)))
   ;; get_mouse_buttons() → MK_* style button bitmask (1=left, 2=right)
   (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
   ;; set_window_class(hwnd, class_name_ptr)

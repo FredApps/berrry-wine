@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 259,
+  "count": 260,
   "sigs": {
     "log": {
       "params": [
@@ -354,6 +354,12 @@
       "results": []
     },
     "get_mouse_buttons": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
+    },
+    "get_mouse_buttons_live": {
       "params": [],
       "results": [
         "i32"
