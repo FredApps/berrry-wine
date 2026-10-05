@@ -86,3 +86,17 @@ test('activity and task rows show committed/pushed/merged/tested state and never
   const section = vm.runInContext("commitSection(state.tasks[1])", ctx);
   assert.match(section, /No commit message names this task ID/);
 });
+
+test('stopped work is prominent across pages, but active workers and real blockers are distinguished',()=>{
+  const s=snapshot();s.agents=s.agents.filter(a=>!a.parentAgentId);s.agents[0].state='idle';
+  let ctx=browserApp(s);
+  assert.match(vm.runInContext('stoppedAgentBanner()',ctx),/stopped with work remaining/);
+  assert.match(vm.runInContext('agentActivity(state.agents[0])',ctx),/idle · last activity/);
+  s.tasks[0].blocker='Needs source media';
+  assert.equal(vm.runInContext('stoppedAgentBanner()',browserApp(s)),'');
+  delete s.tasks[0].blocker;s.tasks[0].dependencies=['missing-dependency'];
+  assert.equal(vm.runInContext('stoppedAgentBanner()',browserApp(s)),'');
+  s.tasks[0].dependencies=[];s.agents.push({id:'child',parentAgentId:s.agents[0].id,state:'tool',lastActivityAt:ago(1)});
+  assert.equal(vm.runInContext('stoppedAgentBanner()',browserApp(s)),'');
+  assert.equal(vm.runInContext('agentSignal(state.agents[0]).label',browserApp(s)),'Workers active');
+});

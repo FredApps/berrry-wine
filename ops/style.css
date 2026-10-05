@@ -1290,3 +1290,11 @@ dd {
 .perf-compare h3 { margin:0 0 6px; font-size:13px; }
 .desktop-counts { margin:4px 0 12px; }
 .stale-reviews { overflow-wrap:anywhere; }
+
+/* Decision first: a completed turn must not look like a working agent. */
+.stopped-agents { border:2px solid #ff857a; border-left-width:8px; background:#301916; color:#fff0ed; padding:18px 22px; margin:0 0 24px; }
+.stopped-agents > strong { display:block; font-size:1.15rem; margin-bottom:12px; }
+.stopped-agents > div { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:8px 0; }
+.stopped-agents > div > span { flex:1 1 320px; overflow-wrap:anywhere; }
+.stopped-agents button { color:#fff0ed; border-color:#ff857a; }
+.agent-status.bad { color:#ffb1a9; background:#361c19; border:1px solid #ff857a; }

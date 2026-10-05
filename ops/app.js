@@ -94,10 +94,19 @@ function agentSignal(a) {
   const active=state.tasks.some(t=>t.owner===a.id && t.status==='active');
   const blocked=!active && state.tasks.some(t=>t.owner===a.id && t.status==='blocked');
   if(liveApproval)return {label:'Awaiting approval',color:'warn',rank:0,reason:'Review the live prompt to continue.'};
+  const pending=state.tasks.filter(t=>t.owner===a.id && ['active','ready','review'].includes(t.status) && !t.blocker && (t.dependencies||[]).every(id=>state.tasks.some(d=>d.id===id && d.status==='done')));
+  const workers=state.agents.filter(c=>c.parentAgentId===a.id && ['working','tool'].includes(c.state) && Date.now()-Date.parse(c.lastActivityAt)<15*60000);
+  if(a.state==='idle' && pending.length && !workers.length)return {label:'Stopped with work remaining',color:'bad',rank:0,stopped:true,reason:`Turn ended ${age(a.lastActivityAt)} ago · ${pending.length} actionable task${pending.length===1?'':'s'}. Open terminal to inspect the draft or resume work.`};
+  if(a.state==='idle' && workers.length)return {label:'Workers active',color:'good',rank:3,reason:`Coordinator turn ended; ${workers.length} worker${workers.length===1?'':'s'} still reporting activity.`};
   if(blocked)return {label:'Task blocked',color:'warn',rank:1,reason:'Read the blocker and required decision.'};
   if(active && a.state==='idle')return {label:'Assigned · turn ended',color:'warn',rank:2,reason:'Check the handoff or next pickup; the task is still marked running.'};
   const [label,color]=health(a);
   return {label,color,rank:color==='warn'?2:3,reason:color==='warn'?'No recent session activity. Inspect the terminal; this alone does not prove a stall.':''};
+}
+function stoppedAgentBanner() {
+  const stopped=currentAgents().filter(a=>agentSignal(a).stopped);
+  if(!stopped.length)return '';
+  return `<aside class="stopped-agents" role="status" aria-label="Stopped agents"><strong>■ ${stopped.length} agent${stopped.length===1?' has':'s have'} stopped with work remaining</strong>${stopped.map(a=>`<div><span><b>${escape(agentName(a))}</b> · ${escape(agentSignal(a).reason)}</span>${terminalLink(a)}<button data-agent="${escape(a.id)}">Inspect agent →</button></div>`).join('')}</aside>`;
 }
 function subagentSummary(a) {
   const children = state.agents.filter(child => child.parentAgentId === a.id && child.id !== a.id)
@@ -128,7 +137,7 @@ function agentLine2(a,signal) {
   return a.lastEvent && a.lastEvent!=='Unknown' ? 'Last operation: '+a.lastEvent+' · no result or next step recorded' : 'No result or next step recorded';
 }
 function agentActivity(a) {
-  return `<span class="agent-age" title="Last observed session activity. Activity is not proof of progress.">${a.lastActivityAt?'active '+age(a.lastActivityAt)+' ago':'activity unknown'}</span>`;
+  return `<span class="agent-age" title="Last observed session activity. Activity is not proof of progress.">${a.lastActivityAt?(a.state==='idle'?'idle · last activity ':'last activity ')+age(a.lastActivityAt)+' ago':'activity unknown'}</span>`;
 }
 function subagentRows(a) {
   const children=state.agents.filter(child=>child.parentAgentId===a.id && child.id!==a.id)
@@ -380,7 +389,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, activity: activityView }[view] || overview)();
+  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
