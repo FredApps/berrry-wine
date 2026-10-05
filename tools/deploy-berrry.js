@@ -240,6 +240,8 @@ const NOT_REDISTRIBUTABLE = new Set([
 const NEVER_PUBLISH_PREFIXES = [
   'test/binaries/candidates/morrowind/',
   'binaries/candidates/morrowind/',
+  'test/binaries/candidates/myth-the-fallen-lords/',
+  'binaries/candidates/myth-the-fallen-lords/',
   'downloads/',
 ];
 const neverPublish = p => {

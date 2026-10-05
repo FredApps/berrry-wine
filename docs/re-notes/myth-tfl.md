@@ -4,7 +4,28 @@ Status 2026-10-05 (NEW-GAME-MYTH-20261005): both the official Win32 demo and
 the retail CD reach in-level 3D gameplay headless with ordinary mouse and
 keyboard input. Evidence: `scratch/runs/20261005-myth-tfl-retail-iso-gameplay/`
 (retail, reviewed, `result.json`) and `scratch/runs/20261005-myth-tfl-demo-gameplay/`
-(demo; not a registered candidate, so no `result.json`). FPS not measured.
+(demo; not a registered candidate, so no `result.json`), and the browser route
+`scratch/runs/20261005-myth-tfl-retail-browser/` (reviewed). FPS not measured.
+
+## Registered app `myth_tfl` (localhost-only)
+
+`lib/apps.js` LOCAL_CANDIDATE_APPS; refused by `tools/deploy-berrry.js`. Local
+media under `test/binaries/candidates/myth-the-fallen-lords/` (gitignored):
+
+- `installed/` — the Small install Setup.exe writes (copied out with
+  `--save-vfs-prefix='c:\program files'`), mounted at `c:\` by
+  `.wine-assembly-browser.json` (`c:\tags\tags.gor`, `c:\modules\tcpip.dll`, …).
+- `sources/myth-tfl.cue` — one `MODE1/2048` track over `myth-tfl.iso`; the
+  `cdAudio` config mounts it lazily as `D:` `MYTH_TFL` (HTTP Range in the page),
+  so the 538 MB ISO is never loaded whole. `disc/` (the fetch tool's extraction)
+  is not used by the route.
+
+Browser (headless Chrome, `web-input-probe.js --app=myth_tfl`, served by
+`tools/dev-server.js` for Range support): menu at ~48 s, level ~110 s real time.
+In real time the enemy is already crossing the bridge by the time the level is
+on screen. Input verified there: A turns the camera, F8 key list, minimap click
+moves the view; Enter (Select All) reached the guest as WM_KEYDOWN 0x0D with no
+visible selection. Unit select/move was verified on the CLI.
 
 ## Sources
 
@@ -80,4 +101,3 @@ A/D turn, Q/E orbit, C/V zoom.
 
 - "Networking is unavailable because no network modules were found" — the
   modules scan does not accept `modules\tcpip.dll`; single-player unaffected.
-- Not yet registered in `lib/apps.js`; browser route untested.
