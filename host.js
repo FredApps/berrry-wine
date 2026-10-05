@@ -3523,6 +3523,7 @@ class WineAssembly {
                 if (sizedRange && (!this._manifestAssetAbort || this._manifestAssetAbort.signal.aborted)) this._manifestAssetAbort = new AbortController();
                 const lifetimeSignal = sizedRange ? this._manifestAssetAbort.signal : null;
                 const rangeOptions = {
+                  validateRange: sizedRange,
                   // Only launch-time discovery belongs to this AbortSignal.
                   // The provider retains this adapter for later gameplay GETs;
                   // those must remain usable after the launch controller ends.
