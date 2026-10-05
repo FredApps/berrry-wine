@@ -3237,6 +3237,9 @@
     (global.set $yield_reason (global.get $wave_callback_saved_yield_reason))
     (global.set $yield_flag (global.get $wave_callback_saved_yield_flag))
     (global.set $wave_callback_saved (i32.const 0))
+    ;; This continuation belongs to waveOut, not a multimedia timer. A stale
+    ;; timer resume value must not overwrite the exact restored wave wait.
+    (global.set $mm_timer_resume_yield (i32.const 0))
     (if (global.get $yield_reason) (then (global.set $steps (i32.const 0)))))
 
   ;; A host-side writer that fills guest memory directly (ReadFile into the

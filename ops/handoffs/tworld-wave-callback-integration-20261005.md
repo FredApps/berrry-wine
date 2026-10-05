@@ -19,3 +19,9 @@ Exact prior evidence: `scratch/new-game-tworld-20261004/repair/final-validation-
 ## Latest-main rebase, 2026-10-05
 
 The narrow repair was reapplied cleanly onto laptop commit6a92c113 (including97718c18). The winmm timer thread, Worker MM timer quanta, CACA003B continuation, short-park scheduler change and TIMER_SHARED size0x60 remain present. Region-map/generated layout,09a timer handlers, app/browser-shell settings and laptop timer/scheduler tests are unchanged byte-for-byte. No Heroes timing investigation was repeated. This source preservation check is not an execution result: exact rebased private WAT/Worker regression validation is queued after COMI phase1. The earlier tests/gameplay retain their original module/source identities.
+
+## Latest-main validation and final guard
+
+Rebased on laptop main6a92c113 as712d3d6c, preserving MM timer thread/layout. Final saved-wave return clears stale mm_timer_resume_yield only inside the wave-owned restoration branch. Actual WAT regression injects stale7: candidate restores parked wait1; before-clear control fails7!=1. Existing waveOut audio/reset/window/function and public callback WAT regressions pass after explicit six-argument registration fixtures and valid interrupted guest EIP. Full private build gates PASS. Original integrated queue/control/ambiguity and laptop MM timer thread tests PASS.
+
+Ordinary latest-main private run scratch/runs/20261005-tworld-main6a-callback-gameplay: Level1 entered, Right collects chips6→3, Left response captured; root reviewed after-enter/right2. Browser64739 exited0, browser/server closed. Source/build/picture hashes in immutable run. No FPS/audio fidelity claim. CLI main inline owner path supported; CLI auxiliary opener remains unsupported transport limitation. Canonical untouched. Full receipts scratch/new-game-tworld-20261004/repair/main6a-validation/final-receipt.json.

@@ -189,7 +189,7 @@ try {
     },
   };
   const pacedImports = createHostImports(pacedCtx);
-  const pacedHandle = pacedImports.host.wave_out_open(rate, channels, bits, 1);
+  const pacedHandle = pacedImports.host.wave_out_open(rate, channels, bits, 1, 0x10002, 0);
   const pacedDv = new DataView(pacedMem);
   const pacedHwnd = 0x10002;
   const pacedWaveHdrWA = 0x22000;
@@ -219,11 +219,14 @@ try {
   console.log('PASS  non-browser waveOut completion follows the simulated audio clock');
 
   const functionCalls = [];
-  pacedCtx.exports.fire_wave_out_callback = (hwo, waveHdr) => {
+  pacedCtx.exports.get_eip = () => 0x401000;
+  pacedCtx.exports.fire_wave_out_callback_bound = (hwo, waveHdr, cb, instance) => {
+    assert.strictEqual(cb, 0x651300);
+    assert.strictEqual(instance, 0x12345678);
     functionCalls.push([hwo >>> 0, waveHdr >>> 0]);
     return 1;
   };
-  const functionHandle = pacedImports.host.wave_out_open(rate, channels, bits, 3);
+  const functionHandle = pacedImports.host.wave_out_open(rate, channels, bits, 3, 0x651300, 0x12345678);
   const functionHdrWA = 0x24000;
   const functionHdrGA = 0x405000;
   pacedDv.setUint32(WAVE_OUT_SHARED + 4, 0x651300, true);
@@ -268,7 +271,7 @@ try {
   const browserImports = createHostImports(browserCtx);
   let signaled = 0;
   browserImports.host.set_event = () => { signaled++; return 1; };
-  const browserHandle = browserImports.host.wave_out_open(rate, channels, bits, 5);
+  const browserHandle = browserImports.host.wave_out_open(rate, channels, bits, 5, 0xE0001, 0);
   const browserAc = browserCtx._voices._ac;
   const browserDv = new DataView(browserMem);
   browserDv.setUint32(WAVE_OUT_SHARED + 4, 0xE0001, true);
@@ -317,7 +320,7 @@ try {
     },
   };
   const windowImports = createHostImports(windowCtx);
-  const windowHandle = windowImports.host.wave_out_open(rate, channels, bits, 1);
+  const windowHandle = windowImports.host.wave_out_open(rate, channels, bits, 1, 0x10001, 0);
   const windowAc = windowCtx._voices._ac;
   const windowDv = new DataView(windowMem);
   const hwnd = 0x10001;
@@ -352,7 +355,7 @@ try {
     },
   };
   const resetImports = createHostImports(resetCtx);
-  const resetHandle = resetImports.host.wave_out_open(rate, channels, bits, 1);
+  const resetHandle = resetImports.host.wave_out_open(rate, channels, bits, 1, 0x10003, 0);
   const resetAc = resetCtx._voices._ac;
   const resetDv = new DataView(resetMem);
   const resetHwnd = 0x10003;
