@@ -137,7 +137,9 @@ function agentLine2(a,signal) {
   return a.lastEvent && a.lastEvent!=='Unknown' ? 'Last operation: '+a.lastEvent+' · no result or next step recorded' : 'No result or next step recorded';
 }
 function agentActivity(a) {
-  return `<span class="agent-age" title="Last observed session activity. Activity is not proof of progress.">${a.lastActivityAt?(a.state==='idle'?'idle · last activity ':'last activity ')+age(a.lastActivityAt)+' ago':'activity unknown'}</span>`;
+  const elapsed=a.lastActivityAt?Date.now()-Date.parse(a.lastActivityAt):NaN;
+  const freshness=!Number.isFinite(elapsed)?'unknown':elapsed<120000?'fresh':elapsed<600000?'quiet':'stale';
+  return `<span class="agent-age activity-${freshness}" title="Last activity: green under 2 minutes; amber 2–10 minutes; red 10+ minutes. Activity is not proof of progress.">${Number.isFinite(elapsed)?(a.state==='idle'?'idle · last activity ':'last activity ')+age(a.lastActivityAt)+' ago':'activity unknown'}</span>`;
 }
 function subagentRows(a) {
   const children=state.agents.filter(child=>child.parentAgentId===a.id && child.id!==a.id)
