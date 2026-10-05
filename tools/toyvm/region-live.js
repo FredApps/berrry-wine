@@ -425,8 +425,9 @@ class LiveJit {
       + `${prepared.gate.ratio.toFixed(2)}x over ${this.gateIters} snapshot iterations`);
 
     const tInstall = now();
-    await this.install(prepared);
+    const installed = await this.install(prepared);
     this.ms.install = now() - tInstall;
+    if (installed === false) return;
     this.installs++;
     this.phase = 'installed';
     this.log(`[jit] installed ${prepared.picks.length} region(s) at `
