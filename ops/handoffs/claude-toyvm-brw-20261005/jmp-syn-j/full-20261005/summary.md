@@ -13,3 +13,8 @@ Tree hashes: dos-loop.js 74f94f3e..., compile.js 0910ce47..., emit.js e07d99db..
 Start of the investigation (HEAD): L1 a066bf27 vs jit-sepc 2fa3dd95. Each mechanism moved the first divergence later: 88.9M (v2/v3 early handback on a date) -> 115.06M (J, jmp_syn budget test) -> 160.195M (v4, overdue SB date) -> 330.6M (forward-SMC: the interpreter ran stale code) -> none.
 
 Scope (narrow, per root): this is BRW parity on one fixture with four unapplied candidate patches. It does NOT establish general forward-SMC correctness: the same-block forward patch fails on HEAD in every mode (repro2-20261005), and no synthetic reproducer reaches the pure-compile path yet. L1's own result changed (a066bf27 -> 4dbd3ff0), so landing needs the corpus before/after A/B and the user's decisions (J vs R, L1 baseline changes, the SMC fix). Nothing promoted.
+
+
+## Coordinator semantics review
+
+The same-block synthetic result is an observed mismatch against its chosen expectation, not yet a universal x86 architectural violation. Intel describes model-dependent self-modifying-code behavior and recommends a jump or serializing instruction between modification and execution; an Intel486 can execute prefetched old bytes. See Intel SDM volume 3A, sections 7.1.3 and 10.6: https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366821.pdf. Establish the intended emulated CPU contract and a synchronized reproducer before classifying that case as a required correctness fix. This caveat does not erase the measured BRW compile-path divergence or the candidate parity result.

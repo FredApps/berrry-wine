@@ -11,3 +11,8 @@ Answers root's 14:13:39Z review caveat (within-block vs transfer-separated).
 - TRANSFER-SEPARATED: it does NOT reproduce the BRW bug. All 200 calls take an SMC break in every arm (cached 200, smcFlush 200), so this program never reaches the pure uncached compile. Something about BRW's case (promotion and entry conditions, run length, the hash-stale demotion) is not captured yet.
 
 So: the forward-SMC fix is evidenced only by BRW (330.588M window: L1 matches jit-sepc with the fix, 7d0423ee). General forward-SMC correctness is NOT established: the same-block form fails everywhere and needs its own fix (a store into the storing block's remaining bytes ending the block, end_smc for DS-relative stores, or a re-decode on $smc at the next instruction). Narrow BRW repair and general correctness are separate items; neither is promoted.
+
+
+## Coordinator semantics review
+
+The same-block synthetic result is an observed mismatch against its chosen expectation, not yet a universal x86 architectural violation. Intel describes model-dependent self-modifying-code behavior and recommends a jump or serializing instruction between modification and execution; an Intel486 can execute prefetched old bytes. See Intel SDM volume 3A, sections 7.1.3 and 10.6: https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366821.pdf. Establish the intended emulated CPU contract and a synchronized reproducer before classifying that case as a required correctness fix. This caveat does not erase the measured BRW compile-path divergence or the candidate parity result.
