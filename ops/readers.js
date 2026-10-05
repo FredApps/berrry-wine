@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const { createProcessObserver } = require('./processes');
 const { classifyCandidate } = require('./corpus-categories');
 const { inventory } = require('./corpus-inventory');
-const { getCatalog, launchFor } = require('./emulator-server');
+const { getCatalog, getBuildIdentity, launchFor } = require('./emulator-server');
 const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
 const { createActivityReader, boardEntry } = require('./activity');
 
@@ -471,11 +471,13 @@ function createReader(options = {}) {
     }
     const releaseReadiness = deriveReleaseReadiness({candidates, runs: runList, tasks, review: await loadReleaseReview(root)});
     for (const candidate of candidates) candidate.releaseReadiness = releaseReadiness.entries.find(entry => entry.id === candidate.id);
+    let emulatorBuild = null;
+    try { emulatorBuild = await getBuildIdentity(root); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
     try {
       const launchCatalog = await getCatalog(root);
-      for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production);
+      for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,projectStatus,releaseReadiness,
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,projectStatus,releaseReadiness,emulatorBuild,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }

@@ -39,6 +39,21 @@
     return {commit, dirty, dirtyPatch, wasm, text: parts.join(' · ')};
   }
 
+  // The module a launch from this dashboard serves right now (emulator-server).
+  function servedBuild(snapshot) {
+    const b = snapshot.emulatorBuild;
+    if (!b) return {known: false, wasm: null, text: 'Served build unknown'};
+    const id = buildIdentity({commit: b.commit, dirty: b.dirty, wasmSha256: b.wasmSha256});
+    const dirty = b.dirty === true ? ' (' + b.dirtyFiles + ' tracked file' + (b.dirtyFiles === 1 ? '' : 's') + ' modified)' : '';
+    return {known: !!b.wasmSha256, wasm: b.wasmSha256 || null, commit: b.commit || null, dirty: b.dirty ?? null, reason: b.reason || '', text: id.text + dirty};
+  }
+
+  // Compare by module hash only; a matching commit with a different module is a different build.
+  function buildMatch(servedWasm, recordedWasm) {
+    if (!servedWasm || !recordedWasm) return {status: 'unknown', text: !recordedWasm ? 'reviewed run did not record its wasm' : 'served wasm unknown'};
+    return servedWasm === recordedWasm ? {status: 'match', text: 'served wasm matches the reviewed gameplay run'} : {status: 'differs', text: 'served wasm differs from the reviewed gameplay run (' + recordedWasm.slice(0, 12) + ')'};
+  }
+
   function measuredRate(snapshot, candidate) {
     const r = candidate.releaseReadiness || {};
     const reviewedRun = r.performance?.runKey && (snapshot.runs || []).find(run => run.key === r.performance.runKey && run.performance);
@@ -73,7 +88,8 @@
     return {
       id: candidate.id, name: candidate.name || candidate.id, status: r.status, prospect: r.prospect,
       screenshot: shots.length ? {...shots[shots.length - 1], runKey: r.reviewedGameplay.runKey} : null,
-      gameplayRun: gameplayRun ? {key: gameplayRun.key, startedAt: gameplayRun.startedAt, route: gameplayRun.route || '', build: buildIdentity(gameplayRun.build)} : null,
+      gameplayRun: gameplayRun ? {key: gameplayRun.key, startedAt: gameplayRun.startedAt, route: gameplayRun.route || '', build: buildIdentity(gameplayRun.build),
+        servedMatch: buildMatch(snapshot.emulatorBuild?.wasmSha256, buildIdentity(gameplayRun.build).wasm)} : null,
       rate: measuredRate(snapshot, candidate),
       input: {status: input.status, text: input.met ? input.detail : input.status === 'unknown' ? 'Input not reviewed' : 'Input ' + input.status.replaceAll('-', ' ') + ': ' + input.detail},
       // No release gate or run field records audio today; say so instead of guessing.
@@ -97,5 +113,5 @@
       production: snapshot.releaseReadiness?.production || {status: 'unknown'}};
   }
 
-  return {GATES, rateLabels, parseBuild, buildIdentity, measuredRate, gateRows, desktopRow, desktopQueue};
+  return {GATES, rateLabels, parseBuild, buildIdentity, servedBuild, buildMatch, measuredRate, gateRows, desktopRow, desktopQueue};
 });
