@@ -25,3 +25,9 @@ Next: root source review, then a separately granted ordinary Dredmor route with 
 ## Disk receipt
 
 Removed only redownloadable beta7z and retail DAT/blob sources after verifying every extracted file SHA/length plus source SHA/length.12,842 extracted files remain unchanged;464,848,325 source-cache bytes removed. Original source inventories remain in each `.candidate-source.json`; exact deletion receipt is `scratch/dredmor-lazy-20261005/source-cache-retirement.json`. The old clean COMI timer and phase1 worktrees were retired; published commits and immutable run evidence remain.
+
+## Combined-main integration validation
+
+Concurrent laptop commit939d8a3e added _mbsstr at4085 while publication was in flight. The integration tree rebased onto it and regenerated from its authoritative API table: all4086 existing rows compare exactly, with path APIs now4086–4088. Final integration89c1ed6e passed the complete private production build and40actual-handler cases. The initial sparse checkout lacked tracked ToyVM browser bundles; materializing those files allowed a clean full-gate rerun, without a waiver. Module SHA256 40cc834b014b46a9ea5c81f21ee000a41e3a70c6422e70c8aa42f22407bfaced,1665281bytes. Receipts: scratch/dredmor-lazy-20261005/integration-build-corrected.log and integration-focused.log. Canonical/public runtime untouched.
+
+Ordinary prior candidateee432681/module16247861 reached the rendered configuration screen and main menu. Immutable20261005-dredmor-lazy-main-menu records6248 lazy mounts,1437 HTTP206 requests to1306 distinct lazy files,16,918,607 server-body bytes,21 required companion URLs,0game HEADs and0game HTTP errors. The180second guard closed browser/server cleanly; NewGame was clicked near the deadline but no subsequent gameplay state was recorded. No naturally visible wait overlay was captured, so runtime wait/retry UX remains unqualified. Root reviewed the main-menu screenshot and sent Telegram461.
