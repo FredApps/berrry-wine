@@ -58,7 +58,7 @@ The same-block forward-SMC defect (`../jmp-syn-j/repro2-20261005`) is NOT addres
 and is tracked separately; BRW parity does not close it.
 
 Runner contract (root reviews 12:29Z and 116210a7; all enforced and fixture-tested by
-`corpus-plan.test.js`, 26/26 passing with stub tools, no corpus run):
+`corpus-plan.test.js`, 33/33 passing with stub tools, no corpus run):
 - Every gate EXITS rather than only logging: 3 test gate, 4 sweep gate, 5 arms gate, 6 control
   gate, 9 BRW parity gate.
 - Every child's exit code is checked (prep's tar/patch/bundle/unpack/smoke, the sweep, corpus-ab,
@@ -67,8 +67,13 @@ Runner contract (root reviews 12:29Z and 116210a7; all enforced and fixture-test
   after 5 s), and any abort -- including a gate in P2 while P1 still runs, or a signal to the
   runner -- kills every live group first. Fixture-tested: a sibling suite's grandchild and a
   timed-out child's grandchild are both gone afterwards.
-- Coverage: P2 (sweep rows per tree), P3 (4 arms per program) and P4 (1 row per program) must cover
-  the whole program list; otherwise exit 11 INCOMPLETE, even when every compared row agrees.
+- Coverage by IDENTITY, not count (root review ~14:45Z): P2 expects exactly the program list
+  (sweep row `exe`), P3 exactly program x {l1, jit-early, jit-sepc, fold64} x budget, P4 exactly
+  program x l1 x budget (budgets parsed as corpus-ab does). Every expected identity must appear once:
+  a missing one is exit 11 INCOMPLETE (even when every compared row agrees), and a malformed row, a
+  row without identity fields, an out-of-domain program/arm/budget or a duplicate is exit 12. So an
+  equal-count set with a wrong program or arm in place of a missing one cannot pass
+  (fixture-tested).
 - P5: the candidate's L1 and jit-sepc interrupt lists (vec, src, at, cs:ip; `hb=` ignored) and
   frames and dispatch counts must be identical, else exit 9; the base tree is informational.
 - P1 aborts on an empty or mismatched suite. P4 needs exactly "0 of N l1 rows moved" with N > 0.
@@ -88,7 +93,7 @@ corpus-hash gate is exercised for real.
 
 Expected wall time is unmeasured. The cap is SLOT_S=900 s; request a 15-minute slot. Fixture tests
 for smoke mode (positional program list instead of --dir, SMOKE-tagged journal, SMOKE_TESTS filter)
-are in corpus-plan.test.js, 28/28 passing.
+are in corpus-plan.test.js (33/33 passing overall).
 
 Then the full run as
 `W=<dir> CAND=stack PATCHES="<p1>:<sha1>,<p2>:<sha2>,<p3>:<sha3>" JOBS=3 node corpus-plan.js all`
