@@ -309,6 +309,104 @@
     (if (i32.load offset=20 (local.get $slot))
       (then (i32.store (local.get $slot) (i32.const 0)))))
 
+  ;; Milliseconds until the earliest multimedia timer is due: 0 when one is
+  ;; already due, -1 when there is no timer at all. The host shortens its run
+  ;; quantum to this, so a 5ms timer is served at its deadline instead of at
+  ;; the end of whatever slice happened to be running.
+  (func $mm_timer_ms_until_due (result i32)
+    (local $i i32) (local $slot i32) (local $left i32) (local $best i32)
+    (local $elapsed i32) (local $interval i32)
+    (local.set $best (i32.const -1))
+    (global.set $tick_count (call $host_get_ticks))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (if (i32.load (local.get $slot))
+        (then
+          (local.set $elapsed
+            (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot))))
+          (local.set $interval (i32.load offset=4 (local.get $slot)))
+          (local.set $left
+            (if (result i32) (i32.ge_u (local.get $elapsed) (local.get $interval))
+              (then (i32.const 0))
+              (else (i32.sub (local.get $interval) (local.get $elapsed)))))
+          (if (i32.or (i32.lt_s (local.get $best) (i32.const 0))
+                      (i32.lt_u (local.get $left) (local.get $best)))
+            (then (local.set $best (local.get $left))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  ;; 1 once the winmm timer thread exists: from then on it alone runs
+  ;; timeSetEvent callbacks, and the main-thread paths (the MM_TIMER
+  ;; pseudo-message and fire_mm_timer's injection) stand down.
+  (func $mm_timer_thread_owned (result i32)
+    (i32.ne (i32.atomic.load offset=4 (global.get $MM_TIMER_THREAD)) (i32.const 0)))
+
+  ;; Start the winmm timer thread on the first timeSetEvent when the host chose
+  ;; that mode. On Windows the callbacks run on a time-critical thread of
+  ;; winmm's own, preempting whatever the application's threads are doing;
+  ;; run on the caller's thread they inherit its id, its SEH chain and its
+  ;; held critical sections, and only run when that thread pumps or is
+  ;; interrupted between slices.
+  (func $mm_timer_thread_ensure
+    (local $thunk i32) (local $handle i32)
+    (if (i32.ne (i32.load (global.get $MM_TIMER_THREAD)) (i32.const 1)) (then (return)))
+    (if (call $mm_timer_thread_owned) (then (return)))
+    (local.set $thunk (call $com_cont_thunk (i32.const 0xCACA003B)))
+    (i32.store offset=8 (global.get $MM_TIMER_THREAD) (local.get $thunk))
+    (i32.store offset=12 (global.get $MM_TIMER_THREAD) (i32.const 0))
+    ;; host_create_thread(start, param, stack, flags, lpThreadId wasm, creator)
+    (local.set $handle (call $host_create_thread
+      (local.get $thunk) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (global.get $current_thread_id)))
+    (i32.atomic.store offset=4 (global.get $MM_TIMER_THREAD) (local.get $handle)))
+
+  ;; 0xCACA003B: one turn of the winmm timer thread. The thread starts here and
+  ;; every callback returns here. Call the first due timer, or sleep until the
+  ;; next one is due. The loop ESP is pinned, so a callback declared with the
+  ;; wrong convention cannot walk the stack away.
+  (func $mm_timer_thread_step
+    (local $slot i32) (local $esp i32) (local $thunk i32) (local $wait i32)
+    (local $id i32) (local $dwuser i32) (local $cb i32)
+    (local.set $thunk (i32.load offset=8 (global.get $MM_TIMER_THREAD)))
+    (local.set $esp (i32.load offset=12 (global.get $MM_TIMER_THREAD)))
+    (if (i32.eqz (local.get $esp))
+      (then
+        (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+        (i32.store offset=12 (global.get $MM_TIMER_THREAD) (local.get $esp))))
+    (i32.store offset=16 (global.get $reg_base) (local.get $esp))
+    (global.set $steps (i32.const 0))
+    (local.set $slot (call $mm_timer_due_slot))
+    (if (local.get $slot)
+      (then
+        (local.set $id (i32.load (local.get $slot)))
+        (local.set $dwuser (i32.load offset=12 (local.get $slot)))
+        (local.set $cb (i32.load offset=8 (local.get $slot)))
+        (call $mm_timer_consume_slot (local.get $slot))
+        ;; TimeProc(uTimerID, uMsg=0, dwUser, dw1=0, dw2=0), stdcall.
+        (call $io_apc_push (i32.const 0))
+        (call $io_apc_push (i32.const 0))
+        (call $io_apc_push (local.get $dwuser))
+        (call $io_apc_push (i32.const 0))
+        (call $io_apc_push (local.get $id))
+        (call $io_apc_push (local.get $thunk))
+        (global.set $eip (local.get $cb))
+        (return)))
+    ;; Nothing due: Sleep until the next deadline, re-entering here. With no
+    ;; timer at all the thread idles in 50ms sleeps, as winmm's does.
+    (local.set $wait (call $mm_timer_ms_until_due))
+    (if (i32.le_s (local.get $wait) (i32.const 0))
+      (then (local.set $wait
+        (if (result i32) (i32.lt_s (local.get $wait) (i32.const 0))
+          (then (i32.const 50)) (else (i32.const 1))))))
+    ;; Re-entering the same thunk: opt out of the run loop's auto-pop.
+    (global.set $eip (local.get $thunk))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $sleep_yielded (i32.const 1))
+    (global.set $sleep_timeout (local.get $wait)))
+
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
   (func $timer_check_due (param $msg_ptr i32) (param $consume i32) (result i32)
@@ -369,7 +467,9 @@
     )
     (call $lock_wnd_release)
     (if (local.get $found) (then (return (i32.const 1))))
-    ;; Check multimedia timers (timeSetEvent)
+    ;; Check multimedia timers (timeSetEvent) -- unless the winmm timer
+    ;; thread owns them, in which case no application thread delivers them.
+    (if (call $mm_timer_thread_owned) (then (return (i32.const 0))))
     (local.set $addr (call $mm_timer_due_slot))
     (if (local.get $addr)
       (then

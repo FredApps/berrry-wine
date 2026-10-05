@@ -225,6 +225,8 @@ const highFixedAliases = new Map(Object.entries({
   gl_sw_st: { owner: 'GL_SW_STATE' },
   // Mutable: $init_thread points each instance at its own tid slice.
   OP_INDEX: { owner: 'OP_INDEX_REGION' },
+  // The winmm timer thread record lives in TIMER_SHARED's tail.
+  MM_TIMER_THREAD: { owner: 'TIMER_SHARED' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

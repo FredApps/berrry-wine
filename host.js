@@ -1012,6 +1012,10 @@ class WineAssembly {
     // they are not pumping messages. This remains opt-in per app: the normal
     // path still delivers the callback through the guest message loop.
     this.asyncMultimediaTimer = false;
+    // Run timeSetEvent callbacks on a winmm timer guest thread of their own,
+    // the Windows model, instead of on the application's thread (via its
+    // message pump, or asyncMultimediaTimer's injection between slices).
+    this.mmTimerThread = false;
     // Decode-time x87 fusion is on by default. An app opts out with
     // `x87Fusion: false` in lib/apps.js (browser-shell copies it here), and the
     // page opts out with ?no-x87-fold or the debug toolbar box.
@@ -2521,6 +2525,18 @@ class WineAssembly {
     const presentPaceMode = this.presentPace === 'deadline' ? 0 : 1;
     if (this.instance.exports.set_present_pace_mode) {
       this.instance.exports.set_present_pace_mode(presentPaceMode);
+    }
+    // ?mm-thread[=0] and ?async-mm[=0] override the app's timeSetEvent
+    // delivery, so the two models can be A/B'd on one app without an edit.
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.has('mm-thread')) this.mmTimerThread = q.get('mm-thread') !== '0';
+      if (q.has('async-mm')) this.asyncMultimediaTimer = q.get('async-mm') !== '0';
+    } catch (_) {}
+    // Process-wide (shared memory), so the main instance setting it reaches a
+    // guest Worker too; set before any guest code can call timeSetEvent.
+    if (this.instance.exports.set_mm_timer_thread_mode) {
+      this.instance.exports.set_mm_timer_thread_mode(this.mmTimerThread ? 1 : 0);
     }
     this._wasmModule = wasmModule;
     // Kept so an experimental guest worker can be handed the SAME host import
@@ -4566,6 +4582,12 @@ class WineAssembly {
             self._workerVblankDue = false;
             sliceSync = Object.assign({}, mainSync || {}, { vblank: 1 });
           }
+          // asyncMultimediaTimer: the Worker serves timeSetEvent between its
+          // own run quanta (lib/guest-worker.js runServingMmTimers); the page
+          // cannot, because it never holds the guest's registers.
+          if (self.asyncMultimediaTimer) {
+            sliceSync = Object.assign({}, sliceSync || {}, { mmTimer: 1 });
+          }
           const slice = await self.guestWorker.slice(steps, sliceSync);
           self._workerLastSlice = slice;
           // The worker reports a Sleep it yielded for; nothing else will make
@@ -5683,16 +5705,29 @@ class WineAssembly {
     let blocks = 0;
     let remaining = Math.max(1, maxBlocks | 0);
     let hitDeadline = false;
+    // asyncMultimediaTimer: serve timeSetEvent at every quantum boundary, and
+    // end a quantum at the next timer deadline, so a 5ms timer is late by at
+    // most one ~1ms quantum rather than by a whole host step.
+    const mmPump = !this._frozen && this.asyncMultimediaTimer && !!ex.mm_timer_ms_until_due;
     do {
-      const quantum = this._frozen ? remaining : Math.min(remaining,
+      let quantum = this._frozen ? remaining : Math.min(remaining,
         Math.max(1, this._cooperativeQuantumBlocks || 128));
+      let capped = false;
+      if (mmPump) {
+        this._pumpMultimediaTimer();
+        const due = ex.mm_timer_ms_until_due() | 0;
+        if (due > 0) {
+          const cap = Math.max(16, Math.ceil(due * (this._cooperativeQuantumBlocks || 128)));
+          if (cap < quantum) { quantum = cap; capped = true; }
+        }
+      }
       const before = now();
       ex.run(quantum);
       const ran = ex.get_last_run_blocks ? Math.max(0, ex.get_last_run_blocks()) : 0;
       const elapsed = Math.max(0, now() - before);
       blocks += ran;
       remaining -= ran;
-      if (!this._frozen && ran >= quantum && elapsed > 0) {
+      if (!this._frozen && !capped && ran >= quantum && elapsed > 0) {
         // Target roughly 1ms per quantum; limit growth after a cheap phase.
         this._cooperativeQuantumBlocks = Math.max(1,
           Math.min(2048, quantum * 2, Math.floor(ran / elapsed)));
