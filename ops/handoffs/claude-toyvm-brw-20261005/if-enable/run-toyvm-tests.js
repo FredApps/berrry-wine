@@ -26,6 +26,8 @@
 //
 //   node run-toyvm-tests.js --out=<new dir> --plan=cand,stack [--total=300] [--per-test=60]
 //     [--tests=a,b,...] --candidate=<diff> --candidate-sha=<64 hex>
+//   test hook: --prepared-trees=<dir> (contains <tree>/test/test-toyvm-<t>.js;
+//   copied into --out, skipping build and git archive; copies removed)
 // Default test list, in risk order (CANDIDATE.md 1-8; browser-bundle and live
 // are left out: browser-bundle reads the committed docs/ bundle, which the
 // candidate is EXPECTED to break until bundle regeneration, a separate gate).
@@ -44,9 +46,9 @@ const arg = (k, d) => { const h = argv.find((a) => a.startsWith(`--${k}=`)); ret
 const OUT = arg('out'), TOTAL_MS = Number(arg('total', 300)) * 1000, PER_MS = Number(arg('per-test', 60)) * 1000, t0 = Date.now();
 const PLAN = arg('plan', 'cand,stack').split(',').filter(Boolean);
 const TESTS = arg('tests') ? arg('tests').split(',').filter(Boolean) : DEFAULT_TESTS;
-const CAND = arg('candidate'), CAND_SHA = arg('candidate-sha');
+const CAND = arg('candidate'), CAND_SHA = arg('candidate-sha'), PREP = arg('prepared-trees');
 if (!OUT || PLAN.some((t) => !['stack', 'head', 'cand'].includes(t)) || TESTS.some((t) => !/^[a-z0-9-]+$/.test(t))
-  || (PLAN.includes('cand') && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
+  || (!PREP && PLAN.includes('cand') && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
   console.error('usage: node run-toyvm-tests.js --out=<new dir> --plan=cand,stack [--total=300] [--per-test=60] [--tests=a,b] --candidate=<diff> --candidate-sha=<64 hex>');
   process.exit(2);
 }
@@ -93,6 +95,14 @@ function run(name, cmd, args, cwd, capMs) {
   for (const tree of PLAN) {
     const dir = path.join(OUT, `tree-${tree}`); trees.push(dir);
     const tr = result.trees[tree] = { tests: {} };
+    // Test hook: a prepared tree (with its own test/test-toyvm-<t>.js) is
+    // COPIED in, so the copy is owned and removed like a built tree.
+    if (PREP) {
+      fs.cpSync(path.join(PREP, tree), dir, { recursive: true });
+      tr.prepared = true;
+      for (const t of TESTS) { tr.tests[t] = await run(`${tree}-${t}`, process.execPath, [path.join('test', `test-toyvm-${t}.js`)], dir, PER_MS); write(); }
+      continue;
+    }
     const b = await run(`build-${tree}`, process.execPath, [path.join(HERE, 'build-tree.js'), `--out=${dir}`, `--tree=${tree}`,
       ...(tree === 'cand' ? [`--candidate=${CAND}`, `--candidate-sha=${CAND_SHA}`] : [])], HERE, 60000);
     tr.build = b;
