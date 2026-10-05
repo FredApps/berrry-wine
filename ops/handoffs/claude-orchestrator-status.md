@@ -81,3 +81,17 @@ follow-ups below are **not** — until today none had a task ID.
 ## Other Claude tasks (2026-10-04)
 - CLAUDE-OPS-DASHBOARD-UX-REVIEW: phase-1 proposal in `ops/handoffs/claude-dashboard-ux-review-20261004.md` (source/API audit, no browser yet).
 - CLAUDE-PROGRESSIVE-GAME-LOADING-DESIGN: accepted; assigned to the first free existing worker (after the BRW audit). Proposal only.
+
+## State 2026-10-05 (after session recovery)
+- Heroes II timing/latch work: STOPPED on this box. Laptop session 5e92d715 owns it (97718c18, 6a92c113).
+  39d4bb09 was the ops integrator's revert pending the idle anomaly, not a user revert. The box review
+  (ops/handoffs/claude-heroes2-latch-review-20261005.md) is handed over as reference only.
+- Merged on main: launch UX, dashboard gaps (c003b59f), Diablo lazy pilot, installed-shortcut persistence,
+  three-game review, progressive-loading design, Heroes II diagnosis note.
+- TOYVM-REGION-JIT-BRW: bisect narrowed the divergence to install #5 (region 0x423a) and first register
+  divergence at dispatch 330588033; billing and install side effects refuted. Findings in
+  ops/handoffs/claude-toyvm-brw-20261005.md. Next: ~60 s CPU for a narrow per-handback trace (L1, K=4,
+  K=5) and lattice-clock K=5, after root's queue.
+- CLAUDE-TOYVM-LONGRUN-BG: delivered (ops/handoffs/claude-toyvm-longrun-bg-20261005.md); the 30/120 s
+  equivalent-work experiment (~37 min, quiet bench box) needs a budget grant.
+- No Claude subagents running.
