@@ -1,9 +1,9 @@
 'use strict';
-// Actual-WAT private tests. Deliberately no guest COM front-door qualification.
+// Actual-WAT bitmap/descriptor helper contract. The separate interface test covers COM.
 const fs=require('fs'),path=require('path'),assert=require('assert');
 const {bootRenderHarness}=require('./render-helper');
 const R=require('../lib/region-map.generated');
-const extraWat=['descriptor-adapters.wat','bmp24-loader.wat','bitmap-to-surface.wat','surface-descriptor.wat'].map(f=>fs.readFileSync(path.join(__dirname,'fixtures/vbdd-image-helpers',f),'utf8')).join('\n')+String.raw`
+const extraWat=String.raw`
 (export "to_native" (func $vbdd_desc_rgb_to_native))
 (export "from_native" (func $vbdd_desc_from_native))
 (export "load_bmp" (func $vbdd_load_bmp24_wide))

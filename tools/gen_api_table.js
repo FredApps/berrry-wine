@@ -1581,6 +1581,645 @@ for (const entry of require('./glide3-methods').entries) {
   }
 }
 
+// Dedicated DX7VB image surface ABI; unsupported methods fail with exact cleanup.
+const vbImageMethods = [
+  {
+    "name": "IVBImageSurface7_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "handler": "VBImage_QueryInterface"
+  },
+  {
+    "name": "IVBImageSurface7_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "handler": "VBImage_AddRef"
+  },
+  {
+    "name": "IVBImageSurface7_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "handler": "VBImage_Release"
+  },
+  {
+    "name": "IVBImageSurface7_InternalSetObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_InternalGetObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_AddAttachedSurface",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_Blt",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 28,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_BltColorFill",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_BltFast",
+    "nargs": 7,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 32,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_BltFx",
+    "nargs": 7,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 32,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_BltToDC",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_ChangeUniquenessValue",
+    "nargs": 1,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 8,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DeleteAttachedSurface",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawBox",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawCircle",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawEllipse",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawLine",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawRoundedBox",
+    "nargs": 7,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 32,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_DrawText",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_Flip",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetAttachedSurface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetAttachedSurfaceEnum",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetBltStatus",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetClipper",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetColorKey",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetDirectDraw",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetDirectDrawColorControl",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetDirectDrawGammaControl",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_getDrawStyle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_getDrawWidth",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetFillColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetFillStyle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetFlipStatus",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetFontTransparency",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetForeColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetLockedPixel",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetPalette",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetPixelFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetSurfaceDesc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "handler": "VBImage_GetSurfaceDesc"
+  },
+  {
+    "name": "IVBImageSurface7_GetUniquenessValue",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_isLost",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_Lock",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_ReleaseDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_restore",
+    "nargs": 1,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 8,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetClipper",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetColorKey",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_setDrawStyle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_setDrawWidth",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetFillColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetFillStyle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetFont",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetFontTransparency",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetForeColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetLockedPixel",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetPalette",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_Unlock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetPriority",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetPriority",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetLOD",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetLOD",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetLockedArray",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetFontBackColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetFontBackColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 12,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_UpdateOverlay",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 24,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_UpdateOverlayZOrder",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetOverlayPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_SetOverlayPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_GetOverlayZOrdersEnum",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBImageSurface7_UpdateOverlayFx",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 28,
+      "ret": 2147500033
+    }
+  }
+];
+for (const row of vbImageMethods) {
+  let current=existing.find(api=>api.name===row.name);
+  if (!current) { current={id:existing.length,...row}; existing.push(current); seen.add(row.name); }
+  Object.assign(current,row);
+}
+const vbImageFile=existing.find(api=>api.name==='IVBDirectDraw7_DirectSlot008');
+if (!vbImageFile) throw Error('Missing established VB image API');
+vbImageFile.nargs=4; vbImageFile.handler='VBDD_CreateSurfaceFromFile';
+
 // Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
 // belongs to the API row rather than the name/hash generator.
 const table = existing.map((api, id) => {

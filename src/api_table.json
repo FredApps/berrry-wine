@@ -21581,9 +21581,10 @@
   {
     "id": 2542,
     "name": "IVBDirectDraw7_DirectSlot008",
-    "nargs": 1,
+    "nargs": 4,
     "convention": "stdcall",
-    "hash": 510204772
+    "hash": 510204772,
+    "handler": "VBDD_CreateSurfaceFromFile"
   },
   {
     "id": 2543,
@@ -33487,5 +33488,573 @@
     "convention": "stdcall",
     "hash": 1597275093,
     "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3956,
+    "name": "IVBImageSurface7_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 39649529,
+    "handler": "VBImage_QueryInterface"
+  },
+  {
+    "id": 3957,
+    "name": "IVBImageSurface7_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3776332234,
+    "handler": "VBImage_AddRef"
+  },
+  {
+    "id": 3958,
+    "name": "IVBImageSurface7_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1218098855,
+    "handler": "VBImage_Release"
+  },
+  {
+    "id": 3959,
+    "name": "IVBImageSurface7_InternalSetObject",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1174337806
+  },
+  {
+    "id": 3960,
+    "name": "IVBImageSurface7_InternalGetObject",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 369590034
+  },
+  {
+    "id": 3961,
+    "name": "IVBImageSurface7_AddAttachedSurface",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3201711460
+  },
+  {
+    "id": 3962,
+    "name": "IVBImageSurface7_Blt",
+    "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1132678132
+  },
+  {
+    "id": 3963,
+    "name": "IVBImageSurface7_BltColorFill",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1926458746
+  },
+  {
+    "id": 3964,
+    "name": "IVBImageSurface7_BltFast",
+    "nargs": 7,
+    "stub": { "pop": 32, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2728014834
+  },
+  {
+    "id": 3965,
+    "name": "IVBImageSurface7_BltFx",
+    "nargs": 7,
+    "stub": { "pop": 32, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1582368202
+  },
+  {
+    "id": 3966,
+    "name": "IVBImageSurface7_BltToDC",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 157989768
+  },
+  {
+    "id": 3967,
+    "name": "IVBImageSurface7_ChangeUniquenessValue",
+    "nargs": 1,
+    "stub": { "pop": 8, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2879974435
+  },
+  {
+    "id": 3968,
+    "name": "IVBImageSurface7_DeleteAttachedSurface",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2204261632
+  },
+  {
+    "id": 3969,
+    "name": "IVBImageSurface7_DrawBox",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1784641409
+  },
+  {
+    "id": 3970,
+    "name": "IVBImageSurface7_DrawCircle",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4055710604
+  },
+  {
+    "id": 3971,
+    "name": "IVBImageSurface7_DrawEllipse",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 801014742
+  },
+  {
+    "id": 3972,
+    "name": "IVBImageSurface7_DrawLine",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1417156466
+  },
+  {
+    "id": 3973,
+    "name": "IVBImageSurface7_DrawRoundedBox",
+    "nargs": 7,
+    "stub": { "pop": 32, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3755965758
+  },
+  {
+    "id": 3974,
+    "name": "IVBImageSurface7_DrawText",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 352336527
+  },
+  {
+    "id": 3975,
+    "name": "IVBImageSurface7_Flip",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 102578973
+  },
+  {
+    "id": 3976,
+    "name": "IVBImageSurface7_GetAttachedSurface",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4054031841
+  },
+  {
+    "id": 3977,
+    "name": "IVBImageSurface7_GetAttachedSurfaceEnum",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1474161996
+  },
+  {
+    "id": 3978,
+    "name": "IVBImageSurface7_GetBltStatus",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3460978458
+  },
+  {
+    "id": 3979,
+    "name": "IVBImageSurface7_GetCaps",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1625636155
+  },
+  {
+    "id": 3980,
+    "name": "IVBImageSurface7_GetClipper",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4078766547
+  },
+  {
+    "id": 3981,
+    "name": "IVBImageSurface7_GetColorKey",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 733813780
+  },
+  {
+    "id": 3982,
+    "name": "IVBImageSurface7_GetDC",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1175896747
+  },
+  {
+    "id": 3983,
+    "name": "IVBImageSurface7_GetDirectDraw",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2657117129
+  },
+  {
+    "id": 3984,
+    "name": "IVBImageSurface7_GetDirectDrawColorControl",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1509262321
+  },
+  {
+    "id": 3985,
+    "name": "IVBImageSurface7_GetDirectDrawGammaControl",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3973990211
+  },
+  {
+    "id": 3986,
+    "name": "IVBImageSurface7_getDrawStyle",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 624602585
+  },
+  {
+    "id": 3987,
+    "name": "IVBImageSurface7_getDrawWidth",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4160182064
+  },
+  {
+    "id": 3988,
+    "name": "IVBImageSurface7_GetFillColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3080142790
+  },
+  {
+    "id": 3989,
+    "name": "IVBImageSurface7_GetFillStyle",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1566849928
+  },
+  {
+    "id": 3990,
+    "name": "IVBImageSurface7_GetFlipStatus",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4251152363
+  },
+  {
+    "id": 3991,
+    "name": "IVBImageSurface7_GetFontTransparency",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1559110757
+  },
+  {
+    "id": 3992,
+    "name": "IVBImageSurface7_GetForeColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2930348667
+  },
+  {
+    "id": 3993,
+    "name": "IVBImageSurface7_GetLockedPixel",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4178817468
+  },
+  {
+    "id": 3994,
+    "name": "IVBImageSurface7_GetPalette",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1481512053
+  },
+  {
+    "id": 3995,
+    "name": "IVBImageSurface7_GetPixelFormat",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3469662445
+  },
+  {
+    "id": 3996,
+    "name": "IVBImageSurface7_GetSurfaceDesc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1794663092,
+    "handler": "VBImage_GetSurfaceDesc"
+  },
+  {
+    "id": 3997,
+    "name": "IVBImageSurface7_GetUniquenessValue",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1237818499
+  },
+  {
+    "id": 3998,
+    "name": "IVBImageSurface7_isLost",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4171767584
+  },
+  {
+    "id": 3999,
+    "name": "IVBImageSurface7_Lock",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2154603193
+  },
+  {
+    "id": 4000,
+    "name": "IVBImageSurface7_ReleaseDC",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1667419630
+  },
+  {
+    "id": 4001,
+    "name": "IVBImageSurface7_restore",
+    "nargs": 1,
+    "stub": { "pop": 8, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 844658988
+  },
+  {
+    "id": 4002,
+    "name": "IVBImageSurface7_SetClipper",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 412866071
+  },
+  {
+    "id": 4003,
+    "name": "IVBImageSurface7_SetColorKey",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2615454496
+  },
+  {
+    "id": 4004,
+    "name": "IVBImageSurface7_setDrawStyle",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 886430069
+  },
+  {
+    "id": 4005,
+    "name": "IVBImageSurface7_setDrawWidth",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1927399068
+  },
+  {
+    "id": 4006,
+    "name": "IVBImageSurface7_SetFillColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2046056458
+  },
+  {
+    "id": 4007,
+    "name": "IVBImageSurface7_SetFillStyle",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 351008940
+  },
+  {
+    "id": 4008,
+    "name": "IVBImageSurface7_SetFont",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1144881607
+  },
+  {
+    "id": 4009,
+    "name": "IVBImageSurface7_SetFontTransparency",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2994268769
+  },
+  {
+    "id": 4010,
+    "name": "IVBImageSurface7_SetForeColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2326229631
+  },
+  {
+    "id": 4011,
+    "name": "IVBImageSurface7_SetLockedPixel",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3610299536
+  },
+  {
+    "id": 4012,
+    "name": "IVBImageSurface7_SetPalette",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4079028289
+  },
+  {
+    "id": 4013,
+    "name": "IVBImageSurface7_Unlock",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2105882842
+  },
+  {
+    "id": 4014,
+    "name": "IVBImageSurface7_SetPriority",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2331958826
+  },
+  {
+    "id": 4015,
+    "name": "IVBImageSurface7_GetPriority",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 929156510
+  },
+  {
+    "id": 4016,
+    "name": "IVBImageSurface7_GetLOD",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2398707513
+  },
+  {
+    "id": 4017,
+    "name": "IVBImageSurface7_SetLOD",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3963908549
+  },
+  {
+    "id": 4018,
+    "name": "IVBImageSurface7_GetLockedArray",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3460097025
+  },
+  {
+    "id": 4019,
+    "name": "IVBImageSurface7_SetFontBackColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3136384167
+  },
+  {
+    "id": 4020,
+    "name": "IVBImageSurface7_GetFontBackColor",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3775657467
+  },
+  {
+    "id": 4021,
+    "name": "IVBImageSurface7_UpdateOverlay",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2454914893
+  },
+  {
+    "id": 4022,
+    "name": "IVBImageSurface7_UpdateOverlayZOrder",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3081784647
+  },
+  {
+    "id": 4023,
+    "name": "IVBImageSurface7_GetOverlayPosition",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 33370293
+  },
+  {
+    "id": 4024,
+    "name": "IVBImageSurface7_SetOverlayPosition",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1613490185
+  },
+  {
+    "id": 4025,
+    "name": "IVBImageSurface7_GetOverlayZOrdersEnum",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1348966156
+  },
+  {
+    "id": 4026,
+    "name": "IVBImageSurface7_UpdateOverlayFx",
+    "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 494854795
   }
 ]
