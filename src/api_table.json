@@ -33541,9 +33541,9 @@
     "id": 3962,
     "name": "IVBImageSurface7_Blt",
     "nargs": 6,
-    "stub": { "pop": 28, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1132678132
+    "hash": 1132678132,
+    "handler": "VBImage_Blt"
   },
   {
     "id": 3963,
@@ -33861,9 +33861,9 @@
     "id": 4002,
     "name": "IVBImageSurface7_SetClipper",
     "nargs": 2,
-    "stub": { "pop": 12, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 412866071
+    "hash": 412866071,
+    "handler": "VBImage_SetClipper"
   },
   {
     "id": 4003,
