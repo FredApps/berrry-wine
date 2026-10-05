@@ -41,3 +41,13 @@ Published immutable evidence: `scratch/runs/20261005-dredmor-transient-range-rec
 A private HTTP-only fault delayed the exact manTemplateDB.xml range bytes0-6562 by2500ms and returned503 once. The unchanged provider automatically retried255ms later and loading resumed into the menu. This did **not** exercise user Retry: provider defaults to two retries (three attempts total), so the prepared next diagnostic must fail exactly those three requests before allowing original bytes. Samples at142ms and946ms after request respectively show no overlay and Loading; they are sequential observations, not an exact500ms threshold measurement.
 
 After recovery, one ordinary150ms held click on visible New Game reached **Choose Your Difficulty** (`new-game-held.png`, root independently reviewed). This is setup/input evidence, not player-controlled gameplay, and comes from a fault-recovered diagnostic rather than a pristine route. It disproves a blanket claim that New Game is unusable; previous instantaneous clicks remain insufficiently diagnosed. Next ordinary route uses the verified hold and advances difficulty/skills. No FPS/audio claim.
+
+## 2026-10-05 actual failed lazy read → user Retry → recovery
+
+Core lazy-loading runtime qualification now passes. Immutable result `scratch/runs/20261005-dredmor-lazy-retry-recovery` contains37 hashed entries/38 files,97 verified served pins, source45e3f361 and module40cc834b. Browser87522 closed normally11:35:21.852Z with both resources closed and no cleanup errors. No gameplay/FPS claim.
+
+The private server returned503 for exactly the first three GETs for `game/game/manTemplateDB.xml`, Range bytes0-6562. First failure was delayed2500ms; next two were immediate. This exhausted **host._fillParkedRead** retries (host.js689–699,250/500ms backoff); ChunkCache.fill itself has no retry. Earlier references to provider preload retry describe a different path. No engine/provider behavior was modified.
+
+At37664/40418/40922ms the target requests failed503 with zero body bytes. `after-retry-exhaustion.png` visibly names the file/HTTP503 and offers Retry/Quit. Ordinary pointer click663,422 held150ms (55047–55203ms) activated Retry. Fourth identical request at55203ms succeeded206 with6563 original bytes. `after-user-retry.png` shows later file recipes_bg.png loading, then `menu-resumed.png` shows the normal menu. This verifies failure feedback, user Retry, unchanged-range retrieval and resumption. Quit is visible but was not clicked; screenshots provide only sampled timing, not an exact500ms threshold measurement.
+
+Next task is a separate pristine300sec ordinary route through confirmed150ms New Game click, difficulty/skills/name and actual dungeon movement. The menu/setup evidence is not gameplay qualification.
