@@ -54,3 +54,11 @@ cannot satisfy that signature.
 ```sh
 node test/test-ultima4-dosbox.js
 ```
+
+## 2026-10-05 ordinary browser character creation (not gameplay)
+
+Session87748 used source94d18605/module2e2fd8d1, the original installed DOSBox0.74-2.1 and existing dynamic-core/fixed3000/sound-disabled config. The sole local registration overlay was explicitly pinned;258production sources and280asset URLs were checked. Normal input reached main menu, I/new name Avatar, male choice, the introduction and virtue questions. The first A choice advanced the abacus; second preamble (Valor/Spirituality) was visible. No player world or movement was reached.
+
+The300sec wall guard ended18:04:02.733Z with browser/server closed, errors[], sessionexit2. It includes operator image-review time; no compatibility fault or timing performance is inferred. Later submitted inputs after terminal were not executed. Immutable evidence: scratch/runs/20261005-ultima4-character-creation/result.json and validation.json; screenshot question2.png is character creation, not gameplay.
+
+Next: fresh600sec ordinary route, reuse the now-observed introduction advance sequence with periodic captures, stop at actual virtue prompts and answer seven visible choices. Personal review of active world and before/after arrow movement remain mandatory. No automatic retry or synthetic save/protocol.
