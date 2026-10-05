@@ -45,7 +45,15 @@ const HERE = __dirname, ONE = arg('one', path.join(HERE, 'bench-one.js'));
 // path that does not exist exercises the SPAWN-ERROR path.
 const NODE = arg('node', process.execPath);
 const TREES = ['cand', 'stack'];
-if (!OUT || !PROGS.length || !(REPS >= 1) || (!PREP && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
+// Bounds must be finite and positive, --reps a whole number >= 1 and
+// --dispatches a count bench-one accepts -- all before --out or any child.
+const okBound = (ms) => Number.isFinite(ms) && ms > 0;
+if (!okBound(TOTAL_MS) || !okBound(PER_MS) || !Number.isInteger(REPS) || REPS < 1 || !/^\d+(?:\.\d+)?[kmb]?$/i.test(DISP)) {
+  console.error(`refusing: --total/--per-run must be finite seconds > 0, --reps a whole number >= 1, --dispatches a count`
+    + ` (got total=${arg('total', 300)} per-run=${arg('per-run', 60)} reps=${arg('reps', 5)} dispatches=${DISP})`);
+  process.exit(2);
+}
+if (!OUT || !PROGS.length || (!PREP && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
   console.error('usage: node bench-trees.js --out=<new dir> --progs=a,b [--reps=5] [--dispatches=20m] [--cpu-time] [--total=300] [--per-run=60] --candidate=<diff> --candidate-sha=<64 hex>');
   process.exit(2);
 }

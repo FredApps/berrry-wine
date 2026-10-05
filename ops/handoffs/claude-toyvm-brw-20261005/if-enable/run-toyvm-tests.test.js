@@ -90,6 +90,25 @@ check('spawn error: SPAWN-ERROR recorded, comparison incomplete, trees still rem
   assert.strictEqual(r.res.compare.a, 'incomplete (cand SPAWN-ERROR, stack SPAWN-ERROR)');
   assert.deepStrictEqual(r.res.treesRemoved, [true, true]);
 });
+check('invalid bounds refused before --out exists; valid 600/60 still accepted', () => {
+  for (const bad of [['--total=0'], ['--total=-5'], ['--total=abc'], ['--total=Infinity'], ['--per-test=0'], ['--per-test=NaN']]) {
+    const out = path.join(ROOT, `out-bad-${bad[0].replace(/[^a-z0-9]/gi, '_')}`);
+    const r = spawnSync(process.execPath, [RUNNER, `--out=${out}`, '--plan=stack', '--tests=a', `--prepared-trees=${PREP}`, ...bad], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 2, `${bad}: exit ${r.status}`); assert.match(r.stderr, /must be finite seconds > 0/);
+    assert.ok(!fs.existsSync(out), `${bad}: --out was created`);
+  }
+  const r = run('valid', 'a', ['--total=600', '--per-test=60']);
+  assert.strictEqual(r.code, 0, r.out); assert.strictEqual(r.res.totalS, 600); assert.strictEqual(r.res.perTestS, 60);
+  assert.strictEqual(r.res.trees.cand.tests.a.status, 'PASS');
+});
+check('--tests=uop-only still archives every default test plus the test-to-test require closure (static, git only)', () => {
+  const r = spawnSync(process.execPath, [RUNNER, '--list-archive', '--tests=uop-only'], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const files = r.stdout.trim().split('\n');
+  for (const t of ['uop-only', 'uop', 'uop-live', 'pm-timer-vector', 'live', 'arena-recycle']) assert.ok(files.includes(`test/test-toyvm-${t}.js`), `missing ${t}`);
+  assert.strictEqual(new Set(files).size, files.length);
+  assert.strictEqual(files.length, 15);
+});
 check('refuses a non-empty --out', () => {
   const out = path.join(ROOT, 'out-used'); write(path.join(out, 'x'), '1');
   assert.strictEqual(spawnSync(process.execPath, [RUNNER, `--out=${out}`, '--plan=stack', `--prepared-trees=${PREP}`], { encoding: 'utf8' }).status, 2);

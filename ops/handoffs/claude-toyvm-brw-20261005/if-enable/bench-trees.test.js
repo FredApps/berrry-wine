@@ -117,6 +117,19 @@ check('spawn error: SPAWN-ERROR recorded, program INCOMPLETE, no ratio, cleanup'
   assert.strictEqual(p.pairedCandOverStack, undefined);
   assert.deepStrictEqual(r.res.treesRemoved, [true, true]);
 });
+check('invalid bounds/reps/dispatches refused before --out exists; valid 300/60/5 still accepted', () => {
+  for (const bad of [['--total=0'], ['--total=-1'], ['--total=x'], ['--per-run=0'], ['--per-run=Infinity'], ['--reps=0'], ['--reps=2.5'], ['--reps=abc'], ['--dispatches=lots']]) {
+    const out = path.join(ROOT, `out-bad-${bad[0].replace(/[^a-z0-9]/gi, '_')}`);
+    const r = spawnSync(process.execPath, [DRIVER, `--out=${out}`, `--progs=${prog('ok.com')}`, `--prepared-trees=${PREP}`, ...bad], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 2, `${bad}: exit ${r.status}`); assert.match(r.stderr, /^refusing: --total\/--per-run/);
+    assert.ok(!fs.existsSync(out), `${bad}: --out was created`);
+  }
+  const out = path.join(ROOT, 'out-valid');
+  const r = spawnSync(process.execPath, [DRIVER, `--out=${out}`, `--progs=${prog('ok.com')}`, `--prepared-trees=${PREP}`, '--total=300', '--per-run=60', '--reps=5', '--dispatches=1m'],
+    { env: { ...process.env, FX_COUNTER: path.join(ROOT, 'counter-valid'), FX_PIDFILE: path.join(ROOT, 'pid-valid') }, encoding: 'utf8', timeout: 90000 });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8')).programs[prog('ok.com')].status, 'COMPARABLE');
+});
 check('refuses a non-empty --out', () => {
   const out = path.join(ROOT, 'out-used'); write(path.join(out, 'x'), '1');
   const r = spawnSync(process.execPath, [DRIVER, `--out=${out}`, `--progs=${prog('ok.com')}`, `--prepared-trees=${PREP}`], { encoding: 'utf8' });

@@ -57,6 +57,19 @@ const CAND = arg('candidate'), CAND_SHA = arg('candidate-sha'), PREP = arg('prep
 // Test hook: the executable the TESTS run under (default this Node). A path
 // that does not exist exercises the SPAWN-ERROR path.
 const TEST_NODE = arg('node', process.execPath);
+// Bounds must be finite and positive, checked before --out or any child exists.
+const okBound = (ms) => Number.isFinite(ms) && ms > 0;
+if (!okBound(TOTAL_MS) || !okBound(PER_MS)) {
+  console.error(`refusing: --total and --per-test must be finite seconds > 0 (got ${arg('total', 300)}, ${arg('per-test', 60)})`);
+  process.exit(2);
+}
+// --list-archive: print the test files a run would extract (all defaults +
+// selection, closed over test-to-test requires) and exit. Static: git only;
+// no tree, no output directory, no child.
+if (argv.includes('--list-archive')) {
+  console.log(testClosure([...new Set([...DEFAULT_TESTS, ...TESTS])]).map((t) => `test/test-toyvm-${t}.js`).join('\n'));
+  process.exit(0);
+}
 if (!OUT || PLAN.some((t) => !['stack', 'head', 'cand'].includes(t)) || TESTS.some((t) => !/^[a-z0-9-]+$/.test(t))
   || (!PREP && PLAN.includes('cand') && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
   console.error('usage: node run-toyvm-tests.js --out=<new dir> --plan=cand,stack [--total=300] [--per-test=60] [--tests=a,b] --candidate=<diff> --candidate-sha=<64 hex>');
@@ -81,6 +94,20 @@ function finish(code) {
 }
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => { result.signal = s; finish(130); });
 const left = () => TOTAL_MS - (Date.now() - t0);
+
+// The transitive closure of test-to-test requires (`require('./test-toyvm-X')`)
+// at BASE, starting from `names`. Static: reads the files with `git show`.
+function testClosure(names) {
+  const seen = new Set(), queue = [...names];
+  while (queue.length) {
+    const t = queue.shift();
+    if (seen.has(t)) continue;
+    seen.add(t);
+    const src = execFileSync('git', ['-C', R, 'show', `${BASE}:test/test-toyvm-${t}.js`], { encoding: 'utf8', maxBuffer: 1 << 26 });
+    for (const m of src.matchAll(/require\(\s*['"]\.\/test-toyvm-([a-z0-9-]+?)(?:\.js)?['"]\s*\)/g)) queue.push(m[1]);
+  }
+  return [...seen];
+}
 
 // One child in its own process group. When the direct child CLOSES -- whether
 // it finished, failed, or was killed -- its whole group is SIGKILLed too: a
@@ -136,7 +163,12 @@ function run(name, cmd, args, cwd, capMs) {
     if (b.status !== 'PASS') { write(); continue; }
     tr.pins = JSON.parse(fs.readFileSync(path.join(OUT, `build-${tree}.txt`), 'utf8').trim().split('\n').pop());
     // The tests, from the base commit, into <tree>/test/.
-    const files = TESTS.map((t) => `test/test-toyvm-${t}.js`);
+    // ALWAYS the whole default set plus whatever was selected, closed over
+    // test-to-test requires: a subset replay (--tests=uop-only) must still find
+    // the test files it loads (uop-only requires ./test-toyvm-uop and
+    // ./test-toyvm-uop-live; uop-live requires ./test-toyvm-uop at base).
+    const files = testClosure([...new Set([...DEFAULT_TESTS, ...TESTS])]).map((t) => `test/test-toyvm-${t}.js`);
+    result.archivedTests = files;
     const tar = execFileSync('git', ['-C', R, 'archive', BASE, ...files], { maxBuffer: 1 << 28 });
     if (spawnSync('tar', ['-x', '-C', dir], { input: tar }).status !== 0) { tr.error = 'test extraction failed'; write(); continue; }
     for (const t of TESTS) {
