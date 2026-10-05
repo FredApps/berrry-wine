@@ -259,6 +259,45 @@ check('P5 aborts on a differing candidate frame', () => {
   assert.strictEqual(r.code, 9, r.out); assert.match(r.journal, /frame f00d vs beef/);
 });
 
+// --- diagnostic tail (P5 + P6 after a FAILED stage 2) --------------------------
+// Trees with tool files and the stub brw-bisect.js in place BEFORE the real
+// checkpoint phase pins them, so the diagnostic tail sees an unchanged closure.
+function diagTree(W, brwOpts) {
+  programs(W);
+  for (const tr of ['base', 'cand']) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) write(path.join(W, tr, 'tools/toyvm', fn + '.js'), `// ${tr} ${fn}\n`);
+  brwTree(W, brwOpts);
+  const cp = plan('checkpoint', W);
+  assert.strictEqual(cp.code, 0, cp.out);
+}
+check('diagtail refuses without a stage1 checkpoint (and is capped at 1200 s)', () => {
+  const W = workdir('diag-nocp'); programs(W);
+  const r = plan('diagtail', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /diagtail needs a passed stage1/);
+  assert.match(r.journal, /SLOT\] diagtail: \d+s this invocation \(cap 1200s/);
+});
+check('diagtail refuses when a tree file changed after the checkpoint', () => {
+  const W = workdir('diag-changed'); diagTree(W);
+  write(path.join(W, 'cand/scratch/o/toyvm-brw/brw-bisect.js'), '// edited\n');
+  const r = plan('diagtail', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /diagtail: tree files changed since stage1/);
+});
+check('diagtail runs P5+P6, exits 20 (never 0), and never reports a stage pass', () => {
+  const W = workdir('diag-ok'); diagTree(W);
+  const r = plan('diagtail', W);
+  assert.strictEqual(r.code, 20, r.out);
+  assert.match(r.journal, /\[DIAG\] diagnostic continuation .* stage 2 P4 FAILED \(retained, not rerun\); this is NOT a stage pass/);
+  assert.match(r.journal, /\[P5\] BRW parity on cand/);
+  assert.match(r.journal, /\[DIAG\] P5 and P6 complete; stage 2 remains FAILED at P4; NOT a full-stage pass/);
+  assert.ok(!/\[DONE\]|both stages complete/.test(r.journal), 'diagtail must not print a stage-complete line');
+  const rec = JSON.parse(fs.readFileSync(path.join(W, 'out/diagtail.json'), 'utf8'));
+  assert.strictEqual(rec.fullStagePass, false); assert.match(rec.p4, /FAILED/);
+});
+check('diagtail keeps the P5 parity failure code (9), not 20', () => {
+  const W = workdir('diag-p5fail'); diagTree(W, { candSepcFrame: 'beef' });
+  const r = plan('diagtail', W);
+  assert.strictEqual(r.code, 9, r.out); assert.ok(!fs.existsSync(path.join(W, 'out/diagtail.json')));
+});
+
 // --- process hygiene ---------------------------------------------------------
 // A stub that starts a grandchild which records its pid and sleeps.
 const spawner = (pidFile, sleepMs, rc = 0, delayMs = 0) => `const { spawn } = require('child_process');\n`

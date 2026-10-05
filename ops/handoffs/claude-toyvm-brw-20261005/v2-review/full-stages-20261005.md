@@ -50,3 +50,24 @@ changed in any way (a same-count substitution included).
 Exit codes: 0 pass, 2 child/prep failure, 3 tests, 4 sweep, 5 arms, 6 control, 7 deadline,
 8 candidate, 9 BRW parity, 11 INCOMPLETE coverage, 12 coverage integrity, 13 stage checkpoint,
 130 signalled. Every abort kills all live child process groups first.
+
+## Diagnostic continuation after the FAILED stage 2 (prepared 2026-10-05 ~16:25Z; NOT run)
+
+Stage 2 attempt 2 FAILED its P4 gate (820886d4); the P4 attribution (8f1985c4) shows the four moves
+are dispatched-only, from fix J (ACIDRAIN, NEWSBOX3, BRIAN) and the SMC fix (COLORS). That failure
+stands. `diagtail` is a diagnosis tool, not a pass:
+- it verifies the unchanged stage-1 checkpoint (exit 13 otherwise), then runs ONLY P5 (BRW 500,918,116
+  candidate parity gate) and P6 (the rubric for moved frames); P3 and P4 are not rerun;
+- every journal line is tagged DIAG and states that stage 2 remains FAILED at P4; it writes
+  out/diagtail.json with `fullStagePass: false`; it never prints a stage-complete line;
+- it NEVER exits 0: exit 20 means "P5 and P6 complete, diagnostic only"; a P5 parity failure keeps
+  exit 9;
+- the default cap is 1200 s for this invocation (INVOCATION_S), inside the shared 5700 s account
+  (1388 s spent so far).
+
+Runner corpus-plan.js sha256 3ec295c173f15232e40118da2bf607bb5b555244f5a4ed3e96edbe8d064f8e88; corpus-plan.test.js daab23c73e932494c11461cf452ca6e17b40eb8e26c9d81408837864ac4ef48b (45/45, incl. checkpoint refusal, changed
+tree refusal, exit 20 with no pass claim, and a P5 failure keeping exit 9).
+
+    W=/tmp/claude-1000/-home-user-wine-assembly/1863d2b5-bc58-4c0b-9c15-00fc951f0256/scratchpad/full-W SLOT_S=5700 JOBS=3 CAND=stack \
+    PATCHES="/home/user/wine-assembly/scratch/claude-toyvm-jmpsyn-j-20261005/v2-v3-j-combined.patch:54de1b1368d0aeefc39916b4af2f506036d079af7f2504d5424c00be4d3e6f82,/home/user/wine-assembly/scratch/claude-toyvm-jmpsyn-j-20261005/v4-delta-on-combined.patch:4b00d26def9852864b62b93bbb513e4328500765120c7b0b9cf86ad83210949b,/home/user/wine-assembly/scratch/claude-toyvm-jmpsyn-j-20261005/smc-pure-forward-fix.patch:b3371e2185dafad8399bfec7250805b1a9b9960e0791f7c063d17f6ddfd3c612" \
+    node /home/user/wine-assembly/scratch/claude-toyvm-brw-v2-review-20261005/corpus-plan.js diagtail
