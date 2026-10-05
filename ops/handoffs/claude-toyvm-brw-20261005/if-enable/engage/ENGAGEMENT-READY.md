@@ -1,6 +1,6 @@
 # IF-enable candidate: engagement gate, staged, NOT run
 
-Prepared 2026-10-05 ~21:10Z, source-only. It runs only on an explicit root grant, with a fresh board CLAIM / SESSION / RELEASE.
+Prepared 2026-10-05T21:02:24Z (commit `eeae1755`); revised 2026-10-05T21:06Z for the supervisor hardening of `run-fixture.js` asked by root's source review. Source-only. It runs only on an explicit root grant, with a fresh board CLAIM / SESSION / RELEASE.
 
 **Why this gate is next:**
 - Correctness is complete for the 15 default tests: all PASS in both trees. See main `e6b09f57` + `2eb59bc6` (combined run) and `a1bb5034` + `3a51afa3` (replay).
@@ -13,7 +13,8 @@ Prepared 2026-10-05 ~21:10Z, source-only. It runs only on an explicit root grant
 
 | file | sha256 | relation |
 |---|---|---|
-| `run-fixture.js` | `d86f384c17ef99d6f1809a344ee293e845ab4268eefc4f814e7857741c9b967b` | unchanged from the coverage2 run |
+| `run-fixture.js` | `7b2d6356c4b13fac7796ef11a9a29a224d1cbf7c136ede76541fa5380f91af3e` | coverage2's `d86f384c` + supervisor hardening (below) |
+| `run-fixture.test.js` | `957e8ad8ff763c0d44abad5bfda4cfce2b8c29d9a9412fc0046b41af1f926d37` | wrapper tests, no emulator (new) |
 | `build-tree.js` | `b2d24038e2d632923dc108614bdd5f4b6960b1c51a100c50c0feddfae95d47ad` | unchanged; byte-identical to main's copy |
 | `impl-draft/candidate-v2.diff` | `ee8265ba3302fa10c439e1b6e7328fd92b41878ed95e6a54df9a99b65f5f8ba4` | unchanged candidate |
 | `test-toyvm-irq-if-enable.js` | `8e3d89cb5a89046f2a20db18d62adefd8ecbaf6b28ae325e15a8fcf124960afa` | coverage2 fixture `e19398b3` + the changes below |
@@ -34,6 +35,27 @@ The trees are base `2683a6e3` + the pinned stack (v2v3j `54de1b13`, v4 `4b00d26d
    - A new assertion refuses a program whose end would reach 0x400.
 5. **Engagement parsing and tally:** the region and foldStats arms report executed evidence. After the cases, `ENGAGEMENT <arm>: installed in a/b [...]; executed evidence in c/b [...]` is printed per arm.
    - It is reported, never failed: the exit code remains correctness only.
+
+## Wrapper hardening (`run-fixture.js`, root review)
+
+The same semantics as the reviewed `run-toyvm-tests.js` / `bench-trees.js`:
+- `--total` must be finite seconds > 0 and `--plan` non-empty. Both are checked before `--out` exists or any child starts; otherwise exit 2.
+- A spawn failure is recorded as `spawnError` and classified HARNESS-FAIL. It no longer leaves the step hanging with no listener.
+- When a child closes, its whole process group is SIGKILLed, and `leftoverGroup` records whether anything was still there. An early-exiting child can no longer leave a live grandchild, and the child's own exit/status is kept.
+- Each step settles exactly once.
+- Test hook: `--node=<exe>`.
+
+**Classification is unchanged:** PASS / ARCH-FAIL / HARNESS-FAIL from the test's exit code and its `FAIL` lines. The fixture's `ENGAGEMENT …` tally lines are observation only, and they never make a step pass or fail.
+
+**`run-fixture.test.js`:** 6/6, with no emulator. The real wrapper runs beside a fake `build-tree.js` and fake fixture:
+- PASS / ARCH-FAIL with ENGAGEMENT lines that must not count as a verdict;
+- an early exit leaving a live grandchild: status kept, group reaped, grandchild dead;
+- a spawn error: `spawnError` ENOENT, HARNESS-FAIL, no tree left;
+- the total bound killing a hung test and its grandchild;
+- invalid `--total` (0, -1, abc, Infinity, NaN) and an empty `--plan` refused before `--out`, while a valid `--total=300` is accepted;
+- a non-empty `--out` refused.
+
+**Against the unhardened `d86f384c`:** the same tests give 2/6. Its early-exit run left both grandchildren alive; they were found afterwards and killed. Its spawn-error case fails because it has no `--node` hook, so that case alone does not prove the old behaviour.
 
 ## Static verification done (no emulator)
 
