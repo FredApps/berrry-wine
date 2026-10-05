@@ -538,7 +538,8 @@
         (return)))
     ;; Open via host
     (local.set $handle (call $host_wave_out_open
-      (local.get $rate) (local.get $ch) (local.get $bits) (local.get $cbType)))
+      (local.get $rate) (local.get $ch) (local.get $bits) (local.get $cbType)
+      (local.get $arg3) (local.get $arg4)))
     ;; Store callback info in WAVE_OUT_SHARED (cross-thread accessible)
     ;; +0: handle, +4: callback, +8: instance, +12: cb_type
     (global.set $wave_out_handle (local.get $handle))

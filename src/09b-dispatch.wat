@@ -1398,6 +1398,7 @@
         ;; returns from the callback and immediately enters a deeper call.
         (global.set $mm_timer_in_cb (i32.const 0))
         (call $restore_caller_regs)
+        (call $wave_callback_restore_wait)
         (if (global.get $mm_timer_resume_yield)
           (then
             (global.set $yield_reason (global.get $mm_timer_resume_yield))
