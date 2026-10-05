@@ -1,6 +1,6 @@
 # Dredmor settings-path API repair
 
-Owner: corpus_categories. Isolated source rebased to c12a57a65709d15a94cc65cd95f1d16c83550197, preserving all58 newly integrated DirectX7 API IDs. No shared production edits. Current status: private real-dispatch regression PASS40, exact old-dispatch negative control reaches the missing-API trap, full private production gates PASS. No game rerun after this change yet.
+Owner: corpus_categories. Isolated source rebased to c12a57a65709d15a94cc65cd95f1d16c83550197, preserving all58 newly integrated DirectX7 API IDs. No shared production edits. Current status: private real-dispatch regression PASS40, exact old-dispatch negative control reaches the missing-API trap, full private production gates PASS. Ordinary private runtime now reaches the launcher and main menu with successful lazy range reads; gameplay remains unqualified.
 
 The immutable run `scratch/runs/20261005-dredmor-lazy-startup-pathappendw` reaches an unimplemented PathAppendW at1128ms. EXE calls SHGetFolderPathW(CSIDL_PERSONAL), PathAppendW with `Gaslamp Games\\Dungeons of Dredmor`, PathFileExistsW, then SHCreateDirectoryExW only if absent. This is settings-directory setup; zero lazy reads preceded the trap. Clearing it is a prerequisite to testing actual in-game loading behavior, not proof of gameplay.
 
@@ -16,15 +16,25 @@ No new host imports, RPC path, browser changes or shared scratch region. Path AP
 
 ## Tests so far
 
-`node test/test-shell-wide-paths.js`:40 actual generated-dispatch cases PASS on c12a57a6 (session58923 exit0), including six ANSI cases. Checks return values/stack cleanup, Dredmor's exact doubled separator suffix, drive/UNC replacement, dot/parent normalization, Unicode, overlap, MAX_PATH edge, real VFS files/directories, recursive creation, sparse discontiguous pages, relative/invalid/long paths, existing file ancestor, unavailable drive, trailing/forward separators, unsupported security and read-only failure. Static API generation, handler ESP, logical-and, A/W census and test-tier checks pass. The ANSI wrapper and bounded-read refinements passed. Full build first correctly caught a duplicate indexed WORD store; the final shell wrapper reuses the identical existing win16_rect_set helper, which has no mode/rectangle state. This one equivalent delegation change passed the full production build; the focused40-case run immediately preceded it. First private compile detected malformed nesting and failed; corrected source then passed. All process handles released.
+`node test/test-shell-wide-paths.js`:40 actual generated-dispatch cases PASS on c12a57a6 (session58923 exit0), including six ANSI cases. Checks return values/stack cleanup, Dredmor's exact doubled separator suffix, drive/UNC replacement, dot/parent normalization, Unicode, overlap, MAX_PATH edge, real VFS files/directories, recursive creation, sparse discontiguous pages, relative/invalid/long paths, existing file ancestor, unavailable drive, trailing/forward separators, unsupported security and read-only failure. Static API generation, handler ESP, logical-and, A/W census and test-tier checks pass. The ANSI wrapper and bounded-read refinements passed. Full build first correctly caught a duplicate indexed WORD store; the final shell wrapper reuses the identical existing win16_rect_set helper, which has no mode/rectangle state. Final helper-reuse source also passed the focused40-case run (84653 exit0) after the full production build. First private compile detected malformed nesting and failed; corrected source then passed. All process handles released.
 
 Negative control: exact bc6c8f37 before dispatcher reached crash_unimplemented followed by actual WASM unreachable on the first PathAppendW dispatch (55815 expected failure); no compiler/setup failure. Initial control setup hit execFileSync default maxBuffer before source mutation, corrected to8MiB. Candidate dispatch restoration/hash verified. Full private build61897 exit0, all gates PASS; production module SHA256162478613568105d1420d1c63c4aff5bff4bd0f4fe777ce7bb19773c91d5ce41,1,665,053 bytes, layoutd1e6d2a7ebbbc1e3, no test exports. Shared canonical module remainsf40d4ca3382279ff9b826188573f8acd9272eaa2dc5024dcbb69aecc35b49063.
 
-Next: root source review, then a separately granted ordinary Dredmor route with corrected binaries alias. Preserve original runtime result and report actual lazy GETs/wait/retry observations only if reached.
+Next: parent integration validation and a separately granted streamlined New Game continuation. Preserve both immutable runtime results and their actual source identities.
 
 ## Disk receipt
 
 Removed only redownloadable beta7z and retail DAT/blob sources after verifying every extracted file SHA/length plus source SHA/length.12,842 extracted files remain unchanged;464,848,325 source-cache bytes removed. Original source inventories remain in each `.candidate-source.json`; exact deletion receipt is `scratch/dredmor-lazy-20261005/source-cache-retirement.json`. The old clean COMI timer and phase1 worktrees were retired; published commits and immutable run evidence remain.
+
+## Ordinary runtime after repair
+
+Private ee432681/module16247861 session97916 closed browser/server with errors[] at2026-10-05T11:06:52.125Z. Exit2 was the predeclared180second guard, not a guest failure. Actual registered release reached the configuration launcher, responded to resolution selection1024x768 and Start Game, and rendered its main menu. New Game click occurred176733ms; no subsequent setup/gameplay image before the guard.
+
+Immutable run: `scratch/runs/20261005-dredmor-lazy-main-menu`,32 hashed artifacts,97 served identities checked.6,248 lazy mounts;1,437 successful206 range requests to1,306 distinct lazy files;16,918,607 lazy server-body bytes;21 distinct required companion URLs; zero game HEADs and zero game HTTP errors. Total game traffic27,589,854 server-body bytes. These are server writes, not independent client consumption. Native msvcrt fallback now returned200 through the corrected alias. Preserved browser abort records include split native fetch cancellation; no resource HTTP error for game paths. Optional build-info/favicon/app-icon404s remain recorded.
+
+Successful on-demand reads are now demonstrated in the real game. Loading/Retry/Quit UI was not visibly observed, and no failed lazy read was induced; error/retry UX remains supported by focused tests, not newly runtime-qualified. No gameplay, FPS or audio claim. The configuration screenshot shows SFX mute checked during dropdown interaction. Root separately reviewed the main-menu screenshot.
+
+The run uses c12-based API IDs4085–4087. Parent integration later regenerated atop the laptop_mbsstr addition; those IDs are different and must not be substituted into this immutable run. Next ordinary progression plan: `scratch/dredmor-lazy-20261005/route-attempt3.json`; batch known scroll inputs with normal800ms settles and review only actual transition gates, so configuration does not consume most of the180second allowance. Root queues Hype then Jig before this follow-up.
 
 ## Combined-main integration validation
 
