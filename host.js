@@ -3430,6 +3430,29 @@ class WineAssembly {
     }
   }
 
+  // Background is an explicit prefix warmup, never an eager whole-tree load.
+  // It starts after run(), is bounded to eight 64KiB prefixes, and its errors
+  // remain retryable through the ordinary parked-read UI.
+  startBackgroundAssets() {
+    if (this._backgroundAssetsPromise) return this._backgroundAssetsPromise;
+    const jobs = (this._backgroundAssetJobs || []).splice(0, 8);
+    const signal = this._manifestAssetAbort && this._manifestAssetAbort.signal;
+    const state = this.backgroundAssets = { total: jobs.length, deferred: this._backgroundAssetDeferred || 0, completed: 0, failed: [], cancelled: false };
+    this._backgroundAssetsPromise = (async () => {
+      for (const job of jobs) {
+        if (signal && signal.aborted) { state.cancelled = true; break; }
+        try { await job.cache.fill(0, Math.min(65536, job.cache.size)); state.completed++; }
+        catch (error) {
+          if (signal && signal.aborted) { state.cancelled = true; break; }
+          state.failed.push({ url: job.url, reason: String(error && error.message || error) });
+          console.warn('[files] background prefix failed; guest read can retry: ' + job.url);
+        }
+      }
+      return state;
+    })();
+    return this._backgroundAssetsPromise;
+  }
+
   async loadFiles(urls, options = {}) {
     const transferOpts = options.transfer || {};
     const checkCancelled = () => WineAssembly._throwIfAssetAborted(transferOpts.signal);
@@ -3441,6 +3464,16 @@ class WineAssembly {
     const failures = [];
     const assetLoads = new Map();
     const total = urls.length;
+    const declarations = new Map();
+    for (const item of urls) {
+      if (!item || typeof item !== 'object' || item.loadMode === undefined) continue;
+      if (!['required', 'lazy', 'background'].includes(item.loadMode)) throw new Error('Invalid asset loadMode: ' + item.loadMode);
+      if (!Number.isSafeInteger(item.size) || item.size < 0) throw new Error('Invalid manifest size: ' + item.url);
+      if (item.loadMode !== 'required' && (item.decodeImage || item.preloadRanges)) throw new Error('Lazy manifest cannot require synchronous image decode or preload ranges: ' + item.url);
+      const identity = item.loadMode + ':' + item.size;
+      if (declarations.has(item.url) && declarations.get(item.url) !== identity) throw new Error('Conflicting manifest declarations: ' + item.url);
+      declarations.set(item.url, identity);
+    }
     // The launch window's listener and Cancel, passed by the launch that owns
     // this file list (lib/browser-shell.js); internal lists such as the boot
     // fonts are not the app's download and are not reported.
@@ -3478,14 +3511,18 @@ class WineAssembly {
         // Keep large read-only archives on the server. The VFS parks a guest
         // read on a cache miss and fetches only the needed HTTP byte range.
         // Duplicate URL aliases share one load and one cache.
-        const useRange = !!(item && item.httpRange && typeof window !== 'undefined' &&
-          window.byteProvider && vfs.setProviderFile);
+        const sizedRange = !!(item && ['lazy', 'background'].includes(item.loadMode));
+        const rangeAvailable = typeof window !== 'undefined' && window.byteProvider && vfs.setProviderFile;
+        if (sizedRange && !rangeAvailable) throw new Error('Manifest requires range-capable VFS: ' + url);
+        const useRange = !!(rangeAvailable && (sizedRange || (item && item.httpRange && item.loadMode !== 'required')));
         const key = `${useRange ? 'range' : 'bytes'}:${url}`;
         if (!assetLoads.has(key)) {
           assetLoads.set(key, (async () => {
             if (useRange) {
               try {
-                const provider = await WineAssembly._openRangeProvider(url, {
+                if (sizedRange && (!this._manifestAssetAbort || this._manifestAssetAbort.signal.aborted)) this._manifestAssetAbort = new AbortController();
+                const lifetimeSignal = sizedRange ? this._manifestAssetAbort.signal : null;
+                const rangeOptions = {
                   // Only launch-time discovery belongs to this AbortSignal.
                   // The provider retains this adapter for later gameplay GETs;
                   // those must remain usable after the launch controller ends.
@@ -3494,11 +3531,21 @@ class WineAssembly {
                       checkCancelled();
                       return fetch(source, { ...init, signal: transferOpts.signal });
                     }
-                    return fetch(source, init);
+                    return fetch(source, sizedRange ? { ...init, signal: lifetimeSignal } : init);
                   },
-                });
+                };
+                // A stat-verified manifest already knows the length. Mount it
+                // synchronously without a HEAD for every asset in the tree.
+                const provider = sizedRange
+                  ? new window.byteProvider.HttpRangeProvider(url, item.size, rangeOptions)
+                  : await WineAssembly._openRangeProvider(url, rangeOptions);
                 checkCancelled();
-                const cache = window.byteProvider.cached(provider);
+                const cache = window.byteProvider.cached(provider, sizedRange ? {chunkSize:65536, readAhead:0} : undefined);
+                if (item.loadMode === 'background') {
+                  if (!this._backgroundAssetJobs) this._backgroundAssetJobs = [];
+                  if (this._backgroundAssetJobs.length < 8) this._backgroundAssetJobs.push({url, cache});
+                  else this._backgroundAssetDeferred = (this._backgroundAssetDeferred || 0) + 1;
+                }
                 // Game data on the server: a parked read of it gets the
                 // in-game wait window and Retry (see _fillParkedRead).
                 cache.gameData = true;
@@ -3538,6 +3585,7 @@ class WineAssembly {
                 return { provider: cache };
               } catch (error) {
                 checkCancelled();
+                if (sizedRange) throw error; // Never silently turn lazy metadata into eager downloads.
                 // A static host without Range support keeps the eager path.
                 if (!/does not advertise Accept-Ranges|HEAD .* → (?:404|405|501)/.test(
                   String(error && error.message))) throw error;
@@ -3593,7 +3641,7 @@ class WineAssembly {
           console.log(`[files] optional ${url} not loaded: ${error && error.message || error}`);
         } else {
           failed++;
-          failures.push({ url, reason: String(error && error.message || error),
+          failures.push({ url, required: item && item.loadMode === 'required', reason: String(error && error.message || error),
             attempts: (error && error.attempts) || 1, error });
         }
       } finally {
@@ -3615,7 +3663,7 @@ class WineAssembly {
     checkCancelled();
     const rejected = settled.find(result => result.status === 'rejected');
     if (rejected) throw rejected.reason;
-    if (failed && options.required) {
+    if (failed && (options.required || failures.some(failure => failure.required))) {
       const details = failures.slice(0, 5).map(({ url, reason }) =>
         `${url}: ${reason}`).join('; ');
       const more = failures.length > 5 ? `; ${failures.length - 5} more` : '';
@@ -4103,6 +4151,8 @@ class WineAssembly {
   // repaint had the opposite fault: a crash left the dead app's last frame on
   // screen. Repainting last, once, fixes both.
   stop(options = {}) {
+    if (this._manifestAssetAbort) this._manifestAssetAbort.abort();
+    if (this._backgroundAssetJobs) this._backgroundAssetJobs.length = 0;
     // Put the final frame on the canvas before stepping ends, then drop the
     // pending rAF: a scheduled frame holds this host alive, and nothing will
     // present for a stopped host again. A dirty DirectDraw surface counts even

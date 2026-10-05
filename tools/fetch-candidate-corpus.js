@@ -438,6 +438,13 @@ function writeBrowserManifest(candidate, destination) {
   assertSafeRelative(browser.exe, `${candidate.id}.browser.exe`);
   if (browser.cue) assertSafeRelative(browser.cue, `${candidate.id}.browser.cue`);
 
+  const modes = ['required', 'lazy', 'background'];
+  if (browser.defaultLoadMode !== undefined && !modes.includes(browser.defaultLoadMode)) throw new Error('Invalid browser.defaultLoadMode');
+  const fileModes = browser.fileLoadModes || {};
+  for (const [name, mode] of Object.entries(fileModes)) {
+    assertSafeRelative(name, 'browser.fileLoadModes');
+    if (!modes.includes(mode)) throw new Error('Invalid browser.fileLoadModes value: ' + name);
+  }
   const fileRoot = path.join(destination, browser.fileRoot);
   const executable = path.normalize(browser.exe);
   if (!fs.statSync(fileRoot).isDirectory()) {
@@ -474,7 +481,15 @@ function writeBrowserManifest(candidate, destination) {
       for (const key of ['creationTime', 'lastAccessTime', 'lastWriteTime']) {
         if (metadata[key] !== undefined) times[key] = metadata[key];
       }
-      return onDisc ? { url, vfsPaths: [vfsPath, onDisc], ...times } : { url, vfsPath, ...times };
+      const size = fs.statSync(path.join(fileRoot, relative)).size;
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size: ' + url);
+      // Native modules and fonts can be read during synchronous initialization.
+      // They stay required even when the asset tree opts into on-demand data.
+      const synchronous = /\.(?:exe|dll|ocx|vbx|drv|ttf|ttc|fon)$/i.test(relative);
+      const requestedMode = fileModes[key] || browser.defaultLoadMode;
+      const loadMode = requestedMode === undefined ? undefined : synchronous ? 'required' : requestedMode;
+      const loading = {size, ...(loadMode === undefined ? {} : {loadMode})};
+      return onDisc ? { url, vfsPaths: [vfsPath, onDisc], ...times, ...loading } : { url, vfsPath, ...times, ...loading };
     }).filter(Boolean);
 
   const trackSizes = {};
