@@ -218,7 +218,8 @@
       "RUMOR.DAT"
      ],
      "collisionCount": 6
-    }
+    },
+    "evidence": []
    },
    "load": {
     "policy": "preload-all",
@@ -346,7 +347,8 @@
      "filesInSubdirs": 173,
      "collisions": [],
      "collisionCount": 0
-    }
+    },
+    "evidence": []
    },
    "load": {
     "policy": "preload-all",
@@ -430,7 +432,7 @@
    ],
    "toyvm": {
     "status": "untested",
-    "verdict": "No static blocker found, but it has never been run on ToyVM. Untested; not a claim that it works.",
+    "verdict": "No static blocker; furthest recorded ToyVM run: title screen (scratch/runs/20261005T222004Z-toyvm-ultima4-cli-probe-a2). Gameplay untested; not a claim that it works.",
     "blockers": [],
     "cautions": [
      {
@@ -445,7 +447,15 @@
      "filesInSubdirs": 0,
      "collisions": [],
      "collisionCount": 0
-    }
+    },
+    "evidence": [
+     {
+      "run": "scratch/runs/20261005T222004Z-toyvm-ultima4-cli-probe-a2",
+      "at": "2026-10-05T22:20:04Z",
+      "reached": "title-screen",
+      "summary": "CLI probe (run-dos.js, origin/main 9df4dc30): ULTIMA.COM started the title program, EGA 320x200, rendered the correct title screen; still running and polling the keyboard when the 200M-dispatch budget ended. No keys sent. One unhandled DOS call: INT 21h AH=2Ah (get date)."
+     }
+    ]
    },
    "load": {
     "policy": "preload-all",
@@ -617,7 +627,8 @@
       "SWHELP.EXE"
      ],
      "collisionCount": 18
-    }
+    },
+    "evidence": []
    },
    "load": {
     "policy": "preload-all",
@@ -765,7 +776,8 @@
       "ITALIAN.FXT"
      ],
      "collisionCount": 7
-    }
+    },
+    "evidence": []
    },
    "load": {
     "policy": "preload-all",

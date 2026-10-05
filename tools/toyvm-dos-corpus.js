@@ -122,6 +122,11 @@ function build(only) {
     row.payload = { present: true, files: files.length, bytes, excluded: Object.fromEntries(Object.entries(skipped).sort()), largest: [...files].sort((a, b) => b.size - a.size).slice(0, 3).map((f) => ({ path: f.path, size: f.size })) };
     row.programs = [scans.entry, ...scans.others].filter(Boolean).map((s) => ({ name: s.name, bytes: s.bytes, mode: s.mode, extender: s.extender, packers: s.packers, newHeader: s.newHeader ? s.newHeader.signature : null }));
     row.toyvm = assess(t, files, scans);
+    // Recorded ToyVM runs (titles.json toyvmEvidence). They can say how far a
+    // run got; the status stays 'untested' for gameplay until a reviewed
+    // gameplay scene exists, and a static blocker is never cleared by them.
+    row.toyvm.evidence = (t.toyvmEvidence || []).map((e) => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary }));
+    if (row.toyvm.evidence.length && row.toyvm.status === 'untested') row.toyvm.verdict = `No static blocker; furthest recorded ToyVM run: ${row.toyvm.evidence.map((e) => e.reached.replace(/-/g, ' ')).join(', ')} (${row.toyvm.evidence.at(-1).run}). Gameplay untested; not a claim that it works.`;
     row.load = { policy: 'preload-all', preloadFiles: files.length, preloadBytes: bytes, lazyFiles: 0, reason: TOYVM_FACTS['sync-reads'].text };
     row.fileList = `test/toyvm-dos-corpus/files/${t.id}.json`;
     fileLists[t.id] = { schemaVersion: 1, id: t.id, gameDir: t.gameDir, files };

@@ -78,7 +78,15 @@
         "cdrom": false,
         "midiMpu401": false
       },
-      "notes": "docs/re-notes/ultima4-gog.md"
+      "notes": "docs/re-notes/ultima4-gog.md",
+      "toyvmEvidence": [
+        {
+          "run": "scratch/runs/20261005T222004Z-toyvm-ultima4-cli-probe-a2",
+          "at": "2026-10-05T22:20:04Z",
+          "reached": "title-screen",
+          "summary": "CLI probe (run-dos.js, origin/main 9df4dc30): ULTIMA.COM started the title program, EGA 320x200, rendered the correct title screen; still running and polling the keyboard when the 200M-dispatch budget ended. No keys sent. One unhandled DOS call: INT 21h AH=2Ah (get date)."
+        }
+      ]
     },
     {
       "id": "shadow-warrior",

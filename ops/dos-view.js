@@ -17,7 +17,8 @@ function dosToyvmCell(r) {
   const t = r.toyvm, label = t.status === 'blocked' ? 'Blocked on ToyVM' : t.status === 'untested' ? 'Untested on ToyVM' : 'ToyVM: unknown';
   const action = t.launch && dosSafe(t.launch.url, '/toyvm/') ? `<a class="emulator-launch" href="${escape(t.launch.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(t.launch.label + ' — ' + r.title)}">${escape(t.launch.label)} ↗</a>`
     : `<p class="sub">${escape(t.blockers.length ? t.blockers.map((b) => b.text.split('. ')[0]).slice(0, 2).join('; ') + '.' : t.reason)}</p>`;
-  return `<div class="dos-route"><span class="dos-route-name">ToyVM</span>${badge(label, dosToyvmTone[t.status] || '')}${action}</div>`;
+  const got = (t.evidence || []).at(-1);
+  return `<div class="dos-route"><span class="dos-route-name">ToyVM</span>${badge(label, dosToyvmTone[t.status] || '')}${got ? badge('Reached: ' + got.reached.replace(/-/g, ' ') + ' (probe)', '') : ''}${action}</div>`;
 }
 function dosDosboxCell(r) {
   const d = r.dosbox, s = d.status, route = d.routes.find((x) => x.available && dosSafe(x.url, '/emulator/'));
@@ -58,7 +59,7 @@ function dosDetail(id) {
     + `<div class="dos-routes">${dosToyvmCell(r)}${dosDosboxCell(r)}</div>`
     + `<h3>Entry program</h3><p><code>${escape(r.entry.program)}${r.entry.args ? ' ' + escape(r.entry.args) : ''}</code></p><p class="sub">${escape(r.entrySource)}</p>`
     + (r.programs.length ? `<ul>${r.programs.map((x) => `<li><code>${escape(x.name)}</code> · ${escape(x.mode)}${x.extender ? ' · ' + escape(x.extender) : ''}</li>`).join('')}</ul>` : '')
-    + `<h3>ToyVM</h3><p>${escape(r.toyvm.verdict)}</p>${r.toyvm.blockers.length ? `<ul>${dosFactList(r.toyvm.blockers)}</ul>` : ''}${r.toyvm.cautions.length ? `<details><summary>Other limits (${r.toyvm.cautions.length})</summary><ul>${dosFactList(r.toyvm.cautions)}</ul></details>` : ''}`
+    + `<h3>ToyVM</h3><p>${escape(r.toyvm.verdict)}</p>${(r.toyvm.evidence || []).map((e) => `<p class="sub">${escape(when(e.at))} · ${escape(e.summary)} <code>${escape(e.run)}</code>${e.present ? '' : ' (run folder not on this machine)'}</p>`).join('')}${r.toyvm.blockers.length ? `<ul>${dosFactList(r.toyvm.blockers)}</ul>` : ''}${r.toyvm.cautions.length ? `<details><summary>Other limits (${r.toyvm.cautions.length})</summary><ul>${dosFactList(r.toyvm.cautions)}</ul></details>` : ''}`
     + `<h3>Win98 emulator + DOSBox.exe</h3>${s ? `<p>${escape(s.summary)}</p><p class="sub">As of ${escape(when(s.asOf))}${s.stale ? ' · a newer run exists; this summary may be stale' : ''}</p><div class="links">${s.basis.map((b) => b.github ? link(b.github, b.path) : b.source ? link(b.source, b.path) : `<span class="sub">${escape(b.path)}${b.present ? '' : ' (missing)'}</span>`).join('')}</div>` : `<p class="sub">${escape(r.dosbox.reason)}</p>`}`
     + `<h3>Payload</h3><p class="sub">${r.payload.present ? `${r.payload.files} files, ${dosBytes(r.payload.bytes)}, read in place; ${escape(r.load?.policy === 'preload-all' ? 'all downloaded before boot (ToyVM cannot fetch on demand)' : r.load?.policy || '')}.${excluded ? ' GOG wrapper files left out: ' + escape(excluded) + '.' : ''}` : escape(r.payload.reason)}</p><div class="links">${r.fileListGithub ? link(r.fileListGithub, 'File manifest (size + sha256)') : ''}</div>`
     + `<h3>Provenance</h3><p class="sub">${p.packages.map((x) => `${escape(x.url)}${x.sha1 ? ' · sha1 ' + escape(x.sha1) : ''}`).join('<br>') || 'No package recorded.'}</p><p class="sub">${escape(p.license)}</p><div class="links">${p.sourcePage ? link(p.sourcePage, 'Source page') : ''}${p.github ? link(p.github, p.manifest) : ''}${r.notes?.source ? link(r.notes.source, 'Investigation notes') : ''}${r.notes?.github ? link(r.notes.github, 'Notes on GitHub') : ''}</div>`

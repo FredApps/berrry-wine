@@ -14,7 +14,7 @@ function repo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dos-corpus-'));
   const w = (rel, v) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), typeof v === 'string' ? v : JSON.stringify(v)); };
   w('test/toyvm-dos-corpus/manifest.json', { about: 'about', toyvmFacts: { 'no-dpmi': { text: 'No DPMI host.', cite: 'tools/toyvm/dos.js' } }, titles: [
-    { id: 'u4', title: 'Ultima <IV>', candidateId: 'cand-u4', dosboxAppIds: ['u4_gog'], entry: { program: 'ULTIMA.COM', args: '' }, entrySource: 'conf', payload: { present: true, files: 3, bytes: 3000 }, load: { policy: 'preload-all', preloadBytes: 3000, lazyFiles: 0 }, programs: [{ name: 'ULTIMA.COM', mode: 'real' }], toyvm: { status: 'untested', verdict: 'Untested.', blockers: [], cautions: [] }, fileList: 'test/toyvm-dos-corpus/files/u4.json', notes: 'docs/re-notes/u4.md' },
+    { id: 'u4', title: 'Ultima <IV>', candidateId: 'cand-u4', dosboxAppIds: ['u4_gog'], entry: { program: 'ULTIMA.COM', args: '' }, entrySource: 'conf', payload: { present: true, files: 3, bytes: 3000 }, load: { policy: 'preload-all', preloadBytes: 3000, lazyFiles: 0 }, programs: [{ name: 'ULTIMA.COM', mode: 'real' }], toyvm: { status: 'untested', verdict: 'Untested.', blockers: [], cautions: [], evidence: [{ run: 'scratch/runs/u4probe', at: '2026-10-05T22:20:04Z', reached: 'title-screen', summary: 'Title shown.' }, { run: '/abs/escape', reached: 'x' }] }, fileList: 'test/toyvm-dos-corpus/files/u4.json', notes: 'docs/re-notes/u4.md' },
     { id: 'df', title: 'Daggerfall', candidateId: 'cand-df', dosboxAppIds: ['df_gog'], entry: { program: 'FALL.EXE', args: 'Z.CFG' }, payload: { present: true, files: 9, bytes: 9e8 }, programs: [{ name: 'FALL.EXE', mode: 'protected (DOS extender)', extender: { id: 'causeway', binding: 'bound' } }], toyvm: { status: 'blocked', verdict: 'Not expected to run.', blockers: [{ id: 'extender', text: 'Needs DPMI. More.', facts: ['no-dpmi', 'not-a-fact'] }], cautions: [] } },
     { id: 'sw', title: 'Shadow Warrior', candidateId: 'cand-sw', dosboxAppIds: [], entry: { program: 'Sw.exe' }, payload: { present: true, files: 1, bytes: 1 }, toyvm: { status: 'blocked', verdict: 'No.', blockers: [{ id: 'cdrom', text: 'Needs a CD.', facts: [] }], cautions: [] } },
   ] });
@@ -73,6 +73,11 @@ test('provenance, tasks, screenshots; unsafe screenshot URLs are dropped', async
   assert.equal(u4.notes.source, '/source?path=docs%2Fre-notes%2Fu4.md');
   assert.equal(u4.notes.github, null, 'no GitHub link without a known repository');
 });
+test('ToyVM run evidence is passed through with an existence check; unsafe run paths are dropped', async () => {
+  const u4 = (await buildDosCorpus({ root: repo(), candidates, runs, tasks })).rows[0];
+  assert.deepEqual(u4.toyvm.evidence, [{ run: 'scratch/runs/u4probe', at: '2026-10-05T22:20:04.000Z', reached: 'title-screen', summary: 'Title shown.', present: false }]);
+  assert.equal(u4.toyvm.status, 'untested', 'evidence never changes the status');
+});
 test('a missing corpus manifest is reported, not thrown', async () => {
   const c = await buildDosCorpus({ root: fs.mkdtempSync(path.join(os.tmpdir(), 'dos-empty-')) });
   assert.equal(c.available, false); assert.match(c.reason, /manifest/);
@@ -94,6 +99,7 @@ test('view: filter counts, real launch links only, escaped titles', async () => 
   assert.match(html, /Ultima &lt;IV&gt;/); assert.doesNotMatch(html, /Ultima <IV>/);
   assert.match(html, /Untested on ToyVM/); assert.match(html, /Blocked on ToyVM/);
   assert.match(html, /“Untested” is not a claim that it works/);
+  assert.match(html, /Reached: title screen \(probe\)/);
 });
 test('view: the blocked filter shows only blocked titles', async () => {
   const { html } = await rendered('blocked');

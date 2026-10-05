@@ -72,7 +72,9 @@ async function buildDosCorpus({ root, candidates = [], runs = [], tasks = [], gi
     // present payload, the gateway route to a live session.
     const tv = t.toyvm || {};
     const toyvmLaunchable = t.payload?.present === true && tv.status === 'untested' && !(tv.blockers || []).length;
-    const toyvm = { status: ['blocked', 'untested'].includes(tv.status) ? tv.status : 'unknown', verdict: clip(tv.verdict, 600), blockers: withFacts(tv.blockers), cautions: withFacts(tv.cautions),
+    const evidence = [];
+    for (const e of Array.isArray(tv.evidence) ? tv.evidence : []) { const r = rel(e?.run); if (r) evidence.push({ run: r, at: iso(e.at), reached: clip(e.reached, 40), summary: clip(e.summary, 600), present: await exists(root, r + '/result.json') }); }
+    const toyvm = { status: ['blocked', 'untested'].includes(tv.status) ? tv.status : 'unknown', verdict: clip(tv.verdict, 600), blockers: withFacts(tv.blockers), cautions: withFacts(tv.cautions), evidence,
       launch: toyvmLaunchable ? { url: '/toyvm/?title=' + encodeURIComponent(t.id), label: 'Try in ToyVM (untested)' } : null,
       reason: toyvmLaunchable ? '' : !t.payload?.present ? 'Payload not on this machine.' : 'Blocked by the static assessment; no session offered.' };
 
