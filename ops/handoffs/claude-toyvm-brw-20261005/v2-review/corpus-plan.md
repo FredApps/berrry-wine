@@ -212,3 +212,14 @@ to land**: the doc's own gate is the full-corpus P2.
 3. Add a section to `docs/toyvm-irq-schedule.md`: the before/after tables from `out/`, using the
    doc's "The baselines changed" framing.
 4. Promote `test-toyvm-irq-early-handback` only once it reproduces (review N8).
+
+## Coordinator review, 2026-10-05 12:35 UTC
+
+The hardened JavaScript runner passes its 18 fixture checks. This is harness
+evidence only; no corpus run or runtime patch is promoted. Before scheduling,
+add cleanup of sibling processes on gate failure and descendant processes on
+timeout, enforce candidate BRW interrupt-list equality, and require complete
+corpus coverage. The current `process.exit` abort can leave a concurrent phase
+running, and killing its direct child does not guarantee descendant cleanup.
+The combined `jmp_syn` patch is also still required. Partial comparisons must
+remain explicitly incomplete, even if all compared rows pass.
