@@ -33541,9 +33541,9 @@
     "id": 3962,
     "name": "IVBImageSurface7_Blt",
     "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1132678132,
-    "handler": "VBImage_Blt"
+    "hash": 1132678132
   },
   {
     "id": 3963,
