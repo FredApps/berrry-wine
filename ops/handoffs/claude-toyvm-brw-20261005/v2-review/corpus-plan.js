@@ -15,7 +15,8 @@
 // 9 BRW interrupt-list/frame parity gate, 11 INCOMPLETE corpus coverage (a
 // partial comparison is never a pass, even when every compared row agrees),
 // 12 coverage integrity (a malformed, out-of-domain or duplicate row),
-// 13 stage checkpoint (stage2 without a matching, unchanged stage1),
+// 13 stage checkpoint (stage2/diagtail without a matching, unchanged stage1),
+// 20 diagnostic tail complete -- deliberately NOT 0: it is never a pass,
 // 130 the runner itself was signalled.
 //
 // Process hygiene (root review 116210a7): every child runs in its OWN process
@@ -98,7 +99,7 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
 let deadline = 0, invokedAt = 0, spentBefore = 0, INVOCATION_S = 0;
 const spentFile = () => p('out', 'slot-spent.txt');
 function startSlot(cmd) {
-  INVOCATION_S = Number(env.INVOCATION_S || ({ stage1: 3300, stage2: 2400 })[cmd] || SLOT_S);
+  INVOCATION_S = Number(env.INVOCATION_S || ({ stage1: 3300, stage2: 2400, diagtail: 1200 })[cmd] || SLOT_S);
   spentBefore = Number(read(spentFile()).trim()) || 0;
   invokedAt = Date.now();
   // ...and no single invocation may take more than INVOCATION_S of it: a
@@ -516,26 +517,53 @@ async function stage1() {
   await p1p2();
   await checkpoint();
 }
-async function stage2() {
+// Both stage2 and the diagnostic tail run only on top of an unchanged stage-1
+// checkpoint: same candidate/patches/smoke, every closure file of both trees
+// byte-identical, and the exact programs.txt.
+function verifyCheckpoint(who) {
   let cp;
-  try { cp = JSON.parse(read(p('out', 'stage1.done.json'))); } catch { abort('stage2 needs a passed stage1 (no stage1.done.json)', 13); }
+  try { cp = JSON.parse(read(p('out', 'stage1.done.json'))); } catch { abort(`${who} needs a passed stage1 (no stage1.done.json)`, 13); }
   if (cp.cand !== CAND || JSON.stringify(cp.patches) !== JSON.stringify(STACK) || cp.smoke !== SMOKE) {
-    abort('stage2 candidate/patches/smoke differ from stage1', 13);
+    abort(`${who} candidate/patches/smoke differ from stage1`, 13);
   }
   const now = treeDigest();
-  if (JSON.stringify(now) !== JSON.stringify(cp.trees)) abort('stage2: tree files changed since stage1', 13);
-  if (!fs.existsSync(p('programs.txt')) || sha256(p('programs.txt')) !== cp.programsSha) abort('stage2: program list (programs.txt) changed since stage1', 13);
+  if (JSON.stringify(now) !== JSON.stringify(cp.trees)) abort(`${who}: tree files changed since stage1`, 13);
+  if (!fs.existsSync(p('programs.txt')) || sha256(p('programs.txt')) !== cp.programsSha) abort(`${who}: program list (programs.txt) changed since stage1`, 13);
+  return cp;
+}
+async function stage2() {
+  const cp = verifyCheckpoint('stage2');
   say('STAGE2', `resuming on stage1 checkpoint ${cp.at}; ${spentBefore}s of ${SLOT_S}s already spent`);
   await arms(); await control(); await brw(); await nudge();
   say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}both stages complete, ${spentNow()}s of ${SLOT_S}s spent`);
 }
 
-const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge, stage1, stage2, checkpoint };
+// DIAGNOSTIC continuation after a FAILED stage 2 (root, 2026-10-05 ~16:22Z):
+// stage 2 attempt 2 failed its P4 gate (4 dispatched-only l1 moves, attributed
+// to fix J and the SMC fix by p4-attribution 8f1985c4). This runs ONLY P5 and
+// P6 on the unchanged stage-1 checkpoint, for diagnosis. It does not rerun
+// P3/P4, it does not turn the stage into a pass, and it never exits 0: when P5
+// and P6 complete it exits 20 ("diagnostic complete, NOT a pass"); a P5 parity
+// failure keeps its own exit 9. Capped at 1200 s per invocation by default.
+async function diagtail() {
+  const cp = verifyCheckpoint('diagtail');
+  say('DIAG', `diagnostic continuation on stage1 checkpoint ${cp.at}: P5 + P6 only; stage 2 P4 FAILED (retained, not rerun); this is NOT a stage pass`);
+  await brw();
+  await nudge();
+  const rec = { kind: 'diagnostic-tail', p4: 'FAILED (stage 2 attempt 2, retained)', p3: 'not rerun', p5: 'complete', p6: 'complete',
+    fullStagePass: false, spentS: spentNow(), at: new Date().toISOString() };
+  fs.writeFileSync(p('out', 'diagtail.json'), JSON.stringify(rec, null, 1) + '\n');
+  say('DIAG', `P5 and P6 complete; stage 2 remains FAILED at P4; NOT a full-stage pass; ${spentNow()}s of ${SLOT_S}s spent`);
+  killAll();
+  process.exit(20);
+}
+
+const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge, stage1, stage2, checkpoint, diagtail };
 
 async function main(cmd) {
   if (!W) { console.error('set W to an empty work dir (needs ~90 MB)'); process.exit(2); }
   if (!PHASES[cmd] && cmd !== 'all') {
-    console.error(`usage: W=DIR [CAND=stack PATCHES=file:sha,...|CAND=v2|v3|v3j JMPSYN=patch JMPSYN_SHA=sha] [JOBS=N] node ${path.basename(__filename)} prep|tests|sweep|p1p2|arms|control|brw|nudge|stage1|stage2|all`);
+    console.error(`usage: W=DIR [CAND=stack PATCHES=file:sha,...|CAND=v2|v3|v3j JMPSYN=patch JMPSYN_SHA=sha] [JOBS=N] node ${path.basename(__filename)} prep|tests|sweep|p1p2|arms|control|brw|nudge|stage1|stage2|diagtail|all`);
     process.exit(2);
   }
   // Every phase can run on its own, so every phase needs both directories.
