@@ -25,7 +25,13 @@ sha verified). Invocation: `--plan=cand,stack`, one 300 s bound.
 
 **This FAIL is preserved.** The count threshold was not lowered.
 
-## Why 5 at X: evidence points to an invalid fixture assumption, not a candidate defect
+## Why 5 at X: the count failure is explained by a truncated fixture
+
+**Scope of this conclusion:** it explains the *count* (5 instead of ≥ 7) and nothing more.
+
+- It does **not** exonerate the candidate in general.
+- It says nothing about rounds that never ran.
+- Every correctness and performance gap listed below and in the readiness notes remains open.
 
 The fixture assumed every one of the 8 rounds runs. In `region_coexist` they did not.
 
@@ -38,7 +44,8 @@ The fixture assumed every one of the 8 rounds runs. In `region_coexist` they did
    Other cases show `ifen 8`.
 3. **Delivery count:** 50 deliveries ≈ 5 rounds × (1 at X + about 10 timer IRQs during each
    983k-dispatch `work`, at the 100k interval). The other cases deliver 23 ≈ 8 × (1 + about 2).
-4. **The candidate delivered at X in every round that ran:** 5 rounds, 5 at X. There were no
+4. **In each of the 5 rounds that ran, the delivery came at X:** 5 rounds, 5 at X. That is all this
+   count shows about the candidate. There were no
    deliveries in a shadow, and the sequences were identical across arms.
 5. **The baseline (stack) also delivered 50:** the same truncation, independent of the candidate.
 
