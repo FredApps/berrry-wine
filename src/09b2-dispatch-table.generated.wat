@@ -196,11 +196,6 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
 
-  ;; IVBImageSurface7_DrawText: pop 24, return 0x80004001
-  (func $handle_IVBImageSurface7_DrawText (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
-
   ;; IVBImageSurface7_Flip: pop 16, return 0x80004001
   (func $handle_IVBImageSurface7_Flip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
@@ -19728,7 +19723,7 @@
       (call $handle_IVBImageSurface7_DrawRoundedBox (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3974: IVBImageSurface7_DrawText
-      (call $handle_IVBImageSurface7_DrawText (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_VBImage_DrawText (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3975: IVBImageSurface7_Flip
       (call $handle_IVBImageSurface7_Flip (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

@@ -3,6 +3,11 @@ const assert=require('assert/strict'),fs=require('fs');
 const extraWat=String.raw`
 (func (export "fore_meta") (param $obj i32) (result i32) (call $dx_surf_meta_ptr (call $dx_from_this (local.get $obj))))
 
+(func (export "draw_alloc_dc") (param $h i32) (result i32) (call $gdi_dc_state_entry (local.get $h) (i32.const 1)))
+(func (export "draw_free_dc") (param $h i32) (call $gdi_dc_state_release (local.get $h)))
+
+(func (export "draw_dc_alive") (param $obj i32) (result i32) (call $gdi_dc_state_entry (i32.add (i32.const 0x200000) (call $dx_slot_of (call $dx_from_this (local.get $obj)))) (i32.const 0)))
+
 (func (export "vb_key") (param $obj i32) (result i32) (load.field DxObject misc2 (call $dx_from_this (local.get $obj))))
 (func (export "vb_flags") (param $obj i32) (result i32) (load.field DxObject flags (call $dx_from_this (local.get $obj))))
 ;; Test real shared native keyed consumer without pretending VB Blt supports
@@ -127,6 +132,34 @@ async function run(h,apis,notepad,fixture){
  check('SetForeColor forged receiver preserves live per-surface state',()=>{
   const fake=a(8);w(fake,r(dest));w(fake+4,r(dest+4));const p=e.fore_state(dest),before=Buffer.from(u8.slice(p,p+8));assert.equal(call(fake,54,0x999999),0x80070057);assert.deepEqual(Buffer.from(u8.slice(p,p+8)),before);
  });
+
+ const bstr=(text,extra=0)=>{const q=a(text.length*2+8);w(q,text.length*2+extra);for(let i=0;i<text.length;i++)e.guest_write16(q+4+i*2,text.charCodeAt(i));e.guest_write16(q+4+text.length*2,0x5a5a);return q+4};
+ const preview=bstr('Preview'),image16=()=>Buffer.from(u8.slice(db,db+dp*128));
+ const clear=()=>u8.fill(0,db,db+dp*128),hasInk=()=>{let n=0;for(let y=0;y<128;y++)for(let x=0;x<128;x++)if(v.getUint16(db+y*dp+x*2,true))n++;return n};
+ check('DrawText actual Preview BSTR/slot18/ESP24 produces native16bit glyph pixels',()=>{
+  assert.equal(call(dest,54,0xffffff),0);clear();assert.equal(call(dest,18,9,7,preview,0),0,'DrawText must execute real counted text');assert(hasInk()>20);assert.equal(e.draw_dc_alive(dest),0);const white=image16();assert.equal(call(dest,54,0x000000ff),0);clear();assert.equal(call(dest,18,9,7,preview,0),0);let pixels=0;for(let y=0;y<128;y++)for(let x=0;x<128;x++){const before=white.readUInt16LE(y*dp+x*2),after=v.getUint16(db+y*dp+x*2,true);assert.equal(after,before?0xf800:0);if(before)pixels++}assert(pixels>20);assert.equal(e.draw_dc_alive(dest),0);
+ });
+ check('DrawText counted Unicode/embeddedNUL/oddbyte floor never scans past BSTR',()=>{
+  assert.equal(call(dest,54,0xffffff),0);clear();assert.equal(call(dest,18,2,2,bstr('A\u0000B'),0),0);const ab=image16();clear();assert.equal(call(dest,18,2,2,bstr('A\u0000C'),0),0);assert.notDeepEqual(image16(),ab,'characters following counted NUL must participate');clear();assert.equal(call(dest,18,2,2,bstr('Café'),0),0);const even=image16();assert(hasInk()>0);clear();assert.equal(call(dest,18,2,2,bstr('Café',1),0),0);assert.deepEqual(image16(),even);assert.equal(e.draw_dc_alive(dest),0);
+ });
+ check('DrawText sparse length/payload reads preserve guest backing and match contiguous glyphs',()=>{
+  clear();assert.equal(call(dest,18,3,4,preview,0),0);const expected=image16(),b=0x3d000000,n=b+0x10000;for(const q of[b,n,b+4096])e.test_virtual_map_commit(q,4096);assert.notEqual(e.guest_to_wasm(b)+4096,e.guest_to_wasm(b+4096));for(let i=0;i<128;i++)e.guest_write8(n+i,0x6a);
+  for(const q of[b+4093,b+4098]){w(q-4,14);for(let i=0;i<14;i++)e.guest_write8(q+i,e.guest_read8(preview+i));clear();assert.equal(call(dest,18,3,4,q,0),0);assert.deepEqual(image16(),expected);for(let i=0;i<128;i++)assert.equal(e.guest_read8(n+i),0x6a);assert.equal(e.draw_dc_alive(dest),0)}
+ });
+ check('DrawText invalid BSTR/span/oversized count do not create DC or alter pixels',()=>{
+  const before=image16();for(const [q,hr]of[[0,0x80070057],[1,0x80004003],[0xffffffff,0x80004003]])assert.equal(call(dest,18,0,0,q,0),hr);const q=0x3e000000;e.test_virtual_map_commit(q,4096);w(q+4088,20);assert.equal(call(dest,18,0,0,q+4092,0),0x80004003);const big=bstr('');w(big-4,131074);assert.equal(call(dest,18,0,0,big,0),0x80004001);assert.deepEqual(image16(),before);assert.equal(e.draw_dc_alive(dest),0);assert.equal(call(dest,18,0,0,bstr(''),0),0);assert.deepEqual(image16(),before);
+ });
+ check('DrawText clips offedge coordinates and honors low16 update-current-position',()=>{
+  clear();assert.equal(call(dest,18,0,0,preview,0),0);const origin=image16();clear();assert.equal(call(dest,18,37,41,preview,0xffff),0);assert.deepEqual(image16(),origin,'TA_UPDATECP uses fresh DC current origin');clear();assert.equal(call(dest,18,0,0,preview,0x10000),0);assert.deepEqual(image16(),origin,'only low16 VARIANT_BOOL participates');clear();assert.equal(call(dest,18,-3,-2,preview,0),0);assert(hasInk()>0);clear();assert.equal(call(dest,18,500,500,preview,0),0);assert.equal(hasInk(),0);assert.equal(e.draw_dc_alive(dest),0);
+ });
+ check('DrawText32bit uses native COLORREF conversion and isolated surface lifetime',()=>{
+  descriptor(128,32);w(d+4,0x1007);w(d+76,0x40);w(d+104,32);w(d+128,0xff0000);w(d+148,0xff00);w(d+164,0xff);assert.equal(call(owner,7,d,out),0);const o=r(out),bits=e.vb_bits(o)>>>0,pitch=e.vb_pitch(o);u8.fill(0,bits,bits+pitch*32);assert.equal(call(o,54,0x00332211),0);assert.equal(call(o,18,1,1,preview,0),0);let ink=0;for(let y=0;y<32;y++)for(let x=0;x<128;x++){const color=v.getUint32(bits+y*pitch+x*4,true);if(color){assert.equal(color&0xffffff,0x112233);ink++}}assert(ink>20);assert.equal(e.draw_dc_alive(o),0);assert.equal(call(o,2),0);
+ });
+ assert.equal(call(dest,54,0xffffff),0);
+
+ check('DrawText propagates actual GetDC exhaustion and frees gathered sparse input',()=>{
+  const handles=[];for(let i=0;i<65536;i++){const hdc=0x500000+i;if(!e.draw_alloc_dc(hdc))break;handles.push(hdc)}assert(handles.length>0&&handles.length<65536);const before=image16();try{assert.equal(call(dest,18,0,0,0x3d001002,0),0x88760096);assert.deepEqual(image16(),before);assert.equal(e.draw_dc_alive(dest),0)}finally{for(const hdc of handles)e.draw_free_dc(hdc)}assert.equal(call(dest,18,0,0,preview,0),0);assert.equal(e.draw_dc_alive(dest),0);
+ });
  const drawMeta=e.fore_meta(dest),sourceMeta=e.fore_meta(src),drawState=e.fore_state(dest),sourceState=e.fore_state(src),destPen=v.getUint32(drawState+4,true),srcPen=v.getUint32(sourceState+4,true);
  const aux=new WebAssembly.Instance(h.module,{host:h.host,gdi:h.gdi}).exports;
  check('shared draw state survives auxiliary instance construction without reinitialization',()=>{assert.equal(aux.fore_load_wa(drawState)>>>0,0xffffff);assert.equal(aux.fore_load_wa(drawState+4)>>>0,destPen);assert.equal(aux.fore_load_wa(sourceState)>>>0,0xff00)});
@@ -134,5 +167,13 @@ async function run(h,apis,notepad,fixture){
  check('final release retires both pens and clears shared state; fresh surface defaults remain black',()=>{for(const p of[destPen,srcPen])assert.equal(e.fore_pen_live(p),0);for(const p of[drawMeta,sourceMeta])assert.equal(aux.fore_load_wa(p+12),0);descriptor(8,8);assert.equal(call(owner,7,d,out),0);const o=r(out),p=e.fore_state(o);assert.equal(p,0);assert.equal(v.getUint32(e.fore_meta(o)+12,true),0);assert.equal(call(o,2),0)});
  return {cases,limits:['no gameplay qualification','bounded offscreen same-format copy/WAIT only','no broad native DirectDraw or VB drawing support claim']};
 }
+
+async function runMissingFonts(h,apis,notepad){
+ const e=h.exports,u8=new Uint8Array(h.memory.buffer);u8.set(notepad,e.get_staging());assert(e.load_pe(notepad.length)>0);e.init_dx_com_thunks();
+ const a=n=>e.guest_alloc(n)>>>0,w=(p,x)=>e.guest_write32(p,x),r=p=>e.guest_read32(p)>>>0,stack=a(64),out=a(4),d=a(232),text=a(20);for(let i=0;i<232;i++)e.guest_write8(d+i,0);w(d+4,7);w(d+8,32);w(d+12,128);w(d+200,0x840);w(text,14);for(let i=0;i<7;i++)e.guest_write16(text+4+i*2,'Preview'.charCodeAt(i));
+ const call=(o,slot,...args)=>{const thunk=r(r(o)+slot*4),api=apis[r(thunk+4)];assert.equal(api.nargs,args.length+1);w(stack,0);[o,...args].forEach((x,i)=>w(stack+4+i*4,x));e.set_esp(stack);e.set_eip(thunk);e.run(1);assert.equal(e.get_eip(),0);assert.equal(e.get_esp()>>>0,stack+(api.nargs+1)*4);return e.get_eax()>>>0};
+ e.vb_factory(out);const owner=r(out);assert.equal(call(owner,7,d,out),0);const obj=r(out),bits=e.vb_bits(obj)>>>0,n=e.vb_pitch(obj)*32;u8.fill(0,bits,bits+n);assert.equal(call(obj,54,0xffffff),0);assert.equal(call(obj,18,0,0,text+4,0),0);assert(u8.slice(bits,bits+n).every(x=>x===0),'missing real fonts cannot fabricate pixels');assert.equal(e.draw_dc_alive(obj),0);assert.equal(call(obj,2),0);console.log('PASS native ignored raster BOOL with missing font is not pixel qualification');return {cases:1,missingFontsPixels:false};
+}
+
 const {bootRenderHarness}=require('./render-helper');
-(async()=>{const h=await bootRenderHarness({extraWat:extraWat+foreExtraWat,fonts:'none'});console.log(JSON.stringify({status:'PASS',...await run(h,require('../src/api_table.json'),fs.readFileSync(__dirname+'/binaries/notepad.exe'),fs.readFileSync(__dirname+'/fixtures/vbdd-image-helpers/asymmetric.bmp'))}));})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{const apis=require('../src/api_table.json'),notepad=fs.readFileSync(__dirname+'/binaries/notepad.exe'),fixture=fs.readFileSync(__dirname+'/fixtures/vbdd-image-helpers/asymmetric.bmp');const h=await bootRenderHarness({extraWat:extraWat+foreExtraWat,fonts:'bitmap'});const main=await run(h,apis,notepad,fixture);const empty=await bootRenderHarness({extraWat:extraWat+foreExtraWat,fonts:'none'});const negative=await runMissingFonts(empty,apis,notepad);console.log(JSON.stringify({status:'PASS',cases:main.cases+negative.cases,main,negative}));})().catch(e=>{console.error(e);process.exitCode=1;});

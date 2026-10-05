@@ -33637,9 +33637,9 @@
     "id": 3974,
     "name": "IVBImageSurface7_DrawText",
     "nargs": 5,
-    "stub": { "pop": 24, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 352336527
+    "hash": 352336527,
+    "handler": "VBImage_DrawText"
   },
   {
     "id": 3975,

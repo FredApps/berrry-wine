@@ -1734,10 +1734,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_DrawText",
     "nargs": 5,
     "convention": "stdcall",
-    "stub": {
-      "pop": 24,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_DrawText"
   },
   {
     "name": "IVBImageSurface7_Flip",

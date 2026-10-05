@@ -13637,3 +13637,52 @@
 (func $handle_VBImage_SetForeColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
  (i32.store (global.get $reg_base) (call $vbdd_set_fore_color (local.get $arg0) (local.get $arg1)))
  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+;; Native DX7VB73545219 DrawText: counted BSTR -> ExtTextOutW, default
+;; transparent stock-font DC and persistent COLORREF. Low16 updateCP toggles
+;; TA_UPDATECP. Native ignores raster BOOL and ReleaseDC HRESULT: S_OK alone
+;; never proves pixels. Custom font/background setters remain unsupported.
+(func $vbdd_draw_text (param $obj i32) (param $x i32) (param $y i32) (param $bstr i32) (param $update i32) (result i32)
+ (local $entry i32) (local $bytes i32) (local $count i32) (local $text i32)
+ (local $tmp i32) (local $esp i32) (local $eax i32) (local $hr i32) (local $hdc i32) (local $align i32)
+ (if (i32.eqz (local.get $bstr)) (then (return (i32.const 0x80070057))))
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (if (i32.lt_u (local.get $bstr) (i32.const 4)) (then (return (i32.const 0x80004003))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (i32.sub (local.get $bstr) (i32.const 4)) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (local.set $bytes (call $gl32 (i32.sub (local.get $bstr) (i32.const 4))))
+ (local.set $count (i32.shr_u (local.get $bytes) (i32.const 1)))
+ ;; The actual GDI rasterizer accepts at most65536 UTF16 units. Reject the
+ ;; unsupported larger contract before any DC/pixel change, rather than
+ ;; silently making the rasterizer's early no-op look like implemented text.
+ (if (i32.gt_u (local.get $count) (i32.const 65536)) (then (return (i32.const 0x80004001))))
+ (local.set $bytes (i32.shl (local.get $count) (i32.const 1)))
+ (if (local.get $bytes) (then
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $bstr) (local.get $bytes))) (then (return (i32.const 0x80004003))))
+  (local.set $text (call $guest_span_in (local.get $bstr) (local.get $bytes)))
+  (if (i32.eqz (local.get $text)) (then (return (i32.const 0x8007000E))))))
+ (local.set $hr (i32.const 0x8007000E))
+ (local.set $tmp (call $heap_alloc (i32.const 16)))
+ (if (local.get $tmp) (then
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_GetDC (local.get $obj) (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (if (i32.ge_s (local.get $hr) (i32.const 0)) (then
+   (local.set $hdc (call $gl32 (local.get $tmp)))
+   (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+   (drop (call $gdi_native_set_text_color (local.get $hdc) (if (result i32) (call $vbdd_draw_state_ptr (local.get $entry)) (then (i32.load (call $vbdd_draw_state_ptr (local.get $entry)))) (else (i32.const 0)))))
+   (local.set $align (call $gdi_native_get_text_align (local.get $hdc)))
+   (drop (call $gdi_native_set_text_align (local.get $hdc)
+    (i32.or (i32.and (local.get $align) (i32.const -2)) (i32.ne (i32.and (local.get $update) (i32.const 65535)) (i32.const 0)))))
+   (drop (call $gdi_native_ext_text_out (local.get $hdc) (local.get $x) (local.get $y) (i32.const 0) (i32.const 0) (local.get $text) (local.get $count) (i32.const 0) (i32.const 1)))
+   (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+   (call $handle_IDirectDrawSurface_ReleaseDC (local.get $obj) (local.get $hdc) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+   (local.set $hr (i32.const 0))))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax))
+  (call $heap_free (local.get $tmp))))
+ (if (local.get $text) (then (call $guest_span_release (local.get $text) (local.get $bytes))))
+ (local.get $hr))
+(func $handle_VBImage_DrawText (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_draw_text (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
