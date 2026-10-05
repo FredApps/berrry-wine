@@ -12,18 +12,18 @@
 // wav-validate/SLICE-DIAG-RESULT-20261005.md). HEAD fails the "delivered at X"
 // assertions below; docs: IF-ENABLE-DESIGN.md beside this file.
 //
-// Architectural rules exercised (Intel SDM instruction reference):
-//   STI      "If IF = 0, maskable hardware interrupts remain inhibited on the
-//            instruction boundary following an execution of STI" -- so the
-//            interrupt goes in after the NEXT instruction, not after STI.
-//            "No interrupts can be recognized if an execution of CLI
-//            immediately follow such an execution of STI."
-//   MOV/POP SS  "inhibits interrupts on the following instruction boundary".
-//   POPF, IRET  no maskable-interrupt shadow: the IF they load takes effect at
-//            the very next boundary.
-// STI immediately followed by MOV SS is not spelled out in those pages; this
-// test takes both rules literally (no delivery after STI, none after MOV SS,
-// so the first boundary is after the instruction following MOV SS) and says so.
+// Architectural rules exercised (Intel SDM 325462-093; 80386 PRM 1986):
+//   STI      with IF=0 inhibits maskable interrupts on the boundary right after
+//            it, until the next instruction completes; STI;CLI recognizes none
+//            (SDM Vol. 2B 4-674, Vol. 3A 7.8.1 p. 7-8; 386 PRM STI page).
+//   MOV/POP SS  inhibits interrupts on the following boundary (SDM Vol. 2B
+//            4-29, Vol. 3A 7.8.3 pp. 7-8/7-9; 386 PRM 9.2.4).
+//   POPF, IRET  no maskable-interrupt shadow statement (SDM Vol. 2B 4-407ff,
+//            Vol. 2A 3-490ff): the IF they load applies at the next boundary.
+// STI immediately followed by MOV SS is stated by NEITHER source. The
+// sti_movss case composes the two rules (no delivery after STI, none after
+// MOV SS) and is INFORMATIONAL: reported, never counted as pass or fail,
+// until a primary source or a reference machine confirms it.
 //
 // Every case: hook INT 8, then ROUNDS times { make a timer interrupt pending
 // with IF=0 for longer than the timer interval; enable IF the case's way; X: }
@@ -125,8 +125,9 @@ const CASES = {
   // IRET to X with IF=1 in the popped FLAGS: delivered at X.
   iret: { body: [STI, PUSHF, CLI, ...CALL('delay'), 0x0E, 0x68, { abs16: 'X' }, IRET], forbid: [], expect: 'X' },
   // STI then MOV SS (its own shadow) then MOV SP: first boundary is X.
+  // INFORMATIONAL (composed oracle, see the header).
   sti_movss: { body: [CLI, ...CALL('delay'), 0x8C, 0xD0, 0x89, 0xE3, STI, L('f_movss'), 0x8E, 0xD0, L('f_movsp'), 0x89, 0xDC],
-    forbid: ['f_movss', 'f_movsp'], expect: 'X' },
+    forbid: ['f_movss', 'f_movsp'], expect: 'X', informational: true },
 };
 
 function deliveries(out) {
@@ -161,8 +162,11 @@ for (const [name, c] of Object.entries(CASES)) {
     }
     const ref = JSON.stringify(runs.l1);
     for (const [arm, d] of Object.entries(runs)) assert.strictEqual(JSON.stringify(d), ref, `${name}: arm ${arm} delivers at a different (dispatch, ip) sequence than l1`);
-    console.log(`ok   ${name}`);
-  } catch (e) { failed++; console.log(`FAIL ${name}: ${e.message}`); }
+    console.log(`${c.informational ? 'info ' : 'ok   '}${name}${c.informational ? ': composed oracle held (not counted)' : ''}`);
+  } catch (e) {
+    if (c.informational) console.log(`info ${name}: composed oracle did not hold (not counted): ${e.message}`);
+    else { failed++; console.log(`FAIL ${name}: ${e.message}`); }
+  }
 }
 if (!emit) { fs.rmSync(dir, { recursive: true, force: true }); console.log(failed ? `${failed} case(s) failed` : 'all passed'); }
 process.exit(failed ? 1 : 0);

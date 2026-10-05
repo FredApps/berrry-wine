@@ -8,18 +8,39 @@ the next STOP that finds IF=1. BLIQ #48 and #70 were 71,241 and 250,337 dispatch
 guest had IF=1 at 291/435 and 1,041/1,553 intervening early handbacks. No runtime has been used
 for this note.
 
-## 1. Architectural rules (Intel SDM instruction reference, as quoted by felixcloutier.com)
+**Status:** a pending design, unpromoted.
 
-| instruction | rule | consequence for delivery |
+- Revised after root's source review of 1773b424: the rules are now cited to the primary Intel
+  SDM and the 80386 PRM (§1).
+- The one composed rule (STI immediately followed by MOV SS) is unconfirmed, and its case is
+  informational only.
+
+## 1. Architectural rules (primary sources)
+
+Sources:
+
+- Intel 64 and IA-32 Architectures SDM, combined volumes, order 325462-093, downloaded from Intel
+  2026-10-05 (sha256 a4a62e6a7ba11a76…). Located with `pdftotext` and page searches.
+- Intel 80386 Programmer's Reference Manual (1986), for the 386 that toyvm runs as, read via the
+  MIT 6.828 HTML transcription.
+
+| rule (paraphrased) | SDM | 80386 PRM |
 |---|---|---|
-| STI | "If IF = 0, maskable hardware interrupts remain inhibited on the instruction boundary following an execution of STI." The inhibition ends at "delivery of another event (e.g., exception) or the execution of the next instruction." "If an STI instruction is followed by an RET instruction, the RET instruction is allowed to execute before external interrupts are recognized." "No interrupts can be recognized if an execution of CLI immediately follow such an execution of STI." | first eligible boundary = after the instruction FOLLOWING STI; only when IF was 0 before STI; a following CLI cancels |
-| MOV SS / POP SS | "inhibits interrupts on the following instruction boundary. (The inhibition ends after delivery of an exception or the execution of the next instruction.)" | never deliver between an SS load and the next instruction |
-| POPF | no shadow statement; IF changes only at sufficient privilege ("altered only when executing at a level at least as privileged as the IOPL") | eligible at the boundary right after POPF |
-| IRET | no maskable-interrupt shadow statement (only NMI unblocking) | eligible at the boundary right after IRET (its target) |
+| **STI:** if IF was 0, maskable interrupts stay inhibited on the boundary right after STI; the inhibition ends when the next instruction completes (or another event is delivered). STI; RET runs the RET before any interrupt; STI; CLI recognizes none. | Vol. 2B 4-674 (STI); Vol. 3A §7.8.1, p. 7-8; Vol. 3C Table 27-3 "Blocking by STI", p. 27-7 | STI page: interrupts are recognized after the next instruction, if it leaves IF set; same RET and CLI notes |
+| **MOV SS / POP SS:** interrupts are inhibited on the boundary following the SS load, until the next instruction completes. | Vol. 2B 4-29 (MOV); Vol. 3A §7.8.3, pp. 7-8/7-9; Table 27-3 "Blocking by MOV SS" | §9.2.4: INTR inhibited at the boundary following an instruction that changes SS |
+| **Consecutive SS loads:** only the first is guaranteed to inhibit. | Vol. 3A §7.8.3, p. 7-9 | — |
+| **The two blockings never coexist:** VMX guest state cannot indicate blocking by STI and by MOV SS at once. | Vol. 3C §29.3.1.5, p. 29-14 | — |
+| **POPF:** no interrupt-shadow statement on its pages; IF changes only at CPL ≤ IOPL. | Vol. 2B 4-407ff (checked: no match for inhibit, boundary, recogni or shadow) | — |
+| **IRET:** no maskable-interrupt shadow statement (its only "shadow" text is CET shadow stacks). | Vol. 2A 3-490ff (checked the same way) | — |
 
-- **Not covered by those pages: STI immediately followed by MOV SS.** The design and the test take
-  both rules literally: no delivery after STI, none after MOV SS. So the first boundary is after
-  the instruction that follows MOV SS. Marked as derived, not quoted.
+**STI immediately followed by MOV SS is UNCONFIRMED.** Neither source states it.
+
+- Applying the two rules independently forbids delivery after STI and after MOV SS, making the
+  first boundary the one after the instruction that follows MOV SS.
+- The VMX "never both" constraint is consistent with that, since STI's blocking ends when MOV SS
+  completes and MOV SS's then begins. But it is not a statement about this sequence.
+- The test therefore keeps `sti_movss` as an **informational** case: it is reported and never
+  counted as a pass or a failure.
 - **Not every IF 0→1 means immediate delivery.** STI is one boundary late by rule. POPF/IRET at
   insufficient IOPL in V86 mode do not change IF; toyvm's V86 handling decides that, and this
   design only acts on the IF value the VM actually holds afterwards. A pending interrupt is
@@ -115,11 +136,12 @@ each hooks INT 8, then 8 times makes a timer IRQ pending with IF=0 for about 327
 | sti_cli | STI; CLI; NOP; STI; NOP; X | after STI, after CLI, after the 2nd STI |
 | popf | STI; PUSHF; CLI; delay; POPF; X | — |
 | iret | STI; PUSHF; CLI; delay; PUSH CS; PUSH X; IRET | — |
-| sti_movss | MOV AX,SS; MOV BX,SP; STI; MOV SS,AX; MOV SP,BX; X | after STI, after MOV SS |
+| sti_movss (INFORMATIONAL) | MOV AX,SS; MOV BX,SP; STI; MOV SS,AX; MOV SP,BX; X | after STI, after MOV SS (composed oracle, §1) |
 
-- **Expected on HEAD:** assertion 1 fails in every case. Delivery waits for a stop, which lands
-  inside `spin`, not at X. Assertions 2 and 3 are expected to hold.
-- **Expected on the candidate:** all three hold.
+- **Expected on HEAD:** assertion 1 fails in the five counted cases. Delivery waits for a stop,
+  which lands inside `spin`, not at X. Assertions 2 and 3 are expected to hold. `sti_movss` is
+  reported as `info` either way.
+- **Expected on the candidate:** all three hold for the five counted cases.
 - **Static check done:** `--emit=DIR` writes the programs, and `tools/toyvm/dos-disasm.js`
   disassembles them as intended (STI/MOV SS/IRET frame/STI;RET at the listed addresses, handler
   0x143/0x149 matching the vector-8 write).
