@@ -401,3 +401,39 @@ test/test-toyvm-region-live.js case. A blend-shaped loop with a forward `jb` sid
 date placed inside the iteration, and an assertion that L1 and the region arm push the IRQ
 in front of the same cs:ip (from `onIrq`). That replaces scene B in
 test-toyvm-region-continuous.draft.js.
+
+# Phase 4, 2026-10-05 ~10:40Z: candidate fix in the working tree (uncommitted)
+
+Working-tree hunk in tools/toyvm/dos-loop.js `step` (claimed on the board):
+(a) `atStop = dispatched > stopAt || (cut >= 0 && dispatched >= stopAt)`;
+(b) `due()` accepts `at >= this.dispatched`; (c) exit label `left < 0 ? date/budget : early`.
+Also new: test/test-toyvm-irq-early-handback.js (draft, does NOT yet reproduce: its 16-bit loop's
+region exits re-link through $jlook, so no early handback lands on a date) and a section appended
+to docs/toyvm-irq-schedule.md.
+
+Single-run invariant that catches the bug: every timer IRQ must be raised at a handback with
+`left < 0` (slice log `dispatched left cs:ip` joined to `--trace-irq` `at=`). Pre-fix BRW K5 to
+100M: exactly 1 violation (at=88900000, 8:4299, left=0). Fixed: 0 in L1 and K5, and the 88.9M
+delivery matches (at=88900003 from 8:423a in both arms). Runs: runs-20261005b/inv-k5.*, fix-*.*.
+
+NOT DONE: by 100M the fixed arms still differ on 46 delivery addresses, all SB (vec 0f), at
+different DATES. Cause: the fix also changes L1 itself. Baseline (pre-fix, worktree
+scratchpad/wt-base-toyvm @HEAD) L1 cuts a slice to the SB date 80854061 (`left -2`); fixed L1 never
+cuts there (slices at ...051 left 264 -> stopAt ~80854315), so the SB date in `due()` moved, i.e.
+audioAt/lastSbIrq differ earlier. Suspect half (b) or (c): budget-1 slices (280 "tiny" slices by
+100M in fixed L1) render audio / move audioAt on the sbDueNow path (dos-loop ~1947, clockAt =
+dispatched when !atStop). Runs: base-l1.{irq,slog}, fix-l1.{irq,slog}.
+
+# Phase 5, 2026-10-05 ~10:45Z (brw-worker; runtime then stopped by coordinator: source-only on main box)
+
+- Main-box A/B before the stop (runs-20261005c/l1-{A,B,AB}.irq, BRW L1 to 81M, temporary env
+  toggles since removed): vs pre-fix baseline (runs-20261005b/base-l1.irq), half (a) alone moves
+  2 deliveries, (b) alone 0, (a)+(b) 2. Baseline L1 to 81M has 0 interrupts at a left==0
+  handback (timer 737 and sb 735 at left<0; 2 sb at left>0, which are machine cuts).
+- Mechanism (source): with (a), an early handback landing exactly on the SB block's last sample
+  still renders through `sbDueNow` (`dispatched - audioAt >= sbInterval`). That moves audioAt to
+  the date (consuming it from `due()`), while the IRQ needs atStop and waits for the next real
+  stop: hundreds of dispatches late, after which the guest's DMA restart and every later SB date
+  move.
+- Fix part (3) applied in the working tree: under the schedule `sbDueNow` is strict (`>`). NOT RUN.
+- Worker box: `boat`/`box` CLI present but not signed in (401 "run boat login"). Not provisioned.
