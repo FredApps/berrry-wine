@@ -179,3 +179,39 @@ test('Busy terminal keeps actionable chat queued with typing, without Saved chat
  await bot.handle(message('capture the next game'));
  assert.equal(state.chatQueue.length,1);assert.deepEqual(calls.map(c=>c.method),['sendChatAction']);
 });
+test('Claude orchestrator: busy pane still accepts chat into an empty prompt, never over a draft or approval',()=>{
+  const {claudeChatReady,claudeChatSubmitKey}=require('./work-guard');
+  const busy='● Working on it\n✻ Imagining… (12s)\n─────\n❯ \n─────\n  ⏵⏵ bypass permissions on · esc to interrupt';
+  assert.equal(claudeChatReady(busy),true);
+  assert.equal(claudeChatReady(busy.replace('❯ ','❯ half-typed note')),false);
+  assert.equal(claudeChatReady('just a shell $'),false);
+  const text='[Telegram] status?';
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ '+text),text),'Enter');
+  assert.equal(claudeChatSubmitKey(busy,text),null);
+});
+test('Claude transcript replies: final text after a Telegram prompt is direct, tool chatter is not',()=>{
+  const replies=require('./telegram-replies'),state={};
+  const user=(content,extra={})=>({type:'user',timestamp:'t',uuid:'u'+Math.random(),message:{role:'user',content},...extra});
+  const said=(text,stop,uuid)=>({type:'assistant',timestamp:'t',uuid,message:{id:'m',stop_reason:stop,content:[{type:'text',text}]}});
+  replies.enqueue(state,user('[Telegram] how is myth going?'));
+  replies.enqueue(state,said('Checking the board.','tool_use','a1'));
+  replies.enqueue(state,user([{type:'tool_result',tool_use_id:'x',content:'ok'}]));
+  replies.enqueue(state,said('Myth worker is on the demo search.','end_turn','a2'));
+  replies.enqueue(state,user('[Telegram] ignore',{isSidechain:true}));
+  assert.deepEqual(state.replyQueue.map(r=>[r.id,r.text,r.direct]),[['a2','Myth worker is on the demo search.',true]]);
+  replies.enqueue(state,user('local keyboard prompt'));
+  replies.enqueue(state,said('Autonomous final.','end_turn','a3'));
+  replies.enqueue(state,said('[Telegram update] Myth demo found.','end_turn','a4'));
+  assert.deepEqual(state.replyQueue.map(r=>r.id),['a2','a4']);
+});
+
+test('a dim Claude prompt suggestion is not a draft', () => {
+  const {claudeChatReady,plainScreen}=require('./work-guard');
+  const rule='\x1b[38;5;244m'+'─'.repeat(40)+'\x1b[0m';
+  const footer='  \x1b[38;5;211m⏵⏵ bypass permissions on\x1b[0m (shift+tab to cycle) · ← for agents';
+  const ghost=['✻ Churned for 1m 52s',rule,'\x1b[39m❯ \x1b[2myes, list the clean merged Codex worktrees\x1b[0m',rule,footer].join('\n');
+  assert.equal(claudeChatReady(plainScreen(ghost)),true);
+  const typed=ghost.replace('\x1b[2myes, list','typed by hand, list');
+  assert.equal(claudeChatReady(plainScreen(typed)),false);
+  assert.match(plainScreen('\x1b[2mdim status\x1b[0m line'),/^dim status line$/);
+});

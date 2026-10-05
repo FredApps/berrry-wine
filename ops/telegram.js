@@ -8,8 +8,8 @@ const base=process.env.OPS_URL||'http://127.0.0.1:8098';
 if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base))throw Error('OPS_URL must be loopback HTTP');
 async function atomic(file,data){await fs.writeFile(file+'.tmp',JSON.stringify(data,null,2)+'\n',{mode:0o600});await fs.rename(file+'.tmp',file);}
 async function findLog(agentId){
-  const id=agentId?.replace(/^codex:/,'');if(!/^[a-f0-9-]{36}$/.test(id||''))return null;
-  const start=process.env.CODEX_SESSIONS_ROOT||path.join(os.homedir(),'.codex/sessions');
+  const claude=/^claude:/.test(agentId||''),id=agentId?.replace(/^(codex|claude):/,'');if(!/^[a-f0-9-]{36}$/.test(id||''))return null;
+  const start=claude?process.env.CLAUDE_PROJECTS_ROOT||path.join(os.homedir(),'.claude/projects'):process.env.CODEX_SESSIONS_ROOT||path.join(os.homedir(),'.codex/sessions');
   async function walk(d,depth){if(depth>4)return null;for(const e of await fs.readdir(d,{withFileTypes:true})){const f=path.join(d,e.name);if(e.isFile()&&e.name.endsWith(id+'.jsonl'))return f;if(e.isDirectory()){const found=await walk(f,depth+1);if(found)return found;}}return null;}
   return walk(start,0);
 }

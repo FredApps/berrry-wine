@@ -20,4 +20,32 @@ function workSubmitKey(screen,message,provider) {
   for(let n=i;n<lines.length;n++){const l=lines[n].replace(n===i?/^\s*❯\s?/:/^/,'');if(!l.trim()||/^[─━]+/.test(l))break;draft.push(l);}
   return draft.join('').replace(/\s/g,'')===message.replace(/\s/g,'')?'Enter':null;
 }
-module.exports={workReady,workSubmitKey};
+// Telegram chat into a Claude pane: Claude queues input typed while it works, so only
+// an approval prompt, a modal question or an existing draft blocks delivery.
+function claudeDraft(screen){
+  const lines=screen.trimEnd().split('\n'),i=lines.findLastIndex(l=>/^\s*❯/.test(l));
+  if(i<0)return null;
+  const draft=[];
+  for(let n=i;n<lines.length;n++){const l=lines[n].replace(n===i?/^\s*❯\s?/:/^/,'');if(!l.trim()||/^[─━]+/.test(l))break;draft.push(l);}
+  return draft.join('');
+}
+function claudeChatReady(screen){
+  if(parseApproval(screen)||/Would you like to|Press enter to confirm/i.test(screen.slice(-5000)))return false;
+  return claudeDraft(screen)==='' && /bypass permissions|accept edits|shift.tab to cycle/i.test(screen.slice(-3000));
+}
+function claudeChatSubmitKey(screen,message){
+  if(parseApproval(screen))return null;
+  const draft=claudeDraft(screen);
+  return draft!==null && draft.replace(/\s/g,'')===message.replace(/\s/g,'')?'Enter':null;
+}
+// `capture-pane -e` text to plain text. Claude Code prints a suggested next prompt in
+// dim text after an empty `❯`; read as a draft it blocks every Telegram delivery, so dim
+// runs on prompt lines are dropped before the escapes are.
+const SGR=/\x1b\[[0-9;]*m/g;
+function plainScreen(ansi){
+  return ansi.split('\n').map(line=>{
+    if(/^\s*[›❯]/.test(line.replace(SGR,'')))line=line.replace(/\x1b\[2m[\s\S]*?(?=\x1b\[(?:0|22)?m|$)/g,'');
+    return line.replace(SGR,'');
+  }).join('\n');
+}
+module.exports={workReady,workSubmitKey,claudeChatReady,claudeChatSubmitKey,plainScreen};
