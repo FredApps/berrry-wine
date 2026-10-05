@@ -556,3 +556,10 @@ test('corpus search matches identity fields and splits games from apps', async (
   assert.ok(!matchesCorpusSearch(myth,'','apps'));
   assert.ok(matchesCorpusSearch(pad,'','apps'));
 });
+
+test('the private emulator can serve a checkout other than the dashboard root', () => {
+  const a=createReader({root:'/tmp/dash-root',codexRoot:false,claudeRoot:false});
+  assert.equal(a.emulatorRoot,'/tmp/dash-root');
+  const b=createReader({root:'/tmp/dash-root',emulatorRoot:'/tmp/web-root',codexRoot:false,claudeRoot:false});
+  assert.equal(b.root,'/tmp/dash-root');assert.equal(b.emulatorRoot,'/tmp/web-root');
+});

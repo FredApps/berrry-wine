@@ -253,6 +253,9 @@ async function walkLogs(root, warnings, maxFiles = 10000) {
 
 function createReader(options = {}) {
   const root = path.resolve(options.root || path.join(__dirname, '..'));
+  // The private emulator may serve a different checkout than the one the dashboard
+  // reads TODOS/runs from, e.g. a clean main worktree beside a shared working tree.
+  const emulatorRoot = path.resolve(options.emulatorRoot || process.env.WINE_EMULATOR_ROOT || root);
   const readActivity = createActivityReader(root);
   const codexRoot = options.codexRoot === false ? null : options.codexRoot || path.join(os.homedir(), '.codex', 'sessions');
   const claudeRoot = options.claudeRoot === false ? null : options.claudeRoot || path.join(os.homedir(), '.claude', 'projects', root.replace(/[^a-zA-Z0-9-]/g, '-'));
@@ -477,9 +480,9 @@ function createReader(options = {}) {
     const releaseReadiness = deriveReleaseReadiness({candidates, runs: runList, tasks, review: await loadReleaseReview(root)});
     for (const candidate of candidates) candidate.releaseReadiness = releaseReadiness.entries.find(entry => entry.id === candidate.id);
     let emulatorBuild = null;
-    try { emulatorBuild = await getBuildIdentity(root); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
+    try { emulatorBuild = await getBuildIdentity(emulatorRoot); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
     try {
-      const launchCatalog = await getCatalog(root);
+      const launchCatalog = await getCatalog(emulatorRoot);
       for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
     linkCommits(activityResult.commits || [], tasks, runList);
@@ -508,7 +511,7 @@ function createReader(options = {}) {
     const warnings = [];
     return { agents: await sessions(warnings), warnings };
   }
-  return { root, snapshot, artifact, analyticsSnapshot };
+  return { root, emulatorRoot, snapshot, artifact, analyticsSnapshot };
 }
 
 module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows };
