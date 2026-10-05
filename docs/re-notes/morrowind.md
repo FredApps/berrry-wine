@@ -964,3 +964,14 @@ Local immutable evidence: `scratch/new-game-morrowind-20261005/attempt6`, includ
 `cursor-diff.json`, read-only state snapshots, `pointer-receipts.json`, and
 `cleanup.json`. Earlier attempt3 secondary-connection viewport change and
 attempt5 human-review phase timeout remain harness failures, not game failures.
+
+
+## 2026-10-05 — ordinary New click reaches prison Name prompt
+
+The generic DirectInput live-button repair is integrated as main `520d1cde` (source `94d18605`). It separates physical mouse buttons from queued Win32 message snapshots while preserving message and OLE consumers. Its real-WAT before-control failed the new physical-button assertion; the candidate, full production/shake build, CLI mouse control and renderer message-mask regressions passed.
+
+Ordinary browser attempt9 used module `2e2fd8d1ca62cd87f0bc09312bc4836108df610d00cb7771bb5ae22755eceedc`. The original Puppeteer connection seeded (16,16), then moved to (32,16). A reviewed New-target click held the button for 1500 ms and released it normally. The passive host census recorded the actual canvas recipient at page (32,16), then live mask 1. Four retained physical reads returned 0x8000 while the active WM_MOUSEMOVE snapshot still held button mask 0. All 62 retained completed GetDeviceState outputs inside the resolved-down/requested-up interval contained left-button byte 0x80; attempt8's corresponding outputs were zero. This supports the repaired state-selection path, without confusing browser coordinates with the independently observed game cursor.
+
+The click advanced to the red opening movie and then the prison Name dialog, personally reviewed by the coordinator. An Escape intended for the movie arrived after the prison loaded and opened its pause menu; a separately reviewed second Escape returned to the Name prompt. Ordinary typing of Codex completed, but its screenshot raced the original 300-second deadline. Name submission, free movement, gameplay qualification, audio quality and FPS remain unproven.
+
+Local evidence: `scratch/new-game-morrowind-20261005/attempt9/analysis.json`, `host-button-census.json`, `button-observer.json`, `pointer-receipts.json`, `settled.png`, `return-prison.png` and `prison-wait.png`. The host census closed with 73 records and no observer errors. Worker coverage is main-instance only and its 128-record cap overflowed, so the unrecorded tail is unknown. Session 33855 ended at the original deadline, browser/server closed at 17:57:32.462 UTC, Chrome exited 0 and no processes remained; driver exit 2 and the screenshot TargetClose error are retained. The next ordinary route gets a predeclared 600-second total budget for Name/OK and actual player control, without repeating button diagnosis.
