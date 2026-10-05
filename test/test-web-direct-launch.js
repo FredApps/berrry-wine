@@ -144,6 +144,13 @@ async function newPage(browser, viewport) {
   await page.setViewport(viewport);
   await page.evaluateOnNewDocument(installProbe);
   page.on('pageerror', e => console.log(`  [pageerror] ${e.message}`));
+  // DIRECT_LAUNCH_CONSOLE=1: the page console and every failed request, which
+  // is what names a stage timing out because a file was refused.
+  if (process.env.DIRECT_LAUNCH_CONSOLE) {
+    page.on('console', m => console.log(`  [console] ${m.text().slice(0, 300)}`));
+    page.on('response', r => { if (r.status() >= 400) console.log(`  [http ${r.status()}] ${r.url()}`); });
+    page.on('requestfailed', r => console.log(`  [reqfail] ${r.url()} ${r.failure() && r.failure().errorText}`));
+  }
   return page;
 }
 
@@ -537,6 +544,14 @@ async function cacheStage(browser, base) {
       await page.evaluateOnNewDocument(() => {
         if (navigator.serviceWorker) navigator.serviceWorker.register = () => new Promise(() => {});
       });
+    } else {
+      // index.html installs sw-coi.js only for a real visitor: it skips the
+      // install when navigator.webdriver is set, so a harness page stays as
+      // isolated as its server makes it. Present as a visitor here, so the
+      // page's own install path puts the worker in front of the second load.
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false, configurable: true });
+      });
     }
     const sources = async () => page.evaluate(() =>
       [...window.wineLaunchUi.current.transfers.values()].map(t => [t.name, t.source]));
@@ -548,6 +563,12 @@ async function cacheStage(browser, base) {
         sources: await sources(),
         sw: await page.evaluate(() => !!(navigator.serviceWorker && navigator.serviceWorker.controller)),
       });
+      if (!blockSw && n === 1) {
+        await page.evaluate(() => Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise(resolve => setTimeout(resolve, 10000)),
+        ]).then(() => undefined));
+      }
     }
     result[label] = loads;
     await context.close();
@@ -663,6 +684,13 @@ async function main() {
   const server = await startStaticServer({
     root: ROOT,
     handleRequest,
+    // A worktree links its corpus (binaries/, test/binaries/) to a shared
+    // checkout, so those files realpath outside ROOT and the static server
+    // refuses them with 403 unless the link targets are allowlisted: then
+    // cards.dll and msvcrt.dll never arrive, sol.exe dies in cdtInit, and
+    // every stage that waits for Solitaire's first window times out.
+    allowedRealRoots: ['binaries', 'test/binaries', 'fonts']
+      .map(dir => path.join(ROOT, dir)).filter(dir => fs.existsSync(dir)),
     headers: (request) => (cacheable && /^\/binaries\//.test(new URL(request.url, 'http://x').pathname)
       ? { 'Cache-Control': 'max-age=600' } : {}),
   });
