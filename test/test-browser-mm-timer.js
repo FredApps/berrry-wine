@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { hasPageScript } = require('./browser-runtime-scripts');
+
+const ROOT = path.join(__dirname, '..');
+const hostSource = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
+const shellSource = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
+const apps = require(path.join(ROOT, 'lib', 'apps.js')).APPS;
+const context = { console };
+vm.runInNewContext(hostSource + '\n;globalThis.WineAssembly = WineAssembly;', context);
+
+const wine = new context.WineAssembly();
+let calls = 0;
+wine.instance = {
+  exports: {
+    get_eip: () => 0x00401000,
+    fire_mm_timer: () => { calls++; return 1; },
+  },
+};
+
+assert.strictEqual(wine._pumpMultimediaTimer(), 0,
+  'multimedia timer pumping is disabled unless the app opts in');
+assert.strictEqual(calls, 0, 'disabled timer delivery must not call into WASM');
+
+wine.asyncMultimediaTimer = true;
+assert.strictEqual(wine._pumpMultimediaTimer(), 1,
+  'an opted-in app pumps the cooperative multimedia callback');
+assert.strictEqual(calls, 1, 'the browser calls the existing WASM timer hook once');
+
+wine.instance.exports.get_eip = () => 0;
+assert.strictEqual(wine._pumpMultimediaTimer(), 0,
+  'an exited guest cannot receive a multimedia callback');
+assert.strictEqual(calls, 1, 'the exited guest did not call the timer hook');
+
+let mainSuspended = true;
+wine.threadManager = {
+  isMainThreadSuspended: () => mainSuspended,
+};
+wine.instance.exports.is_mm_timer_callback_active = () => 0;
+assert.strictEqual(wine._isMainExecutionSuspended(), true,
+  'ordinary suspended application code remains parked');
+wine.instance.exports.is_mm_timer_callback_active = () => 1;
+assert.strictEqual(wine._isMainExecutionSuspended(), false,
+  'a serialized multimedia-timer context can run until it resumes the application thread');
+mainSuspended = false;
+assert.strictEqual(wine._isMainExecutionSuspended(), false,
+  'an active application thread is never reported as suspended');
+
+let closedHandle = 0;
+wine.threadManager = {
+  closeSyncHandle: handle => {
+    closedHandle = handle >>> 0;
+    return true;
+  },
+};
+assert.strictEqual(wine._closeSyncHandle(0xE0007), true,
+  'the browser delegates synchronization CloseHandle calls to ThreadManager');
+assert.strictEqual(closedHandle, 0xE0007,
+  'the browser preserves the process synchronization handle value');
+assert(hostSource.includes('closeSyncHandle: handle => self._closeSyncHandle(handle)'),
+  'browser filesystem imports expose the synchronization close callback');
+
+assert.strictEqual(apps.diablo_demo.asyncMultimediaTimer, true,
+  'Diablo opts into out-of-message-loop timeSetEvent delivery');
+assert(shellSource.includes('wine.asyncMultimediaTimer = !!app.asyncMultimediaTimer'),
+  'the browser launcher passes the per-app timer policy to WineAssembly');
+assert(hostSource.includes('self._pumpMultimediaTimer();'),
+  'the browser run loop pumps the opted-in timer after each main slice');
+assert(hasPageScript('lib/apps.js'),
+  'the browser centrally versions per-app launch metadata');
+assert(hasPageScript('lib/browser-shell.js'),
+  'the browser centrally versions per-app timer policy wiring');
+
+console.log('PASS  browser multimedia timer delivery is isolated and per-app');

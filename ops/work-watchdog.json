@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "terminals": ["orchestrator", "claude-launch-ux"],
+  "idleMs": 120000,
+  "cooldownMs": 900000,
+  "maxUnchangedNudges": 2,
+  "excludedTasks": ["CLAUDE-HEROES2-TIMING-FIX", "CLAUDE-HEROES2-LATCH-REVIEW", "GAMEPLAY-heroes-2-demo"],
+  "note": "Heroes II timing/music work belongs to the laptop; the box must not restart it. Review-state tasks may already be merged: reconcile before any implementation."
+}

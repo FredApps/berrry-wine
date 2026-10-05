@@ -1,0 +1,575 @@
+  ;; ============================================================
+  ;; PE LOADER
+  ;; ============================================================
+  (func $load_pe (export "load_pe") (param $size i32) (result i32)
+    (local $pe_off i32) (local $num_sections i32) (local $opt_hdr_size i32)
+    (local $section_off i32) (local $i i32) (local $vaddr i32) (local $vsize i32)
+    (local $raw_off i32) (local $raw_size i32) (local $import_rva i32)
+    (local $tls_rva i32) (local $tls_dir i32) (local $tls_start i32) (local $tls_end i32)
+    (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32) (local $tls_data_wa i32)
+    (local $tls_raw_size i32) (local $tls_zero_size i32)
+    (local $src i32) (local $dst i32) (local $characteristics i32)
+    (local $mapped_size i32) (local $copy_size i32) (local $initialized_size i32)
+
+    (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
+    (local.set $pe_off (i32.add (global.get $PE_STAGING)
+      (i32.load (region.addr $PE_STAGING 0x3C))))
+    ;; A 16-bit image has an 'NE' header where a PE has 'PE\0\0'. It shares
+    ;; nothing else with this loader, so hand it over whole.
+    (if (i32.eq (i32.load16_u (local.get $pe_off)) (i32.const 0x454E))
+      (then (return (call $load_ne (local.get $size)))))
+    (if (i32.ne (i32.load (local.get $pe_off)) (i32.const 0x00004550)) (then (return (i32.const -2))))
+
+    (local.set $num_sections (i32.load16_u (i32.add (local.get $pe_off) (i32.const 6))))
+    (local.set $opt_hdr_size (i32.load16_u (i32.add (local.get $pe_off) (i32.const 20))))
+    (global.set $image_base (i32.load (i32.add (local.get $pe_off) (i32.const 52))))
+    (global.set $entry_point (i32.add (global.get $image_base) (i32.load (i32.add (local.get $pe_off) (i32.const 40)))))
+    ;; Compute guest-space thunk zone bounds
+    (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))
+    (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))
+    (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
+    ;; TLS directory = data directory entry 9 (offset 192 from PE header).
+    (local.set $tls_rva (i32.load (i32.add (local.get $pe_off) (i32.const 192))))
+    ;; Resource directory RVA = data directory entry 2 (offset 136 in optional header)
+    (global.set $rsrc_rva (i32.load (i32.add (local.get $pe_off) (i32.const 136))))
+    ;; Export directory = data directory entry 0 (offset 120). Usually zero; a
+    ;; game whose engine lives in the EXE and whose DLLs import back out of it
+    ;; needs this to resolve those imports.
+    (global.set $exe_export_rva (i32.load (i32.add (local.get $pe_off) (i32.const 120))))
+
+    ;; Store SizeOfImage for DLL loader
+    (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
+    ;; Set heap to be above the image. Publishes to HEAP_SHARED so guest threads,
+    ;; which are separate instances and get their own copy of every global, start
+    ;; from the same process heap instead of a private replica of this cursor.
+    (call $heap_init
+      (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
+    (global.set $heap_sparse_ptr (i32.const 0))
+    (global.set $heap_sparse_end (i32.const 0))
+    ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
+    ;; get backing memory through $virtual_map_commit instead of consuming the
+    ;; low HeapAlloc arena.
+    (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
+    (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
+      (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE) (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (call $zero_memory (global.get $GUEST_PAGE_TABLE)
+      (global.get $GUEST_PAGE_TABLE_SIZE))
+    (i32.store (region.addr $VIRTUAL_MAP_STATE 4)
+      (global.get $VIRTUAL_BACKING_BASE))
+
+    ;; Copy DOS+PE headers into guest memory (CRT startup reads MZ signature from image base)
+    (call $memcpy (global.get $GUEST_BASE) (global.get $PE_STAGING)
+      (i32.load (i32.add (local.get $pe_off) (i32.const 84))))  ;; SizeOfHeaders
+
+    (local.set $section_off (i32.add (local.get $pe_off) (i32.add (i32.const 24) (local.get $opt_hdr_size))))
+    (local.set $i (i32.const 0))
+    (block $sd (loop $sl
+      (br_if $sd (i32.ge_u (local.get $i) (local.get $num_sections)))
+      (local.set $vsize (i32.load (i32.add (local.get $section_off) (i32.const 8))))
+      (local.set $vaddr (i32.load (i32.add (local.get $section_off) (i32.const 12))))
+      (local.set $raw_size (i32.load (i32.add (local.get $section_off) (i32.const 16))))
+      (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
+      (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
+      ;; Watcom PE images use VirtualSize=0 and put the committed extent in
+      ;; SizeOfRawData. A zero PointerToRawData is BSS, regardless of flags.
+      ;; Packers also emit combined CODE/IDATA/UDATA characteristics on a single
+      ;; section with real raw bytes; the UDATA bit does not discard those bytes.
+      (local.set $mapped_size
+        (if (result i32) (i32.gt_u (local.get $vsize) (local.get $raw_size))
+          (then (local.get $vsize))
+          (else (local.get $raw_size))))
+      (local.set $copy_size
+        (if (result i32) (i32.eqz (local.get $raw_off))
+          (then (i32.const 0))
+          (else (local.get $raw_size))))
+      (local.set $initialized_size (local.get $copy_size))
+      ;; The host prehydrates initialized section bytes whose file offsets lie
+      ;; beyond the fixed staging buffer. Copy only bytes that are actually in
+      ;; staging, but preserve the full initialized extent so imports and PE
+      ;; resources can consume that prehydrated tail during this load.
+      (if (i32.gt_u (i32.add (local.get $raw_off) (local.get $copy_size)) (local.get $size))
+        (then
+          (local.set $copy_size
+            (if (result i32) (i32.lt_u (local.get $raw_off) (local.get $size))
+              (then (i32.sub (local.get $size) (local.get $raw_off)))
+              (else (i32.const 0))))))
+      (local.set $dst (i32.add (global.get $GUEST_BASE) (local.get $vaddr)))
+      (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
+      (if (local.get $copy_size)
+        (then (call $memcpy (local.get $dst) (local.get $src) (local.get $copy_size))))
+      ;; Zero BSS/unbacked tail through the complete mapped section extent.
+      (if (i32.gt_u (local.get $mapped_size) (local.get $initialized_size))
+        (then (call $zero_memory
+          (i32.add (local.get $dst) (local.get $initialized_size))
+          (i32.sub (local.get $mapped_size) (local.get $initialized_size)))))
+      (if (i32.and (local.get $characteristics) (i32.const 0x20))
+        (then
+          (global.set $code_start (i32.add (global.get $image_base) (local.get $vaddr)))
+          (global.set $code_end (i32.add (global.get $code_start) (local.get $mapped_size)))))
+      (local.set $section_off (i32.add (local.get $section_off) (i32.const 40)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sl)))
+
+    (if (i32.ne (local.get $import_rva) (i32.const 0))
+      (then (call $process_imports (local.get $import_rva))))
+
+    (global.set $eip (global.get $entry_point))
+    ;; ESP is a guest address; reserve a zero return word below StackBase so a
+    ;; returning self-extractor entry point stops instead of executing garbage.
+    (i32.store offset=16 (global.get $reg_base) (i32.add
+      (i32.sub (i32.add (global.get $GUEST_STACK) (global.get $GUEST_STACK_SIZE))
+               (global.get $GUEST_BASE))
+      (i32.sub (global.get $image_base) (i32.const 4))))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=4 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=8 (global.get $reg_base) (i32.const 0)) (i32.store offset=12 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=20 (global.get $reg_base) (i32.const 0)) (i32.store offset=24 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=28 (global.get $reg_base) (i32.const 0)) (global.set $df (i32.const 0))
+    ;; Allocate fake TIB (Thread Information Block) for FS segment
+    (global.set $fs_base (call $heap_alloc (i32.const 256)))
+    (call $zero_memory (call $g2w (global.get $fs_base)) (i32.const 256))
+    ;; TIB+0: SEH chain head (set to -1 = end of chain)
+    (call $gs32 (global.get $fs_base) (i32.const 0xFFFFFFFF))
+    ;; TIB+0x18: Self-pointer (linear address of TIB)
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x18)) (global.get $fs_base))
+    ;; TIB+0x04: Stack top
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04))
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    ;; TIB+0x08: Stack bottom
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08))
+      (i32.sub (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)) (global.get $GUEST_STACK_SIZE)))
+    ;; TIB+0x2c: ThreadLocalStoragePointer — point at our TLS slot array so that
+    ;; apps doing direct FS:[0x2c][index*4] reads (bypassing TlsGetValue) see the
+    ;; same values our TlsSetValue writes. Eagerly allocate the slot array.
+    (if (i32.eqz (call $tls_ensure_slots))
+      (then (global.set $last_error (i32.const 8)) (return (i32.const 0))))
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x2c)) (global.get $tls_slots))
+    ;; TIB+0x30: on Win9x this is the process database, a pointer into the
+    ;; shared arena above 0x80000000; NT keeps its PEB (below 2 GB) here. Code
+    ;; tells the two apart by the sign bit alone (Moorhuhn 3's packer takes
+    ;; its Win9x path on `test eax,eax / js`), so the high bit is the ABI.
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x30)) (global.get $WIN9X_PROCESS_DB))
+    ;; Static PE TLS: assign one slot, copy the template, and expose it through
+    ;; FS:[0x2c][slot]. Delphi/VCL reads this vector directly instead of always
+    ;; calling TlsGetValue.
+    (if (i32.ne (local.get $tls_rva) (i32.const 0))
+      (then
+        (local.set $tls_dir (i32.add (global.get $image_base) (local.get $tls_rva)))
+        (local.set $tls_start (call $gl32 (local.get $tls_dir)))
+        (local.set $tls_end (call $gl32 (i32.add (local.get $tls_dir) (i32.const 4))))
+        (local.set $tls_index_addr (call $gl32 (i32.add (local.get $tls_dir) (i32.const 8))))
+        (local.set $tls_raw_size (i32.sub (local.get $tls_end) (local.get $tls_start)))
+        (local.set $tls_zero_size (call $gl32 (i32.add (local.get $tls_dir) (i32.const 16))))
+        (if (i32.ne
+              (i32.or (local.get $tls_raw_size) (local.get $tls_zero_size))
+              (i32.const 0))
+          (then
+            (local.set $tls_index (call $tls_reserve))
+            (if (i32.ne (local.get $tls_index) (i32.const -1))
+              (then
+                (if (local.get $tls_index_addr)
+                  (then (call $gs32 (local.get $tls_index_addr) (local.get $tls_index))))
+                (local.set $tls_data
+                  (call $heap_alloc (i32.add (local.get $tls_raw_size) (local.get $tls_zero_size))))
+                (if (local.get $tls_data)
+                  (then
+                    (local.set $tls_data_wa (call $g2w (local.get $tls_data))) (call $memcpy
+                      (local.get $tls_data_wa)
+                      (call $g2w (local.get $tls_start))
+                      (local.get $tls_raw_size))
+                    (call $zero_memory
+                      (i32.add (local.get $tls_data_wa) (local.get $tls_raw_size))
+                      (local.get $tls_zero_size))
+                    (call $gs32
+                      (i32.add (global.get $tls_slots) (i32.shl (local.get $tls_index) (i32.const 2)))
+                      (local.get $tls_data))))))))))
+    (global.get $entry_point))
+
+  ;; ============================================================
+  ;; IMPORT TABLE
+  ;; ============================================================
+  (func $process_imports (param $import_rva i32)
+    (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
+    (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32) (local $thunk_addr i32)
+    (local $api_id i32) (local $data_addr i32)
+    (local.set $desc_ptr (i32.add (global.get $GUEST_BASE) (local.get $import_rva)))
+    (block $id (loop $dl
+      (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
+      (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
+      ;; OriginalFirstThunk is optional. Bound/stripped images commonly leave
+      ;; it zero and retain the lookup entries in FirstThunk until the loader
+      ;; overwrites them. FirstThunk is required for a live descriptor, so it
+      ;; is also the reliable end-of-table discriminator.
+      (br_if $id (i32.eqz (local.get $iat_rva)))
+      (if (i32.eqz (local.get $ilt_rva))
+        (then (local.set $ilt_rva (local.get $iat_rva))))
+      (local.set $ilt_ptr (i32.add (global.get $GUEST_BASE) (local.get $ilt_rva)))
+      (local.set $iat_ptr (i32.add (global.get $GUEST_BASE) (local.get $iat_rva)))
+      (block $fd (loop $fl
+        (local.set $entry (i32.load (local.get $ilt_ptr)))
+        (br_if $fd (i32.eqz (local.get $entry)))
+        ;; WASM addr of thunk data = THUNK_BASE + idx*8
+        ;; Guest addr = WASM_addr - GUEST_BASE + image_base
+        (local.set $thunk_addr (i32.add
+          (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                   (global.get $GUEST_BASE))
+          (global.get $image_base)))
+        (i32.store (local.get $iat_ptr) (local.get $thunk_addr))
+        (if (i32.eqz (i32.and (local.get $entry) (i32.const 0x80000000)))
+          (then
+            (local.set $data_addr
+              (call $resolve_msvcrt_data_import_a
+                (i32.add (global.get $GUEST_BASE)
+                  (i32.add (local.get $entry) (i32.const 2)))))
+            (if (local.get $data_addr)
+              (then
+                (i32.store (local.get $iat_ptr) (local.get $data_addr)))
+              (else
+                (local.set $api_id (call $import_hint_override_api_id
+                  (i32.add (global.get $image_base)
+                    (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+                  (i32.add (global.get $GUEST_BASE) (local.get $entry))))
+                (if (i32.ne (local.get $api_id) (i32.const -1))
+                  (then
+                    ;; Treat hint-corrected imports like resolved ordinals for
+                    ;; logging, so traces show the canonical API name from api_id.
+                    (i32.store
+                      (i32.add (global.get $THUNK_BASE)
+                        (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.or (i32.const 0x80000000)
+                        (i32.load16_u (i32.add (global.get $GUEST_BASE) (local.get $entry)))))
+                    (i32.store
+                      (i32.add
+                        (i32.add (global.get $THUNK_BASE)
+                          (i32.mul (global.get $num_thunks) (i32.const 8)))
+                        (i32.const 4))
+                      (local.get $api_id)))
+                  (else
+                    (i32.store
+                      (i32.add (global.get $THUNK_BASE)
+                        (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (local.get $entry))
+                    ;; Lookup and store API ID in thunk+4
+                    (i32.store
+                      (i32.add
+                        (i32.add (global.get $THUNK_BASE)
+                          (i32.mul (global.get $num_thunks) (i32.const 8)))
+                        (i32.const 4))
+                      (call $lookup_api_id
+                        (i32.add (global.get $GUEST_BASE)
+                          (i32.add (local.get $entry) (i32.const 2))))))))))
+          (else
+            ;; Ordinal import: bit 31 set, low 16 bits = ordinal number
+            ;; Store ordinal as name RVA marker, resolve API ID via host
+            (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))
+            (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
+              (call $resolve_import_ordinal
+                ;; DLL name: desc+12 = name RVA, as a guest address...
+                (i32.add (global.get $image_base) (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+                ;; ...and as a linear-memory address
+                (i32.add (global.get $GUEST_BASE) (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+                ;; ordinal = entry & 0xFFFF
+                (i32.and (local.get $entry) (i32.const 0xFFFF))))))
+        (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+        (call $update_thunk_end)
+        (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
+        (local.set $iat_ptr (i32.add (local.get $iat_ptr) (i32.const 4)))
+        (br $fl)))
+      (local.set $desc_ptr (i32.add (local.get $desc_ptr) (i32.const 20)))
+      (br $dl)))
+
+    ;; Allocate catch-return thunk: guest addr for catch funclet return
+    ;; Write a special marker (0xCACA0000) as the name RVA so win32_dispatch can identify it
+    (global.set $catch_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0000))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate Delphi SEH handler continuation thunk (marker 0xCACA000E)
+    (global.set $delphi_seh_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000E))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate CreateWindowEx continuation thunk (marker 0xCACA0001)
+    (global.set $createwnd_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0001))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate Synchronous SendMessage continuation thunk (marker 0xCACA0005)
+    (global.set $sync_msg_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0005))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+    ;; Allocate DialogBoxParamA message loop thunk (marker 0xCACA0004)
+    (global.set $dlg_loop_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0004))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate _initterm continuation thunk (marker 0xCACA0003)
+    (global.set $initterm_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0003))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate normal CRT exit() callback continuation thunk (marker
+    ;; 0xCACA002C). Each atexit callback returns here so the registry can be
+    ;; drained in LIFO order before the host process exit is reported.
+    (global.set $atexit_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002C))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate bsearch continuation thunk (marker 0xCACA000C)
+    (global.set $bsearch_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000C))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate qsort comparator continuation thunk (marker 0xCACA002D).
+    (global.set $qsort_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002D))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate CBT hook continuation thunk (marker 0xCACA0002)
+    (global.set $cbt_hook_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0002))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate first-ShowWindow activation chain thunks.
+    ;; Chain: ShowWindow -> ACTIVATE -> SETFOCUS -> MOVE -> SIZE -> done.
+    (global.set $createwnd_activate_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0022))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    (global.set $createwnd_setfocus_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0023))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    (global.set $createwnd_move_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0024))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    (global.set $createwnd_size_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0031))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Child-CreateWindow CBT hook continuation (marker 0xCACA0026)
+    ;; After CBT hook returns (potentially after SetWindowLongA subclass),
+    ;; dispatch WM_CREATE synchronously so lpCreateParams (which for MFC SDI
+    ;; is a CCreateContext* on the caller's stack) is still live when
+    ;; CView::OnCreate calls CDocument::AddView. CACA0027 is the post-WM_CREATE
+    ;; continuation that hands the hwnd back to the CreateWindowEx caller.
+    (global.set $child_cbt_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0026))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Child-WM_CREATE post-dispatch continuation (marker 0xCACA0027)
+    (global.set $child_create_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0027))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Dialog CBT hook continuation (marker 0xCACA0028). MFC uses WH_CBT
+    ;; to attach the HWND to its CWnd object before WM_INITDIALOG.
+    (global.set $dialog_cbt_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0028))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; WM_NCCREATE-to-WM_CREATE continuation (marker 0xCACA0029). Used by
+    ;; controls whose wndproc initializes state from WM_NCCREATE before
+    ;; CreateWindowExA's caller can query it.
+    (global.set $createwnd_nccreate_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0029))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Child WM_NCCREATE-to-WM_CREATE continuation (marker 0xCACA002E).
+    ;; Unlike CACA0029, this retains the child-specific saved WM_SIZE word so
+    ;; CACA0027 can finish the complete create sequence.
+    (global.set $child_create_nccreate_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002E))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; SetFocus WM_SETFOCUS return continuation (marker 0xCACA002A).
+    (global.set $setfocus_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002A))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate modal dialog pump thunk (marker 0xCACA0006). Used by
+    ;; $modal_begin to park EIP while a WAT-driven modal common dialog
+    ;; (Open/Save/Color/Font/...) is being interacted with.
+    (global.set $modal_loop_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0006))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate DirectDrawEnumerateA callback return thunk (marker 0xCACA0007)
+    (global.set $ddenum_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0007))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate EnumDisplayModes continuation thunk (marker 0xCACA0008)
+    (global.set $enum_modes_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0008))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate D3D EnumDevices multi-device continuation thunk (marker 0xCACA000B)
+    (global.set $d3d_enum_dev_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000B))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate D3D EnumZBufferFormats callback continuation thunk (marker 0xCACA000D)
+    (global.set $d3d_enum_zbuf_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000D))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate D3D EnumTextureFormats callback continuation thunk (marker 0xCACA000F)
+    (global.set $d3d_enum_tex_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000F))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate EnumFontFamilies callback return thunk (marker 0xCACA0011)
+    (global.set $font_enum_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0011))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate EnumChildWindows callback continuation thunk (marker 0xCACA002B)
+    (global.set $enum_child_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002B))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate EnumResourceNamesA callback continuation thunk (marker
+    ;; 0xCACA0030). Unlike the one-shot font thunk, this resumes a PE resource
+    ;; directory walk after each guest callback.
+    (global.set $enum_rsrc_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0030))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate LineDDA point callback return thunk (marker CACA0012).
+    (global.set $line_dda_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0012))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate mm_timer callback return thunk (marker 0xCACA000A)
+    (global.set $mm_timer_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000A))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+        (call $update_thunk_end)
+  )

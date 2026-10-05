@@ -1,0 +1,22 @@
+[
+  {
+    "test": "test/test-darkstone-gameplay.js",
+    "seconds": 660,
+    "reason": "Authentic installer payload, menu, character creation and responsive town acceptance use a 600-second guest guard; allow 60 seconds for loading and cleanup."
+  },
+  {
+    "test": "test/test-broken-sword-gameplay.js",
+    "seconds": 660,
+    "reason": "Authentic installer output, opening sequences and responsive cafe acceptance use a 600-second guest guard; allow 60 seconds for loading and cleanup."
+  },
+  {
+    "test": "test/test-web-quake2-room.js",
+    "seconds": 600,
+    "reason": "Four headless browsers each boot Quake II: the host loads demo1 as a listen server, then three joiners (server list, toast after a 20-second poll, a ?room= link) connect over WebRTC and load the level. 203 seconds at load 34; its own 540-second budget covers a slower box, plus 60 seconds for Chrome and cleanup."
+  },
+  {
+    "test": "test/test-diablo2-demo-gameplay.js",
+    "seconds": 480,
+    "reason": "Diablo II's Direct3D route to character creation and the Act I load costs 49 seconds of user CPU and about 55 seconds of wall clock on an idle box; its 420-second guest guard is sized for this machine at load 50, where the same work gets a fraction of a core, plus 60 seconds for loading and cleanup."
+  }
+]
