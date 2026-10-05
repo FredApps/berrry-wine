@@ -3,6 +3,39 @@
   "assetRoot": "test/binaries/candidates",
   "candidates": [
     {
+      "id": "dungeons-of-dredmor-release",
+      "name": "Dungeons of Dredmor (archived Steam release)",
+      "kind": "game",
+      "version": "Steam public depot 98801 revision 17; archive catalog timestamp 2012-08-29; no executable version resource",
+      "executables": [
+        "game/Dungeons of Dredmor.exe"
+      ],
+      "sourcePage": "https://archive.org/details/steam2-dump",
+      "license": "Proprietary commercial Steam release; local archival compatibility fixture, not a demo or redistribution grant",
+      "localOnly": true,
+      "packages": [],
+      "browser": {
+        "fileRoot": "game",
+        "exe": "game/Dungeons of Dredmor.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 20000,
+        "timeoutMs": 60000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "game/SDL.dll",
+          "game/SDL_ttf.dll",
+          "game/libexpat.dll",
+          "game/steam_api.dll",
+          "game/OpenAL32.dll"
+        ]
+      },
+      "notes": "Manually restored from the Archive.org steam2.torrent using only depot98801 revision17 parent-CRC closure:18verified blobs and16verified DATs. Complete6270-file manifest statically decoded; original binaries unchanged. Separate from beta98811. Startup/gameplay/audio/FPS untested; see docs/re-notes/dungeons-of-dredmor-release.md and local .candidate-source.json for exact hashes. --prepare regenerates browser manifest; packages intentionally empty because generic fetcher does not decode Steam2 archives."
+    },
+    {
       "id": "dungeons-of-dredmor",
       "name": "Dungeons of Dredmor (Steam beta)",
       "kind": "game",

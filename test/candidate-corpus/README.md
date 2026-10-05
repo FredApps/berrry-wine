@@ -136,3 +136,5 @@ II release, so there is no GOG package recipe to maintain yet.
 ## Dungeons of Dredmor archived beta
 
 Fetch with `node tools/fetch-candidate-corpus.js --id=dungeons-of-dredmor`. This is the community-archived Windows Steam beta depot 98811 revision 8, not a demo. The local experimental selector `dungeons_of_dredmor` mounts its complete asset tree, including the original Steam DLL. No compatibility or Steam availability claim is made; the entry is excluded from the public desktop. See [provenance and static dependency notes](../../docs/re-notes/dungeons-of-dredmor.md).
+
+The separate `dungeons-of-dredmor-release` candidate preserves archived public-game Steam depot98801 revision17, alongside beta98811. It requires manual Steam2 archive preparation; `--id=dungeons-of-dredmor-release --prepare` regenerates the manifest after restoration. Local experimental app: `dungeons_of_dredmor_release`. [Release provenance and limitations](../../docs/re-notes/dungeons-of-dredmor-release.md).
