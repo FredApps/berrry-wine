@@ -312,3 +312,11 @@ present counts agree; the run ends without errors. World visibility between
 actual publications was about 32–38 ms, versus 36–47 ms in the unpaced sample.
 These are diagnostic observations, not controlled performance measurements.
 Pacing alone did not fix stable presentation and was not promoted to production.
+
+## 2026-10-05: authenticated UI clipping starts with nonfinite inputs
+
+The corrected owning-Worker trace armed only after the successful world swap (EIP4f1644, returns4671d4/43f631), before nested UI422260. It retained four entry483bf0/post483c35 pairs, zero observer errors, then disabled its exact owned trace at the cap. Original EXE spans and actual served module/source are pinned in the immutable run.
+
+The first UI pair already has yA=NaN (`ffc00000`), yB=0; its A vertex is (635,NaN). The second enters with yA=+Infinity (`7f800000`), yB=NaN. Later pairs also contain infinity. Therefore this observation does not establish Y interpolation as the first corruption and does not justify patching its arithmetic. Next trace the incoming quad and earlier X clipping to locate the first nonfinite value. Preserve raw float bits; JSON null is not a sufficient numeric description.
+
+Evidence: `scratch/runs/20261005-hype-ui-clipper-nonfinite-input` (207 artifact hashes rechecked); raw clipper SHA256 `c0ecfa49e04bc0a296f5f7d68696aa4d21665802e9788f66cf276e9ad87a45ee`. Session74195 exited0, browser/server closed10:33:12.696Z. `after-trace.png` shows the knight/street world, but this intermittent scene is not stable gameplay or input qualification. No FPS or normal-timing claim under trace.
