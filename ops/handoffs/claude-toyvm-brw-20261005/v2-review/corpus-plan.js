@@ -32,7 +32,14 @@ const R = env.R || '/home/user/wine-assembly';
 const W = env.W;
 const CAND = env.CAND || 'v3j';                 // v2 | v3 | v3j (v2+v3+jmp_syn)
 const JOBS = Number(env.JOBS || 3);
-const SLOT_S = Number(env.SLOT_S || 7200);      // the whole slot, all phases, seconds
+// SMOKE=N: a bounded real smoke of the runner itself -- N programs (BRW.EXE
+// first), small budgets, the SMOKE_TESTS suites only, BRW to BRW_BUDGET. Every
+// journal line says SMOKE; it is a harness check, never the corpus A/B.
+const SMOKE = Number(env.SMOKE || 0);
+const SMOKE_TESTS = String(env.SMOKE_TESTS || 'test-toyvm-region-live,test-toyvm-region-install-clock').split(',').filter(Boolean);
+const BRW_BUDGET = Number(env.BRW_BUDGET || (SMOKE ? 50000000 : 500918116));
+const B = (full, smoke) => (SMOKE ? smoke : full);          // per-phase budget picker
+const SLOT_S = Number(env.SLOT_S || (SMOKE ? 900 : 7200));  // the whole slot, all phases, seconds
 const SWEEP_S = Number(env.SWEEP_S || 3000);
 const BASE = env.BASE || '2683a6e31d0e95e7ffd1805fcafe013f94f1bcec';
 const REV = env.REV || path.join(R, 'scratch/claude-toyvm-brw-v2-review-20261005');
@@ -57,6 +64,7 @@ const TREES = ['base', 'cand'];
 const p = (...x) => path.join(W, ...x);
 const now = () => new Date().toISOString().slice(11, 19);
 function say(tag, msg) {
+  if (SMOKE) tag = `SMOKE ${tag}`;
   const line = `${now()} [${tag}] ${msg}`;
   console.log(line);
   fs.appendFileSync(p('out', 'journal.txt'), line + '\n');
@@ -89,6 +97,7 @@ function startSlot() {
 }
 const remainingS = () => Math.floor((deadline - Date.now()) / 1000);
 function needSlot(phase, minS) {
+  if (SMOKE) minS = Math.ceil(minS / 10);
   const r = remainingS();
   if (r < minS) abort(`${phase}: slot deadline (${r}s left, needs ${minS}s)`, 7);
 }
@@ -203,6 +212,14 @@ async function prep() {
     { log: p('out', 'corpus.txt'), tee: true, timeoutS: 900 }));
   if (!read(p('out', 'corpus.txt')).includes(CORPUS_SHA)) abort('corpus hash', 2);
   if (!read(p('programs.txt')).trim()) abort('empty program list', 2);
+  if (SMOKE) {
+    const full = read(p('programs.txt')).split('\n').filter(Boolean);
+    fs.writeFileSync(p('programs-full.txt'), full.join('\n') + '\n');
+    const brw = full.filter((l) => /BRW\.EXE$/i.test(l));
+    const pick = [...brw, ...full.filter((l) => !brw.includes(l))].slice(0, SMOKE);
+    fs.writeFileSync(p('programs.txt'), pick.join('\n') + '\n');
+    say('P0', `smoke list: ${pick.length} of ${full.length} programs (${pick.map((l) => path.basename(l)).join(' ')})`);
+  }
   for (const t of TREES) {
     await must(`${t} smoke run`, await node([p(t, 'tools/toyvm/run-dos.js'), p('demos/1995-c-cma_brw/BRW.EXE'),
       '--dispatches=10m'], { log: p('logs', `${t}-smoke.log`), timeoutS: 120 }));
@@ -215,6 +232,7 @@ async function tests() {
   const lists = TREES.map((t) => {
     let files = [];
     try { files = fs.readdirSync(p(t, 'test')).filter((f) => /^test-toyvm-.*\.js$/.test(f)).sort(); } catch {}
+    if (SMOKE) files = files.filter((f) => SMOKE_TESTS.includes(path.basename(f, '.js')));
     return files;
   });
   if (lists.some((l) => l.length === 0)) abort(`empty suite (base ${lists[0].length}, cand ${lists[1].length})`, 3);
@@ -262,7 +280,9 @@ async function sweep() {
   // sweep-dos.js rewrites --out after every program, so a TERM at SWEEP_S (exit
   // 124 here) leaves a valid partial JSON; any other non-zero exit is a failure.
   const rcs = await Promise.all(TREES.map((t) => node([p(t, 'tools/toyvm/sweep-dos.js'), `--dir=${p('demos')}`,
-    '--dispatches=8m', '--reps=1', '--timeout=180', `--out=${p('out', `sweep-${t}.json`)}`],
+    `--dispatches=${B('8m', '2m')}`, '--reps=1', '--timeout=180', `--out=${p('out', `sweep-${t}.json`)}`,
+    // smoke: the listed programs as positional args instead of the whole --dir
+    ...(SMOKE ? programList() : [])].filter((a) => !(SMOKE && a.startsWith('--dir='))),
   { log: p('logs', `sweep-${t}.log`), timeoutS: Math.min(SWEEP_S, remainingS()), signal: 'SIGTERM' })));
   rcs.forEach((rc, i) => {
     if (rc !== 0 && rc !== 124) abort(`sweep-dos ${TREES[i]} failed (exit ${rc})`, 2);
@@ -284,10 +304,10 @@ async function sweep() {
 
 async function arms() {
   diskok();
-  const secs = remainingS() - 1800;        // leave 30 min for P4-P6
-  if (secs <= 600) abort('P3: not enough slot left', 7);
+  const secs = remainingS() - B(1800, 180);   // leave room for P4-P6
+  if (secs <= B(600, 60)) abort('P3: not enough slot left', 7);
   const rcs = await Promise.all(TREES.map((t) => node([AB, `--tree=${p(t)}`, `--list=${p('programs.txt')}`,
-    '--arms=l1,jit-early,jit-sepc,fold64', '--recipe=witness', '--budgets=80m',
+    '--arms=l1,jit-early,jit-sepc,fold64', '--recipe=witness', `--budgets=${B('80m', '4m')}`,
     `--jobs=${Math.floor((JOBS + 1) / 2)}`, '--timeout=300', `--max-seconds=${secs}`,
     `--out=${p('out', `arms-${t}.ndjson`)}`], { log: p('logs', `arms-${t}.log`) })));
   rcs.forEach((rc, i) => { if (rc !== 0) abort(`corpus-ab ${TREES[i]} failed (exit ${rc})`, 2); });
@@ -309,7 +329,7 @@ async function control() {
   needSlot('P4', 600);
   for (const t of TREES) {
     await must(`nosched ${t}`, await node([AB, `--tree=${p(t)}`, `--list=${p('programs.txt')}`, '--arms=l1',
-      '--recipe=sweep', '--budgets=8m', '--no-irq-schedule', `--jobs=${JOBS}`, '--timeout=180',
+      '--recipe=sweep', `--budgets=${B('8m', '2m')}`, '--no-irq-schedule', `--jobs=${JOBS}`, '--timeout=180',
       `--out=${p('out', `nosched-${t}.ndjson`)}`], { log: p('logs', `nosched-${t}.log`) }));
   }
   const rc = await node([AB, `--compare=${p('out/nosched-base.ndjson')},${p('out/nosched-cand.ndjson')}`,
@@ -341,7 +361,7 @@ async function brw() {
   const exe = p('demos/1995-c-cma_brw/BRW.EXE');
   for (const t of TREES) {
     const rcs = await Promise.all(['l1', 'sepc'].map((a) => node(['scratch/o/toyvm-brw/brw-bisect.js', `--arm=${a}`,
-      `--exe=${exe}`, '--budget=500918116', '--trace-irq', `--irq-out=${p('out', `brw-${t}-${a}.irq`)}`],
+      `--exe=${exe}`, `--budget=${BRW_BUDGET}`, '--trace-irq', `--irq-out=${p('out', `brw-${t}-${a}.irq`)}`],
     { cwd: p(t), log: p('logs', `brw-${t}-${a}.log`), timeoutS: 900 })));
     rcs.forEach((rc, i) => { if (rc !== 0) abort(`brw ${t} ${['l1', 'sepc'][i]} failed (exit ${rc})`, 2); });
   }
@@ -392,7 +412,7 @@ async function nudge() {
   if (!paths.length) { say('P6', 'nothing moved'); return; }
   for (const t of TREES) {
     await must(`nudge ${t}`, await node([AB, `--tree=${p(t)}`, `--list=${p('out', 'nudge-paths.txt')}`, '--arms=l1',
-      '--recipe=sweep', '--budgets=8m,8.01m,8.02m,8.04m', `--jobs=${JOBS}`, '--timeout=180',
+      '--recipe=sweep', `--budgets=${B('8m,8.01m,8.02m,8.04m', '2m,2.01m,2.02m,2.04m')}`, `--jobs=${JOBS}`, '--timeout=180',
       `--out=${p('out', `nudge-${t}.ndjson`)}`], { log: p('logs', `nudge-${t}.log`) }));
   }
   await must('nudge rubric', await node([AB, `--nudge=${p('out/nudge-base.ndjson')},${p('out/nudge-cand.ndjson')}`],
@@ -424,7 +444,7 @@ async function main(cmd) {
   await prep();
   await p1p2();
   await arms(); await control(); await brw(); await nudge();
-  say('DONE', `elapsed ${Math.floor((Date.now() - (deadline - SLOT_S * 1000)) / 1000)}s`);
+  say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}elapsed ${Math.floor((Date.now() - (deadline - SLOT_S * 1000)) / 1000)}s`);
 }
 
 if (require.main === module) {

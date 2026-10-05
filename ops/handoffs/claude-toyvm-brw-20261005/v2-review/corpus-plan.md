@@ -75,7 +75,22 @@ Runner contract (root reviews 12:29Z and 116210a7; all enforced and fixture-test
 - One slot deadline (`SLOT_S`, persisted in `$W/out/slot-start.txt`) caps every child's timeout
   and is checked before each phase, including phases run one at a time (exit 7).
 
-Run as
+**Bounded real smoke first** (root, 2026-10-05 ~14:38Z: before any 120-minute grant). The same
+runner with `SMOKE=3`: BRW.EXE plus two more programs, small budgets (sweep 2M, arms 4M, nosched 2M,
+nudge 2M-range), only `SMOKE_TESTS` in P1 (default: test-toyvm-region-live and
+test-toyvm-region-install-clock), BRW to `BRW_BUDGET` (default 50M in smoke), `SLOT_S` 900 by
+default, so the whole smoke is hard-capped at 15 minutes. Every journal line is tagged `SMOKE`, and
+the DONE line says "harness smoke only, NOT the corpus A/B". Coverage and parity gates run exactly
+as in the full run, against the smoke list. Prep still unpacks and hashes the whole corpus, so the
+corpus-hash gate is exercised for real.
+
+`W=<empty dir> SMOKE=3 CAND=stack PATCHES="<p1>:<sha1>,<p2>:<sha2>,<p3>:<sha3>" JOBS=2 node corpus-plan.js all`
+
+Expected wall time is unmeasured. The cap is SLOT_S=900 s; request a 15-minute slot. Fixture tests
+for smoke mode (positional program list instead of --dir, SMOKE-tagged journal, SMOKE_TESTS filter)
+are in corpus-plan.test.js, 28/28 passing.
+
+Then the full run as
 `W=<dir> CAND=stack PATCHES="<p1>:<sha1>,<p2>:<sha2>,<p3>:<sha3>" JOBS=3 node corpus-plan.js all`
 (the three patches above, absolute paths), or
 phase by phase. Each line below says
