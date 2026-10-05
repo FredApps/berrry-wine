@@ -850,6 +850,7 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+const SAVE_VFS_PREFIX = getArg('save-vfs-prefix', null); // --save-vfs-prefix='c:\\program files\\x': only that guest tree
 // --capture-launch=DIR: snapshot the VFS when ShellExecute names a VFS-backed
 // executable, before an installer bootstrap can delete its temporary child.
 // At exit DIR contains the snapshot plus launch.json for a second CLI stage.
@@ -1089,7 +1090,11 @@ const EXE_PATH = getArg('exe', ZIP_LAUNCH ? ZIP_LAUNCH.exePath
   : ISO_LAUNCH ? ISO_LAUNCH.exePath
   : (APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe'));
 const EXE_GUEST_PATH = (() => {
-  const requested = getArg('exe-guest-path', null);
+  // An --iso-exe launch IS a guest path on the disc: an installer that copies
+  // "from its own directory" (Myth's VISE Setup: GetModuleFileName) must see
+  // D:\Setup.exe, not the host temp copy reported as C:\Setup.exe.
+  const requested = getArg('exe-guest-path', null) || (ISO_LAUNCH
+    ? path.win32.join(ISO_LAUNCH.guestDir, path.basename(ISO_LAUNCH.exePath)) : null);
   if (!requested) return null;
   const rooted = /^[a-z]:[\\/]/i.test(requested) ? requested : `c:\\${requested}`;
   const normalized = path.win32.normalize(rooted.replace(/\//g, '\\'));
@@ -10924,6 +10929,7 @@ if (VERBOSE) {
   if (SAVE_VFS && ctx.vfs) {
     saveVfsToHost(ctx.vfs, SAVE_VFS, {
       suffix: SAVE_VFS_SUFFIX,
+      prefix: SAVE_VFS_PREFIX,
       skipPaths: ['c:\\app.exe'],
       log: line => console.log(line),
     });

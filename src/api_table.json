@@ -34613,5 +34613,12 @@
     "stub": { "pop": 16, "ret": 2147500033 },
     "convention": "stdcall",
     "hash": 1168585098
+  },
+  {
+    "id": 4093,
+    "name": "_hwrite",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3025282013
   }
 ]

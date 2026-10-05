@@ -3481,6 +3481,18 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
+  ;; 4093: _hwrite — the LONG-count spelling of _lwrite (Myth demo's VISE installer).
+  (func $handle__hwrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.lt_s (local.get $arg2) (i32.const 0))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    (call $handle__lwrite
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
   ;; 938: _hread — the LONG-count spelling of _lread.
   (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.lt_s (local.get $arg2) (i32.const 0))

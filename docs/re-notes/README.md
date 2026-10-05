@@ -69,6 +69,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Jardinains! v1.2 | [jardinains.md](jardinains.md) |
 | JigSawedME 1.3 (VB6; version-resource byte counts) | [jigsawedme.md](jigsawedme.md) |
 | Moorhuhn 1, 2, Winter-Edition, 3, Tennis and CD extras | [moorhuhn.md](moorhuhn.md) |
+| Myth: The Fallen Lords (demo + retail ISO) | [myth-tfl.md](myth-tfl.md) |
 | NetHack 3.4.3 for Windows | [nethack-win32.md](nethack-win32.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | Little Fighter 2 v1.9 | [little-fighter-2.md](little-fighter-2.md) |

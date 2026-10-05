@@ -535,6 +535,24 @@ test('directory notifications honor filter and subtree boundaries', () => {
 
 // --- findFirstFile ---
 
+test('CreateFile on an existing directory fails ERROR_ACCESS_DENIED under every disposition', () => {
+  // Win9x behavior. Myth: The Fallen Lords probes a directory with
+  // CreateFile(dir, GENERIC_READ, OPEN_EXISTING) and reads error 5 (or 32) as
+  // "exists"; FILE_NOT_FOUND sent it to CreateDirectory and recursion.
+  const vfs = makeVFS({ 'c:\\tags\\tags.gor': 4 });
+  vfs.dirs.add('c:\\tags');
+  vfs.dirs.add('c:\\tags\\local');
+  for (const creation of [1, 2, 3, 4, 5]) {
+    const access = creation === 5 ? 0xC0000000 : 0x80000000;
+    assert.deepStrictEqual(vfs.createFileResult('C:\\TAGS\\LOCAL', access, creation),
+      { handle: 0, error: 5 }, `disposition ${creation}`);
+  }
+  assert(!vfs.files.has('c:\\tags\\local'), 'no file is created over the directory');
+  assert.deepStrictEqual(vfs.createFileResult('c:\\tags\\missing', 0x80000000, 3),
+    { handle: 0, error: 2 }, 'a missing path is still FILE_NOT_FOUND');
+  assert(vfs.createFile('c:\\tags\\tags.gor', 0x80000000, 3), 'files beside it still open');
+});
+
 test('wildcard *.* in CWD finds files in c:\\', () => {
   const vfs = makeVFS({ 'c:\\foo.txt': 10, 'c:\\bar.dat': 20 });
   const r = vfs.findFirstFile('.\\*.*');
