@@ -94,8 +94,8 @@ The original installer sequence is root `setup.exe` (PE bootstrap),
 Welcome, destination, program folder, and shortcut dialogs lead to the
 installed tree under `C:\Program Files\Electronic Arts\Need for Speed III Demo`.
 
-NFS III loads its original software renderer `softtria.dll` at `0x00b30000`.
-With worker threads and real-time clocks, the CLI renders the car and track.
+The original default loaded the software renderer `softtria.dll`.
+With worker threads and real-time clocks, that CLI path renders the car and track.
 The browser also reaches race startup: the Corvette loading screen at 10s,
 the starting-grid camera at 21s, and cockpit/race HUD at 31s after launch.
 These are sampled observations, not minimum loading times. Safari itself has
@@ -108,7 +108,76 @@ otherwise triggers the default same-EIP detector after only 11 batches.
 node test/run.js --app=nfs3_demo --threads --real-ticks --no-build --quiet-api --quiet-blocks --stuck-after=100000 --max-batches=100000 --max-seconds=40 --batch-size=10000 --png=/tmp/nfs3.png
 ```
 
-## Texture cache page tracking
+## Direct3D renderer
+
+The app now seeds the native 3DSetup settings under
+`HKLM\Software\Electronic Arts\Need For Speed III Demo`:
+`Thrash Driver` (REG_SZ) = `d3d`, `D3D Device` (REG_DWORD) = `0`.
+This loads the original bundled `d3da.dll`; neither Glide nor a replacement
+renderer DLL is needed. The apparent `-d3d0` and `-D3D` switches did not select
+it in this demo's launch probes, so use the verified registry configuration.
+
+Its Watcom DLL has a `.bss` section with VirtualSize=0, RawSize=32256, and
+PointerToRawData=0. The DLL loader previously copied file bytes into that
+section. Its process-attach count at preferred VA `0x60019148` was therefore
+nonzero before initialization, producing the misleading "DLL already in use"
+message. `$load_dll` now zeroes that entire unbacked section, matching the
+existing main-EXE loader behavior. `test-pe-zero-original-first-thunk.js`
+covers both clearing reused memory and not copying headers into short BSS.
+
+Verified with threads enabled: the CLI renders the car/track at 640x480
+through Direct3D's WAT rasterizer. An isolated Chrome browser with
+`?threads&d3dim-gpu` also renders via WebGL: starting-grid camera at the
+22-second sample, cockpit/race HUD with advancing timer by 43 seconds.
+At that sample the executor reported 325,957 triangles, zero errors, and
+4,460 fallback operations. Some operations still use software after the HUD
+appears; this is not a claim of an exclusively GPU-rendered frame or of
+physical GPU acceleration in headless Chrome. Safari remains unverified.
+
+Repeatable local-fixture browser check:
+
+```sh
+node test/test-nfs3-d3d-web.js
+```
+
+It verifies native DLL selection, worker isolation, sustained race geometry,
+and zero WebGL executor errors; saves `build/nfs3-d3d/race.png` and stats.
+The normal renderer setting still controls WAT versus WebGL rasterization;
+the game's renderer selection is Direct3D in either case.
+The browser now defaults to WebGL for every supported Direct3D version;
+the selector has only WebGL and Software. `?d3d-renderer=software` selects
+the CPU path for both generations. The old `d3d9-renderer` spelling remains
+an alias; `d3dim-gpu` is no longer needed. Missing WebGL context creation
+declines draws to the software rasterizer instead of aborting the guest.
+The NFS browser regression now runs without the GPU opt-in parameter.
+Safari 26.4 was subsequently verified with that default: isolated worker
+mode, cockpit/race HUD, 234,894 WebGL triangles and zero executor errors.
+
+Before that default change, a live Safari software-worker sample measured
+81 flips in 10.35 seconds (7.8/s), 29,372 queued draws and 131,498,976 bytes
+of snapshots: about 363 draws and 1.62 MB per flip. Replay consumed 9.22s,
+with 3.57s of overlapping producer waits. The reported horizontal seam was
+visible near screen row 256 in both that software path and Safari's WebGL
+capture. Changing the backend alone did not fix it.
+
+### Cockpit tile seam
+
+The cockpit uses adjacent 256-pixel tiles. The top tile's V coordinates run
+from 0.5/256 to 1+0.5/256 with wrapping, so drawing its exact bottom edge
+samples its opaque black roof row at screen y=256. The software textured
+triangle loop included y2; it now excludes that bottom row. The GPU path's
+Y flip reverses ownership of exact horizontal-edge ties. A 1/256-pixel upward
+bias on triangle vertices selects the screen-top owner; line vertices keep
+their original coordinates.
+
+`test-d3dim-gpu-edge-web.js` reproduces this with a transparent tile whose top
+row is black: the unfixed path loses the top row and paints the unwanted
+bottom row. It fails before and passes after the GPU change. The existing
+`test-d3dim-texture-wrap.js` also checks exclusion of the software triangle's
+bottom row. Chromium race captures confirm the y=256 line is gone. Safari
+has not yet been retested with this edge correction.
+
+### Texture cache page tracking
 
 The WebGL cache now watches only texture/palette/render-target backing pages.
 Guest aliases and Worker instances share atomic generations; CPU, bulk,
@@ -250,6 +319,19 @@ readbacks per frame remain, not one per line. Earlier counters show virtually
 identical triangle totals for D3D/Glide but 386 versus 229 GPU draws/frame and
 40% more guest blocks for D3D. See `docs/nfs-renderer-benchmark.md` for evidence,
 profiling limitations, artifacts and reproduction.
+
+### Lazy default compatibility check (2026-09-30)
+
+Frozen box8 `lazy-fence-after.wasm` runs with shared-WebGL default-on and
+`?no-lazy-sync` both reach the cockpit with native `d3da.dll`, six guest
+workers and zero GPU errors. Reviewed captures retain world/mirrors/HUD.
+Neither arm triggers lazy arming or touching; this route therefore checks
+compatibility rather than deferred Lock correctness. Both have zero framebuffer
+uploads. Guest Flip trace events and queued-GPU Flip counters differ by about
+2:1 and must not be interchanged. Weather/opponents and load differ between
+launches, so the measured rates do not establish an FPS improvement.
+See [coverage results](../lazy-sync-game-results.md) and
+`build/lazy-games/coverage-nfs3-{on1,off1}/` for counters, captures and hashes.
 
 ## NFS II game step (GAME/s)
 

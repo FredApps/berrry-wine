@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// Dialog-button releases must re-enter a native modal loop through
-// GetMessage/DispatchMessage. A synchronous out-of-band UP can let the button
-// set its completion state while leaving the loop blocked inside GetMessage.
+// A captured WAT BUTTON release may execute its built-in control procedure
+// directly: that procedure only clears/toggles local state and queues the
+// parent's BN_CLICKED. The parent dialog still runs through GetMessage, while
+// frameworks cannot pre-translate and discard WM_LBUTTONUP before the built-in
+// BUTTON sees it.
 
 const assert = require('assert');
 const { installInputHandlers } = require('../lib/renderer-input');
@@ -61,21 +63,12 @@ renderer.repaint = () => {};
 
 renderer.handleMouseUp(55, 70, 1);
 
-assert.strictEqual(routedSynchronously, 0,
-  'captured dialog button must not receive a synchronous out-of-band mouse-up');
-assert.strictEqual(renderer.inputQueue.length, 1, 'mouse-up should be queued');
-assert.deepStrictEqual(renderer.inputQueue[0], {
-  type: 'mouse',
-  hwnd: 0x10002,
-  msg: 0x0202,
-  wParam: 0,
-  lParam: (20 << 16) | 15,
-  mouseX: 55,
-  mouseY: 70,
-  mouseButtons: 0,
-});
+assert.strictEqual(routedSynchronously, 1,
+  'captured WAT dialog button must receive its built-in mouse-up directly');
+assert.strictEqual(renderer.inputQueue.length, 0,
+  'the built-in button queues BN_CLICKED, not the renderer mouse-up');
 
-console.log('PASS  captured dialog mouse-up is queued for modal-loop dispatch');
+console.log('PASS  captured WAT button mouse-up directly reaches the built-in control');
 
 let watRoutedSynchronously = 0;
 const watModalWasm = {
@@ -187,7 +180,7 @@ assert.strictEqual(ownerlessButton.sent.length, 2,
   'ownerless main-dialog WAT button should dispatch synchronously');
 assert.strictEqual(ownerlessButton.queued.length, 0);
 
-console.log('PASS  WAT capture dispatches directly outside owned guest modal buttons');
+console.log('PASS  WAT capture dispatches directly for controls and ownerless buttons');
 
 const nativeDialogWasm = {
   exports: {

@@ -1725,7 +1725,10 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (i32.const 0) (local.get $name_ptr))
     (if (i32.eq (global.get $yield_reason) (i32.const 1))
-      (then (global.set $wait_stack_bytes (i32.const 24)))
+      (then
+        (call $user_apc_set_alertable (i32.ne (local.get $arg4) (i32.const 0)))
+        (global.set $user_apc_sleep (i32.const 0))
+        (global.set $wait_stack_bytes (i32.const 24)))
       (else
         (i32.store offset=16 (global.get $reg_base)
           (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))))

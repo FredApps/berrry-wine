@@ -188,3 +188,109 @@ RCT_SCREENSHOT=/private/tmp/rct-construction.png node test/test-rct-gameplay.js
 The test launches one `--control-stdin --frozen` CLI process, advances only by
 explicit step commands, and uses the CLI's internal `--max-seconds` guard. It
 does not wrap the emulator in an external signal timeout.
+
+## The gate now fails: the park view is ~85% black (2026-09-11)
+
+`test-rct-gameplay.js` fails reproducibly at `0 changed pixels` (the 2026-09-05
+run above recorded 61,107). It fails **identically on main and on committed
+2109f24a**, at 55.0s and 56.3s against a 180s guard, so it is neither a
+candidate regression nor the guard expiring.
+
+What the failing frame actually shows: toolbar, status bar (`£10,000.00`,
+`0 Guests`, `March, Year 1`, `17°C`) and the Path Construction panel all render
+**correctly**, while the park viewport is black except for one wedge of
+well-formed terrain and trees at bottom centre.
+
+Ruled out, each with the measurement:
+
+- **Not paused.** `byte [0x8e31a9] == 00` (the pause flag from the section
+  above), dumped in-run at batch 4300.
+- **Not stalled.** `--count=0x00436234` (game update) = 5,097 over the gate's
+  own step budget, and 34,824 over a longer run. `0x00438248` = 4,080.
+- **Not progressive paint.** Captures at batches 4240/5000/6500/8800 differ from
+  the first by 378/1015/768 pixels — the black never fills in.
+- **Not a truncated scenario load.** `--trace-fs` shows `sc0.sc4` read straight
+  through in 0x400 chunks to a short final read of 0x1e5 at 0x45000 (EOF,
+  283,109 bytes), 7,274 trace lines, no gap.
+- **Not the renderer.** The title screen is pixel-perfect and complete —
+  `--dx-surfaces` reports slot 29 640x480 `colors=128 nonZero=1850/1850`, and
+  the PNG is 628KB against the in-game frames' 130KB.
+- **Not the gate racing its own steps.** `run.js`'s `step` resolves its reply
+  only when `controlStepWaiter.remaining` hits 0 (`test/run.js:5403-5416`), so
+  clicks and snapshots are correctly ordered.
+
+Leading hypothesis, unproven: the **camera/viewport position** for the loaded
+scenario, i.e. we are looking past the map's corner, which is what RCT draws as
+black. The visible terrain is detailed and correctly graded, which is not what a
+half-decoded map looks like.
+
+Next probe for whoever picks this up — arrow keys are NOT it (RCT reads
+DirectInput 5, so `--input=keydown` never reaches it; a 12-press scroll moved
+288 pixels, i.e. nothing). Use the in-game map window from the toolbar, or find
+the viewport globals inside the per-frame function at `0x438248`. `tools/ctl.js`
+against `run.js --control --frozen` is the right instrument (look, click, look),
+but note the control server shares the guest thread, so `snapshot` cannot be
+answered while credits are draining — sequence commands, do not poll.
+
+## CORRECTION: the black park view is the initial CAMERA, and the gate never checked the picture (2026-09-12)
+
+The section above is wrong in its framing and its suspects. Measured this
+session, with pictures:
+
+**The renderer, the `.SC4` decode and the viewport paint are all healthy.**
+Reaching the live park and then clicking the toolbar **Map** button at
+`(246,15)` draws the whole Forest Frontiers map as a correct diamond — the
+clearing, the path, the lake. Clicking inside that map window at `(120,160)`
+recentres the main view, and the park then renders **full-screen and perfect**:
+grass, trees, fences, no black anywhere, with the yellow viewport rectangle
+appearing in the map window. Two clicks of **zoom out** at `(118,15)` likewise
+widen the view to a large forested hill whose top edge is a natural terrain
+silhouette, not a clip line.
+
+So the black is not unpainted pixels and not a half-decoded map. It is the
+**initial viewport origin sitting at/near the map's north corner (tile ~0,0)**,
+i.e. the camera is looking off the edge of the world, which RCT draws black.
+Whether real RCT centres Forest Frontiers on the park at scenario start is
+**not verified here** — that is the next thing to establish before calling the
+initial position a bug rather than the scenario's own saved view.
+
+Newly useful toolbar coordinates: `(118,15)` zoom out, `(246,15)` map window,
+`(382,15)` path construction, `(10,10)` pause.
+
+**The gate was green on this same broken picture.** `test-rct-gameplay.js`
+asserts only `pixelDiff(a,b) > 10000` between two park frames — "some pixels
+changed", never "the park is visible". The 2026-09-05 run that recorded 61,107
+pixels and claimed it "proves live scenario simulation/rendering" was looking
+at the same mostly-black frame. Captured at the gate's own known-good commit
+`35a05fff`, the screenshot is pixel-identical to the failing one.
+
+**Therefore the bisect result below is about test sensitivity, not rendering.**
+A clean-build bisect (`good 35a05fff`, `bad f37f79d8`, `rm -rf build` each step
+— a stale `build/` poisons verdicts) lands on `7065931d` "Fix Alpha Centauri
+gameplay and cooperative workers", and within it on exactly one hunk: the
+removal of the `yield_flag`/`steps` reset on an **empty PeekMessage** in
+`09a5-handlers-window.wat`. Restoring those two lines makes the gate pass again
+(81,932 px at main) **and changes the picture not at all** — the park is still
+black. It is a masking change, not a fix, and it would revert a deliberate SMAC
+correction that has no CLI gate protecting it. It was NOT applied.
+
+Ruled out this session, each by building and running the gate:
+- the new `colorkey8` fold (handler 443) — disabling it changes nothing, at
+  `7065931d` or at main;
+- `GDI_DC_STATE_COUNT`/`GDI_OBJECT_COUNT` 256→512 — reverting both (with their
+  `00-regions.wat` sizes, which a build gate ties to stride x count) changes
+  nothing;
+- the new WM_PAINT and WM_TIMER peek-filter gates — RCT peeks unfiltered
+  (`hwnd=0, min=0, max=0, remove=1`), which satisfies both conditions, so they
+  are inert here.
+
+Also note the yield's absence makes RCT retire *more* work, not less: over a
+fixed 1500-batch budget, `0x00438248` = 980 frames and `0x00436234` = 784 game
+updates without it, against 777 and 0 with it. Any "the clock is starved"
+explanation is contradicted by that measurement.
+
+Two separate defects remain open:
+1. the initial camera position (above), and
+2. the gate itself, which should assert the park viewport is actually
+   populated — e.g. a nonzero-pixel share over the viewport rect — instead of
+   only that two frames differ.

@@ -120,11 +120,21 @@ function matchingPixels(image, target, tolerance = 0,
   return { points, box };
 }
 
-function cropImage(image, x, y, width, height, scale = 1) {
+// `gain` multiplies each channel before writing. Text drawn near-black on
+// black -- a glyph pass that lost its colour, a drop shadow that survived
+// alone -- is legible in the pixel values and invisible to the eye, and every
+// investigation of that so far has ended in a throwaway script. A crop at
+// --gain=12 answers "is there anything written here" directly. It is a
+// display aid: it saturates, so read exact colours with png-stats.js.
+function cropImage(image, x, y, width, height, scale = 1, gain = 1) {
   if (![x, y, width, height, scale].every(Number.isFinite) ||
       width <= 0 || height <= 0 || scale <= 0 || !Number.isInteger(scale)) {
     throw new UsageError('crop rectangle and scale must be positive integers');
   }
+  if (!Number.isFinite(gain) || gain <= 0) {
+    throw new UsageError('gain must be a positive number');
+  }
+  const lift = v => Math.max(0, Math.min(255, Math.round(v * gain)));
   const output = new PNG({ width: width * scale, height: height * scale });
   for (let dy = 0; dy < output.height; dy++) {
     for (let dx = 0; dx < output.width; dx++) {
@@ -132,9 +142,9 @@ function cropImage(image, x, y, width, height, scale = 1) {
       const sy = Math.min(image.height - 1, Math.max(0, y + Math.floor(dy / scale)));
       const from = (sy * image.width + sx) * 4;
       const to = (dy * output.width + dx) * 4;
-      output.data[to] = image.data[from];
-      output.data[to + 1] = image.data[from + 1];
-      output.data[to + 2] = image.data[from + 2];
+      output.data[to] = lift(image.data[from]);
+      output.data[to + 1] = lift(image.data[from + 1]);
+      output.data[to + 2] = lift(image.data[from + 2]);
       output.data[to + 3] = 0xff;
     }
   }
@@ -439,9 +449,11 @@ function runCrop(argv) {
   if (!flags.has('rect')) throw new UsageError('need --rect=X,Y,W,H or --boxes');
   const [x, y, width, height] = numbers(flags.get('rect'));
   const scale = Number(flags.get('scale') || 1);
+  const gain = Number(flags.get('gain') || 1);
   const out = flags.get('out') || file.replace(/\.png$/, '') + '-crop.png';
-  writePng(out, cropImage(image, x, y, width, height, scale));
-  console.log(`${width}x${height} at ${x},${y} scaled ${scale}x -> ${out}`);
+  writePng(out, cropImage(image, x, y, width, height, scale, gain));
+  console.log(`${width}x${height} at ${x},${y} scaled ${scale}x` +
+    (gain === 1 ? '' : ` gain ${gain}x`) + ` -> ${out}`);
 }
 
 function luminance(image, x, y) {

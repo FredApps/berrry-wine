@@ -41,7 +41,7 @@ async function runBoids(browser, base, query) {
     logs.push(text);if(logs.length>80)logs.shift();
     if (/UNIMPLEMENTED API:|RuntimeError|D3D render Worker|FATAL:|trapped/i.test(text)) problems.push(text);
   });
-  await page.goto(`${base}?debug&no-log${query}`, { waitUntil: 'load', timeout: 60000 });
+  await page.goto(`${base}?debug&no-log&d3d-renderer=software${query}`, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(() => typeof launchApp === 'function' &&
     document.querySelector('#app-select option[value="dx_boids"]'), { timeout: 30000 });
   assert(await page.evaluate(() => crossOriginIsolated), 'server must be cross-origin isolated');

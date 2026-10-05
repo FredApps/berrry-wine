@@ -31,6 +31,13 @@ const INSTALLED = path.join(ROOT,
 const FULL_ROUTE = process.env.DIABLO2_FULL_ROUTE === '1';
 const SHOTS = process.env.DIABLO2_SCREENSHOT_DIR ||
   path.join(os.tmpdir(), 'wine-assembly-diablo2-demo-gameplay');
+// Profiling hooks for the full route: DIABLO2_EXTRA_ARGS is appended to the
+// run.js command line (space-separated, e.g. --handler-hist-* windows), and
+// DIABLO2_AFTER_WORLD=N keeps playing N more batches in the encampment, walking
+// the Barbarian to alternating ground points, so a window placed after the
+// printed gameplay batch sees gameplay rather than the end of the session.
+const EXTRA_ARGS = (process.env.DIABLO2_EXTRA_ARGS || '').split(/\s+/).filter(Boolean);
+const AFTER_WORLD = Number(process.env.DIABLO2_AFTER_WORLD) || 0;
 
 // A batch is a budget of blocks, and this route spends almost none of the old
 // 1,000,000 on work: measured over the first 100s of the D3D route, 99.7% of
@@ -104,6 +111,8 @@ function stats(file) {
 async function main() {
   fs.mkdirSync(SHOTS, { recursive: true });
   const session = startControlSession([
+    // DIABLO2_NODE_ARGS go to node itself, e.g. --cpu-prof (refused in NODE_OPTIONS).
+    ...(process.env.DIABLO2_NODE_ARGS || '').split(/\s+/).filter(Boolean),
     RUN,
     '--app=diablo2_demo',
     '--no-build',
@@ -116,6 +125,7 @@ async function main() {
     '--no-close',
     '--control-stdin',
     '--frozen',
+    ...EXTRA_ARGS,
   ], { cwd: ROOT, idPrefix: 'd2g-' });
 
   let batch = 0;
@@ -238,9 +248,20 @@ async function main() {
     reached = true;
     console.log('PASS Diablo II Demo creates a Barbarian and renders playable ' +
       `Rogue Encampment gameplay on the Direct3D route (batch ${batch})`);
+
+    const targets = [[160, 150], [480, 300], [480, 150], [160, 300]];
+    const worldBatch = batch;
+    for (let i = 0; batch < worldBatch + AFTER_WORLD; i++) {
+      const [x, y] = targets[i % targets.length];
+      await click(x, y, 38);
+      if (i % 10 === 9) await capture(`07-walk-${batch}`);
+    }
   } finally {
     const output = session.output();
     await session.quit({ ignoreReplyError: true });
+    // DIABLO2_LOG=FILE keeps run.js's whole output, exit summaries included,
+    // for the profiling flags DIABLO2_EXTRA_ARGS turns on.
+    if (process.env.DIABLO2_LOG) fs.writeFileSync(process.env.DIABLO2_LOG, session.output());
     // Only when the route itself succeeded: an assertion thrown from a finally
     // block replaces the real failure with a less informative one.
     if (reached) {

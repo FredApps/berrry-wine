@@ -5431,10 +5431,13 @@
               (block $rdone
                 (block $r3b (block $r2b (block $r1b (block $r0b
                   (br_table $r0b $r1b $r2b $r3b $r3b (local.get $d)))
-                  (call $rep_movsb_do) (br $rdone))
-                  (call $rep_movsd_do) (br $rdone))
+                  (call $rep_movsb_do (local.get $imm)) (br $rdone))
+                  (call $rep_movsd_do (local.get $imm)) (br $rdone))
                   (call $rep_stosb_do) (br $rdone))
                 (call $rep_stosd_do))
+              ;; SEH owns EIP/registers now. Do not run later ops or publish
+              ;; the abandoned executor's local state over the handler frame.
+              (if (global.get $eip_redirected) (then (return)))
               (local.set $r0 (i32.load offset=0 (global.get $reg_base)))
               (local.set $r1 (i32.load offset=4 (global.get $reg_base)))
               (local.set $r2 (i32.load offset=8 (global.get $reg_base)))
@@ -6470,10 +6473,13 @@
               (block $rdone
                 (block $r3b (block $r2b (block $r1b (block $r0b
                   (br_table $r0b $r1b $r2b $r3b $r3b (local.get $d)))
-                  (call $rep_movsb_do) (br $rdone))
-                  (call $rep_movsd_do) (br $rdone))
+                  (call $rep_movsb_do (local.get $imm)) (br $rdone))
+                  (call $rep_movsd_do (local.get $imm)) (br $rdone))
                   (call $rep_stosb_do) (br $rdone))
                 (call $rep_stosd_do))
+              ;; Same fault exit as the general executor: its locals no
+              ;; longer describe the thread redirected into the SEH handler.
+              (if (global.get $eip_redirected) (then (return)))
               (local.set $r0 (i32.load offset=0 (global.get $reg_base)))
               (local.set $r1 (i32.load offset=4 (global.get $reg_base)))
               (local.set $r2 (i32.load offset=8 (global.get $reg_base)))
@@ -6664,6 +6670,7 @@
     (call $bx_tail_note (local.get $tail_ip))
     (global.set $ip (local.get $tail_ip))
     (dispatch-next))
+
 
   ;; ======================================================================
   ;; H464 -- THE ONE-BLOCK LEAF THAT MAY FALL BACK (round 17, section 27)
@@ -7304,10 +7311,11 @@
               (block $rdone
                 (block $r3b (block $r2b (block $r1b (block $r0b
                   (br_table $r0b $r1b $r2b $r3b $r3b (local.get $d)))
-                  (call $rep_movsb_do) (br $rdone))
-                  (call $rep_movsd_do) (br $rdone))
+                  (call $rep_movsb_do (local.get $imm)) (br $rdone))
+                  (call $rep_movsd_do (local.get $imm)) (br $rdone))
                   (call $rep_stosb_do) (br $rdone))
                 (call $rep_stosd_do))
+              (if (global.get $eip_redirected) (then (return)))
               (local.set $r0 (i32.load offset=0 (global.get $reg_base)))
               (local.set $r1 (i32.load offset=4 (global.get $reg_base)))
               (local.set $r2 (i32.load offset=8 (global.get $reg_base)))
@@ -7554,4 +7562,3 @@
     (call $bx_tail_note (local.get $tail_ip))
     (global.set $ip (local.get $tail_ip))
     (dispatch-next))
-

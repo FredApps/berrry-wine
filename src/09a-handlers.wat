@@ -288,7 +288,7 @@
   ;; First slot whose period has elapsed, or 0. Refreshes $tick_count, so the
   ;; caller does not have to.
   (func $mm_timer_due_slot (result i32)
-    (local $i i32) (local $slot i32)
+    (local $i i32) (local $slot i32) (local $mode i32) (local $event i32)
     (global.set $tick_count (call $host_get_ticks))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
@@ -298,7 +298,20 @@
           (if (i32.ge_u
                 (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
                 (i32.load offset=4 (local.get $slot)))
-            (then (return (local.get $slot))))))
+            (then
+              (local.set $mode (i32.and (i32.load offset=20 (local.get $slot)) (i32.const 0x30)))
+              (if (i32.or (i32.eq (local.get $mode) (i32.const 0x10))
+                          (i32.eq (local.get $mode) (i32.const 0x20)))
+                (then
+                  ;; Event timers signal kernel objects, never guest code or
+                  ;; the message queue. Consume even during PM_NOREMOVE: the
+                  ;; signal is independent of message removal.
+                  (local.set $event (i32.load offset=8 (local.get $slot)))
+                  (call $mm_timer_consume_slot (local.get $slot))
+                  (drop (call $host_set_event (local.get $event)))
+                  (if (i32.eq (local.get $mode) (i32.const 0x20))
+                    (then (drop (call $host_reset_event (local.get $event))))))
+                (else (return (local.get $slot))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -306,7 +319,7 @@
   ;; Charge one period to a due slot, retiring it if it was a one-shot.
   (func $mm_timer_consume_slot (param $slot i32)
     (call $mm_timer_consume_due_tick (local.get $slot))
-    (if (i32.load offset=20 (local.get $slot))
+    (if (i32.and (i32.load offset=20 (local.get $slot)) (i32.const 1))
       (then (i32.store (local.get $slot) (i32.const 0)))))
 
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found

@@ -5,9 +5,7 @@
     (local $pe_off i32) (local $num_sections i32) (local $opt_hdr_size i32)
     (local $section_off i32) (local $i i32) (local $vaddr i32) (local $vsize i32)
     (local $raw_off i32) (local $raw_size i32) (local $import_rva i32)
-    (local $tls_rva i32) (local $tls_dir i32) (local $tls_start i32) (local $tls_end i32)
-    (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32) (local $tls_data_wa i32)
-    (local $tls_raw_size i32) (local $tls_zero_size i32)
+    (local $tls_rva i32)
     (local $src i32) (local $dst i32) (local $characteristics i32)
     (local $mapped_size i32) (local $copy_size i32) (local $initialized_size i32)
 
@@ -52,6 +50,10 @@
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE) (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (call $zero_memory (global.get $VIRTUAL_RESERVE_TABLE)
+      (global.get $VIRTUAL_RESERVE_TABLE_SIZE))
+    (call $zero_memory (global.get $VIRTUAL_HOLE_TABLE)
+      (global.get $VIRTUAL_HOLE_TABLE_SIZE))
     (call $zero_memory (global.get $GUEST_PAGE_TABLE)
       (global.get $GUEST_PAGE_TABLE_SIZE))
     (i32.store (region.addr $VIRTUAL_MAP_STATE 4)
@@ -149,40 +151,10 @@
     ;; tells the two apart by the sign bit alone (Moorhuhn 3's packer takes
     ;; its Win9x path on `test eax,eax / js`), so the high bit is the ABI.
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x30)) (global.get $WIN9X_PROCESS_DB))
-    ;; Static PE TLS: assign one slot, copy the template, and expose it through
-    ;; FS:[0x2c][slot]. Delphi/VCL reads this vector directly instead of always
-    ;; calling TlsGetValue.
-    (if (i32.ne (local.get $tls_rva) (i32.const 0))
-      (then
-        (local.set $tls_dir (i32.add (global.get $image_base) (local.get $tls_rva)))
-        (local.set $tls_start (call $gl32 (local.get $tls_dir)))
-        (local.set $tls_end (call $gl32 (i32.add (local.get $tls_dir) (i32.const 4))))
-        (local.set $tls_index_addr (call $gl32 (i32.add (local.get $tls_dir) (i32.const 8))))
-        (local.set $tls_raw_size (i32.sub (local.get $tls_end) (local.get $tls_start)))
-        (local.set $tls_zero_size (call $gl32 (i32.add (local.get $tls_dir) (i32.const 16))))
-        (if (i32.ne
-              (i32.or (local.get $tls_raw_size) (local.get $tls_zero_size))
-              (i32.const 0))
-          (then
-            (local.set $tls_index (call $tls_reserve))
-            (if (i32.ne (local.get $tls_index) (i32.const -1))
-              (then
-                (if (local.get $tls_index_addr)
-                  (then (call $gs32 (local.get $tls_index_addr) (local.get $tls_index))))
-                (local.set $tls_data
-                  (call $heap_alloc (i32.add (local.get $tls_raw_size) (local.get $tls_zero_size))))
-                (if (local.get $tls_data)
-                  (then
-                    (local.set $tls_data_wa (call $g2w (local.get $tls_data))) (call $memcpy
-                      (local.get $tls_data_wa)
-                      (call $g2w (local.get $tls_start))
-                      (local.get $tls_raw_size))
-                    (call $zero_memory
-                      (i32.add (local.get $tls_data_wa) (local.get $tls_raw_size))
-                      (local.get $tls_zero_size))
-                    (call $gs32
-                      (i32.add (global.get $tls_slots) (i32.shl (local.get $tls_index) (i32.const 2)))
-                      (local.get $tls_data))))))))))
+    ;; Register the template for this thread and all future thread vectors.
+    (if (i32.eqz (call $tls_static_register (global.get $image_base)
+          (i32.load offset=80 (local.get $pe_off)) (local.get $tls_rva)))
+      (then (return (i32.const 0))))
     (global.get $entry_point))
 
   ;; ============================================================

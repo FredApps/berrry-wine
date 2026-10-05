@@ -107,7 +107,7 @@ const RegionMap = require('../lib/region-map.generated.js');
       Array.from(bytes.subarray(wa(ramp), wa(ramp) + 1536)));
   });
 
-  check('software pixel format is described, chosen, set once, and swapped', () => {
+  check('software pixel format is described, chosen, re-set idempotently, and swapped', () => {
     const { bitmap, hdc } = createSurface();
     const requested = allocZero(40);
     wat.guest_write16(requested, 40);
@@ -125,7 +125,13 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 0);
     assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 1);
     assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 1);
-    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 0);
+    // Re-selecting the format a surface already has is a no-op that succeeds;
+    // only a *change* is refused. Warcraft III runs its GL setup twice on one
+    // window and takes a FALSE here as "this device cannot do OpenGL".
+    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 1);
+    assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 1);
+    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 2, requested), 0);
+    assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 1);
     assert.strictEqual(wat.test_call_SwapBuffers(hdc), 1);
     wat.test_call_DeleteObject(bitmap);
     wat.test_call_DeleteDC(hdc);

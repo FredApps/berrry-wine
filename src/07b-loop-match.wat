@@ -6217,7 +6217,8 @@
   ;; would have left them, because the stores are the same stores. The price
   ;; is sixteen global accesses around a call that already costs thousands.
   ;;
-  ;; `d` selects which of the four (fn - 82). Every other field is inert, and
+  ;; `d` selects which of the four (fn - 82). MOVS carries its prefix PC in
+  ;; `imm` for precise fault restart; STOS keeps its unused zero operand.
   ;; `a` and the SIB index nibble are 0xF so the hoisted EA adds nothing.
   (global $TU_REP_STR    i32 (i32.const 49))
 
@@ -6884,11 +6885,12 @@
     ;; bits are then its destination reg8.
     ;; -- REP MOVSB/MOVSD/STOSB/STOSD (H82..H85) -----------------------------
     ;; See $TU_REP_STR. Contiguous handler indices, checked as a range, and
-    ;; the operand word is unused by all four.
+    ;; MOVS carries its prefix PC in the operand; STOS still carries zero.
     (if (i32.and (i32.ge_u (local.get $fn) (i32.const 82))
                  (i32.le_u (local.get $fn) (i32.const 85)))
       (then
         (global.set $tu_d (i32.sub (local.get $fn) (i32.const 82)))
+        (global.set $tu_imm (local.get $op))
         (global.set $tu_a (i32.const 0xF))
         (global.set $tu_b (i32.const 0xF))
         (global.set $tu_kind (global.get $TU_REP_STR))

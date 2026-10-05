@@ -76,6 +76,23 @@ const context = {
 vm.runInNewContext(hostSource + '\n;globalThis.WineAssembly = WineAssembly;', context);
 const WineAssembly = context.WineAssembly;
 
+// Worker exit diagnostics must never read the idle browser-side instance.
+{
+  const wine = new WineAssembly();
+  wine.instance = { exports: new Proxy({}, { get() {
+    throw new Error('read idle page registers');
+  } }) };
+  wine.moduleBases = { 'game.exe': { loadAddr: 0x400000, origBase: 0x400000 } };
+  const site = wine._exitSiteText({ regs: {
+    prevEip: 0x401300, prev2Eip: 0x401200, eax: 0x1234abcd,
+    ecx: 2, edx: 3, esi: 4, esp: 0x40008000, frames: [0x401500],
+  } });
+  assert(site.includes('last block 0x00401300 (game.exe+0x00401300)'));
+  assert(site.includes('eax=0x1234abcd'));
+  assert(site.includes('frame 0: 0x00401500'));
+  assert.strictEqual(wine._exitSiteText({ regs: null }), 'worker exit registers unavailable');
+}
+
 // The constants the drive loop reads. A reference to a class that does not
 // exist throws here rather than on somebody's app launch.
 assert.strictEqual(typeof WineAssembly.MAX_PARK_SLEEP_MS, 'number');

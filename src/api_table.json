@@ -33487,5 +33487,47 @@
     "convention": "stdcall",
     "hash": 1597275093,
     "handler": "ftm_unimplemented"
+  },
+  {
+    "id": 3956,
+    "name": "QueueUserAPC",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2299245819
+  },
+  {
+    "id": 3957,
+    "name": "WriteProcessMemory",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3221786346
+  },
+  {
+    "id": 3958,
+    "name": "wglGetCurrentContext",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2339120867
+  },
+  {
+    "id": 3959,
+    "name": "wglGetCurrentDC",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 548415565
+  },
+  {
+    "id": 3960,
+    "name": "glGetTexLevelParameteriv",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1974744617
+  },
+  {
+    "id": 3961,
+    "name": "glClearDepth",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3394571592
   }
 ]

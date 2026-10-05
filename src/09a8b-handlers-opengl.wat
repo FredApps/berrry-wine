@@ -5,6 +5,8 @@
   ;; this one ABI bridge. The host sees the original stack in linear memory;
   ;; it owns fixed-function emulation and lowers to the generic GPU backend.
 
+  (global $gl_current_dc (mut i32) (i32.const 0))
+
   (func $gpu_linear_to_guest (param $wa i32) (result i32)
     (i32.add (i32.sub (local.get $wa) (global.get $GUEST_BASE))
       (global.get $image_base)))
@@ -154,6 +156,9 @@
 
     (i32.store offset=0 (global.get $reg_base) (call $gl_wat_encode_call
       (local.get $opcode) (call $g2w (i32.load offset=16 (global.get $reg_base))) (local.get $aux)))
+    (if (i32.and (i32.eq (local.get $opcode) (i32.const 51))
+                 (i32.ne (i32.load offset=0 (global.get $reg_base)) (i32.const 0)))
+      (then (global.set $gl_current_dc (local.get $arg0))))
     ;; OpenGL entry points use APIENTRY/stdcall. stack_dwords counts physical
     ;; 32-bit stack words, so GLdouble arguments correctly consume two each.
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base))
@@ -161,6 +166,19 @@
     ;; 55 is wglSwapBuffers: the frame end.
     (if (i32.eq (local.get $opcode) (i32.const 55)) (then (call $present_frame_end)))
   )
+
+  (func $handle_wglGetCurrentContext
+      (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (global.get $gl_current_context))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  (func $handle_wglGetCurrentDC
+      (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (select (global.get $gl_current_dc) (i32.const 0) (global.get $gl_current_context)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
   ;; wglSwapLayerBuffers(hdc, fuPlanes) -> BOOL. Warcraft III presents through
   ;; this spelling rather than SwapBuffers. This frontend owns exactly one

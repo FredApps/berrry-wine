@@ -531,3 +531,50 @@ Route (box2; flags as for UT2003 above):
 6. By batch 8200: DM-Rankin with "Press [Fire] to join the match!".
 7. Click in the viewport (340,300). By 8600 the player has spawned, with the
    HUD, the weapon bar and the assault rifle.
+
+## Unreal Special Edition: deterministic headless single-player route (2026-10-01)
+
+A plain Node/WASM route now verifies single-player input and rendering beyond
+the earlier SoftDrv flyby. The stock command-line override is
+`--args=Nyleve.unr?game=UnrealI.SinglePlayer -window`. This is the requested URL,
+not proof of the loaded map's identity: the captured starting room resembles
+the prison interior, and this probe did not inspect a guest map-name log.
+
+The frozen host ran `unreal_special_demo` with `--no-threads --quiet-api
+--no-close --stuck-after=0 --batch-size=200000 --tick-ms-per-batch=25
+--repaint-every=10 --branch-clock --wall-clock-ms=1790673326000`, stopping at
+batch 2101. At batch 1490, click `(300,250)` to focus the viewport; this also
+fires the weapon. Hold Up through both `di-keydown` and `keydown` at 1550,
+release both at 1750, then hold Right at 1800 and release at 1950. Up and Right
+are the installed INI's `MoveForward` and `TurnRight` bindings. The route has
+not been minimized to determine whether both input mechanisms are necessary.
+
+Reviewed checkpoints establish actual gameplay:
+
+- Batch 1500: first-person weapon, crosshair, 100 health and 49 ammo following
+  the click/fire action.
+- Batch 1760: the player has moved close to the wall and the game reports
+  `YOU GOT A FLARE`; the inventory icon appears.
+- Batch 2000: a distinct view after turning right; the final batch 2101 image
+  retains that orientation and the flare inventory icon.
+
+The remote original/experimental pilot completed at
+`2026-10-01T23:12:51.972Z..23:13:09.927Z` and
+`2026-10-01T23:13:09.927Z..23:13:28.390Z`, respectively. Both runs used Node
+24.21.0 / V8 13.6.233.17-node.53 on x86-64, the frozen headless host, SoftDrv,
+and cooperative guest threads. All four corresponding PNG files were
+byte-identical, and both recorded 7,350,053 API calls. This one-pair pilot
+establishes the route and output parity, not a performance improvement.
+
+Preserved evidence bundles, with original timestamps, exact commands, module
+and host hashes, route JSON, logs and reviewed screenshots:
+
+- `scratch/runs/20261001T231251Z-unreal-special-edition-mmx-b-gameplay/`
+  uses original WASM SHA-256
+  `65985dbecf428a305951d3ca1fe55fa951ae979907a791d437911ec79a8f4ff5`.
+- `scratch/runs/20261001T231309Z-unreal-special-edition-mmx-s-gameplay/`
+  uses experimental expanded stacked MMX ABCDEFG WASM SHA-256
+  `b3bb724e0ab563d4fd55606745f325c8776c759aa3a4e925fbb2b994871ccc1f`.
+
+These results apply to the preserved builds; neither the current checkout nor
+the original menu route is implicitly validated by this command-line override.

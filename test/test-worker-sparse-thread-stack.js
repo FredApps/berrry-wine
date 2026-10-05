@@ -69,7 +69,12 @@ async function main() {
       'a synchronous structured-clone failure must clear the pending request');
   }
 
-  const module = await WebAssembly.compile(compileSrcWasm());
+  const module = await WebAssembly.compile(compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? source + `
+      (func (export "test_worker_sleep_ex") (param $ms i32)
+        (call $handle_SleepEx (local.get $ms) (i32.const 1)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    ` : source));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = {
     getMemory: () => memory.buffer,
@@ -78,6 +83,20 @@ async function main() {
   };
   const imports = createHostImports(ctx);
   imports.host.memory = memory;
+  const apcs = [];
+  const alertable = [];
+  imports.host.dequeue_user_apc = (tid, outWa) => {
+    assert.strictEqual(tid, 2, 'APCs must be dequeued by the target Worker');
+    if (!apcs.length) return 0;
+    if (outWa) {
+      const item = apcs.shift();
+      const words = new Uint32Array(memory.buffer, outWa >>> 0, 2);
+      words[0] = item.callback;
+      words[1] = item.data;
+    }
+    return 1;
+  };
+  imports.host.set_apc_alertable = (tid, flag) => alertable.push([tid, flag]);
   const sigs = JSON.parse(fs.readFileSync(
     path.join(root, 'lib', 'host-import-sigs.generated.json'), 'utf8')).sigs;
   const host = new GuestThreadHost({
@@ -127,11 +146,84 @@ async function main() {
     assert.strictEqual(await host.callExport('test_call_TlsFree', 79), 1);
     assert.strictEqual(await thread.callExport('guest_read32', vector + 79 * 4), 0,
       'main instance Free clears the real guest Worker vector without a GetValue call');
+
+    // Real x86 callbacks cross the same broker/Worker boundary used by the
+    // browser. A queued-before-start callback must run before the entry point;
+    // a later callback must wait until an alertable wait, even across slices.
+    const marker = 0x00402000;
+    const observed = marker + 4;
+    const callback = 0x00401100;
+    const loop = 0x0040100a;
+    const putBytes = async (address, values) => {
+      for (let off = 0; off < values.length; off += 4) {
+        const word = Buffer.alloc(4);
+        Buffer.from(values.slice(off, off + 4)).copy(word);
+        await thread.callExport('guest_write32', address + off, word.readUInt32LE(0));
+      }
+    };
+    const u32 = value => [...Uint8Array.of(value, value >>> 8, value >>> 16, value >>> 24)];
+    // mov eax,[marker]; mov [observed],eax; jmp $
+    await putBytes(0x00401000, [0xa1, ...u32(marker), 0xa3, ...u32(observed), 0xeb, 0xfe]);
+    // mov eax,[esp+4]; add [marker],eax; ret 4
+    await putBytes(callback, [0x8b, 0x44, 0x24, 4, 0x01, 0x05, ...u32(marker), 0xc2, 4, 0]);
+    apcs.push({ callback, data: 7 });
+    const startup = await thread.slice(1000);
+    assert(!startup.trapped, JSON.stringify(startup));
+    assert.strictEqual(await thread.callExport('guest_read32', observed), 7,
+      'startup APC executes before the thread entry point');
+    apcs.push({ callback, data: 11 });
+    await thread.slice(1000);
+    assert.strictEqual(await thread.callExport('guest_read32', marker), 7,
+      'startup dispatch must not repeat on later slices');
+    // Enter an alertable wait while its queue is empty, then queue an APC.
+    const pending = apcs.pop();
+    const esp = await thread.callExport('get_esp') >>> 0;
+    await thread.callExport('set_esp', esp - 12);
+    await thread.callExport('guest_write32', esp - 12, loop);
+    await thread.callExport('test_worker_sleep_ex', 1000);
+    assert.deepStrictEqual(alertable.at(-1), [2, 1]);
+    apcs.push(pending);
+    await thread.completeWait(0xc0, 12);
+    await thread.slice(1000);
+    assert.strictEqual(await thread.callExport('guest_read32', marker), 18,
+      'wait completion must execute the queued guest callback');
+    assert.strictEqual(await thread.callExport('get_eax'), 0xc0);
+    assert.strictEqual(await thread.callExport('get_esp') >>> 0, esp,
+      'APC completion balances the wait and callback stdcall frames');
+    assert.deepStrictEqual(alertable.at(-1), [2, 0]);
+
+    // A timed-out SleepEx returns zero (WAIT_TIMEOUT is a wait API result).
+    await thread.callExport('set_esp', esp - 12);
+    await thread.callExport('guest_write32', esp - 12, loop);
+    await thread.callExport('test_worker_sleep_ex', 1000);
+    await thread.completeWait(0x102, 12);
+    assert.strictEqual(await thread.callExport('get_eax'), 0);
+    assert.strictEqual(await thread.callExport('get_eip'), loop);
+    assert.strictEqual(await thread.callExport('get_esp') >>> 0, esp);
+
+    // An ordinary return to zero is not a WASM trap. Its final registers and
+    // sparse-stack frames must come from the owning Worker nonetheless.
+    const finish = 0x00401300;
+    await putBytes(finish, [0xb8, ...u32(0x1234abcd), 0xc3]);
+    const frame = thread.stackTop - 128;
+    await thread.callExport('guest_write32', frame, 0);
+    await thread.callExport('guest_write32', frame + 4, 0x00401500);
+    await thread.callExport('set_ebp', frame);
+    await thread.callExport('set_esp', thread.stackTop - 8);
+    await thread.callExport('guest_write32', thread.stackTop - 8, 0);
+    await thread.callExport('set_eip', finish);
+    const exited = await thread.slice(1000);
+    assert.strictEqual(exited.trapped, null);
+    assert.strictEqual(exited.eip, 0);
+    assert(exited.regs, 'non-trapping exit includes owning Worker registers');
+    assert.strictEqual(exited.regs.eax, 0x1234abcd);
+    assert(exited.regs.prevEip >= finish && exited.regs.prevEip < finish + 6);
+    assert.deepStrictEqual(exited.regs.frames, [0x00401500]);
   } finally {
     host.stop();
   }
 
-  console.log('PASS guest Worker clone boundary and sparse high-memory stack');
+  console.log('PASS guest Worker clone boundary, sparse stack, startup APCs and alertable waits');
 }
 
 main().catch(error => { console.error(error); process.exit(1); });

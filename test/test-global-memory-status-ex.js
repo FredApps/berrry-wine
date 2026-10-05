@@ -2,6 +2,7 @@
 'use strict';
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+const { REGIONS } = require('../lib/region-map.generated.js');
 
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ fonts: 'none', extraWat: `
@@ -28,7 +29,11 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(e.get_esp(), 0x00300008);
   const first = snapshot();
   assert.strictEqual(first[0], 64);
-  assert.strictEqual(first[2], memory.buffer.byteLength);
+  // The physical total is the sparse backing pool, not the whole linear memory:
+  // the rest of it is emulator-private and no guest commit can ever reach it.
+  // An app that budgets its load from this number has to be told the truth.
+  assert.strictEqual(first[2], REGIONS.VIRTUAL_BACKING_BASE.size);
+  assert.ok(first[2] < memory.buffer.byteLength);
   assert.ok(first[4] > 0 && first[4] <= first[2]);
   assert.strictEqual(first[1], Math.floor((first[2] - first[4]) * 100 / first[2]));
   for (const i of [3, 5, 7, 9, 11, 13, 14, 15]) assert.strictEqual(first[i], 0);

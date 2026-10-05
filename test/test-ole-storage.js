@@ -353,7 +353,7 @@ async function main() {
   u8.fill(0xcc, wa(output), wa(output) + 16);
   const readHr = e.test_ole_stream_read(stream, output, 16, count) >>> 0;
   const roundTrip = Array.from(u8.slice(wa(output), wa(output) + payload.length));
-  check('IStream read returns S_FALSE at EOF with exact byte count', readHr === 1 && dv.getUint32(wa(count), true) === payload.length);
+  check('IStream short read at EOF returns S_OK with exact byte count', readHr === 0 &&dv.getUint32(wa(count), true) === payload.length);
   check('IStream bytes round-trip without text transcoding', roundTrip.every((v, i) => v === payload[i]));
 
   e.test_ole_stream_seek(stream, 3);

@@ -311,6 +311,15 @@
       (if (global.get $page_chunk_deferred)
         (then (call $page_chunk_reclaim_deferred)))
       (br $main)))
+    ;; A terminating callback does not pass through CACA000A. Restore only
+    ;; context identity; leave its terminal EIP/yield intact (never resume main).
+    (if (i32.and (global.get $mm_context_active)
+          (i32.or (i32.eqz (global.get $eip))
+            (i32.eq (global.get $yield_reason) (i32.const 2))))
+      (then
+        (call $mm_timer_context_leave)
+        (global.set $mm_timer_in_cb (i32.const 0))
+        (global.set $mm_timer_resume_yield (i32.const 0))))
     ;; What this call actually got through. $block_budget can end up negative --
     ;; a fold retires k blocks in one go and subtracts all k -- so this can read
     ;; slightly above the budget it was given; that is honest, not a wrap.
@@ -3122,6 +3131,9 @@
     (local.set $id (i32.load (local.get $slot)))
     (local.set $dwuser (i32.load offset=12 (local.get $slot)))
     (local.set $cb (i32.load offset=8 (local.get $slot)))
+    ;; Prepare before consuming a one-shot or disturbing the parked wait.
+    ;; Allocation failure leaves this due callback available for a later poll.
+    (if (i32.eqz (call $mm_timer_context_enter)) (then (return (i32.const 0))))
     ;; Timer is due — consume through the latest interval boundary without
     ;; turning host scheduling lateness into permanent periodic-timer drift,
     ;; retiring the slot first if it was a one-shot.

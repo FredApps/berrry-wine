@@ -1539,6 +1539,67 @@ The later shared-WebGL rollout enables lazy sync by default. Use
 `?no-lazy-sync` or uncheck **Lazy sync** in the debug toolbar for eager readback;
 the checkbox also applies to running guest workers.
 
+The 2026-09-30 diagnostic transfer profile (`--transfer-profile`) separates
+the remaining round trip: per cockpit present, `readPixels` 5.964 ms,
+read conversion 0.402 ms, read bookkeeping 0.034 ms; upload conversion
+0.542 ms, GL update 3.240 ms, upload bookkeeping 0.029 ms. About 480 rows
+are uploaded/present. These CPU wall-time measurements include GL waits,
+overlap transport timing, and are not GPU timestamps or a throughput A/B.
+See [the measured report](../lazy-sync-game-results.md) for 593-frame totals,
+load/fallback caveats, hashes and artifacts. Avoiding transfers is the larger
+opportunity than further optimizing shadow/page bookkeeping in this scene.
+
+The subsequent [whole-frame profile](../mw3-whole-frame-profile.md) puts that
+transfer result in context: guest execution excluding waits takes 29–30 ms
+of a 45–47 ms present interval, renderer waits 13–14 ms, and other worker time
+about 2.4 ms. More than 99% of measured transfer spans overlap guest waits.
+The largest category is guest execution (x87/uop/control flow/operand handling),
+not transfers. Renderer-name `getParameter` queries also consume about
+2.2–2.4 sampled ms/present and are a bounded caching candidate. The upload
+timing largely includes `getError` synchronization, not pure transfer bandwidth.
+
+The [guest-loop investigation](../mw3-guest-loop-investigation.md) identifies
+stable projection (`0x4fd394`, about 4,424 entries/present), clamp (`0x51bc31`,
+about 3,592) and trig-table (`0x51bf10`) work. Mixed x87/integer heads miss uop
+lowering while the integer tier remains active. A separate two-op x87-island
+candidate passed 1,000 pair parity cases and an authentic copied clamp kernel,
+but local timing was order-sensitive and clean remote game A/B was interrupted
+by BOX8 connectivity failure. No production change or game speedup is claimed.
+
+The [post-merge profile](../mw3-postmerge-profile.md) measures frozen 837f0a74
+on a new ASCII box: guest execution 28–31 ms/present in sampled windows,
+waits 12–13 ms, and uop/x87/branch handling remain the main guest hotspots.
+CDP proves both old and new measurements used SwiftShader-backed WebGL;
+the earlier hardware-Intel label was incorrect. The clean committed browser
+worker requires its existing working-tree syntax correction before it starts.
+Historical WASM cannot link against the clean host without the old APC support,
+so no causal A/B improvement is claimed.
+
+The [guest/native disassembly follow-up](../mw3-hot-loop-disassembly.md) decodes
+projection (one reciprocal per vertex), clamp/epsilon checks, a 128-bin sine
+lookup, and squared-length/linear-combination rejection. Exact measured WASM
+was compiled with Chrome 151 TurboFan and its x86-64 code extracted from
+jitdump. Uop ADD still loads operand slots/values and dispatches through an
+86-entry table; x87 uses native scalar arithmetic with tag/stack handling and
+store-helper spills. These explain overhead structure, not per-instruction
+CPU attribution. No runtime optimization was made.
+
+The subsequent [mixed-island prototype](../mw3-mixed-island.md) crosses
+ADD-immediate/INC/DEC while retaining FP state. It passes 1,000 randomized
+state/trace comparisons and the authentic projection kernel, with 17.55% less
+kernel guest-thread CPU on ARM64 and 6.07% on x86. V8 native code was captured
+on both machines. Four headful gameplay launches show no established FPS gain
+(scene work varies; one candidate window had 135 renderer fallbacks). The
+experiment remains isolated; no production default was changed.
+
+The [mixed-island census](../mixed-island-census.md) confirms 426,405 visits
+to projection block `0x4fd394` in the fixed CLI route, with two ADDs and one
+DEC absorbed each time. Whole-route pure islands still execute 95,301,398
+operations. The block executor is off on both guest instances. An isolated
+pure/mixed evaluator split passes randomized and copied-kernel parity and
+reaches batch 1150 with the same 4,423,912 API calls and identical cockpit
+pixels; this local run supplies correctness evidence, not an FPS comparison.
+
 The [P/PC repeatability follow-up](../fp-mw3-repeatability.md) found that
 `processSharedCtx()` omitted `wallNowMs`: the cooperative loading thread could
 read the host date while the main thread read the pinned calendar. Adding the

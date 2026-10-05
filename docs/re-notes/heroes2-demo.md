@@ -438,3 +438,10 @@ Zero live evictions. Heroes II is not decode-bound (unlike Total Annihilation,
 - **The lowering is disabled on main anyway** (`$loop_emit_enabled = 0`,
   commit `bbf4ca05`); `--loop-superops` turns it on for an A/B.
 - **The block cache is not the constraint here** — see above, zero evictions.
+
+### Mixed integer/x87 follow-up (2026-09-30)
+
+The frozen mixed-island prototype was neutral on the 2400-batch adventure-map
+route: whole-process CPU 5.410 → 5.395 s (−0.28%, baseline spread 2.59%). All
+four final frames match exactly. See [cross-game measurements](../mixed-island-corpus.md)
+for artifacts, commands and limitations; this is not a browser FPS result.

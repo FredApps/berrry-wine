@@ -508,6 +508,9 @@
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
   (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
+  (import "host" "queue_user_apc" (func $host_queue_user_apc (param i32 i32 i32 i32) (result i32)))
+  (import "host" "dequeue_user_apc" (func $host_dequeue_user_apc (param i32 i32) (result i32)))
+  (import "host" "set_apc_alertable" (func $host_set_apc_alertable (param i32 i32)))
   (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
   (import "host" "get_thread_locale" (func $host_get_thread_locale (param i32) (result i32)))
   (import "host" "set_thread_locale" (func $host_set_thread_locale (param i32 i32) (result i32)))
@@ -784,7 +787,7 @@
   ;; engine registers GDI32, KERNEL32 and USER32 by GetModuleHandle at startup,
   ;; stops at the first NULL, and then silently drops every script call into
   ;; USER32 — War Wind II's SdAskOptions never shows its dialog and spins.
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x280) "ole32\00user32\00comctl32\00gdi32\00dplayx\00ddraw\00dsound\00d3drm\00glide2x\00glide3x\00\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x280) "ole32\00user32\00comctl32\00gdi32\00dplayx\00ddraw\00dsound\00d3drm\00glide2x\00glide3x\00d3d8\00d3d9\00opengl32\00\00")
   ;; Where those modules claim to live, and the suffix appended to the stem.
   (data (region.addr $RESERVED_PAGE_STRINGS 0x25C) "C:\\WINDOWS\\SYSTEM\\\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x274) ".dll\00")
@@ -2844,7 +2847,8 @@
   (global $tls_registry_node (mut i32) (i32.const 0))
   ;; TLS indexes belong to the process, not one guest-thread WASM instance.
   ;; Existing 64-byte region: +0 high-water mark, +4 lock, +8 vector-list head,
-  ;; +12/+16/+20 allocation bitmap. High-water metadata never resurrects holes.
+  ;; +12/+16/+20 allocation bitmap, +24 immutable static-template list head.
+  ;; High-water metadata never resurrects holes.
   (global $TLS_NEXT_INDEX_SHARED i32 (region.addr $TLS_NEXT_INDEX_SHARED 0))
   (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (region.size $TLS_NEXT_INDEX_SHARED))
   ;; Performance counter (monotonic, incremented per query)
@@ -3002,7 +3006,8 @@
   ;; the periodic timer, fired once, and left no timer at all, so the audio
   ;; buffers were never released and SmackWait spun forever.
   ;; Slot: +0 id (0 = free), +4 interval, +8 callback, +12 dwUser,
-  ;;       +16 last_tick, +20 oneshot. $MM_TIMER_NEXT_ID is the id allocator
+  ;;       +16 last_tick, +20 bit0 oneshot + 0x10 event-set / 0x20 event-pulse.
+  ;;       $MM_TIMER_NEXT_ID is the id allocator
   ;;       (0 reads as 1). Process-wide, hence memory not globals.
   ;; Both addresses were raw `(i32.const 0x00010800)` / `0x000108C0`, in no
   ;; region at all. The WATX allocator only knows about declared regions, so it
@@ -3485,6 +3490,8 @@
   (global $io_apc_head (mut i32) (i32.const 0))
   (global $io_apc_tail (mut i32) (i32.const 0))
   (global $io_apc_thunk (mut i32) (i32.const 0)) ;; CACA0032
+  (global $user_apc_alertable (mut i32) (i32.const 0))
+  (global $user_apc_sleep (mut i32) (i32.const 0))
   ;; In-proc CoCreateInstance as guest calls: DllGetClassObject returns to
   ;; CACA0033, IClassFactory::CreateInstance to CACA0034, Release to CACA0035.
   (global $com_gco_thunk (mut i32) (i32.const 0))

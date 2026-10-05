@@ -74,6 +74,8 @@ function fakeGuest(name, { nameGetter }) {
   for (let i = 0; i < name.length; i++) mem[at + i] = name.charCodeAt(i);
   const state = { eax: 0xdeadbeef, esp: 0x2000, eip: 0x401000, yield: 5, cleared: 0 };
   const exports = {
+    guest_read32: (p) => new DataView(memory).getUint32(p, true),
+    guest_write32: (p, v) => new DataView(memory).setUint32(p, v, true),
     get_image_base: () => 0x400000,
     get_eip: () => state.eip,
     set_eip: (v) => { state.eip = v; },
@@ -203,6 +205,9 @@ function fakeGuest(name, { nameGetter }) {
   console.log('PASS  LoadLibrary yield: a nameless request answers instead of hanging');
 
   const c = fakeGuest('shdocvw.dll', { nameGetter: 'get_com_dll_name' });
+  c.exports.guest_write32(0x2000, 0x402123);
+  c.exports.guest_write32(0x2014, 0x3000);
+  c.exports.guest_write32(0x3000, 0xdeadbeef);
   const comMissing = await handleComDllYield({
     exports: c.exports,
     memoryBuffer: c.memory,
@@ -212,9 +217,12 @@ function fakeGuest(name, { nameGetter }) {
   assert.strictEqual(c.state.eax, 0x80040154, 'CoCreateInstance reports REGDB_E_CLASSNOTREG');
   assert.strictEqual(c.state.esp, 0x2000 + 24, 'the failure path drops the return address and five stdcall args');
   assert.strictEqual(c.state.yield, 0);
+  assert.strictEqual(c.state.eip, 0x402123, 'failure returns to caller instead of retrying import thunk');
+  assert.strictEqual(c.exports.guest_read32(0x3000), 0, 'failed activation clears interface output');
   console.log('PASS  COM DLL yield: a missing in-proc server fails the call and unwinds its args');
 
   const throwing = fakeGuest('shdocvw.dll', { nameGetter: 'get_com_dll_name' });
+  throwing.exports.guest_write32(0x2000, 0x403456);
   await handleComDllYield({
     exports: throwing.exports,
     memoryBuffer: throwing.memory,
@@ -222,5 +230,6 @@ function fakeGuest(name, { nameGetter }) {
   });
   assert.strictEqual(throwing.state.eax, 0x80040154, 'a lookup that throws is a lookup that found nothing');
   assert.strictEqual(throwing.state.esp, 0x2000 + 24);
+  assert.strictEqual(throwing.state.eip, 0x403456);
   console.log('PASS  COM DLL yield: a lookup that throws still leaves the guest runnable');
 })();

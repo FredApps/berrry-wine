@@ -226,3 +226,22 @@ steps.
 Route (batch size 100000): the instruction screen appears by ~300 batches. Hover
 "weiter" (243,462), press at 1500 and release at 1520; a two-batch click only
 highlights the button. The chicken follows the mouse.
+
+### Moorhuhn 3 mixed integer/x87 follow-up (2026-09-30)
+
+The 2270-batch shooting route produced eight identical final frames (score
+250, timer 0:00). Whole-process CPU changed −0.99% in ABBA with 10.75%
+baseline spread, then +1.41% in BAAB with 0.47% baseline spread. The tighter
+repeat suggests a possible small regression, not a benefit. See
+[cross-game measurements](../mixed-island-corpus.md) for exact artifacts and
+limitations. These timings do not isolate the MP3 filter from rendering.
+
+The subsequent [island census](../mixed-island-census.md) counts 4,777,604
+mixed entries absorbing 11,166,124 integer operations, but 408,437,190
+operations in pure islands also pay the prototype's integer check. Live
+unpacked disassembly confirms the long 61-op multiply/accumulate island at
+`0x43030b` is separated by `SUB ESP,4` from a short FP/ADD/ADD/FP island;
+`0x432c76` is a sum/difference loop over two float arrays. The block executor
+is disabled, so its eligibility is not the cause here. An isolated split
+evaluator passes parity and matches final pixels; remote CPU is −0.31% vs
+baseline / −1.23% vs the original prototype, within run variation.

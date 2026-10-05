@@ -314,6 +314,9 @@
     (call $wnd_hinstance_reset_slot (local.get $slot))
     (call $menu_data_reset_slot (local.get $slot))
     (call $dialog_state_reset_slot (local.get $slot))
+    ;; Template metadata uses a separate parallel table. A normal window
+    ;; reusing a dialog slot must not inherit its controls or dialog identity.
+    (call $zero_memory (call $dlg_record_addr (local.get $slot)) (i32.const 32))
     (call $wnd_unicode_reset_slot (local.get $slot))
     (call $wnd_extra_reset_slot (local.get $slot))
     ;; Added with this registry — see the note above.

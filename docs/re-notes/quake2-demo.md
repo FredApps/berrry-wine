@@ -640,3 +640,11 @@ node test/run.js --app=quake2_demo --no-build --gl-renderer=software \
 
 Census at exit: 4,710,009 triangles, 101,281 dropped at the eye plane,
 1,065,868 culled, 1,570 presents, 217 texture uploads, none refused.
+
+### Mixed integer/x87 follow-up (2026-09-30)
+
+The 1400-batch `vid_ref soft` / `map demo1` route produced identical final
+frames in eight runs. Candidate whole-process CPU changed +3.74% in ABBA,
+then −0.28% in BAAB: the initial slowdown did not reproduce. No general
+speedup is established. See [cross-game measurements](../mixed-island-corpus.md)
+for the frozen artifacts, host and individual timings.

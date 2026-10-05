@@ -148,6 +148,30 @@ const extraWat = String.raw`
     assert.strictEqual(readA(out), 'stack 98 walk');
   }
 
+  // Precision is a minimum digit count for integers and a maximum character
+  // count for strings. msi.dll's log prefix "%s (%.2X%c%.2X): " must be
+  // exactly 17 characters, because it writes the message at that offset.
+  const precisionCases = [
+    ['(%.2X:%.2X)', 0xe8, 2, '(E8:02)'],
+    ['[%.4d|%.3u]', 7, 42, '[0007|042]'],
+    ['[%.3d|%5.3d]', -5, -5, '[-005| -005]'],
+    ['[%05d|%04x]', -42, 0xab, '[-0042|00ab]'],
+    ['[%6d|%.2X]', 123, 0x1ff, '[   123|1FF]'],
+  ];
+  for (const [format, value0, value1, expected] of precisionCases) {
+    const fmt = allocA(format);
+    for (const entry of [e.test_wsprintfA_frontdoor, e.test_sprintf_frontdoor]) {
+      const out = allocOut(64);
+      const result = unpack(entry(out, fmt, value0, value1));
+      assert.strictEqual(readA(out), expected, format);
+      assert.strictEqual(result.result, expected.length, `${format} count`);
+    }
+  }
+  const clipped = allocA('[%.3s]');
+  const clipOut = allocOut(32);
+  unpack(e.test_wsprintfA_frontdoor(clipOut, clipped, allocA('Installer'), 0));
+  assert.strictEqual(readA(clipOut), '[Ins]', '%.3s copies at most three characters');
+
   const longText = 'x'.repeat(1100);
   const longFormat = allocA(longText);
   // Microsoft documents the User32 buffer maximum, but not enough truncation

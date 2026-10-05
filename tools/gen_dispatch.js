@@ -275,6 +275,8 @@ const gpuApis = new Map([
   ['glActiveTextureARB', 1],
   ['glClientActiveTextureARB', 1],
   ['glMultiTexCoord2fARB', 3],
+  ['glGetTexLevelParameteriv', 4],
+  ['glClearDepth', 2],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

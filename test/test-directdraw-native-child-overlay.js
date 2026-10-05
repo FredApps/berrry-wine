@@ -86,4 +86,19 @@ assert.deepStrictEqual(composedPixel(5, 6), [0, 255, 0, 255],
 assert.deepStrictEqual(composedPixel(5, 7), [255, 0, 0, 255],
   'the popup must not stretch into the rest of the display');
 
+// OpenGL owns a persistent GPU overlay while ordinary GDI continues to paint
+// the same window's interface. Attaching that GDI backing must not discard the
+// GPU layer; the compositor combines both on each SwapBuffers repaint.
+const glHwnd = 0x10020;
+const glWin = renderer.windows[glHwnd] = {
+  hwnd: glHwnd, x: 0, y: 0, w: 8, h: 8, visible: true, isChild: false,
+  wasm: { exports: { get_dx_exclusive_hwnd: () => 0 } },
+};
+const glLayer = { kind: 'gpu', canvas: createCanvas(8, 8), writeSeq: 1 };
+glWin._gpuFrameLayer = glLayer;
+glWin._dxFrameLayer = glLayer;
+assert.strictEqual(renderer.attachWindowSurface(glHwnd, createCanvas(8, 8)), true);
+assert.strictEqual(glWin._dxFrameLayer, glLayer,
+  'GDI attachment must preserve the active OpenGL presentation layer');
+
 console.log('PASS  native child GDI pixels overlay exclusive DirectDraw by child rect');

@@ -42,6 +42,30 @@ assert.notStrictEqual(idHandle, idView.getUint32(threadIdWa, true),
   'thread HANDLE and thread id remain distinct Win32 namespaces');
 
 const tm = makeThreadManager();
+
+// User APCs are queued on the target, survive suspension and duplicate handles,
+// and interrupt only alertable waits. Exiting discards pending callbacks.
+const apcTm = makeThreadManager();
+const apcHandle = apcTm.createThread(0x5000, 0, 0, 4);
+const apcView = new DataView(apcTm.memory.buffer);
+assert.strictEqual(apcTm.queueUserAPC(0x6000, 0x123456, 1, 1), 6);
+assert.strictEqual(apcTm.queueUserAPC(0x6000, apcHandle, 10, 1), 0);
+assert.strictEqual(apcTm.queueUserAPC(0x6010, -2, 20, 2), 0);
+assert.strictEqual(apcTm.dequeueUserAPC(1, 0), 0, 'queue belongs to target thread');
+assert.strictEqual(apcTm.dequeueUserAPC(2, 0), 1, 'peek preserves suspended target queue');
+assert.strictEqual(apcTm.waitSingle(0xfffffff0, 0, 2), 0x102, 'nonalertable wait is not interrupted');
+apcTm.setAPCAlertable(2, 1);
+assert.strictEqual(apcTm.waitSingle(0xfffffff0, 0, 2), 0xc0);
+assert.strictEqual(apcTm.dequeueUserAPC(2, 0x100), 1);
+assert.deepStrictEqual([apcView.getUint32(0x100, true), apcView.getUint32(0x104, true)], [0x6000, 10]);
+assert.strictEqual(apcTm.dequeueUserAPC(2, 0x100), 1);
+assert.deepStrictEqual([apcView.getUint32(0x100, true), apcView.getUint32(0x104, true)], [0x6010, 20]);
+assert.strictEqual(apcTm.dequeueUserAPC(2, 0), 0);
+assert.strictEqual(apcTm.queueUserAPC(0x6020, apcHandle, 30, 1), 0);
+apcTm.terminateThread(apcHandle, 0);
+assert.strictEqual(apcTm.dequeueUserAPC(2, 0), 0, 'termination discards queued APCs');
+assert.strictEqual(apcTm.queueUserAPC(0x6020, apcHandle, 40, 1), 31);
+
 const handles = [];
 
 for (let i = 0; i < tm._maxWorkerThreads; i++) {

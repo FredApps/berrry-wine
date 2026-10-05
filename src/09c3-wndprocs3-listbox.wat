@@ -1162,4 +1162,3 @@
     ;; Default
     (i32.const 0)
   )
-

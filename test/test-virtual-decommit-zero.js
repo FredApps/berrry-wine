@@ -57,6 +57,22 @@ const extraWat = String.raw`
     (call $gs32 (local.get $guest) (local.get $value)))
   (func (export "test_dz_read32") (param $guest i32) (result i32)
     (call $gl32 (local.get $guest)))
+  (func (export "test_dz_pte") (param $guest i32) (result i32)
+    (call $virtual_query_pte (local.get $guest)))
+  (func (export "test_dz_query_state") (param $guest i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
+    (call $handle_VirtualQuery (local.get $guest) (i32.const 0x00510000)
+      (i32.const 28) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $gl32 (i32.const 0x00510010)))
+  (func (export "test_dz_protect") (param $guest i32) (param $protect i32) (result i32)
+    (call $guest_page_protect_range (local.get $guest) (i32.const 0x1000)
+      (local.get $protect)))
+  (func (export "test_dz_reserve") (param $size i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
+    (call $handle_VirtualAlloc
+      (i32.const 0) (local.get $size) (i32.const 0x2000)
+      (i32.const 0x04) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
 `;
 
 const PAGE = 0x1000;
@@ -112,7 +128,11 @@ async function main() {
   fill(other, 4, 0x22220000);
 
   assert.strictEqual(wasm.test_dz_decommit(a + 2 * PAGE, 3 * PAGE), 1, 'decommit returns TRUE');
-  for (const p of [2, 3, 4]) assert(pageIsZero(a, p), `page ${p} cleared by decommit`);
+  for (const p of [2, 3, 4]) {
+    assert.strictEqual(wasm.test_dz_pte(a + p * PAGE), 0, `page ${p} unmapped by decommit`);
+    assert.strictEqual(wasm.test_dz_query_state(a + p * PAGE), 0x2000,
+      `VirtualQuery reports page ${p} reserved`);
+  }
   for (const p of [0, 1, 5, 6, 7]) {
     assert(pageMatches(a, p, 0x11110000), `page ${p} untouched by a neighbour's decommit`);
   }
@@ -124,23 +144,97 @@ async function main() {
   //    small-block heap takes, and the one that used to return stale bytes.
   assert.strictEqual(wasm.test_dz_commit_at(a + 2 * PAGE, 3 * PAGE) >>> 0, (a + 2 * PAGE) >>> 0,
     're-commit returns the same base');
-  for (const p of [2, 3, 4]) assert(pageIsZero(a, p), `page ${p} still zero after re-commit`);
+  for (const p of [2, 3, 4]) {
+    assert.strictEqual(wasm.test_dz_query_state(a + p * PAGE), 0x1000,
+      `VirtualQuery reports page ${p} committed again`);
+    assert(pageIsZero(a, p), `page ${p} still zero after re-commit`);
+  }
   for (const p of [0, 1, 5, 6, 7]) {
     assert(pageMatches(a, p, 0x11110000), `page ${p} survives the re-commit`);
   }
 
   // 3. size == 0 means "to the end of the allocation at this base".
   wasm.test_dz_reset();
+  const before = wasm.test_dz_alloc(2 * PAGE) >>> 0;
   const b = wasm.test_dz_alloc(4 * PAGE) >>> 0;
   const after = wasm.test_dz_alloc(2 * PAGE) >>> 0;
   assert(b && after, 'second fixture allocations');
   fill(b, 4, 0x33330000);
+  fill(before, 2, 0x77770000);
   fill(after, 2, 0x44440000);
   assert.strictEqual(wasm.test_dz_decommit(b, 0), 1, 'sizeless decommit returns TRUE');
-  for (let p = 0; p < 4; p++) assert(pageIsZero(b, p), `page ${p} cleared by sizeless decommit`);
+  for (let p = 0; p < 4; p++) assert.strictEqual(wasm.test_dz_pte(b + p * PAGE), 0);
+  assert.strictEqual(wasm.test_dz_commit_at(b, 4 * PAGE) >>> 0, b);
+  for (let p = 0; p < 4; p++) assert(pageIsZero(b, p), `page ${p} zero after sizeless recommit`);
   for (let p = 0; p < 2; p++) {
     assert(pageMatches(after, p, 0x44440000), `neighbouring allocation page ${p} untouched`);
+    assert(pageMatches(before, p, 0x77770000), `higher allocation page ${p} untouched`);
   }
+
+  // 4. Existing backing is not proof of committed pages. Restore holes in a
+  // mixed range, keep live bytes/protections, and do not republish outside it.
+  wasm.test_dz_reset();
+  const c = wasm.test_dz_alloc(8 * PAGE) >>> 0;
+  fill(c, 8, 0x55550000);
+  wasm.test_dz_decommit(c + PAGE, PAGE);
+  wasm.test_dz_decommit(c + 5 * PAGE, PAGE);
+  assert.strictEqual(wasm.test_dz_pte(c + PAGE), 0, 'fixture has an absent page');
+  assert.strictEqual(wasm.test_dz_protect(c + 2 * PAGE, 0x02), 0x04);
+  assert.strictEqual(wasm.test_dz_commit_at(c, 4 * PAGE) >>> 0, c);
+  assert.strictEqual(wasm.test_dz_pte(c + PAGE) & 0xfff, 0x804,
+    'recommit publishes absent page with requested protection');
+  assert.strictEqual(wasm.test_dz_pte(c + 2 * PAGE) & 0xfff, 0x802,
+    'recommit preserves existing read-only protection');
+  assert(pageIsZero(c, 1), 'recommitted backing is zero');
+  for (const p of [0, 2, 3, 4, 6, 7]) {
+    assert(pageMatches(c, p, 0x55550000), `live page ${p} retains bytes`);
+  }
+  assert.strictEqual(wasm.test_dz_pte(c + 5 * PAGE), 0,
+    'hole outside the requested range stays absent');
+  wasm.test_dz_write32(c + PAGE, 0x12345678);
+  assert.strictEqual(wasm.test_dz_read32(c + PAGE), 0x12345678,
+    'recommitted page is genuinely writable, not the null sentinel');
+
+  // 5. A request can recommit an old prefix and allocate a new tail. The
+  // recursive tail path must not leave that prefix absent after success.
+  wasm.test_dz_reset();
+  const d = wasm.test_dz_reserve(8 * PAGE) >>> 0;
+  assert(d, 'reserved range');
+  assert.strictEqual(wasm.test_dz_commit_at(d, 4 * PAGE) >>> 0, d);
+  fill(d, 4, 0x66660000);
+  wasm.test_dz_decommit(d + 2 * PAGE, PAGE);
+  assert.strictEqual(wasm.test_dz_commit_at(d + PAGE, 5 * PAGE) >>> 0, d + PAGE);
+  for (const p of [2, 4, 5]) {
+    assert.strictEqual(wasm.test_dz_pte(d + p * PAGE) & 0xfff, 0x804);
+    assert(pageIsZero(d, p), `prefix/tail page ${p} is freshly committed`);
+    wasm.test_dz_write32(d + p * PAGE, 0x12340000 + p);
+    assert.strictEqual(wasm.test_dz_read32(d + p * PAGE), 0x12340000 + p);
+  }
+  for (const p of [0, 1, 3]) assert(pageMatches(d, p, 0x66660000));
+  assert.strictEqual(wasm.test_dz_pte(d + 6 * PAGE), 0, 'unused reservation stays absent');
+  wasm.test_dz_decommit(d + PAGE, PAGE);
+  assert.strictEqual(wasm.test_dz_commit_at(d, 0x70000000), 0,
+    'impossible backing allocation fails');
+  assert.strictEqual(wasm.test_dz_pte(d + PAGE), 0,
+    'failed allocation does not recommit the old prefix');
+
+  // 6. A request beginning before an old map must preserve its backing and
+  // protections, even when new pages on both sides are needed.
+  wasm.test_dz_reset();
+  const e = wasm.test_dz_reserve(8 * PAGE) >>> 0;
+  assert.strictEqual(wasm.test_dz_commit_at(e + 2 * PAGE, 2 * PAGE) >>> 0, e + 2 * PAGE);
+  fill(e + 2 * PAGE, 2, 0x12340000);
+  wasm.test_dz_protect(e + 2 * PAGE, 0x02);
+  assert.strictEqual(wasm.test_dz_commit_at(e, 6 * PAGE) >>> 0, e);
+  assert.strictEqual(wasm.test_dz_pte(e + 2 * PAGE) & 0xfff, 0x802);
+  assert(pageMatches(e + 2 * PAGE, 0, 0x12340000));
+  assert(pageMatches(e + 2 * PAGE, 1, 0x12340000));
+  for (const p of [0, 1, 4, 5]) assert(pageIsZero(e, p));
+  assert.strictEqual(wasm.test_dz_decommit(e + PAGE - 1, 2), 1,
+    'an unaligned range decommits both touched pages');
+  assert.strictEqual(wasm.test_dz_pte(e), 0);
+  assert.strictEqual(wasm.test_dz_pte(e + PAGE), 0);
+  assert.strictEqual(wasm.test_dz_pte(e + 2 * PAGE) & 0xfff, 0x802);
 
   console.log('test-virtual-decommit-zero: OK');
 }

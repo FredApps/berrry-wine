@@ -31,7 +31,11 @@ const { ProcessHub } = require('../lib/vlan-wire');
 const { colorBox } = require('../tools/png-color-box');
 
 const ROOT = path.join(__dirname, '..');
-const EXE = path.join(ROOT, 'packages', 'freeware', 'blobby-volley', 'volley.exe');
+// BLOBBY_EXE runs the gate against another copy of the game, e.g. one whose
+// settings.dat differs; an unregistered copy mounts only the exe, so pass
+// BLOBBY_HOST_ARGS/BLOBBY_GUEST_ARGS='--vfs-include=*.pak,settings.dat' too.
+const EXE = process.env.BLOBBY_EXE ? path.resolve(process.env.BLOBBY_EXE)
+  : path.join(ROOT, 'packages', 'freeware', 'blobby-volley', 'volley.exe');
 const OUT = path.join(ROOT, 'build', 'blobby-vlan');
 
 if (!fs.existsSync(EXE)) {

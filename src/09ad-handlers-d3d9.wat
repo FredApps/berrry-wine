@@ -846,7 +846,9 @@
       (i32.store offset=100 (local.get $wa) (i32.const 2048))
       (i32.store offset=104 (local.get $wa) (i32.const 2048))
       (f32.store offset=112 (local.get $wa) (f32.const 1.0e10)) ;; MaxVertexW
+      (i32.store offset=148 (local.get $wa) (i32.const 4)) ;; fixed-function texture blend stages
       (i32.store offset=152 (local.get $wa) (i32.const 4)) ;; sampled textures
+      (i32.store offset=244 (local.get $wa) (i32.const 0x03000300)) ;; StretchRect POINT/LINEAR min/mag
       (f32.store offset=176 (local.get $wa) (f32.const 1)) ;; point size
       (i32.store offset=180 (local.get $wa) (i32.const 0x100000))
       (i32.store offset=184 (local.get $wa) (i32.const 0x00ffffff))
