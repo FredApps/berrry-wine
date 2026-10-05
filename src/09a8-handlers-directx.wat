@@ -13595,6 +13595,7 @@
 ;; E_NOTIMPL; no unsupported state can silently alter these defaults.
 ;; Shared slot sidecar is independent of transient GDI DC lifetime.
 (global $DX_VB_DRAW_STATE i32 (region.addr $DX_VB_DRAW_STATE 0))
+(global $DX_VB_DRAW_STATE_SIZE i32 (region.size $DX_VB_DRAW_STATE))
 (func $vbdd_draw_state_ptr (param $entry i32) (result i32)
  (i32.add (global.get $DX_VB_DRAW_STATE)
   (i32.shl (i32.div_u (i32.sub (local.get $entry) (global.get $DX_OBJECTS)) (i32.const 32)) (i32.const 3))))
