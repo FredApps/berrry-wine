@@ -62,3 +62,11 @@ Session87748 used source94d18605/module2e2fd8d1, the original installed DOSBox0.
 The300sec wall guard ended18:04:02.733Z with browser/server closed, errors[], sessionexit2. It includes operator image-review time; no compatibility fault or timing performance is inferred. Later submitted inputs after terminal were not executed. Immutable evidence: scratch/runs/20261005-ultima4-character-creation/result.json and validation.json; screenshot question2.png is character creation, not gameplay.
 
 Next: fresh600sec ordinary route, reuse the now-observed introduction advance sequence with periodic captures, stop at actual virtue prompts and answer seven visible choices. Personal review of active world and before/after arrow movement remain mandatory. No automatic retry or synthetic save/protocol.
+
+## 2026-10-05 seven choices complete, post-creation save-open failure
+
+Continuation session59296 on the same94d18605/2e2fd8d1 completed ordinary name/sex/intro and seven personally reviewed A/B choices (A,A,A,B,A,B,A). The final narrative was advanced normally. Actual DOSBox program labels then changed TITLE→ULTIMA→AVATAR→ULTIMA→DOSBOX, and the rendered text reads `Opening PARTY.SAV` immediately followed by the DOS `C:\>` prompt. Stable after-save.png confirms no active world. No gameplay/FPS accepted.
+
+Stopped at the concrete boundary, before the600sec guard: clean exit0/browser+serverclosed18:31:41.282Z/errors[]. Immutable result/screenshots/logs/hashes: scratch/runs/20261005-ultima4-post-creation-save-exit.
+
+Source-only distinction: original installed PARTY.NEW exists (502bytes); PARTY.SAV is not a packaged asset and is expected to be created during play, so it must not be added as a fake fixture. Bundled DOSBox source drive_local.cpp uses fopen("wb+") in FileCreate, rb/rb+ in FileOpen and fwrite for writes; rename delegates CRT rename. Current pinned CRT maps wb+ to CREATE_ALWAYS and tracks FILE ownership. These static paths do not establish which call failed here. Next bounded passive observation should preserve actual VFS create/write/move/delete/close return values for PARTY.NEW/PARTY.SAV/MONSTERS.SAV and a small final metadata inventory; no guest writes or invented saves.
