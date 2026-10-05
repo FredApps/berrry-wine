@@ -74,7 +74,11 @@ While anything is pending, the host sets `$irqwant` (as it already does for the 
 these guest boundaries is then an **eligible delivery instant**, provided IF=1 there:
 
 - (a) after the instruction following an STI that found IF=0, unless that instruction is CLI
-  (IF=0 again) or an SS load (then one more instruction);
+  (IF=0 again). **If that instruction is an SS load, the behaviour is UNCONFIRMED.** No primary
+  source states STI immediately followed by MOV/POP SS (§1). The two candidate behaviours are
+  "eligible after the SS load" and "eligible after the instruction following it". The candidate
+  must implement one behind a named switch, comment it as unconfirmed, and never cite it as a
+  verified rule. The fixture case for it (`sti_movss`) is informational.
 - (b) after a POPF;
 - (c) after an IRET (already exists);
 - (d) after HLT (already a handback).
@@ -93,8 +97,9 @@ puts the boundary at a block transfer, and every arm already honours `CONT` ther
 
 1. **decode.js.** An STI ends its block after the NEXT instruction (`endsBlock` deferred by one).
    That puts a block transfer at exactly the eligible boundary, including STI; RET (whose own
-   transfer is that boundary) and STI; JMP. A CLI or SS load as the next instruction defers the
-   end once more, or cancels it for CLI.
+   transfer is that boundary) and STI; JMP. A CLI as the next instruction cancels it. An SS load
+   as the next instruction is the unconfirmed case in (a): whether to defer the end once more is
+   the switch, not a rule.
 2. **emit.js.**
    - `sti`: if IF was 0 and `$irqwant`, set `$ifarm = 1`. One branch, on a rare instruction.
    - `CONT` gains `| $ifarm`, so the transfer at the boundary refuses and hands back with

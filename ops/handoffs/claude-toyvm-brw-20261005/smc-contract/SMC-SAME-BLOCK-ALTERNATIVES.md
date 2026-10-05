@@ -42,10 +42,10 @@ engineering choice; no user gate.
 
 | | contract | rule | mechanism | cost | repro2 (5 bytes ahead) |
 |---|---|---|---|---|---|
-| **A** | Block-scoped (status quo, written down) | a store into compiled code takes effect at the next block transfer | none; document it, keep the same-block test as *expected stale* | zero | old byte (188) = PASS |
+| **A** | Block-scoped (status quo, described) | a store into compiled code takes effect at the next block transfer | none (description only) | zero | old byte (188); the failing same-block test stays FAILING, because A is not an accepted contract |
 | **B** | 386/486 prefetch window | stale only within W bytes after the storing instruction (W = 16 on `cpu: 386`, unconfirmed); beyond W the new bytes run | in the code-page store path (already the slow path): if the target lies in the current block at ≥ next_ip + W, set `$halt` with `$gip` = next ip, so the block ends at the next instruction boundary and is re-decoded | only stores that hit compiled code; arms must honour an instruction-level halt or decline to compile such stores | old byte (within W) = PASS |
 | **C** | Pentium/P6 snooping (§14.6) | any store into a not-yet-executed instruction takes effect | as B with W = 0 | as B, firing more often | new byte (132) = PASS |
-| **D** | Guaranteed-only (§11.1.3) plus a measurement | any of A/B/C is compliant for code that follows the jump/serialize rule; measure whether the corpus contains code that does not | A's behaviour, plus a diagnostic counter in the code-page store path: same-block forward stores, bucketed by distance (< 16, 16–31, ≥ 32 bytes) | one counter on the slow path | old byte = PASS |
+| **D** | Diagnostic investigation only, NOT a contract or a fix | — | A's behaviour unchanged, plus diagnostics: a static same-block forward-store census bucketed by distance (< 16, 16–31, ≥ 32 bytes), and runtime break overlap (diag-counter/DESIGN.md) | decode time + SMC slow path | unchanged; the test stays failing |
 
 **Consequences:**
 
@@ -54,27 +54,38 @@ engineering choice; no user gate.
   ahead and see whether the old one ran) would conclude "no prefetch queue", meaning newer than a
   486, while CPUID-less 386 detection paths say 386. That is an internal inconsistency a corpus
   program may act on.
-- **B is the model-accurate choice for `cpu: 386`,** but real prefetch fill depends on bus timing,
-  so W is an upper bound and the exact boundary is not architectural. It needs the unconfirmed 16-
-  and 32-byte figures.
-- **A is cheapest** but matches no CPU. It is only safe while no corpus program patches its own block
-  beyond a prefetch window without a jump.
-- **D turns that "only safe while" into a number.**
+- **B is the closest to the 386/486 behaviour the SDM describes, but not established as accurate.**
+  §14.6 says only that a prefetched old instruction *could* execute on a 486 and says nothing
+  model-specific about the 386. The window sizes are unconfirmed, and real prefetch fill depends on
+  bus timing, so the exact boundary is not architectural in any source I have.
+- **A is cheapest but matches no CPU.**
+- **D measures; it does not decide.** A count is about one finite corpus, and says nothing about
+  programs outside it, about arm parity, or about whether A equals a 386.
 
-## 4. Recommendation
+## 4. Recommendation (revised after root's review of 03b53c34)
 
-**D now, then B only if D's counter fires.**
+**D, as a diagnostic investigation only. The accurate CPU contract stays UNRESOLVED.**
 
-1. Write contract A into the toyvm docs as the current, explicit contract. Turn the same-block test
-   into a test of that contract (old byte expected, with a comment citing §11.1.3 and §14.6), so it
-   is no longer a "failing" test of an undecided rule.
-2. Add D's distance-bucketed counter, as a stat next to `smcBreaks`, to the code-page store path. It
-   is diagnostic only, with no behaviour change.
-3. Bounded runtime, later: one corpus sweep with the counter (the existing corpus-plan machinery, l1
-   arm only). If every bucket at ≥ 16 bytes is 0 across the corpus, A is behaviourally
-   indistinguishable from B for this corpus and the task closes. If not, the programs it names are
-   the test cases for implementing B with W = 16.
-4. C is not recommended while toyvm claims to be a 386.
+1. Nothing about the same-block test changes. It stays a failing test of an undecided contract. It
+   is not rewritten to "expected stale", and the task does not close on any measurement.
+2. Add D's diagnostic: no behaviour change, no fast-path cost. Correction to 03b53c34: the host
+   cannot compute "distance from the store" today, because store handlers carry no ip. The design
+   is therefore layered, as a static decode-time census (D1) plus runtime break overlap (D2),
+   reported separately. See `smc-contract/diag-counter/DESIGN.md`; no code yet.
+3. A bounded corpus sweep with the counter needs a later grant. Its result is evidence, not a
+   verdict:
+   - a **non-zero** bucket at ≥ 16 bytes names real programs whose output depends on the
+     unresolved contract, which become test cases for any contract;
+   - a **zero** bucket shows only that this corpus never exercises the difference. It does **not**
+     show A equivalent to a 386 prefetch model, it does not establish arm parity, and it does not
+     resolve the contract.
+4. The contract choice among A, B and C remains open. The uncertainty at the primary-source
+   boundary stays explicit:
+   - §11.1.3 guarantees only store+jump and store+serialize;
+   - §14.6 describes the 486 as "could" run the old bytes, and the 386 not at all;
+   - the window sizes are unconfirmed.
+5. C conflicts with `cpu: 386` for prefetch-queue detection code. That is an argument, not a
+   resolution.
 
 ## 5. Gates that remain whatever the choice
 
