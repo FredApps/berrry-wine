@@ -13413,8 +13413,28 @@
  (call $gs32 (local.get $copy) (local.get $l)) (call $gs32 (i32.add (local.get $copy) (i32.const 4)) (local.get $t))
  (call $gs32 (i32.add (local.get $copy) (i32.const 8)) (local.get $r)) (call $gs32 (i32.add (local.get $copy) (i32.const 12)) (local.get $b)) (i32.const 0))
 
+;; Blt alone clips destination bounds. Do not relax ColorFill/BltFast's
+;; existing bounded helpers. Original DX7VB73544b47..78 maps zero RECT to NULL.
+(func $vbdd_blt_null_rect (param $p i32) (result i32)
+ (if (i32.eqz (local.get $p)) (then (return (i32.const 1))))
+ (i32.eqz (i32.or (i32.or (call $gl32 (local.get $p)) (call $gl32 (i32.add (local.get $p) (i32.const 4))))
+  (i32.or (call $gl32 (i32.add (local.get $p) (i32.const 8))) (call $gl32 (i32.add (local.get $p) (i32.const 12)))))))
+(func $vbdd_blt_dest_rect (param $rect i32) (param $copy i32) (param $entry i32) (result i32)
+ (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+ (local.set $r (load.field DxObject width (local.get $entry)))
+ (local.set $b (load.field DxObject height (local.get $entry)))
+ (if (i32.eqz (call $vbdd_blt_null_rect (local.get $rect))) (then
+  (local.set $l (call $gl32 (local.get $rect))) (local.set $t (call $gl32 (i32.add (local.get $rect) (i32.const 4))))
+  (local.set $r (call $gl32 (i32.add (local.get $rect) (i32.const 8)))) (local.set $b (call $gl32 (i32.add (local.get $rect) (i32.const 12))))))
+ ;; Reject empty/inverted or signed-overflow extents before native arithmetic.
+ (if (i32.or (i32.or (i32.le_s (local.get $r) (local.get $l)) (i32.le_s (local.get $b) (local.get $t)))
+  (i32.or (i32.le_s (i32.sub (local.get $r) (local.get $l)) (i32.const 0)) (i32.le_s (i32.sub (local.get $b) (local.get $t)) (i32.const 0))))
+  (then (return (i32.const 0x80004001))))
+ (call $gs32 (local.get $copy) (local.get $l)) (call $gs32 (i32.add (local.get $copy) (i32.const 4)) (local.get $t))
+ (call $gs32 (i32.add (local.get $copy) (i32.const 8)) (local.get $r)) (call $gs32 (i32.add (local.get $copy) (i32.const 12)) (local.get $b)) (i32.const 0))
+
 (func $vbdd_blt (param $dst i32) (param $dr i32) (param $src i32) (param $sr i32) (param $flags i32) (param $out i32) (result i32)
- (local $de i32) (local $se i32) (local $tmp i32) (local $esp i32) (local $eax i32) (local $hr i32)
+ (local $de i32) (local $se i32) (local $tmp i32) (local $esp i32) (local $eax i32) (local $hr i32) (local $dp i32) (local $sp i32)
  (local.set $de (call $vbdd_surface_entry (local.get $dst))) (local.set $se (call $vbdd_surface_entry (local.get $src)))
  (if (i32.or (i32.eqz (local.get $de)) (i32.eqz (local.get $se))) (then (return (i32.const 0x80070057))))
  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4))) (then (return (i32.const 0x80004003))))
@@ -13431,14 +13451,27 @@
   (br_if $done (i32.eq (local.get $dst) (local.get $src)))
   (local.set $tmp (call $heap_alloc (i32.const 64)))
   (if (i32.eqz (local.get $tmp)) (then (local.set $hr (i32.const 0x8007000E)) (br $done)))
-  (local.set $hr (call $vbdd_blt_rect (local.get $dr) (i32.add (local.get $tmp) (i32.const 32)) (local.get $de))) (br_if $done (local.get $hr))
+  (local.set $hr (call $vbdd_blt_dest_rect (local.get $dr) (i32.add (local.get $tmp) (i32.const 32)) (local.get $de))) (br_if $done (local.get $hr))
   (local.set $hr (call $vbdd_blt_rect (local.get $sr) (i32.add (local.get $tmp) (i32.const 48)) (local.get $se))) (br_if $done (local.get $hr))
+  (local.set $dp (i32.add (local.get $tmp) (i32.const 32)))
+  (local.set $sp (i32.add (local.get $tmp) (i32.const 48)))
+  ;; Only the proved equal-size native clipping path is newly admitted.
+  ;; Out-of-bounds stretch remains explicitly unsupported by this adapter.
+  (if (i32.or (i32.or (i32.lt_s (call $gl32 (local.get $dp)) (i32.const 0)) (i32.lt_s (call $gl32 (i32.add (local.get $dp) (i32.const 4))) (i32.const 0)))
+    (i32.or (i32.gt_s (call $gl32 (i32.add (local.get $dp) (i32.const 8))) (load.field DxObject width (local.get $de))) (i32.gt_s (call $gl32 (i32.add (local.get $dp) (i32.const 12))) (load.field DxObject height (local.get $de)))))
+   (then
+    (if (i32.or
+      (i32.ne (i32.sub (call $gl32 (i32.add (local.get $dp) (i32.const 8))) (call $gl32 (local.get $dp))) (i32.sub (call $gl32 (i32.add (local.get $sp) (i32.const 8))) (call $gl32 (local.get $sp))))
+      (i32.ne (i32.sub (call $gl32 (i32.add (local.get $dp) (i32.const 12))) (call $gl32 (i32.add (local.get $dp) (i32.const 4)))) (i32.sub (call $gl32 (i32.add (local.get $sp) (i32.const 12))) (call $gl32 (i32.add (local.get $sp) (i32.const 4))))))
+     (then (local.set $hr (i32.const 0x80004001)) (br $done)))))
+  (if (call $vbdd_blt_null_rect (local.get $dr)) (then (local.set $dp (i32.const 0))))
+  (if (call $vbdd_blt_null_rect (local.get $sr)) (then (local.set $sp (i32.const 0))))
   ;; Native Blt reads optional FX from ESP+24. Supply a private frame with
   ;; NULL FX; never reinterpret caller statusOut as DDBLTFX or edit its stack.
   (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (i32.const 0))
   (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
   (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
-  (call $handle_IDirectDrawSurface_Blt (local.get $dst) (i32.add (local.get $tmp) (i32.const 32)) (local.get $src) (i32.add (local.get $tmp) (i32.const 48)) (local.get $flags) (i32.const 0))
+  (call $handle_IDirectDrawSurface_Blt (local.get $dst) (local.get $dp) (local.get $src) (local.get $sp) (local.get $flags) (i32.const 0))
   (local.set $hr (i32.load (global.get $reg_base)))
   (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
  (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
