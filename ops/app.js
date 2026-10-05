@@ -270,6 +270,28 @@ function corpusView() {
     }).join('')}</div></section>`;
     }).join('') || empty('No matching candidates.')}`;
 }
+let desktopSelection='all';
+function desktopRowHtml(row) {
+  const c=state.candidates.find(x=>x.id===row.id),[,label,color]=releaseState(c);
+  const gateMark=g=>g.met?'✓':g.status==='blocked'?'✕':'?';
+  const unmet=row.gates.filter(g=>!g.met);
+  const rate=row.rate.known?`<strong>${escape(row.rate.text)}</strong> <span class="sub">${row.rate.reviewed?'reviewed run':'unreviewed run'}${row.rate.historical?' · historical':''} · ${escape(row.rate.qualification)}${row.rate.measuredAt?' · '+age(row.rate.measuredAt)+' ago':''}${row.rate.scene?' · '+escape(row.rate.scene):''}</span>`:`<strong>${escape(row.rate.text)}</strong>`;
+  const shot=row.screenshot?`<button class="desktop-shot" data-run="${escape(row.screenshot.runKey)}" aria-label="Open reviewed gameplay evidence for ${escape(row.name)}"><img src="${escape(row.screenshot.url)}" alt="Reviewed gameplay: ${escape(row.name)} · ${escape(row.screenshot.name)}" loading="lazy"></button>`:'<div class="desktop-shot desktop-shot-missing">No reviewed gameplay screenshot</div>';
+  return `<article class="desktop-row panel" data-desktop-row="${escape(row.id)}">${shot}<div class="desktop-body"><div class="desktop-head"><h3>${escape(row.name)}</h3>${badge(label,color)}<span class="desktop-gates" aria-label="Release gates">${row.gates.map(g=>`<span class="gate gate-${g.met?'met':g.status==='blocked'?'blocked':'unknown'}" title="${escape(g.name+': '+g.status+' — '+g.detail)}">${gateMark(g)} ${escape(g.name)}</span>`).join('')}</span></div>`+
+    `<p class="desktop-line">${rate}</p><p class="desktop-line sub">${escape(row.input.text)} · ${escape(row.sound.text)}${row.gameplayRun?` · Gameplay run ${escape(row.gameplayRun.build.text)}`:''}</p>`+
+    `${row.staleReasons.length?`<p class="desktop-line notice-line">Review not current: ${escape(row.staleReasons.join(' '))}</p>`:''}`+
+    `<ul class="desktop-blockers">${row.blockers.map(b=>`<li class="blocker-item"><strong>Blocker:</strong> ${escape(b.summary)}${b.source?` <span class="sub">${escape(b.source)}</span>`:''}</li>`).join('')}${unmet.map(g=>`<li><strong>${escape(g.name)}</strong> ${escape(g.status.replaceAll('-',' '))}: ${escape(g.detail)}${g.source?` <span class="sub">${escape(g.source)}</span>`:''}</li>`).join('')}</ul>`+
+    `${row.next?`<p class="desktop-line"><strong>Next:</strong> ${escape(row.next)}</p>`:''}<div class="desktop-actions">${corpusLaunchActions(c)}<button data-candidate="${escape(row.id)}">Details →</button></div></div></article>`;
+}
+function desktopView() {
+  const q=ReleaseModel.desktopQueue(state,desktopSelection),rows=q.rows.filter(r=>matches(state.candidates.find(c=>c.id===r.id)));
+  const choices=[['all','All unreleased'],['gameplay','Reviewed gameplay'],['unblocked','No recorded blockers'],['ready','Ready']];
+  return title('Ready for desktop',`${q.unreleased} unreleased games · ${q.withGameplay} with reviewed gameplay · ${q.ready} ready. Sorted by fewest blockers and unmet gates.`)+
+    `<div class="toolbar"><select id="desktop-selection" aria-label="Desktop readiness filter">${choices.map(([id,l])=>`<option value="${id}" ${desktopSelection===id?'selected':''}>${l}</option>`).join('')}</select><span class="sub">${rows.length} shown · ${q.production.status==='verified'?'production snapshot checked '+escape(when(q.production.checkedAt)):'production membership unverified'} · ${q.unknownMembership} games with unknown membership are not listed</span></div>`+
+    `<p class="source-note">From recorded release reviews, runs and launch routes only. Rates use their recorded metric label; nothing is inferred from block or present counts. ✓ passed · ✕ blocked · ? not reviewed. This view does not publish or deploy.</p>`+
+    `<div class="desktop-list">${rows.map(desktopRowHtml).join('') || empty('No unreleased games match this filter.')}</div>`;
+}
+document.addEventListener('change',event=>{if(event.target.id==='desktop-selection'){desktopSelection=event.target.value;render();}});
 function currentAgents() {
   const owners=new Set(state.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status)).map(t=>t.owner));
   return state.agents.filter(a=>a.id===coordinator()?.agentId || owners.has(a.id) || a.provider!=='claude' && a.state!=='idle' && Date.now()-Date.parse(a.lastActivityAt)<15*60000).sort((a,b)=>agentSignal(a).rank-agentSignal(b).rank || Number(b.id===coordinator()?.agentId)-Number(a.id===coordinator()?.agentId));
@@ -289,7 +311,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, agents: agentsView, activity: activityView }[view] || overview)();
+  $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
