@@ -10,6 +10,7 @@ const { inventory } = require('./corpus-inventory');
 const { getCatalog, getBuildIdentity, launchFor } = require('./emulator-server');
 const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
 const { createActivityReader, boardEntry, linkCommits } = require('./activity');
+const { buildDosCorpus } = require('./dos-corpus');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -482,7 +483,18 @@ function createReader(options = {}) {
       for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
     linkCommits(activityResult.commits || [], tasks, runList);
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,
+    // Original DOS titles, kept apart from the Windows EXE corpus. GitHub links
+    // use the repository a real commit URL already names, never a guess.
+    let dosCorpus = null;
+    try {
+      const commitUrl = (activityResult.commits || []).map(c => c.url).find(u => typeof u === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[0-9a-f]+$/.test(u));
+      const githubRepo = commitUrl ? commitUrl.replace(/\/commit\/[0-9a-f]+$/, '') : null;
+      const githubRef = (activityResult.code?.mainRef || 'origin/main').replace(/^origin\//, '');
+      dosCorpus = await buildDosCorpus({ root, candidates, runs: runList, tasks, githubRepo, githubRef });
+      if (dosCorpus.available) sources.push('test/toyvm-dos-corpus/manifest.json', 'ops/dos-corpus.json'); else warnings.push('DOS corpus: ' + dosCorpus.reason);
+      warnings.push(...dosCorpus.warnings);
+    } catch (error) { warnings.push('DOS corpus: ' + error.message); }
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,dosCorpus,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }

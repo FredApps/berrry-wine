@@ -409,9 +409,9 @@ function render() {
   if (!state) return;
   renderApprovals();
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
-  $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
+  $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length; $('#dos-count').textContent = state.dosCorpus?.rows?.length || '';
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)();
+  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, dos: dosView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
