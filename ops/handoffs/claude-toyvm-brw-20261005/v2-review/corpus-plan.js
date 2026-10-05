@@ -95,12 +95,15 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
 // actually ran, and an invocation's deadline is now + (SLOT_S - spent). So
 // stage 2 can start in a later grant without the gap counting against it,
 // and the two stages together can never exceed SLOT_S.
-let deadline = 0, invokedAt = 0, spentBefore = 0;
+let deadline = 0, invokedAt = 0, spentBefore = 0, INVOCATION_S = 0;
 const spentFile = () => p('out', 'slot-spent.txt');
-function startSlot() {
+function startSlot(cmd) {
+  INVOCATION_S = Number(env.INVOCATION_S || ({ stage1: 3300, stage2: 2400 })[cmd] || SLOT_S);
   spentBefore = Number(read(spentFile()).trim()) || 0;
   invokedAt = Date.now();
-  deadline = invokedAt + (SLOT_S - spentBefore) * 1000;
+  // ...and no single invocation may take more than INVOCATION_S of it: a
+  // stage granted 55 minutes must not be able to spend the whole 95.
+  deadline = invokedAt + Math.min(SLOT_S - spentBefore, INVOCATION_S) * 1000;
   process.on('exit', () => {
     try { fs.writeFileSync(spentFile(), String(Math.ceil(spentBefore + (Date.now() - invokedAt) / 1000)) + '\n'); } catch {}
   });
@@ -470,21 +473,40 @@ async function p1p2() {
 // Checkpointed stages (root, 2026-10-05 ~15:00Z): stage1 = P0 prep + P1 || P2,
 // then a checkpoint; stage2 = P3..P6, only on top of a passed stage1 whose
 // trees are byte-identical to what stage1 recorded.
+// Every file of each tree's closure (everything prep extracted, plus the
+// copied brw-bisect.js), hashed path by path; node_modules is a symlink to the
+// shared install and is not part of the candidate. One digest per tree.
 function treeDigest() {
-  const files = [];
-  for (const tr of TREES) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) {
-    const file = p(tr, 'tools/toyvm', `${fn}.js`);
-    if (fs.existsSync(file)) files.push(`${tr}/${fn} ${sha256(file)}`);
+  const out = [];
+  for (const tr of TREES) {
+    const root = p(tr), lines = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        if (e.name === 'node_modules' && dir === root) continue;
+        const full = path.join(dir, e.name);
+        if (e.isSymbolicLink()) { lines.push(`${path.relative(root, full)} -> ${fs.readlinkSync(full)}`); continue; }
+        if (e.isDirectory()) walk(full);
+        else if (e.isFile()) lines.push(`${path.relative(root, full)} ${sha256(full)}`);
+      }
+    };
+    if (fs.existsSync(root)) walk(root);
+    out.push(`${tr} ${lines.length} ${crypto.createHash('sha256').update(lines.join('\n')).digest('hex')}`);
   }
-  return files;
+  return out;
+}
+// Write the stage-1 checkpoint from the current work dir (stage1 calls it; a
+// separate phase only so the fixture tests can build a real one).
+async function checkpoint() {
+  const cp = { stage: 1, cand: CAND, patches: STACK, smoke: SMOKE, programs: programList().length,
+    programsSha: sha256(p('programs.txt')),
+    trees: treeDigest(), spentS: spentNow(), at: new Date().toISOString() };
+  fs.writeFileSync(p('out', 'stage1.done.json'), JSON.stringify(cp, null, 1) + '\n');
+  say('STAGE1', `checkpoint written: ${cp.programs} programs (programs.txt ${cp.programsSha.slice(0, 12)}), trees ${cp.trees.map((x) => x.split(' ').slice(0, 2).join(':')).join(' ')}, ${cp.spentS}s of ${SLOT_S}s spent`);
 }
 async function stage1() {
   await prep();
   await p1p2();
-  const cp = { stage: 1, cand: CAND, patches: STACK, smoke: SMOKE, programs: programList().length,
-    trees: treeDigest(), spentS: spentNow(), at: new Date().toISOString() };
-  fs.writeFileSync(p('out', 'stage1.done.json'), JSON.stringify(cp, null, 1) + '\n');
-  say('STAGE1', `checkpoint written: ${cp.programs} programs, ${cp.trees.length} tree files pinned, ${cp.spentS}s of ${SLOT_S}s spent`);
+  await checkpoint();
 }
 async function stage2() {
   let cp;
@@ -494,13 +516,13 @@ async function stage2() {
   }
   const now = treeDigest();
   if (JSON.stringify(now) !== JSON.stringify(cp.trees)) abort('stage2: tree files changed since stage1', 13);
-  if (programList().length !== cp.programs) abort('stage2: program list changed since stage1', 13);
+  if (!fs.existsSync(p('programs.txt')) || sha256(p('programs.txt')) !== cp.programsSha) abort('stage2: program list (programs.txt) changed since stage1', 13);
   say('STAGE2', `resuming on stage1 checkpoint ${cp.at}; ${spentBefore}s of ${SLOT_S}s already spent`);
   await arms(); await control(); await brw(); await nudge();
   say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}both stages complete, ${spentNow()}s of ${SLOT_S}s spent`);
 }
 
-const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge, stage1, stage2 };
+const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge, stage1, stage2, checkpoint };
 
 async function main(cmd) {
   if (!W) { console.error('set W to an empty work dir (needs ~90 MB)'); process.exit(2); }
@@ -510,7 +532,8 @@ async function main(cmd) {
   }
   // Every phase can run on its own, so every phase needs both directories.
   for (const d of ['out', 'logs']) fs.mkdirSync(p(d), { recursive: true });
-  startSlot();
+  startSlot(cmd);
+  say('SLOT', `${cmd}: ${Math.floor((deadline - invokedAt) / 1000)}s this invocation (cap ${INVOCATION_S}s; ${spentBefore}s of ${SLOT_S}s already spent)`);
   if (cmd !== 'all') return PHASES[cmd]();
   if (CAND !== 'v3j' && CAND !== 'stack') abort('`all` is the scheduled A/B and needs CAND=stack (PATCHES=...) or CAND=v3j', 8);
   await prep();
