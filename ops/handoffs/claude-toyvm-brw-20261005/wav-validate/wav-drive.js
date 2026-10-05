@@ -20,7 +20,7 @@
 // dispatched alone does not fix. Reported: frames, audio.rendered, the outAcc
 // residue, guestSeconds(dispatched), and frames/rate.
 //
-//   node wav-drive.js --tree=DIR --exe=PATH --wav=OUT.wav --row=OUT.json [--trace-irq] [--trace-io=40,43]
+//   node wav-drive.js --tree=DIR --exe=PATH --wav=OUT.wav --row=OUT.json [--trace-irq] [--trace-io=40,43] [--slice-log=FILE [--slice-log-regs]]
 // Trace lines go to stdout; the parent redirects them into a size-capped log.
 
 const crypto = require('crypto');
@@ -46,8 +46,15 @@ const BUDGET = 80e6;
   const { wavBytes } = T('audio');
   const out = (s) => process.stdout.write(s + '\n');
   const t0 = process.hrtime.bigint();
+  // --slice-log=FILE: run-dos's own per-handback record (dispatched, left,
+  // cs:ip; with --slice-log-regs also the 16-bit registers and FLAGS), one line
+  // per handback, held in memory and written by runDos with writeFileSync at
+  // the end. slice-diag.js points FILE at a FIFO it drains under a hard cap,
+  // so the write is capped live like stdout; see slice-diag.js runChild.
+  const sliceLog = arg('slice-log');
   const r = await runDos({ exe, budget: BUDGET, log: out, seconds: 0,
-    traceIrq: argv.includes('--trace-irq'), traceIo, ...RECIPE });
+    traceIrq: argv.includes('--trace-irq'), traceIo,
+    ...(sliceLog ? { sliceLogFile: sliceLog, sliceLogRegs: argv.includes('--slice-log-regs') } : {}), ...RECIPE });
   const bytes = r.audioChunks && r.audioChunks.length ? Buffer.from(wavBytes(r.audioChunks, r.audioRate)) : null;
   if (bytes) fs.writeFileSync(wavOut, bytes);
   const full = bytes ? crypto.createHash('sha256').update(bytes).digest('hex') : null;
@@ -69,6 +76,10 @@ const BUDGET = 80e6;
       dmaWrites: a && a.dma ? a.dma.writes : null, speakerWrites: a ? a.speakerWrites : null,
     },
     cpuSecs: r.cpuSecs, wallSecs: Number(process.hrtime.bigint() - t0) / 1e9,
+    // Measured, not estimated: the process's peak resident set over the whole
+    // run (kernel maxrss, KiB) and the V8 heap at the end.
+    mem: { maxRssKiB: process.resourceUsage().maxRSS, heapUsed: process.memoryUsage().heapUsed,
+      heapLimit: require('v8').getHeapStatistics().heap_size_limit },
   };
   fs.writeFileSync(rowOut, JSON.stringify(row) + '\n');
   exitAfterFlush(0);
