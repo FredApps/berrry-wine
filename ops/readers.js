@@ -388,9 +388,10 @@ function createReader(options = {}) {
     } catch (e) { warnings.push(`Candidate manifest: ${e.message}`); }
     // Keep registry-only games and unknown apps visible without changing the
     // candidate manifest. Exact app/executable associations come from the same
-    // inventory used by the coverage report, not fuzzy title matching.
+    // inventory used by the coverage report, not fuzzy title matching. The
+    // registry is the emulator checkout's, since that is what a launch runs.
     try {
-      const registryFile = await safeFile(root, 'lib/apps.js');
+      const registryFile = await safeFile(emulatorRoot, 'lib/apps.js');
       if (registryFile) {
         const registry = require(registryFile);
         let assessments = [];
@@ -410,7 +411,7 @@ function createReader(options = {}) {
           c.localDesktopAppIds = entry.appIds.filter(id => (registry.DESKTOP_APPS || []).some(row => row[0] === id));
           c.registryOnly = entry.origin === 'registry-only';
           c.appIds = entry.appIds;
-          c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(root,app.executable)})));
+          c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(emulatorRoot,app.executable)})));
           if (c.registryOnly) c.fixtureStatus = c.registeredExecutables.every(e=>e.present) ? 'present' : c.registeredExecutables.some(e=>e.present) ? 'partial' : 'missing';
         }
         sources.push('lib/apps.js');

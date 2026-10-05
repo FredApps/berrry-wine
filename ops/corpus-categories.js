@@ -14,7 +14,7 @@ const groups = [
   ['role-playing', 'Role-playing', ['dungeons-of-dredmor-release', 'dungeons-of-dredmor', 'nethack-win32', 'diablo-2-demo-installer', 'fallout-demo', 'diablo-shareware', 'gog-free-elder-scrolls-arena', 'gog-free-elder-scrolls-daggerfall', 'gog-free-ultima-iv', 'deus-ex-demo', 'icewind-dale-demo', 'baldurs-gate-noninteractive-demo', 'baldurs-gate-interactive-demo', 'baldurs-gate-chapters-1-2-demo', 'arcanum-demo']],
   ['shooters', 'Shooters', ['serious-sam-demo', 'quake-2-demo-installer', 'half-life-uplink-installer', 'gog-free-shadow-warrior-classic', 'unreal-special-edition', 'unreal-tournament-demo-348', 'unreal-tournament-2003-demo', 'unreal-tournament-2004-demo', 'unreal-tournament-3-demo-installer', 'moorhuhn', 'moorhuhn-2', 'moorhuhn-winter', 'moorhuhn-3', 'gallinelle-xxl', 'reflexive-crimsonland', 'reflexive-alien-shooter']],
   ['sports-simulation', 'Sports / simulation', ['blobby-volley', 'simgolf-demo-installer', 'moorhuhn-tennis']],
-  ['strategy', 'Strategy / tactics', ['liquid-war', 'pocket-tanks-installer', 'heroes-3-demo-installer', 'heroes-2-demo', 'starcraft-shareware', 'worms-2-demo', 'civilization-2-win16', 'civilization-2-mge-win32', 'warcraft3-demo']],
+  ['strategy', 'Strategy / tactics', ['liquid-war', 'pocket-tanks-installer', 'heroes-3-demo-installer', 'heroes-2-demo', 'starcraft-shareware', 'worms-2-demo', 'civilization-2-win16', 'civilization-2-mge-win32', 'warcraft3-demo', 'myth-the-fallen-lords']],
   ['tools', 'Applications / tools', ['generally-track-editor', 'putty', 'virtualdub', '7zip-file-manager', 'povray-installer', 'dependency-walker', 'far-manager-170', 'winrar-310']],
   ['collections', 'Collections / extras', ['best-of-moorhuhn']],
 ];
