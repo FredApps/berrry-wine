@@ -117,3 +117,32 @@ Attempt2 used tested runtime source `94d18605`/module `2e2fd8d1ca62cd87f0bc09312
 The run ended on ordinary quit before its original600-second guard, session69536 exit0; browser/server closed18:47:08.029 UTC, no errors or pending streams, Chrome exited0 and owned processes were absent. The manual screenshot/input review loop consumed much of the budget; this does not establish an emulator stall. Next is a bounded, scene-gated replay of the now-observed ordinary route and visible allocation counter changes, followed by actual dungeon movement proof. Do not silently use the historical19800-second driver ceiling as permission to extend the browser run.
 
 Immutable local evidence: `scratch/runs/20261005-daggerfall-character-creation/result.json`, exact inputs/served responses/source closure/review/hash manifest. Payload is read in place; frozen runtime bytes reuse immutable prior source files without duplicating the565MB original game. FPS, sound quality and gameplay qualification remain unknown.
+
+## Browser allocation continuation (2026-10-05, attempt4)
+
+The corrected ordinary creator prefix reached attribute allocation through all
+14 reviewed scene gates and13 normal inputs. Manual allocation then reached
+STR58 with zero attribute points, followed by Mysticism36 with primary1,
+major6 and minor6 points still unassigned. The final image is a skill-allocation
+page, **not dungeon gameplay**. The original600-second guard closed the browser
+and server at19:23:56.462Z with no cleanup errors or unsettled streams.
+
+Evidence: `scratch/runs/20261005-daggerfall-skill-allocation`, including
+`attributes-ok.png`, `p5.png`, physical input timestamps, served byte receipts,
+frozen runtime/registration sources and457 hashed artifacts. Reader validation
+finds82 visuals and zero reviewed gameplay screenshots. Runtime remains the
+previously tested94d18605 source/module2e2fd8d1 with the Daggerfall registration
+overlay; this does not claim a rebuild of current main. A publication-time wrong
+screenshot filename was corrected before acceptance; the original result and
+hash list are retained as explicitly named pre-validation artifacts.
+
+Short clustered clicks sometimes left the visible point count unchanged.
+Observed1000ms ordinary mouse holds followed by2000ms release gaps advanced
+the reviewed values. This is a useful input recipe, not a guest timing diagnosis.
+The next source-only helper recognizes the exact rendered attribute counter
+(0–13) from retained captures, permits one click per observed decrement, and
+stops on unknown, unchanged or skipped counters. It has a120-second sub-bound
+inside the unchanged600-second session and does not infer skill completion,
+reflexes, final-review acceptance, FPS or player control. Remaining creator
+transitions still require ordinary visual review; repeated cold allocation-only
+runs are not gameplay evidence.
