@@ -93,7 +93,20 @@ Command:
 
       node bench-trees.js --out=<fresh> --progs=<synthetic transfer loop .COM>,<corpus prog> --reps=5 --dispatches=20m --cpu-time --total=300 --per-run=60 --candidate=... --candidate-sha=ee8265ba...
 
-## 3. Engine tools for the V8 + SpiderMonkey disassembly gate (checked read-only)
+## 3. Engine tools for the V8 + SpiderMonkey disassembly gate
+
+**Current status (2026-10-05 ~19:43Z, after root authorized provisioning): AVAILABLE.**
+
+| tool | path | version |
+|---|---|---|
+| V8 | `/home/user/.local/opt/toyvm-engines/v8-15.7.45/d8` | 15.7.45 |
+| SpiderMonkey | `/home/user/.local/opt/toyvm-engines/sm-158.0b4/sm` | JavaScript-C158.0; `wasmExtractCode` present |
+| GNU objdump | PATH | 2.42 |
+
+Use them via `SM=… D8=…` with `tools/wasm-native.js`. Checksums, sizes and the procedure are in
+ENGINE-PROVISIONING-20261005.md.
+
+**HISTORICAL** (the read-only check before provisioning, superseded by the table above):
 
 | tool | where `tools/wasm-native.js` looks | status |
 |---|---|---|
