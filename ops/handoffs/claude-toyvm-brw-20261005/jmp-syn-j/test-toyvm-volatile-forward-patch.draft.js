@@ -37,31 +37,49 @@ const { runDos } = require('../tools/toyvm/run-dos');
 
 const N = 200;   // calls; VOLATILE_AFTER is 8, so ~190 of them run volatile
 
-function program() {
+// `sameBlock`: the patched instruction directly follows the store, in the SAME
+// compiled block (no transfer between). Root's review caveat: keeping the code
+// bits only guarantees the store is DETECTED; $smc is acted on at the next
+// block transfer, so a stale immediate inside the storing block can still run.
+// The transfer-separated form is BRW's shape (8:c314 -> loop at 8:c34b).
+function program({ sameBlock = false } = {}) {
   const b = [];
   const w = (...x) => b.push(...x);
+  // SUB is called INDIRECTLY. The pure uncached compile happens only when the
+  // HOST enters a volatile paragraph (CodeCache.entryFor -> volatileEntry),
+  // i.e. after a handback, as BRW enters 8:c290. A direct `call` links into
+  // compiled code and the cached caller program covering SUB keeps the code
+  // bits up, so the store breaks normally and nothing goes stale (the first
+  // draft did that and passed on HEAD). Once the paragraph is promoted its
+  // heads leave the jump table, `call bx` misses $jlook and hands back, and
+  // every call from then on enters SUB through volatileEntry.
   w(0x31, 0xD2);                   // 0100 xor dx,dx
   w(0xB9, N & 0xFF, N >> 8);       // 0102 mov cx,N
   w(0xB0, 0x00);                   // 0105 mov al,0
-  // 0107 outer:
-  w(0xFE, 0xC0);                   // 0107 inc al
-  w(0xE8, 0x00, 0x00);             // 0109 call SUB (rel16 patched below)
-  w(0xE2, 0xF9);                   // 010C loop 0107
-  w(0x88, 0xD0);                   // 010E mov al,dl  (result in al/dl)
-  w(0xB4, 0x4C);                   // 0110 mov ah,4Ch
-  w(0xCD, 0x21);                   // 0112 int 21h
+  w(0xBB, 0x00, 0x00);             // 0107 mov bx,SUB (patched below)
+  // 010A outer:
+  w(0xFE, 0xC0);                   // 010A inc al
+  w(0xFF, 0xD3);                   // 010C call bx
+  w(0xE2, 0xFA);                   // 010E loop 010A
+  w(0x88, 0xD0);                   // 0110 mov al,dl  (result in al/dl)
+  w(0xB4, 0x4C);                   // 0112 mov ah,4Ch
+  w(0xCD, 0x21);                   // 0114 int 21h
   while (b.length < 0x20) w(0x90); // pad to 0120 (SUB starts a fresh paragraph)
   // The patched instruction sits one TRANSFER after the store, as in BRW (the
   // store at 8:c314 patches the loop at 8:c34b): $smc is tested at a block
   // transfer, so a store into the SAME block's later bytes is a separate,
   // wider limitation (only a CS-override store ends the block, end_smc).
   const sub = 0x100 + b.length;    // 0120 SUB:
-  w(0xA2, 0x27, 0x01);             // 0120 mov [0127],al   -> imm8 of the add below
-  w(0xEB, 0x00);                   // 0123 jmp 0125        (block transfer)
-  w(0x80, 0xC2, 0x00);             // 0125 add dl,imm8      (imm8 at 0127)
+  if (sameBlock) {
+    w(0xA2, 0x25, 0x01);           // 0120 mov [0125],al   -> imm8 of the add below
+    w(0x80, 0xC2, 0x00);           // 0123 add dl,imm8      (imm8 at 0125, same block)
+  } else {
+    w(0xA2, 0x27, 0x01);           // 0120 mov [0127],al   -> imm8 of the add below
+    w(0xEB, 0x00);                 // 0123 jmp 0125        (block transfer)
+    w(0x80, 0xC2, 0x00);           // 0125 add dl,imm8      (imm8 at 0127)
+  }
   w(0xC3);                         // 0128 ret
-  const rel = sub - (0x109 + 3);
-  b[0x0A] = rel & 0xFF; b[0x0B] = (rel >> 8) & 0xFF;
+  b[0x08] = sub & 0xFF; b[0x09] = (sub >> 8) & 0xFF;
   return Buffer.from(b);
 }
 
@@ -73,22 +91,27 @@ function expected() {
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-volfwd-'));
-  const com = path.join(dir, 'VOLFWD.COM');
-  fs.writeFileSync(com, program());
   try {
-    const run = async (opts) => {
-      const r = await runDos({ exe: com, budget: 5e6, log: () => {}, ...opts });
-      return { dl: r.vm.get('dx') & 0xFF, smc: r.smcBreaks, dispatched: r.dispatched };
-    };
     const want = expected();
-    const cached = await run({});
-    const flushed = await run({ smcFlush: true });
-    // The control: flushing the whole cache on every detected write.
-    assert.strictEqual(flushed.dl, want, `smcFlush control: dl ${flushed.dl} != ${want}`);
-    assert.strictEqual(cached.dl, want,
-      `cached interpreter ran a stale forward-patched imm8: dl ${cached.dl} != ${want}`
-      + ` (smc breaks ${cached.smc}, smcFlush ${flushed.smc})`);
-    console.log(`PASS test-toyvm-volatile-forward-patch: dl ${cached.dl} == ${want} over ${N} self-patching calls`);
+    const failures = [];
+    for (const sameBlock of [false, true]) {
+      const name = sameBlock ? 'same-block' : 'transfer-separated';
+      const com = path.join(dir, sameBlock ? 'VOLSAME.COM' : 'VOLXFER.COM');
+      fs.writeFileSync(com, program({ sameBlock }));
+      const run = async (opts) => {
+        const r = await runDos({ exe: com, budget: 5e6, log: () => {}, ...opts });
+        return { dl: r.vm.get('dx') & 0xFF, smc: r.smcBreaks, dispatched: r.dispatched };
+      };
+      const cached = await run({});
+      const flushed = await run({ smcFlush: true });
+      // The control: flushing the whole cache on every detected write.
+      const ok = cached.dl === want && flushed.dl === want;
+      console.log(`${ok ? 'PASS' : 'FAIL'} ${name}: cached dl ${cached.dl}, smcFlush dl ${flushed.dl}, want ${want}`
+        + ` (smc breaks cached ${cached.smc}, smcFlush ${flushed.smc})`);
+      if (!ok) failures.push(name);
+    }
+    assert.deepStrictEqual(failures, [], `stale forward-patched imm8 in: ${failures.join(', ')}`);
+    console.log(`PASS test-toyvm-volatile-forward-patch: both forms correct over ${N} self-patching calls`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
