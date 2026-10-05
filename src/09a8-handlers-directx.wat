@@ -13342,3 +13342,13 @@
     (call $vbdd_create_surface_from_file (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
   (i32.store offset=16 (global.get $reg_base)
     (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+
+;; IDirectX7 slot44:HRESULT TickCount([out,retval] LONG*). The existing
+;; host clock supplies the same guest milliseconds as GetTickCount.
+(func $handle_IVBDirectX7_TickCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (local $hr i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg1) (i32.const 4)))
+    (then (local.set $hr (i32.const 0x80004003)))
+    (else (call $gs32 (local.get $arg1) (call $host_get_ticks))))
+  (i32.store offset=0 (global.get $reg_base) (local.get $hr))
+  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))

@@ -3167,7 +3167,7 @@
             (i32.const 36) (global.get $SHELL_LINK_VTBL)))))
       (if (i32.eq (local.get $local_class) (i32.const 7))
         (then (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))))
+          (i32.const 32) (call $init_com_vtable (global.get $API_ID_IVBDirectX7_BASE) (i32.const 58))))))
       (if (i32.eq (local.get $local_class) (i32.const 8))
         (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))))
