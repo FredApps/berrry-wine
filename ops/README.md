@@ -675,6 +675,14 @@ fewest blockers and unmet gates. Logic lives in `release-model.js`, shared by th
 page and `release-model.test.js`. Games with unknown membership are counted, not
 listed.
 
+Launch links carry `&build=<wasm sha256>` of the module the emulator route
+serves (`emulatorBuild` in `/api/state`: `rev · dirty (N tracked files) · wasm`,
+read from the live tree and cached 30 s). If `build/wine-assembly.wasm` changes
+before the click, `/emulator/` answers 409 naming both hashes instead of running
+another build; an unavailable app answers 409 listing its missing files. The
+Ready view compares the served module with the reviewed gameplay run's recorded
+wasm (match / differs / unknown); commits are not compared, only module hashes.
+
 ### Launch from EXE corpus
 
 Use **Launchable now** above the corpus list to show entries with an available

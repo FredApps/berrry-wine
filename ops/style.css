@@ -1241,3 +1241,7 @@ dd {
   .desktop-row { grid-template-columns:1fr; }
   .desktop-shot { width:100%; }
 }
+.build-chip { overflow-wrap:anywhere; }
+.missing-files { overflow-wrap:anywhere; color:var(--amber); }
+.build-differs { color:var(--amber); }
+.build-match { color:var(--green); }

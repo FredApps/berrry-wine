@@ -121,3 +121,25 @@ test('release view script is served and loaded before app.js', () => {
   assert.ok(html.includes('href="#release"'));
   assert.ok(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8').includes("'/release-model.js': ['release-model.js'"));
 });
+
+test('launch shows the served build and compares it with the reviewed gameplay module only by hash', () => {
+  const s = snapshot();
+  assert.equal(ReleaseModel.servedBuild(s).text, 'Served build unknown');
+  s.emulatorBuild = {commit: 'aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa', dirty: true, dirtyFiles: 3, wasmSha256: 'f40d4ca3382279ff9b82', note: 'live tree'};
+  assert.equal(ReleaseModel.servedBuild(s).text, 'rev aaaaaaaa · dirty · wasm f40d4ca33822 (3 tracked files modified)');
+  const alpha = ReleaseModel.desktopQueue(s).rows.find(r => r.id === 'alpha');
+  assert.equal(alpha.gameplayRun.servedMatch.status, 'match');
+  s.emulatorBuild.wasmSha256 = 'ffff';
+  assert.equal(ReleaseModel.desktopQueue(s).rows.find(r => r.id === 'alpha').gameplayRun.servedMatch.status, 'differs');
+  assert.equal(ReleaseModel.buildMatch('ffff', null).status, 'unknown');
+  const ctx = browserApp(s);
+  const html = vm.runInContext('desktopView()', ctx);
+  assert.ok(html.includes('Build rev aaaaaaaa · dirty · wasm ffff (3 tracked files modified)'));
+  assert.ok(html.includes('served wasm differs from the reviewed gameplay run (f40d4ca33822)'));
+  assert.ok(html.includes('Missing: test/binaries/beta.exe'), 'missing files are listed on the row, not only in details');
+  for (const c of s.candidates) Object.assign(c, {category: {...c.category, label: c.category.id}, taskIds: []});
+  const corpus = vm.runInContext('corpusView()', ctx);
+  assert.ok(corpus.includes('Launches serve: rev aaaaaaaa'));
+  assert.ok(!corpus.includes('build-chip'), 'corpus cards stay compact; build is shown once in the launch bar');
+  assert.ok(vm.runInContext("corpusLaunchActions(state.candidates[0],true)", ctx).includes('build-chip'));
+});

@@ -43,6 +43,23 @@ Source `[SRC]` and one read-only `/api/state` `[API]` (4.3 MB, 12 agents, 333 ru
   rates (cave-story 24.9, icy-tower 50.0, moorhuhn-2 8.0, moorhuhn-winter 36.4), gta2-demo
   29.9 guest Flip events/s (unreviewed); 4 stale reviews, reason: source hashes changed.
 
+### 2. Exact-build Play (DASH-GAPS-PLAY-BUILD)
+
+- `emulator-server.js`: `getBuildIdentity(root)` — SHA-256 of the served `build/wine-assembly.wasm`
+  (cached by size+mtime), `git rev-parse HEAD`, tracked dirty-file count; `null` when git or the
+  module is unavailable, never a guess. Exposed as `emulatorBuild` in `/api/state`.
+- Available launch URLs gain `&build=<wasm sha256>`; the emulator index refuses with 409
+  "Served build changed since the dashboard snapshot: link expects wasm X, now Y" if the module
+  changed. The unavailable-app 409 now lists the missing files.
+- UI: corpus launch bar states the served build once; candidate details and Ready rows show a build
+  chip; unavailable routes list up to three missing files on the card (+N more → Details, full list
+  open there); Ready rows say whether the served wasm matches the reviewed gameplay run's wasm.
+- Tests: `emulator-server.test.js` +1 (identity without git / clean / dirty, pinned URL, 200 when
+  equal, 409 after rebuild, 409 with missing paths); `release-model.test.js` +1 (served build text,
+  match/differs/unknown, rendered chip, missing files on row, compact corpus cards).
+- Real tree (own server 8197): rev 16f764ad, dirty (196 tracked files), wasm f40d4ca33822; pinned
+  nfs2_demo link 200, wrong pin 409, snood 409 listing its two missing files.
+
 ## Tests
 
 `node --test ops/<file>.test.js` per file in the worktree (node_modules symlinked from the shared
