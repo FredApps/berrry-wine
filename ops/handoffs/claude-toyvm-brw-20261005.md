@@ -503,3 +503,14 @@ exit edge (exact, and only on the cold path). The test: the Phase-3 single-run i
 enough; compare (dispatched, cs:ip) of every budget stop between L1 and the region arm on a
 synthetic region whose lump spans a side exit (the 0x423a shape), plus BRW 500M frame parity.
 Both this and the Phase-6 dos-loop patch need a corpus A/B before landing.
+
+## Phase 7 correction (source read, region-jit.js 1520-1565)
+
+The "lump charge" reading above is too quick. The emitter bills `pending` before every branch (and
+before every clock-reading op), and its own comment calls that exact: $steps is only read at a
+branch. In the K5 dump of 0x423a, the internal jb checks stop at 425c/425f/4279/427c, which is where
+L1 stops too. Full jit-sepc installs 17 regions, not that one. At 89M its stops are all at 8:4299,
+so the region covering this loop there is probably a different one, with an exit-only shape. That
+region's billing or exit placement is the suspect. Next run (needs a slot): full jit-sepc with
+`--region-dump=DIR` to 90M, read the region whose span holds 0x423a-0x429d, and compare its
+charges and budget tests per branch with the interpreter's block transfers.
