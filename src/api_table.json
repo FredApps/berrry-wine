@@ -33925,9 +33925,9 @@
     "id": 4010,
     "name": "IVBImageSurface7_SetForeColor",
     "nargs": 2,
-    "stub": { "pop": 12, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2326229631
+    "hash": 2326229631,
+    "handler": "VBImage_SetForeColor"
   },
   {
     "id": 4011,

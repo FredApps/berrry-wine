@@ -23,6 +23,7 @@ const extraWat=String.raw`
 (func (export "vb_vidmem") (result i32) (global.get $dx_vidmem_used))
 (func (export "vb_native") (param $owner i32) (param $desc i32) (param $out i32) (call $handle_IDirectDraw_CreateSurface (local.get $owner) (local.get $desc) (local.get $out) (i32.const 0) (i32.const 0) (i32.const 0)))
 `;
+const foreExtraWat="\n(func (export \"fore_state\") (param $obj i32) (result i32) (call $vbdd_draw_state_ptr (call $dx_from_this (local.get $obj))))\n(func (export \"fore_pen_live\") (param $pen i32) (result i32) (call $gdi_object_type (local.get $pen)))\n(func (export \"fore_alloc\") (result i32) (call $gdi_object_alloc (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 0) (i32.const 0)))\n(func (export \"fore_delete\") (param $pen i32) (result i32) (call $gdi_object_delete_full (local.get $pen)))\n(func (export \"fore_load_wa\") (param $p i32) (result i32) (i32.load (local.get $p)))\n;; Independent native consumer of stored pen, not a fabricated VB DrawLine.\n;; A fresh DC is acquired/released each time so DC-local color cannot pass.\n(func (export \"fore_native_line\") (param $obj i32) (param $y i32) (result i32)\n (local $hdc i32) (local $state i32) (local $old i32) (local $ok i32)\n (local.set $state (call $vbdd_draw_state_ptr (call $dx_from_this (local.get $obj))))\n (local.set $hdc (i32.add (i32.const 0x200000) (i32.div_u (i32.sub (call $dx_from_this (local.get $obj)) (global.get $DX_OBJECTS)) (i32.const 32))))\n (if (i32.eqz (call $gdi_dx_dc_bind (local.get $hdc))) (then (return (i32.const 0))))\n (local.set $old (call $gdi_native_select_object (local.get $hdc) (i32.load offset=4 (local.get $state))))\n (drop (call $gdi_native_move_to (local.get $hdc) (i32.const 1) (local.get $y)))\n (local.set $ok (call $gdi_native_line_to (local.get $hdc) (i32.const 7) (local.get $y)))\n (drop (call $gdi_native_select_object (local.get $hdc) (local.get $old)))\n (call $gdi_dx_dc_release (local.get $hdc)) (local.get $ok))\n";
 async function run(h,apis,notepad,fixture){
  const e=h.exports,u8=new Uint8Array(h.memory.buffer),v=new DataView(h.memory.buffer);u8.set(notepad,e.get_staging());assert(e.load_pe(notepad.length)>0);e.init_dx_com_thunks();
  const a=n=>e.guest_alloc(n)>>>0,w=(p,x)=>e.guest_write32(p,x),r=p=>e.guest_read32(p)>>>0,zero=(p,n)=>{for(let i=0;i<n;i++)e.guest_write8(p+i,0)};
@@ -104,8 +105,31 @@ async function run(h,apis,notepad,fixture){
  check('unsupported CreateSurface chain/foreign bits never publishes',()=>{for(const [off,value] of [[200,8],[36,123],[4,15],[12,0],[8,0x80000000]]){descriptor();w(d+off,value);w(out,0xdeadbeef);const used=e.vb_vidmem();assert.equal(call(owner,7,d,out),0x80004001);assert.equal(r(out),0);assert.equal(e.vb_vidmem(),used)}});
  check('native surface remains unchanged and is not silently cast to VB source',()=>{const nd=a(124);zero(nd,124);w(nd,124);w(nd+4,7);w(nd+8,4);w(nd+12,4);w(nd+104,0x840);e.vb_native(owner,nd,out);const native=r(out),nt=r(native);assert.notEqual(nt,table);assert.equal(call(dest,6,0,native,0,0,status+4),0x80070057);assert.equal(r(native),nt);assert.equal(call(native,2),0)});
  check('other unimplemented VB methods retain real-thunk E_NOTIMPL/stack ABI',()=>{for(let i=0;i<71;i++){const api=apis[r(r(table+i*4)+4)];if(api.stub)assert.equal(call(dest,i,...Array(api.nargs-1).fill(0)),0x80004001,api.name)}});
+
+ check('SetForeColor actual slot54/ESP12 persistent raw color and pen replacement',()=>{
+  assert.equal(call(dest,54,0x00123456),0,'SetForeColor must persist real drawing state');
+  const p=e.fore_state(dest)>>>0,old=v.getUint32(p+4,true);assert(old);assert.equal(v.getUint32(p,true),0x00123456);assert.equal(e.fore_pen_live(old),1);
+  assert.equal(call(dest,54,0x00ffffff),0);const pen=v.getUint32(p+4,true);assert.notEqual(pen,old);assert.equal(e.fore_pen_live(old),0);assert.equal(e.fore_pen_live(pen),1);assert.equal(v.getUint32(p,true),0x00ffffff);
+ });
+ check('persistent pen drives real16bit pixels across independent transient DCs',()=>{
+  u8.fill(0,db,db+dp*128);assert.equal(call(dest,54,0x000000ff),0);assert.equal(e.fore_native_line(dest,3),1);for(let x=1;x<7;x++)assert.equal(v.getUint16(db+3*dp+x*2,true),0xf800);assert.equal(v.getUint16(db+3*dp,true),0);assert.equal(v.getUint16(db+3*dp+14,true),0);
+  assert.equal(e.fore_native_line(dest,5),1);for(let x=1;x<7;x++)assert.equal(v.getUint16(db+5*dp+x*2,true),0xf800);
+  assert.equal(call(src,54,0x0000ff00),0);assert.equal(e.fore_native_line(src,7),1);for(let x=1;x<7;x++)assert.equal(v.getUint16(sb+7*sp+x*2,true),0x07e0);assert.equal(v.getUint32(e.fore_state(dest),true),0xff);assert.equal(v.getUint32(e.fore_state(src),true),0xff00);
+ });
+ check('SetForeColor native allocation failure preserves old pen but retains requested color',()=>{
+  const handles=[];let pen;while((pen=e.fore_alloc())!==0){handles.push(pen);assert(handles.length<65536)}
+  const p=e.fore_state(dest),old=v.getUint32(p+4,true);try{assert.equal(call(dest,54,0xabcdef01),0x80070057);assert.equal(v.getUint32(p,true),0xabcdef01);assert.equal(v.getUint32(p+4,true),old);assert.equal(e.fore_pen_live(old),1)}finally{for(const h of handles)assert.equal(e.fore_delete(h),1)}
+  assert.equal(call(dest,54,0xffffff),0);assert.equal(e.fore_pen_live(old),0);
+ });
+ check('SetForeColor forged receiver preserves live per-surface state',()=>{
+  const fake=a(8);w(fake,r(dest));w(fake+4,r(dest+4));const p=e.fore_state(dest),before=Buffer.from(u8.slice(p,p+8));assert.equal(call(fake,54,0x999999),0x80070057);assert.deepEqual(Buffer.from(u8.slice(p,p+8)),before);
+ });
+ const drawState=e.fore_state(dest),sourceState=e.fore_state(src),destPen=v.getUint32(drawState+4,true),srcPen=v.getUint32(sourceState+4,true);
+ const aux=new WebAssembly.Instance(h.module,{host:h.host,gdi:h.gdi}).exports;
+ check('shared draw state survives auxiliary instance construction without reinitialization',()=>{assert.equal(aux.fore_load_wa(drawState)>>>0,0xffffff);assert.equal(aux.fore_load_wa(drawState+4)>>>0,destPen);assert.equal(aux.fore_load_wa(sourceState)>>>0,0xff00)});
  check('created and image lifetime release independently to zero',()=>{assert.equal(e.vb_refs(src),1);assert.equal(e.vb_refs(dest),1);assert.equal(call(src,2),0);assert.equal(call(dest,2),0)});
+ check('final release retires both pens and clears shared state; fresh surface defaults remain black',()=>{for(const p of[destPen,srcPen])assert.equal(e.fore_pen_live(p),0);for(const p of[drawState,sourceState]){assert.equal(aux.fore_load_wa(p),0);assert.equal(aux.fore_load_wa(p+4),0)}descriptor(8,8);assert.equal(call(owner,7,d,out),0);const o=r(out),p=e.fore_state(o);assert.equal(v.getUint32(p,true),0);assert.equal(v.getUint32(p+4,true),0);assert.equal(call(o,2),0)});
  return {cases,limits:['no gameplay qualification','bounded offscreen same-format copy/WAIT only','no broad native DirectDraw or VB drawing support claim']};
 }
 const {bootRenderHarness}=require('./render-helper');
-(async()=>{const h=await bootRenderHarness({extraWat,fonts:'none'});console.log(JSON.stringify({status:'PASS',...await run(h,require('../src/api_table.json'),fs.readFileSync(__dirname+'/binaries/notepad.exe'),fs.readFileSync(__dirname+'/fixtures/vbdd-image-helpers/asymmetric.bmp'))}));})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{const h=await bootRenderHarness({extraWat:extraWat+foreExtraWat,fonts:'none'});console.log(JSON.stringify({status:'PASS',...await run(h,require('../src/api_table.json'),fs.readFileSync(__dirname+'/binaries/notepad.exe'),fs.readFileSync(__dirname+'/fixtures/vbdd-image-helpers/asymmetric.bmp'))}));})().catch(e=>{console.error(e);process.exitCode=1;});

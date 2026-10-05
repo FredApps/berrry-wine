@@ -2049,10 +2049,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetForeColor",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": {
-      "pop": 12,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetForeColor"
   },
   {
     "name": "IVBImageSurface7_SetLockedPixel",

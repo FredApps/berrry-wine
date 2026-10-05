@@ -716,6 +716,10 @@
     (owner "09a8-handlers-directx.wat:$dx_alloc"))
   (region.declare $COM_WRAPPERS (size 0x00010000) (align 0x00001000)
     (owner "09a8-handlers-directx.wat:$dx_alloc_locked"))
+  ;; VB Surface7 foreground COLORREF and owned pen survive transient GetDC.
+  (region.declare $DX_VB_DRAW_STATE (size 0x00010000) (align 0x00001000)
+    (stride 0x8 (count $DX_MAX))
+    (owner "09a8-handlers-directx.wat:$vbdd_draw_state_ptr"))
   (region.declare $DX_SURF_FMT (size 0x00008000) (align 0x00001000)
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:$dx_surf_fmt_ptr"))

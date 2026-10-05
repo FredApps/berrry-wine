@@ -361,11 +361,6 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; IVBImageSurface7_SetForeColor: pop 12, return 0x80004001
-  (func $handle_IVBImageSurface7_SetForeColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
-
   ;; IVBImageSurface7_SetLockedPixel: pop 20, return 0x80004001
   (func $handle_IVBImageSurface7_SetLockedPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
@@ -19841,7 +19836,7 @@
       (call $handle_IVBImageSurface7_SetFontTransparency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 4010: IVBImageSurface7_SetForeColor
-      (call $handle_IVBImageSurface7_SetForeColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_VBImage_SetForeColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 4011: IVBImageSurface7_SetLockedPixel
       (call $handle_IVBImageSurface7_SetLockedPixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

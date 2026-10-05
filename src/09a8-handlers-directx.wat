@@ -996,6 +996,7 @@
   (func $dx_surf_state_reset (param $entry_wa i32)
     (if (local.get $entry_wa)
       (then
+        (call $vbdd_draw_state_reset (local.get $entry_wa))
         (call $dx_cursor_reset (local.get $entry_wa))
         (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32))
         (call $dx_surf_fmt_set (local.get $entry_wa) (i32.const 0))
@@ -1198,6 +1199,7 @@
     (local.set $type (i32.load (local.get $entry_wa)))
     (if (i32.eq (local.get $type) (i32.const 2))
       (then (call $dx_surf_note_write (local.get $entry_wa))))
+    (call $vbdd_draw_state_reset (local.get $entry_wa))
     ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
     (i32.store (local.get $entry_wa) (i32.const 0))
     (i32.store (call $dx_surf_owner_ptr (local.get $entry_wa)) (i32.const 0))
@@ -13585,3 +13587,36 @@
   (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+
+
+;; DX7VB73544f69: persist raw COLORREF before CreatePen; replace/delete the
+;; previous owned pen only after allocation succeeds. Constructor73543c3e
+;; defaults PS_SOLID=0, width=1, foreground=0. Style/width setters remain
+;; E_NOTIMPL; no unsupported state can silently alter these defaults.
+;; Shared slot sidecar is independent of transient GDI DC lifetime.
+(global $DX_VB_DRAW_STATE i32 (region.addr $DX_VB_DRAW_STATE 0))
+(func $vbdd_draw_state_ptr (param $entry i32) (result i32)
+ (i32.add (global.get $DX_VB_DRAW_STATE)
+  (i32.shl (i32.div_u (i32.sub (local.get $entry) (global.get $DX_OBJECTS)) (i32.const 32)) (i32.const 3))))
+(func $vbdd_draw_state_reset (param $entry i32)
+ (local $state i32) (local $pen i32)
+ (local.set $state (call $vbdd_draw_state_ptr (local.get $entry)))
+ (local.set $pen (i32.load offset=4 (local.get $state)))
+ (if (local.get $pen) (then (drop (call $gdi_object_delete_full (local.get $pen)))))
+ (i32.store (local.get $state) (i32.const 0))
+ (i32.store offset=4 (local.get $state) (i32.const 0)))
+(func $vbdd_set_fore_color (param $obj i32) (param $color i32) (result i32)
+ (local $entry i32) (local $state i32) (local $old i32) (local $pen i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (local.set $state (call $vbdd_draw_state_ptr (local.get $entry)))
+ (i32.store (local.get $state) (local.get $color))
+ (local.set $pen (call $gdi_object_alloc (i32.const 1) (i32.const 0) (i32.const 1) (local.get $color) (i32.const 0)))
+ (if (i32.eqz (local.get $pen)) (then (return (i32.const 0x80070057))))
+ (local.set $old (i32.load offset=4 (local.get $state)))
+ (if (local.get $old) (then (drop (call $gdi_object_delete_full (local.get $old)))))
+ (i32.store offset=4 (local.get $state) (local.get $pen))
+ (i32.const 0))
+(func $handle_VBImage_SetForeColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_set_fore_color (local.get $arg0) (local.get $arg1)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
