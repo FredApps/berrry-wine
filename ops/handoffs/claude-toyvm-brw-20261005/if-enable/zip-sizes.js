@@ -12,7 +12,11 @@
 //  - the tail GET must answer 206 with a Content-Range of exactly
 //    `bytes <start>-<end>/<size>` for the range asked, and a body of exactly
 //    that many bytes; a 200, a different range or a different total refuses;
-//  - redirects are followed at most `maxRedirects` (default 5) times;
+//  - redirects are followed at most `maxRedirects` (default 5) times, and a
+//    redirect's own body is never read: its response is destroyed at once;
+//  - only single-disk, non-zip64 archives are sized: a zip64 locator, a
+//    0xffff/0xffffffff sentinel in the EOCD or any entry, or a nonzero disk
+//    number refuses (a sentinel is never summed as a size);
 //  - parsing is bounds-checked: the EOCD and every central-directory field are
 //    read only inside the fetched tail, the directory must lie wholly inside
 //    it, and an entry count or name length that would run past it refuses.
@@ -30,9 +34,15 @@ function request(url, method, headers, cap, redirectsLeft) {
     if (!mod) return reject(new Error(`unsupported URL scheme: ${url}`));
     const r = mod.request(url, { method, headers }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        if (redirectsLeft <= 0) return reject(new Error(`too many redirects at ${url}`));
-        return resolve(request(new URL(res.headers.location, url).toString(), method, headers, cap, redirectsLeft - 1));
+        // Never read a redirect's body: destroy the response (and its socket)
+        // at once, so an oversized or endless 3xx body costs nothing.
+        let next = null;
+        try { next = new URL(res.headers.location, url).toString(); } catch {}
+        res.destroy(); r.destroy();
+        if (redirectsLeft <= 0) reject(new Error(`too many redirects at ${url}`));
+        else if (!next) reject(new Error(`unparsable redirect Location at ${url}`));
+        else resolve(request(next, method, headers, cap, redirectsLeft - 1));
+        return;
       }
       const chunks = [];
       let got = 0;
@@ -44,6 +54,8 @@ function request(url, method, headers, cap, redirectsLeft) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), url }));
       res.on('error', reject);
     });
+    // A destroyed redirect request may emit 'error' after the promise has
+    // already settled on the next hop; settled promises ignore it.
     r.on('error', reject);
     r.setTimeout(30000, () => r.destroy(new Error('timeout')));
     r.end();
@@ -66,7 +78,17 @@ async function probe(url, { tail = 128 * 1024, maxRedirects = 5 } = {}) {
   let eocd = -1;
   for (let i = buf.length - 22; i >= 0; i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) return { url, compressedBytes: size, error: 'no end-of-central-directory record in the fetched tail (zip64 or long comment)' };
+  const disk = buf.readUInt16LE(eocd + 4), cdDisk = buf.readUInt16LE(eocd + 6), diskEntries = buf.readUInt16LE(eocd + 8);
   const entries = buf.readUInt16LE(eocd + 10), cdSize = buf.readUInt32LE(eocd + 12), cdOff = buf.readUInt32LE(eocd + 16);
+  const commentLen = buf.readUInt16LE(eocd + 20);
+  // Only a single-disk, non-zip64 archive has exact 32-bit sizes in its
+  // directory. Zip64 marks overflowing fields with 0xffff/0xffffffff sentinels
+  // (and a zip64 EOCD locator just before the EOCD); refuse rather than add a
+  // sentinel as if it were a size.
+  if (eocd + 22 + commentLen !== buf.length) return { url, compressedBytes: size, error: `EOCD comment length ${commentLen} does not end at the archive end` };
+  if (eocd >= 20 && buf.readUInt32LE(eocd - 20) === 0x07064b50) return { url, compressedBytes: size, error: 'zip64 archive (zip64 EOCD locator present): refused' };
+  if (disk !== 0 || cdDisk !== 0 || diskEntries !== entries) return { url, compressedBytes: size, error: `multi-disk archive (disk ${disk}, directory disk ${cdDisk}, ${diskEntries}/${entries} entries here): refused` };
+  if (entries === 0xffff || cdSize === 0xffffffff || cdOff === 0xffffffff) return { url, compressedBytes: size, error: 'zip64 sentinel in the EOCD: refused' };
   const cdStart = cdOff - start;
   if (cdStart < 0 || cdStart + cdSize > eocd) return { url, compressedBytes: size, entries, error: `central directory (${cdSize} B at ${cdOff}) not wholly inside the fetched tail` };
   let p = cdStart, unpacked = 0, files = 0;
@@ -74,7 +96,10 @@ async function probe(url, { tail = 128 * 1024, maxRedirects = 5 } = {}) {
   for (let i = 0; i < entries; i++) {
     if (p + 46 > cdStart + cdSize) return { url, compressedBytes: size, error: `entry ${i} header runs past the central directory` };
     if (buf.readUInt32LE(p) !== 0x02014b50) return { url, compressedBytes: size, error: `bad central-directory signature at entry ${i}` };
-    const usz = buf.readUInt32LE(p + 24), nlen = buf.readUInt16LE(p + 28), elen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32);
+    const csz = buf.readUInt32LE(p + 20), usz = buf.readUInt32LE(p + 24), nlen = buf.readUInt16LE(p + 28), elen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32);
+    const startDisk = buf.readUInt16LE(p + 34), localOff = buf.readUInt32LE(p + 42);
+    if (csz === 0xffffffff || usz === 0xffffffff || localOff === 0xffffffff || startDisk === 0xffff) return { url, compressedBytes: size, error: `zip64 sentinel in entry ${i}: refused` };
+    if (startDisk !== 0) return { url, compressedBytes: size, error: `entry ${i} starts on disk ${startDisk}: refused` };
     const next = p + 46 + nlen + elen + clen;
     if (next > cdStart + cdSize) return { url, compressedBytes: size, error: `entry ${i} name/extra/comment runs past the central directory` };
     const name = buf.toString('utf8', p + 46, p + 46 + nlen);
