@@ -284,7 +284,7 @@ function handlerCall(api) {
     return `      (call $handle_gpu_api (i32.const ${gpuOpcode}) (i32.const ${gpuApis.get(api.name)}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
   const vbDdSlot = api.name.match(/^IVBDirectDraw7_DirectSlot(\d+)$/);
-  if (vbDdSlot) {
+  if (vbDdSlot && !api.handler) {
     const slot = parseInt(vbDdSlot[1], 10);
     return `      (call $handle_IVBDirectDraw7_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
@@ -463,6 +463,9 @@ comInterfaces.push({ prefix: 'IDirectSound8', global: 'DX_VTBL_DSOUND8', extends
 
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
+// Preserve all existing shared vtable registry offsets.
+comInterfaces.push({prefix:'IVBImageSurface7',global:'DX_VTBL_VBIMAGE7'});
+
 const ifaceInfo = new Map();
 for (const iface of comInterfaces) {
   // Find all APIs matching this interface (prefix + "_")

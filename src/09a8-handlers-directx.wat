@@ -12889,3 +12889,456 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; Video for Windows ICM (ICOpen/ICInfo/ICClose...) lives in 09a7g-video-icm.wat.
+
+  (global $DX_VTBL_VBIMAGE7 (mut i32) (i32.const 0))
+;; PRIVATE DRAFT: internal contiguous buffers only; guest front door must validate
+;; and marshal all 232 bytes with guest spans before using these adapters.
+;; Original ce95fbf5 DLL: converters 7352be1a, 7352bdb4, 7352a286, 7352a3a5.
+;; Return HRESULT; explicit RGB-only input support, never reinterpret 232 as 124.
+(func $vbdd_desc_rgb_to_native (param $vb i32) (param $native i32) (result i32)
+  (local $pf i32)
+  (local.set $pf (i32.load offset=76 (local.get $vb)))
+  ;; An explicitly requested non-RGB format requires a separate adapter.
+  (if (i32.and (i32.load offset=4 (local.get $vb)) (i32.const 0x1000)) (then
+    (if (i32.or (i32.eqz (i32.and (local.get $pf) (i32.const 0x40)))
+          (i32.ne (i32.and (local.get $pf) (i32.const 0xFFFFFFBE)) (i32.const 0)))
+      (then (return (i32.const 0x80004001))))))
+  (memory.copy (local.get $native) (local.get $vb) (i32.const 124))
+    (i32.store offset=0 (local.get $native) (i32.const 124))
+  (if (i32.and (i32.load offset=4 (local.get $vb)) (i32.const 0x20000))
+    (then (i32.store offset=24 (local.get $native) (i32.load offset=224 (local.get $vb))))
+    (else (if (i32.and (i32.load offset=4 (local.get $vb)) (i32.const 0x40000))
+      (then (i32.store offset=24 (local.get $native) (i32.load offset=228 (local.get $vb)))))))
+  ;; Native union fields retain supplied internal values unless RGB selects them.
+  (if (i32.and (local.get $pf) (i32.const 0x140)) (then
+    (i32.store offset=84 (local.get $native) (i32.load offset=104 (local.get $vb)))
+    (i32.store offset=88 (local.get $native) (i32.load offset=128 (local.get $vb)))
+    (i32.store offset=92 (local.get $native) (i32.load offset=148 (local.get $vb)))
+    (i32.store offset=96 (local.get $native) (i32.load offset=164 (local.get $vb)))
+    (if (i32.and (local.get $pf) (i32.const 1))
+      (then (i32.store offset=100 (local.get $native) (i32.load offset=180 (local.get $vb))))
+      (else (if (i32.and (local.get $pf) (i32.const 0x2000))
+        (then (i32.store offset=100 (local.get $native) (i32.load offset=192 (local.get $vb)))))))))
+    (i32.store offset=72 (local.get $native) (i32.const 32))
+  (memory.copy (i32.add (local.get $native) (i32.const 104))
+    (i32.add (local.get $vb) (i32.const 200)) (i32.const 16))
+  (i32.const 0))
+
+;; Exact native reverse-converter expansion. It reports native size124/32
+;; in expanded VB records; forcing sizes232/128 would differ from original.
+(func $vbdd_desc_from_native (param $vb i32) (param $native i32)
+  (memory.fill (local.get $vb) (i32.const 0) (i32.const 232))
+  (memory.copy (local.get $vb) (local.get $native) (i32.const 124))
+    (i32.store offset=224 (local.get $vb) (i32.load offset=24 (local.get $native)))
+    (i32.store offset=228 (local.get $vb) (i32.load offset=24 (local.get $native)))
+  (memory.copy (i32.add (local.get $vb) (i32.const 200))
+    (i32.add (local.get $native) (i32.const 104)) (i32.const 16))
+    (i32.store offset=104 (local.get $vb) (i32.load offset=84 (local.get $native)))
+    (i32.store offset=112 (local.get $vb) (i32.load offset=84 (local.get $native)))
+    (i32.store offset=116 (local.get $vb) (i32.load offset=84 (local.get $native)))
+    (i32.store offset=120 (local.get $vb) (i32.load offset=84 (local.get $native)))
+    (i32.store offset=124 (local.get $vb) (i32.load offset=84 (local.get $native)))
+    (i32.store offset=128 (local.get $vb) (i32.load offset=88 (local.get $native)))
+    (i32.store offset=132 (local.get $vb) (i32.load offset=88 (local.get $native)))
+    (i32.store offset=136 (local.get $vb) (i32.load offset=88 (local.get $native)))
+    (i32.store offset=140 (local.get $vb) (i32.load offset=88 (local.get $native)))
+    (i32.store offset=144 (local.get $vb) (i32.load offset=88 (local.get $native)))
+    (i32.store offset=148 (local.get $vb) (i32.load offset=92 (local.get $native)))
+    (i32.store offset=152 (local.get $vb) (i32.load offset=92 (local.get $native)))
+    (i32.store offset=156 (local.get $vb) (i32.load offset=92 (local.get $native)))
+    (i32.store offset=160 (local.get $vb) (i32.load offset=92 (local.get $native)))
+    (i32.store offset=164 (local.get $vb) (i32.load offset=96 (local.get $native)))
+    (i32.store offset=168 (local.get $vb) (i32.load offset=96 (local.get $native)))
+    (i32.store offset=172 (local.get $vb) (i32.load offset=96 (local.get $native)))
+    (i32.store offset=176 (local.get $vb) (i32.load offset=96 (local.get $native)))
+    (i32.store offset=180 (local.get $vb) (i32.load offset=100 (local.get $native)))
+    (i32.store offset=184 (local.get $vb) (i32.load offset=100 (local.get $native)))
+    (i32.store offset=188 (local.get $vb) (i32.load offset=100 (local.get $native)))
+    (i32.store offset=192 (local.get $vb) (i32.load offset=100 (local.get $native)))
+    (i32.store offset=196 (local.get $vb) (i32.load offset=100 (local.get $native)))
+)
+
+;; PRIVATE draft: path_wa is an owned contiguous NUL-terminated UTF16 path.
+  (func $vbdd_load_bmp24_wide (param $path_wa i32) (result i32)
+    (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
+    (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32) (local $width i32) (local $height i32) (local $extent i64)
+    (local.set $handle (call $host_fs_create_file
+      (local.get $path_wa) (i32.const 0x80000000)
+      (i32.const 3) (i32.const 0x80) (i32.const 1)))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    ;; 54 = BITMAPFILEHEADER + BITMAPINFOHEADER, the smallest legal BMP.
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
+                (i32.gt_u (local.get $size) (i32.const 0x2000000)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0))))
+    (local.set $buf_ga (call $heap_alloc (local.get $size)))
+    (local.set $read_ga (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $buf_ga)) (i32.eqz (local.get $read_ga)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (if (local.get $buf_ga) (then (call $heap_free (local.get $buf_ga))))
+        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
+        (return (i32.const 0))))
+    (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
+    (drop (call $host_fs_read_file
+      (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (local.set $size (i32.load (local.get $read_wa)))
+    (call $heap_free (local.get $read_ga))
+    (local.set $buf_wa (call $g2w (local.get $buf_ga)))
+    ;; 0x4D42 = 'BM'
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
+                (i32.ne (i32.load16_u (local.get $buf_wa)) (i32.const 0x4D42)))
+      (then
+        (call $heap_free (local.get $buf_ga))
+        (return (i32.const 0))))
+    (local.set $hdr (i32.add (local.get $buf_wa) (i32.const 14)))
+    (local.set $off (i32.load offset=10 (local.get $buf_wa)))  ;; bfOffBits
+
+    ;; Intentionally bounded BI_RGB 24bpp BITMAPINFOHEADER subset. Reject
+    ;; unsupported compression/headers and truncated rows before GDI reads.
+    (local.set $width (i32.load offset=4 (local.get $hdr)))
+    (local.set $height (i32.load offset=8 (local.get $hdr)))
+    (if (i32.lt_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
+    (if (i32.or
+      (i32.or (i32.ne (i32.load (local.get $hdr)) (i32.const 40))
+        (i32.ne (i32.load offset=16 (local.get $hdr)) (i32.const 0)))
+      (i32.or (i32.ne (i32.load16_u offset=12 (local.get $hdr)) (i32.const 1))
+        (i32.ne (i32.load16_u offset=14 (local.get $hdr)) (i32.const 24))))
+      (then (call $heap_free (local.get $buf_ga)) (return (i32.const 0))))
+    (if (i32.or
+      (i32.or (i32.le_s (local.get $width) (i32.const 0)) (i32.gt_u (local.get $width) (i32.const 4096)))
+      (i32.or (i32.le_s (local.get $height) (i32.const 0)) (i32.gt_u (local.get $height) (i32.const 4096))))
+      (then (call $heap_free (local.get $buf_ga)) (return (i32.const 0))))
+    (local.set $extent (i64.add (i64.extend_i32_u (local.get $off))
+      (i64.mul (i64.extend_i32_u (i32.and (i32.add (i32.mul (local.get $width) (i32.const 3)) (i32.const 3)) (i32.const -4)))
+        (i64.extend_i32_u (local.get $height)))))
+    (if (i32.or (i32.lt_u (local.get $off) (i32.const 54))
+      (i64.gt_u (local.get $extent) (i64.extend_i32_u (local.get $size))))
+      (then (call $heap_free (local.get $buf_ga)) (return (i32.const 0))))
+    (if (i32.const 1)
+      (then
+        (if (call $gdi_bitmap_plan_info (local.get $hdr) (global.get $GDI_BITMAP_PLAN))
+          (then (local.set $bmp (call $gdi_bitmap_create_owned
+            (global.get $GDI_BITMAP_PLAN)
+            (i32.add (local.get $buf_wa) (local.get $off))
+            (i32.const 1) (i32.const 1) (i32.const 1)
+            (i32.const 0) (i32.const 0))))))
+      (else
+        (local.set $bmp (call $gdi_bitmap_create_dibitmap
+          (i32.const 0) (local.get $hdr)
+          (i32.add (local.get $buf_wa) (local.get $off))
+          (i32.const 1) (i32.const 0)))))
+    (call $heap_free (local.get $buf_ga))
+    (local.get $bmp))
+
+
+;; PRIVATE, not API-wired: create an owned native RGB offscreen surface from
+;; an actual decoded bitmap. The caller still owns bitmap and descriptor.
+;; native_desc is an emulator-owned contiguous 124-byte guest heap allocation.
+;; Returning this native interface directly to a VB caller is prohibited.
+(func $vbdd_bitmap_to_native_surface
+    (param $owner i32) (param $bitmap i32) (param $native_desc i32) (result i32)
+  (local $tmp_ga i32) (local $tmp i32) (local $src i32) (local $pf i32)
+  (local $native i32) (local $obj i32) (local $entry i32)
+  (local $saved_esp i32) (local $saved_eax i32) (local $hr i32)
+  (local $w i32) (local $h i32) (local $sw i32) (local $sh i32)
+  (local $x i32) (local $y i32) (local $color i32) (local $pixel i32)
+  (local $bits i32) (local $pitch i32) (local $bpp i32) (local $ok i32)
+  (local.set $tmp_ga (call $heap_alloc (i32.const 116)))
+  (if (i32.eqz (local.get $tmp_ga)) (then (return (i32.const 0))))
+  (local.set $tmp (call $g2w (local.get $tmp_ga)))
+  (local.set $src (i32.add (local.get $tmp) (i32.const 4)))
+  (local.set $pf (i32.add (local.get $tmp) (i32.const 84)))
+  (local.set $native (call $g2w (local.get $native_desc)))
+  (block $cleanup
+    (br_if $cleanup (i32.eqz (call $gdi_raster_desc_from_bitmap (local.get $bitmap) (local.get $src))))
+    (local.set $sw (i32.load offset=4 (local.get $src)))
+    (local.set $sh (i32.load offset=8 (local.get $src)))
+    (br_if $cleanup (i32.or (i32.le_s (local.get $sw) (i32.const 0)) (i32.le_s (local.get $sh) (i32.const 0))))
+    ;; Only plain/system-memory offscreen surfaces; no implicit primary, chains,
+    ;; caller lpSurface, overlays or texture semantics in this bounded path.
+    (br_if $cleanup (i32.and (i32.load offset=104 (local.get $native)) (i32.const 0xFFFFF7BF)))
+    (br_if $cleanup (i32.ne (i32.load offset=36 (local.get $native)) (i32.const 0)))
+    (local.set $w (i32.load offset=12 (local.get $native)))
+    (local.set $h (i32.load offset=8 (local.get $native)))
+    (if (i32.eqz (local.get $w)) (then (local.set $w (local.get $sw))))
+    (if (i32.eqz (local.get $h)) (then (local.set $h (local.get $sh))))
+    (br_if $cleanup (i32.or (i32.gt_u (local.get $w) (i32.const 4096)) (i32.gt_u (local.get $h) (i32.const 4096))))
+    (br_if $cleanup (i32.or (i32.gt_u (local.get $sw) (i32.const 4096)) (i32.gt_u (local.get $sh) (i32.const 4096))))
+    (i32.store offset=12 (local.get $native) (local.get $w))
+    (i32.store offset=8 (local.get $native) (local.get $h))
+    (i32.store offset=4 (local.get $native) (i32.or (i32.load offset=4 (local.get $native)) (i32.const 6)))
+    (i32.store (local.get $tmp) (i32.const 0))
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $saved_eax (i32.load (global.get $reg_base)))
+    (call $handle_IDirectDraw_CreateSurface (local.get $owner) (local.get $native_desc)
+      (local.get $tmp_ga) (i32.const 0) (i32.const 0) (i32.const 0))
+    (local.set $hr (i32.load (global.get $reg_base)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.store (global.get $reg_base) (local.get $saved_eax))
+    (br_if $cleanup (local.get $hr))
+    (local.set $obj (i32.load (local.get $tmp)))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (br_if $cleanup (i32.eqz (local.get $entry)))
+    (local.set $bits (load.field.memarg DxObject misc1 (local.get $entry)))
+    (local.set $pitch (load.field.memarg DxObject pitch (local.get $entry)))
+    (local.set $bpp (load.field.memarg DxObject bpp (local.get $entry)))
+    (br_if $cleanup (i32.eqz (local.get $bits)))
+    (br_if $cleanup (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16))
+      (i32.or (i32.eq (local.get $bpp) (i32.const 24)) (i32.eq (local.get $bpp) (i32.const 32))))))
+    (call $dx_fill_surface_pixel_format (local.get $pf) (local.get $entry))
+    (loop $rows
+      (local.set $x (i32.const 0))
+      (loop $columns
+        (local.set $color (call $gdi_raster_read (local.get $src)
+          (i32.div_u (i32.mul (local.get $x) (local.get $sw)) (local.get $w))
+          (i32.div_u (i32.mul (local.get $y) (local.get $sh)) (local.get $h))))
+        (br_if $cleanup (i32.eq (local.get $color) (i32.const -1)))
+        (local.set $pixel (i32.add (local.get $bits) (i32.add
+          (i32.mul (local.get $y) (local.get $pitch))
+          (i32.mul (local.get $x) (i32.shr_u (local.get $bpp) (i32.const 3))))))
+        (if (i32.eq (local.get $bpp) (i32.const 16))
+          (then (i32.store16 (local.get $pixel) (i32.or
+            (call $gdi_raster_pack_channel (i32.shr_u (local.get $color) (i32.const 16)) (i32.load offset=16 (local.get $pf)))
+            (i32.or (call $gdi_raster_pack_channel (i32.shr_u (local.get $color) (i32.const 8)) (i32.load offset=20 (local.get $pf)))
+              (call $gdi_raster_pack_channel (local.get $color) (i32.load offset=24 (local.get $pf)))))))
+          (else
+            (i32.store8 (local.get $pixel) (local.get $color))
+            (i32.store8 offset=1 (local.get $pixel) (i32.shr_u (local.get $color) (i32.const 8)))
+            (i32.store8 offset=2 (local.get $pixel) (i32.shr_u (local.get $color) (i32.const 16)))
+            (if (i32.eq (local.get $bpp) (i32.const 32)) (then (i32.store8 offset=3 (local.get $pixel) (i32.const 0))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br_if $columns (i32.lt_u (local.get $x) (local.get $w))))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br_if $rows (i32.lt_u (local.get $y) (local.get $h))))
+    (call $dx_surf_note_cpu_write (local.get $entry))
+    (local.set $ok (i32.const 1)))
+  (if (i32.and (i32.eqz (local.get $ok)) (i32.ne (local.get $obj) (i32.const 0)))
+    (then (drop (call $dx_surface_release (local.get $obj))) (local.set $obj (i32.const 0))))
+  (call $heap_free (local.get $tmp_ga))
+  (local.get $obj))
+
+;; PRIVATE: guest front-door buffer validation without treating sparse pages
+;; as contiguous. No output mutation until every page of the output is mapped.
+(func $vbdd_guest_span_mapped (param $ptr i32) (param $length i32) (result i32)
+  (local $chunk i32)
+  (if (i32.or (i32.eqz (local.get $ptr))
+        (i32.or (i32.eqz (local.get $length))
+          (i64.gt_u (i64.add (i64.extend_i32_u (local.get $ptr)) (i64.extend_i32_u (local.get $length)))
+            (i64.const 0x100000000)))) (then (return (i32.const 0))))
+  (loop $pages
+    (local.set $chunk (i32.sub (i32.const 4096) (i32.and (local.get $ptr) (i32.const 4095))))
+    (if (i32.gt_u (local.get $chunk) (local.get $length)) (then (local.set $chunk (local.get $length))))
+    (if (i32.eq (call $g2w_affine_span (local.get $ptr) (local.get $chunk)) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (local.get $ptr) (local.get $chunk)))
+    (local.set $length (i32.sub (local.get $length) (local.get $chunk)))
+    (br_if $pages (local.get $length)))
+  (i32.const 1))
+
+;; Typelib VB slot40, HRESULT(this,DDSURFACEDESC2*), not native slot22.
+;; This internal result helper deliberately leaves x86 register cleanup to its
+;; eventual dispatch wrapper (12 bytes). Original native reverse converter is
+;; responsible for expanded VB field layout, rather than a native struct cast.
+(func $vbdd_surface_get_desc (param $obj i32) (param $out i32) (result i32)
+  (local $entry i32) (local $scratch_ga i32) (local $native i32) (local $vb i32) (local $i i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 232)))
+    (then (return (i32.const 0x80004003))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $obj) (i32.const 8)))
+    (then (return (i32.const 0x80070057))))
+  (local.set $i (call $gl32 (i32.add (local.get $obj) (i32.const 4))))
+  (if (i32.ge_u (local.get $i) (global.get $DX_MAX))
+    (then (return (i32.const 0x80070057))))
+  (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $i) (i32.const 32))))
+  (if (i32.or (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+        (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0)))
+    (then (return (i32.const 0x80070057))))
+  (local.set $scratch_ga (call $heap_alloc (i32.const 356)))
+  (if (i32.eqz (local.get $scratch_ga)) (then (return (i32.const 0x8007000E))))
+  (local.set $native (call $g2w (local.get $scratch_ga)))
+  (local.set $vb (i32.add (local.get $native) (i32.const 124)))
+  (memory.fill (local.get $native) (i32.const 0) (i32.const 124))
+  (call $dx_fill_surface_desc (local.get $native) (local.get $entry))
+  (i32.store (local.get $native) (i32.const 124))
+  (call $vbdd_desc_from_native (local.get $vb) (local.get $native))
+  (local.set $i (i32.const 0))
+  (loop $write
+    (call $gs8 (i32.add (local.get $out) (local.get $i))
+      (i32.load8_u (i32.add (local.get $vb) (local.get $i))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br_if $write (i32.lt_u (local.get $i) (i32.const 232))))
+  (call $heap_free (local.get $scratch_ga))
+  (i32.const 0))
+
+;; PRIVATE integration draft. Generator must append the complete dedicated
+;; IVBImageSurface7 interface at the registry tail and declare this global.
+(func $vbdd_surface_vtable (result i32) (global.get $DX_VTBL_VBIMAGE7))
+
+(func $vbdd_surface_entry (param $obj i32) (result i32)
+  (local $slot i32) (local $wa i32) (local $entry i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $obj) (i32.const 8)))
+    (then (return (i32.const 0))))
+  (local.set $slot (call $gl32 (i32.add (local.get $obj) (i32.const 4))))
+  (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then (return (i32.const 0))))
+  (local.set $wa (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8))))
+  ;; This identity only uses a fresh primary wrapper, never an auxiliary or
+  ;; a caller-fabricated pair of DWORDs that happens to name a live slot.
+  (if (i32.ne (local.get $obj) (call $w2g (local.get $wa))) (then (return (i32.const 0))))
+  (if (i32.ne (i32.load (local.get $wa)) (global.get $DX_VTBL_VBIMAGE7))
+    (then (return (i32.const 0))))
+  (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+  (if (i32.or (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+        (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0)))
+    (then (return (i32.const 0))))
+  (local.get $entry))
+
+(func $vbdd_surface_query (param $obj i32) (param $iid i32) (param $output i32) (result i32)
+  (local $copy_ga i32) (local $copy i32) (local $i i32) (local $result i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $output) (i32.const 4)))
+    (then (return (i32.const 0x80004003))))
+  (call $gs32 (local.get $output) (i32.const 0))
+  (if (i32.eqz (call $vbdd_surface_entry (local.get $obj))) (then (return (i32.const 0x80070057))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $iid) (i32.const 16)))
+    (then (return (i32.const 0x80004003))))
+  (local.set $copy_ga (call $heap_alloc (i32.const 16)))
+  (if (i32.eqz (local.get $copy_ga)) (then (return (i32.const 0x8007000E))))
+  (local.set $copy (call $g2w (local.get $copy_ga)))
+  (loop $copy_guid
+    (i32.store8 (i32.add (local.get $copy) (local.get $i)) (call $gl8 (i32.add (local.get $iid) (local.get $i))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br_if $copy_guid (i32.lt_u (local.get $i) (i32.const 16))))
+  (local.set $result (call $dx_query_interface_single_wa
+    (local.get $obj) (local.get $copy) (local.get $output)
+    (i32.const 0x9F76FDE8) (i32.const 0x11D18E92) (i32.const 0xC0000888) (i32.const 0x02C6C24F)))
+  (call $heap_free (local.get $copy_ga))
+  (local.get $result))
+
+(func $handle_VBImage_QueryInterface
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (i32.store (global.get $reg_base) (call $vbdd_surface_query (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+(func $handle_VBImage_AddRef
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (local $entry i32) (local.set $entry (call $vbdd_surface_entry (local.get $arg0)))
+  (i32.store (global.get $reg_base) (i32.const 0))
+  (if (local.get $entry) (then
+    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (i32.store (global.get $reg_base) (load.field DxObject refcount (local.get $entry)))))
+  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+(func $handle_VBImage_Release
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (i32.store (global.get $reg_base)
+    (if (result i32) (call $vbdd_surface_entry (local.get $arg0))
+      (then (call $dx_surface_release (local.get $arg0))) (else (i32.const 0))))
+  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+(func $handle_VBImage_GetSurfaceDesc
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (i32.store (global.get $reg_base)
+    (if (result i32) (call $vbdd_surface_entry (local.get $arg0))
+      (then (call $vbdd_surface_get_desc (local.get $arg0) (local.get $arg1))) (else (i32.const 0x80070057))))
+  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+;; PRIVATE FRONT-DOOR DRAFT; not wired, not compiled. Requires a dedicated
+;; correctly generated 71-slot $vbdd_surface_vtable before it can be published.
+;; Returns HRESULT; the eventual API2542 dispatch wrapper advances ESP20.
+(func $vbdd_create_surface_from_file
+  (param $owner i32) (param $bstr i32) (param $descriptor i32) (param $output i32) (result i32)
+  (local $scratch_ga i32) (local $scratch i32) (local $vb i32) (local $native_ga i32) (local $native i32)
+  (local $path_ga i32) (local $path_wa i32) (local $path_bytes i32) (local $i i32)
+  (local $bitmap i32) (local $surface i32) (local $entry i32) (local $vtbl i32)
+  (local $hr i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $output) (i32.const 4)))
+    (then (return (i32.const 0x80004003))))
+  (call $gs32 (local.get $output) (i32.const 0))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $descriptor) (i32.const 232)))
+    (then (return (i32.const 0x80004003))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $owner) (i32.const 8)))
+    (then (return (i32.const 0x80070057))))
+  (local.set $i (call $gl32 (i32.add (local.get $owner) (i32.const 4))))
+  (if (i32.ge_u (local.get $i) (global.get $DX_MAX))
+    (then (return (i32.const 0x80070057))))
+  (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $i) (i32.const 32))))
+  ;; Existing IDirectX7::DirectDrawCreate owns a VB type33 object, not the
+  ;; type1 native DirectDraw factory. Do not reject the actual registered ABI.
+  (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 33))
+    (then (return (i32.const 0x80070057))))
+  ;; SysStringLen reads BSTR's byte prefix. Validate it before subtracting4;
+  ;; empty/NULL file follows the original VB runtime file-not-found HRESULT.
+  (if (i32.eqz (local.get $bstr)) (then (return (i32.const 0x800A0035))))
+  (if (i32.lt_u (local.get $bstr) (i32.const 4)) (then (return (i32.const 0x80004003))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (i32.sub (local.get $bstr) (i32.const 4)) (i32.const 4)))
+    (then (return (i32.const 0x80004003))))
+  (local.set $path_bytes (call $gl32 (i32.sub (local.get $bstr) (i32.const 4))))
+  (if (i32.eqz (local.get $path_bytes)) (then (return (i32.const 0x800A0035))))
+  (if (i32.or (i32.and (local.get $path_bytes) (i32.const 1))
+        (i32.gt_u (local.get $path_bytes) (i32.const 65534)))
+    (then (return (i32.const 0x80070057))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $bstr) (local.get $path_bytes)))
+    (then (return (i32.const 0x80004003))))
+  (local.set $hr (i32.const 0x8007000E))
+  (local.set $scratch_ga (call $heap_alloc (i32.const 356)))
+  (local.set $path_ga (call $heap_alloc (i32.add (local.get $path_bytes) (i32.const 2))))
+  (block $cleanup
+    (br_if $cleanup (i32.or (i32.eqz (local.get $scratch_ga)) (i32.eqz (local.get $path_ga))))
+    (local.set $scratch (call $g2w (local.get $scratch_ga)))
+    (local.set $vb (local.get $scratch))
+    (local.set $native_ga (i32.add (local.get $scratch_ga) (i32.const 232)))
+    (local.set $native (i32.add (local.get $scratch) (i32.const 232)))
+    (local.set $path_wa (call $g2w (local.get $path_ga)))
+    (local.set $i (i32.const 0))
+    (loop $path
+      (i32.store8 (i32.add (local.get $path_wa) (local.get $i))
+        (call $gl8 (i32.add (local.get $bstr) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $path (i32.lt_u (local.get $i) (local.get $path_bytes))))
+    (i32.store16 (i32.add (local.get $path_wa) (local.get $path_bytes)) (i32.const 0))
+    (local.set $i (i32.const 0))
+    (loop $descriptor
+      (i32.store8 (i32.add (local.get $vb) (local.get $i))
+        (call $gl8 (i32.add (local.get $descriptor) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $descriptor (i32.lt_u (local.get $i) (i32.const 232))))
+    ;; Original73542ac8 writes +104 in the VB record on zero flags. Preserve
+    ;; it only in staging; do not confuse that offset with VB caps at200.
+    (if (i32.eqz (i32.load offset=4 (local.get $vb))) (then
+      (i32.store offset=4 (local.get $vb) (i32.const 1))
+      (i32.store offset=104 (local.get $vb) (i32.const 0x40))))
+    (local.set $hr (call $vbdd_desc_rgb_to_native (local.get $vb) (local.get $native)))
+    (br_if $cleanup (local.get $hr))
+    (local.set $bitmap (call $vbdd_load_bmp24_wide (local.get $path_wa)))
+    ;; A loader failure remains failure. Exact missing/invalid/OOM HRESULT
+    ;; distinction is pending typed loader result; generic E_FAIL is honest.
+    (local.set $hr (i32.const 0x80004005))
+    (br_if $cleanup (i32.eqz (local.get $bitmap)))
+    (local.set $surface (call $vbdd_bitmap_to_native_surface
+      (local.get $owner) (local.get $bitmap) (local.get $native_ga)))
+    (br_if $cleanup (i32.eqz (local.get $surface)))
+    (local.set $vtbl (call $vbdd_surface_vtable))
+    (br_if $cleanup (i32.eqz (local.get $vtbl)))
+    ;; This object was just allocated, remains private, and has never been
+    ;; returned to guest code. Never use this publication step on an existing
+    ;; surface or change its vtable during QueryInterface.
+    (call $gs32 (local.get $surface) (local.get $vtbl))
+    (local.set $hr (call $vbdd_surface_get_desc (local.get $surface) (local.get $descriptor)))
+    (br_if $cleanup (local.get $hr))
+    (call $gs32 (local.get $output) (local.get $surface)))
+  (if (local.get $bitmap) (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))
+  (if (i32.and (i32.ne (local.get $hr) (i32.const 0)) (i32.ne (local.get $surface) (i32.const 0)))
+    (then (drop (call $dx_surface_release (local.get $surface)))))
+  (if (local.get $path_ga) (then (call $heap_free (local.get $path_ga))))
+  (if (local.get $scratch_ga) (then (call $heap_free (local.get $scratch_ga))))
+  (local.get $hr))
+
+(func $handle_VBDD_CreateSurfaceFromFile
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (i32.store (global.get $reg_base)
+    (call $vbdd_create_surface_from_file (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+  (i32.store offset=16 (global.get $reg_base)
+    (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))

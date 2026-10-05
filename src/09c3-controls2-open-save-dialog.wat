@@ -308,6 +308,30 @@
     (drop (call $wnd_send_message (local.get $cb) (i32.const 0x014E) ;; CB_SETCURSEL
             (i32.sub (local.get $sel) (i32.const 1)) (i32.const 0))))
 
+  ;; Absolute filename edit text must not receive the displayed directory.
+  ;; These EditState bytes are internally allocated, not a caller guest span.
+  (func $opendlg_path_absolute (param $p i32) (param $len i32) (result i32)
+    (local $c i32)
+    (if (i32.ge_u (local.get $len) (i32.const 2))
+      (then
+        (if (i32.and
+              (i32.or (i32.eq (i32.load8_u (local.get $p)) (i32.const 92))
+                      (i32.eq (i32.load8_u (local.get $p)) (i32.const 47)))
+              (i32.or (i32.eq (i32.load8_u offset=1 (local.get $p)) (i32.const 92))
+                      (i32.eq (i32.load8_u offset=1 (local.get $p)) (i32.const 47))))
+          (then (return (i32.const 1))))))
+    (if (i32.ge_u (local.get $len) (i32.const 3))
+      (then
+        (local.set $c (i32.or (i32.load8_u (local.get $p)) (i32.const 32)))
+        (if (i32.and
+              (i32.and (i32.ge_u (local.get $c) (i32.const 97))
+                       (i32.le_u (local.get $c) (i32.const 122)))
+              (i32.and (i32.eq (i32.load8_u offset=1 (local.get $p)) (i32.const 58))
+                (i32.or (i32.eq (i32.load8_u offset=2 (local.get $p)) (i32.const 92))
+                        (i32.eq (i32.load8_u offset=2 (local.get $p)) (i32.const 47)))))
+          (then (return (i32.const 1))))))
+    (i32.const 0))
+
   ;; ---- Open dialog wndproc ----
   (func $opendlg_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -317,7 +341,7 @@
     (local $text_len i32) (local $text_src_w i32)
     (local $dir_len i32) (local $dir_src_w i32) (local $sep_len i32)
     (local $path_g i32) (local $path_w i32) (local $path_len i32)
-    (local $file_offset i32) (local $extension_offset i32) (local $i i32)
+    (local $file_offset i32) (local $extension_offset i32) (local $i i32) (local $path_char i32)
     (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
     (local $required_w i32) (local $is_wide i32)
     (local $filter_cb i32) (local $filter_sel i32)
@@ -390,8 +414,11 @@
               (then
                 (local.set $edit_sw (cast ptr<EditState> (call $g2w (local.get $edit_state))))
                 (local.set $text_len (load.field.memarg EditState text_len (local.get $edit_sw)))
-                ;; The filename edit contains only the leaf. OPENFILENAME's
-                ;; successful lpstrFile result is the full path. Read the
+                (if (load.field EditState text_buf_ptr (local.get $edit_sw))
+                  (then (local.set $text_src_w
+                    (call $g2w (load.field EditState text_buf_ptr (local.get $edit_sw))))))
+                ;; The edit may hold a leaf, relative path, or absolute path.
+                ;; Successful lpstrFile is the full path. Read the
                 ;; displayed current directory from shared EditState rather
                 ;; than $opendlg_current_dir: a renderer shadow accepting a
                 ;; Worker-owned modal has private globals but shared controls.
@@ -413,6 +440,10 @@
                         (i32.add (local.get $dir_src_w) (i32.sub (local.get $dir_len) (i32.const 1))))
                         (i32.const 0x5C)))
                   (then (local.set $sep_len (i32.const 1))))
+                (if (call $opendlg_path_absolute (local.get $text_src_w) (local.get $text_len))
+                  (then
+                    (local.set $dir_len (i32.const 0))
+                    (local.set $sep_len (i32.const 0))))
                 (local.set $file_offset (i32.add (local.get $dir_len) (local.get $sep_len)))
                 (local.set $path_len (i32.add (local.get $file_offset) (local.get $text_len)))
                 ;; OPENFILENAME.nMaxFile counts characters including the NUL.
@@ -460,14 +491,20 @@
                 ;; nFileOffset names the leaf within the returned full path;
                 ;; nFileExtension names the first character after the last
                 ;; dot, or zero when the leaf has no extension.
+                (local.set $file_offset (i32.const 0))
+                (local.set $extension_offset (i32.const 0))
                 (local.set $i (i32.const 0))
                 (block $ext_done (loop $ext_scan
-                  (br_if $ext_done (i32.ge_u (local.get $i) (local.get $text_len)))
-                  (if (i32.eq (i32.load8_u (i32.add (local.get $text_src_w) (local.get $i)))
-                              (i32.const 0x2E))
+                  (br_if $ext_done (i32.ge_u (local.get $i) (local.get $path_len)))
+                  (local.set $path_char (i32.load8_u (i32.add (local.get $path_w) (local.get $i))))
+                  (if (i32.or (i32.eq (local.get $path_char) (i32.const 92))
+                              (i32.eq (local.get $path_char) (i32.const 47)))
                     (then
-                      (local.set $extension_offset
-                        (i32.add (local.get $file_offset) (i32.add (local.get $i) (i32.const 1))))))
+                      (local.set $file_offset (i32.add (local.get $i) (i32.const 1)))
+                      (local.set $extension_offset (i32.const 0)))
+                    (else
+                      (if (i32.eq (local.get $path_char) (i32.const 46))
+                        (then (local.set $extension_offset (i32.add (local.get $i) (i32.const 1)))))))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $ext_scan)))
                 (i32.store16 offset=56 (local.get $ofn_w) (local.get $file_offset))
