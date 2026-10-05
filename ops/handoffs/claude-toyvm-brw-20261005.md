@@ -351,3 +351,53 @@ Logs: `runs-20261005a/`. All runs used the longrun-bg BRW fixture, through brw-b
 - Then disassemble 8:c290-c35a and the 0x423a body to name the op.
 
 The test draft should replace scene B with a 0x423a-shaped loop once the op is named.
+
+# Phase 3, 2026-10-05 09:57-10:00Z (self-claimed on an idle box; 3 serial Node runs, ~18 s)
+
+Logs: `runs-20261005b/` (`irq-{l1,k4,k5}.txt` = runDos `--trace-irq` lines; brw-bisect.js now
+forwards `--trace-irq --irq-out=FILE`). Budget 330600009 (end of the S1 window).
+
+- **From existing logs, no run:** `w-l1`/`w-k4` state windows are identical; `w-k5` agrees with L1
+  at every shared point through loop iteration 3 and first differs in iteration 4 (`si` f907 vs
+  f681 at the same iteration end, after an extra K5 handback at 8:bec5). The window is the inner
+  loop at 8:c179-c35a with a 0x140 (320-byte VGA row) di stride.
+- **Region 0x423a does not do that work.** Its body (`dump-k5/region-0x423a.wat`) is a 32-bit
+  3-plane additive blend: al/ah from [esi+ecx-1] / [esi+ecx+0x1f2bf] plus bias bytes at
+  0x4238/0x4239; bl from three tables at [ebp+eax] (+0, +64K, +128K); [edi+k*42560] += bl,
+  clamped to 63; inc edi; dec ecx; jnz. It never writes si, and it is not the code running at
+  330.588M. Full-RAM hashes are equal at 330.0M and again at 330.6M (endHash bec246ff in L1, K4
+  and K5), so the 330.588M register difference is transient: an equal dispatch count at a
+  different iteration of one tight loop (per-op billing), not lasting corruption.
+- **`--lattice-clock` is moot.** The interrupt schedule is on by default and supersedes it
+  (run-dos.js:252-263). Not run.
+- **IRQ delivery is where the arms split.** irqs = 6465 in all three arms (same count, same
+  schedule), but the instruction each one is pushed in front of differs:
+  - L1 vs K4: 1 line differs (same from-address 8:8c77, different `at`).
+  - K4 vs K5: 115 lines differ. The first, and 10 of them in all, are the region's own exit:
+    `L1/K4 irq vec=08 at=88900003 from 8:423a` vs `K5 at=88900000 from 8:4299`.
+  - 0x4299 (gip 17049) is the target of the region's third `jb`, which is an unconditional side
+    exit (`(else (global.set $gip 17049) (br $out))`). With steps < 0 there, `$slice_exit` hands
+    back at 0x4299. The interpreter does not stop at that edge: it runs inc/dec/jnz (3 ops) and
+    hands back at the loop head 0x423a. So with K5 a timer or SB interrupt lands 3 instructions
+    earlier, mid-iteration.
+  - The rest (+443..+4703 shifts around 160-165M from 8:7b94/8:4481/8:8c77) are knock-on: SB
+    dates follow the guest's DMA programming, so they move once guest state has moved. This
+    matches the 162M/168M checkpoint transients. Eventually one such move is visible at 500M
+    (S0 frames a066bf27 vs 2fa3dd95).
+- **Class:** this is the "residual overshoot" that docs/toyvm-irq-schedule.md:166-176 already
+  names for tree-fold (BLIQ): two arms leave one date at different block transfers a few ops
+  apart. Its stated fix is a billing/exit question in region-jit.js, not the scheduler.
+- **Open detail:** why L1's line reads `at=88900003` (clockAt should be stopAt when atStop,
+  dos-loop.js:1795). Either L1's slice was cut to a different date or atStop was false at that
+  handback. Read dos-loop.js `step` before any fix.
+
+## Fix direction (not started; shared toyvm source, needs a design note)
+
+Make a region's budget-driven exits land only on edges where the interpreter also tests its
+budget. Either the region side exit to 0x4299 must not `$slice_exit` on steps < 0 (continue
+through `$jlook` to the interpreter, which stops at its own next transfer), or the region must bill
+and test op-for-op like the interpreter at that edge. Test: toyvm-only
+test/test-toyvm-region-live.js case. A blend-shaped loop with a forward `jb` side exit, a timer
+date placed inside the iteration, and an assertion that L1 and the region arm push the IRQ
+in front of the same cs:ip (from `onIrq`). That replaces scene B in
+test-toyvm-region-continuous.draft.js.
