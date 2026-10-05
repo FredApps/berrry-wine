@@ -71,5 +71,16 @@ const BUDGET = 80e6;
     cpuSecs: r.cpuSecs, wallSecs: Number(process.hrtime.bigint() - t0) / 1e9,
   };
   fs.writeFileSync(rowOut, JSON.stringify(row) + '\n');
-  process.exit(0);
-})().catch((e) => { console.error(String(e && e.stack || e)); process.exit(1); });
+  exitAfterFlush(0);
+})().catch((e) => { console.error(String(e && e.stack || e)); exitAfterFlush(1); });
+
+// stdout to a pipe is ASYNCHRONOUS in Node: process.exit() right after a burst
+// of writes drops whatever is still queued. The 2026-10-05 17:01Z run lost all
+// but the first ~1300 irq lines of CAVEIRA and CYCLE this way (254,307 raised,
+// 1,307 logged). A write's callback runs after every write queued before it.
+function exitAfterFlush(code) {
+  let left = 2;
+  const done = () => { if (--left === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+}
