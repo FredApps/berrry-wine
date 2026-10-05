@@ -25,6 +25,7 @@ test('/blockers matches dashboard grouping and stays read-only for authorized us
  assert.match(text,/Next: Restore archive/);assert.match(text,/Reason: Files absent/);assert.match(text,/Owner: Fixture owner/);
  assert.match(text,/Also holds up: Verify game \[child\]/);assert.match(text,/No dashboard override/);
  assert(!text.includes('Old blocker'));assert(!text.includes('Old approval'));
+ assert.match(text,/1 need your input · 1 agent-resolvable/);assert.match(text,/NEEDS YOUR INPUT\n\nReview validation \[review\]/);assert.match(text,/AGENT-RESOLVABLE\n\nRestore game files \[root\]/);assert.match(text,/Who: No waitingOn recorded/);
 });
 test('/blockers empty state and command menu/help share the command catalog',async()=>{
  const f=fixture();f.live(null);await f.bot.handle(message('/blockers'));

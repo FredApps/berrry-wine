@@ -48,7 +48,44 @@ test('browser and CommonJS expose identical model and HTML loads it first', () =
   vm.runInContext(fs.readFileSync(require.resolve('./blocker-model'),'utf8'),ctx);
   const snapshot = {tasks:[task('R',1),task('D',2,{waitingOn:'R'})]};
   assert.equal(JSON.stringify(ctx.BlockerModel.blockerSummary(snapshot)),JSON.stringify(model.blockerSummary(snapshot)));
-  assert.deepEqual(model.blockerSummary({}),{blocked:[],roots:[],dependentCount:0,approvals:[]});
+  assert.deepEqual(model.blockerSummary({}),{blocked:[],roots:[],dependentCount:0,approvals:[],needsUser:[],agentResolvable:[]});
   const html = fs.readFileSync(require.resolve('./index.html'),'utf8');
   assert(html.indexOf('/blocker-model.js') < html.indexOf('/app.js'));
+});
+
+test('user vs agent split uses recorded fields only and is shared by web and Telegram', () => {
+  const t = {
+    user: task('USER', 1, {waitingOn:'user decision on shortcuts', blocker:'Keep installer icons?'}),
+    review: task('REVIEW', 2, {waitingOn:'automated review resolution', blocker:'Worker stopped by automated review'}),
+    capacity: task('CPU', 3, {needs:'GPU host time'}),
+    noUser: task('NOUSER', 4, {waitingOn:'coordinator source/evidence review; no user decision'}),
+    root: task('ROOT', 5, {waitingOn:'root'}),
+    silent: task('SILENT', 6),
+    dep: task('DEP', 7, {dependencies:['USER']}),
+  };
+  const snapshot = {tasks:Object.values(t)};
+  assert.deepEqual(Object.fromEntries(Object.entries(t).map(([k,v])=>[k,model.actor(snapshot,v)[0]])),
+    {user:'user',review:'user',capacity:'user',noUser:'agent',root:'agent',silent:'agent',dep:'agent'});
+  assert.match(model.actor(snapshot,t.silent)[1],/No waitingOn recorded/);
+  assert.match(model.actor(snapshot,t.noUser)[1],/no user decision/);
+  const summary = model.blockerSummary(snapshot);
+  assert.deepEqual(summary.needsUser.map(x=>x.id),['USER','CPU','REVIEW']);
+  assert.deepEqual(summary.agentResolvable.map(x=>x.id),['NOUSER','ROOT','SILENT']);
+  assert.equal(summary.roots.length, summary.needsUser.length + summary.agentResolvable.length);
+  // Parity: the web Blockers view and Telegram /blockers list the same tasks in the same groups and order.
+  const {browserApp} = require('./test-app-vm');
+  const ctx = browserApp({...snapshot, agents:[], terminals:[], approvals:{items:[]}, candidates:[], runs:[], warnings:[]});
+  const html = vm.runInContext('blockersView()', ctx);
+  const [userHtml, agentHtml] = html.split('Agent-resolvable</h2>');
+  const ids = part => [...part.matchAll(/<article class="blocker panel"><div class="blocker-heading"><button data-task="([^"]+)"/g)].map(m=>m[1]);
+  const text = require('./telegram-blockers').blockersText(snapshot);
+  const [userText, agentText] = text.split('AGENT-RESOLVABLE');
+  // Untitled fixture tasks render their Telegram title line as " [ID]".
+  const tids = part => [...part.matchAll(/^ ?\[([A-Z]+)\]$/gm)].map(m=>m[1]);
+  assert.deepEqual(ids(userHtml), ['USER','CPU','REVIEW']);
+  assert.deepEqual(ids(agentHtml), ['NOUSER','ROOT','SILENT']);
+  assert.deepEqual(tids(userText), ids(userHtml));
+  assert.deepEqual(tids(agentText), ids(agentHtml));
+  assert.match(text, /3 need your input · 3 agent-resolvable/);
+  assert.match(html, /3 need your input · 3 agent-resolvable/);
 });

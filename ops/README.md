@@ -243,6 +243,15 @@ Use a stable explicit `id:` (letters, digits, underscore, dot or hyphen) to enab
 replies. Quiet sessions and unstructured messageboard prose are not inferred to
 be blocked tasks. `blocker`, `needs`, and `waiting-on` are single-line descriptions.
 
+Blockers are split into **Needs your input** and **Agent-resolvable** by
+`blocker-model.js` `actor()`, the same function Telegram `/blockers` uses, from
+recorded fields only: a blocked dependency → agent; `waiting-on` saying "no user
+decision" → agent; `waiting-on` naming the user, human, you, maintainer,
+dashboard-user or an approval → user; an automated-review stop or a capacity need
+(host/CPU/GPU) → user; any other `waiting-on` → agent; nothing recorded → agent
+(the owner must state the need). Each row shows the basis. Write
+`waiting-on: user` when the user must act.
+
 **Respond → Post reply to messageboard** appends one timestamped line:
 
 ```text
