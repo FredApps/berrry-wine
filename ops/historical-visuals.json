@@ -235,5 +235,148 @@
       "docs/d3dim-dirty-tracking-perf.md",
       "ops/handoffs/ops-quarantine-review.md"
     ]
+  },
+  {
+    "candidateId": "caesar3_demo",
+    "source": "build/caesar3-gameplay.png",
+    "originalPath": "build/caesar3-gameplay.png",
+    "sourceModifiedAt": "2026-08-25T04:04:31.456Z",
+    "sha256": "eca35577c263b49993122fc38f8a654d7fceb7d2742b6e6a4bdc3122035983d8",
+    "scene": "City map and construction controls",
+    "summary": "Visually inspected historical capture: City map and construction controls.",
+    "evidence": [
+      "test/test-caesar3-gameplay.js",
+      "/Users/vg/.codex/sessions/2026/10/01/rollout-2026-10-01T16-45-09-01a0f9db-89c0-73b3-b528-fe8bf239e061.jsonl:2150",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a0140cd932e30f80f.jsonl:65",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a0140cd932e30f80f.jsonl:67",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a0140cd932e30f80f.jsonl:92",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a296677f528ac3209.jsonl:123",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a296677f528ac3209.jsonl:135",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a2b685ec089d326d2.jsonl:96",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a2b685ec089d326d2.jsonl:116",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a2b685ec089d326d2.jsonl:118",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-a2b685ec089d326d2.jsonl:319",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-aa2e438316ef5e002.jsonl:166",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8/subagents/agent-aa2e438316ef5e002.jsonl:178",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:366",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:392",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:753",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:755",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:757",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:786",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:5493",
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/922b1c2a-351b-4a9c-b917-7ec556841cf8.jsonl:5501"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "hitman_glide_demo",
+    "source": "/private/tmp/hitman-fixed-world.png",
+    "originalPath": "/private/tmp/hitman-fixed-world.png",
+    "sourceModifiedAt": "2026-09-30T20:53:04.613Z",
+    "sha256": "209cff04c97265cc4ea830864af874ce3674e67232201b71fc94425b13d30b9a",
+    "scene": "Agent 47 in a rendered street with HUD",
+    "summary": "Visually inspected historical capture: Agent 47 in a rendered street with HUD.",
+    "evidence": [
+      "/Users/vg/.codex/sessions/2026/09/28/rollout-2026-09-28T20-15-45-01a0eb29-4302-7e20-9b06-7084fb37358b.jsonl:17042",
+      "/Users/vg/.codex/sessions/2026/09/28/rollout-2026-09-28T20-39-05-01a0eb3e-a2a9-7a00-81c7-0318413b01a0.jsonl:8130",
+      "/Users/vg/.codex/sessions/2026/09/28/rollout-2026-09-28T20-39-05-01a0eb3e-a2a9-7a00-81c7-0318413b01a0.jsonl:8139"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "nfs2se_glide_demo",
+    "source": "/private/tmp/claude-502/-Users-vg-Documents-projects-phone-wine-assembly/5e92d715-203b-491b-97c5-fd8ebf17c1de/scratchpad/nfs2se-main.png",
+    "originalPath": "/private/tmp/claude-502/-Users-vg-Documents-projects-phone-wine-assembly/5e92d715-203b-491b-97c5-fd8ebf17c1de/scratchpad/nfs2se-main.png",
+    "sourceModifiedAt": "2026-10-01T03:36:55.790Z",
+    "sha256": "4fb850e449d85795c89069994b6d885ba0c28c8d91d369b79e9197dac895788b",
+    "scene": "Race car on coastal track with race HUD",
+    "summary": "Visually inspected historical capture: Race car on coastal track with race HUD.",
+    "evidence": [
+      "/Users/vg/.claude/projects/-Users-vg-Documents-projects-phone-wine-assembly/5e92d715-203b-491b-97c5-fd8ebf17c1de.jsonl:3951"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "explorer98",
+    "source": "test/output/explorer98-web/desktop.png",
+    "originalPath": "test/output/explorer98-web/desktop.png",
+    "sourceModifiedAt": "2026-08-23T04:00:05.166Z",
+    "sha256": "78f8743e91b9933eb299baa92c210d93b079d15c83605bc0aad5c9200d4abbae",
+    "scene": "Explorer desktop with duplicated My Computer icons and Start bar",
+    "summary": "Visually inspected historical capture: Explorer desktop with duplicated My Computer icons and Start bar.",
+    "evidence": [
+      "test/test-explorer98-web.js",
+      "/Users/vg/.codex/sessions/2026/08/22/rollout-2026-08-22T03-22-54-01a028fe-aec8-7911-8618-6a2a875d0aee.jsonl:13561",
+      "/Users/vg/.codex/sessions/2026/08/22/rollout-2026-08-22T03-22-54-01a028fe-aec8-7911-8618-6a2a875d0aee.jsonl:14818",
+      "/Users/vg/.codex/sessions/2026/08/22/rollout-2026-08-22T03-22-54-01a028fe-aec8-7911-8618-6a2a875d0aee.jsonl:15429",
+      "/Users/vg/.codex/sessions/2026/08/22/rollout-2026-08-22T03-22-54-01a028fe-aec8-7911-8618-6a2a875d0aee.jsonl:15627"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "claass",
+    "source": "test/output/screenshots/xp-claass.png",
+    "originalPath": "test/output/screenshots/xp-claass.png",
+    "sourceModifiedAt": "2026-08-18T04:15:35.961Z",
+    "sha256": "ce67d897f61d67bc802ddc93bc49ccce9a6791a7c9fe7c8a412263d1e1a8efe0",
+    "scene": "Volume control mixer",
+    "summary": "Visually inspected historical capture: Volume control mixer.",
+    "evidence": [
+      "test/output/screenshots/xp-claass.log"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "sndvol32",
+    "source": "test/output/screenshots/win98-apps-sndvol32.png",
+    "originalPath": "test/output/screenshots/win98-apps-sndvol32.png",
+    "sourceModifiedAt": "2026-08-18T04:11:49.174Z",
+    "sha256": "9b7ccaef385c18c6c7c313478f492fe09c2b91a20835262becaf451161f4d00c",
+    "scene": "Volume control mixer",
+    "summary": "Visually inspected historical capture: Volume control mixer.",
+    "evidence": [
+      "test/output/screenshots/win98-apps-sndvol32.log"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "vol98",
+    "source": "test/output/screenshots/win98-apps-vol98.png",
+    "originalPath": "test/output/screenshots/win98-apps-vol98.png",
+    "sourceModifiedAt": "2026-08-18T04:14:42.585Z",
+    "sha256": "9b7ccaef385c18c6c7c313478f492fe09c2b91a20835262becaf451161f4d00c",
+    "scene": "Volume control mixer",
+    "summary": "Visually inspected historical capture: Volume control mixer.",
+    "evidence": [
+      "test/output/screenshots/win98-apps-vol98.log"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "winipcfg",
+    "source": "test/output/screenshots/win98-apps-winipcfg.png",
+    "originalPath": "test/output/screenshots/win98-apps-winipcfg.png",
+    "sourceModifiedAt": "2026-08-18T04:14:53.786Z",
+    "sha256": "ba18ac8ec3e696b37293a95bd88b68e8535245af103d1ccade42d705975dbad4",
+    "scene": "IP configuration dialog",
+    "summary": "Visually inspected historical capture: IP configuration dialog.",
+    "evidence": [
+      "test/output/screenshots/win98-apps-winipcfg.log"
+    ],
+    "associationReview": "Image content inspected; associated test/log or session capture reference checked. Historical association only, not a current runtime or gameplay certification."
+  },
+  {
+    "candidateId": "civilization-2-win16",
+    "source": "scratch/civ2-campaign/civplay/adamsmith-built-ad1680.png",
+    "originalPath": "scratch/civ2-campaign/civplay/adamsmith-built-ad1680.png",
+    "sourceModifiedAt": "2026-09-30T22:14:42.904Z",
+    "sha256": "578218350210ebcb7c4e56e0353ab6064853d34d8c2b94f2147791a612b9c400",
+    "scene": "Roman campaign map and Adam Smith wonder completion",
+    "summary": "Historical Civilization II Win16 campaign capture; map, cities, and Domestic Advisor event visible.",
+    "evidence": [
+      "scratch/civ2-campaign/civ-vm.sh"
+    ],
+    "associationReview": "Visually inspected Civilization II map. Preserved campaign launcher explicitly selects --app=civ2_win16 using this emulator; no reference VM. Not current-build validation."
   }
 ]

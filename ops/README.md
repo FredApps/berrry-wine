@@ -403,10 +403,15 @@ Run folders are ordered by their explicit start timestamp, never file mtime.
 
 Run `node ops/backfill.js --scan`, then `node ops/backfill.js --publish` to
 inventory this project's historical Codex/Claude tool references and existing
-`build/` and `scratch/` images. This never executes recovered commands or starts
+`build/`, `scratch/`, `screenshots/`, and `test/output/` images. This never executes recovered commands or starts
 guest applications. The scan can take several minutes for large session logs.
 
 The inventory and dated import reports live in `scratch/ops-backfill/`.
+Use `--scan-files` to refresh these directories while retaining previously scanned
+session references. `--publish --candidates=notepad,calc` limits publication to
+selected corpus IDs. Registry-only apps use the same ID mapping as the dashboard.
+Reference-emulator/comparison captures and near-uniform frames require review
+instead of automatic publication.
 Published bundles live in `scratch/runs/history-<candidate>-<content-hash>/` and
 appear on the next dashboard refresh. Repeating publication skips content
 already in run folders. Existing runs and source files are never modified.

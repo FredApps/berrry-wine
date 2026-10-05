@@ -75,6 +75,10 @@ test('historical image association never treats prose as a candidate ID', () => 
   assert.equal(identify('/project/build/caesar3-gameplay.png'), null);
   assert.equal(identify('/project/build/generally/menu.png'), 'generally');
   assert.equal(identify('/project/build/pirates_2004/menu.png'), 'pirates-2004');
+  assert.equal(identify('/project/build/notepad/menu.png'), 'notepad');
+  assert.equal(identify('/project/build/calc.png'), 'calc');
+  assert.equal(identify('/project/build/mspaint98/menu.png'), 'mspaint98');
+  assert.equal(identify('/project/build/notepad/calc.png'), null);
   assert.equal(identify('/project/pirates-2004/serious-sam-demo/menu.png'), null);
 });
 

@@ -28,6 +28,13 @@ function reportedBuild(root,entry){
 // the existing repository root and existing-result skip behavior.
 function recover(root=path.resolve(__dirname,'..')){
 const candidates=new Set(JSON.parse(fs.readFileSync(path.join(root,'test/candidate-corpus/manifest.json'),'utf8')).candidates.map(c=>c.id));
+const registryPath=path.join(root,'lib/apps.js');
+if(fs.existsSync(registryPath)) {
+  const manifest=JSON.parse(fs.readFileSync(path.join(root,'test/candidate-corpus/manifest.json'),'utf8'));
+  const statusPath=path.join(root,'ops/corpus-status.json');
+  const assessments=fs.existsSync(statusPath)?JSON.parse(fs.readFileSync(statusPath,'utf8')).entries || []:[];
+  for(const entry of require('./corpus-inventory').inventory(manifest,require(registryPath).APPS,assessments))candidates.add(entry.id);
+}
 const entries=JSON.parse(fs.readFileSync(path.join(root,'ops/historical-visuals.json'),'utf8'));
 const report=[];
 for(const entry of entries){

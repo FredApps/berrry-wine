@@ -12,12 +12,18 @@ const root = path.resolve(__dirname, '..');
 const reportDir = path.join(root, 'scratch/ops-backfill');
 const inventoryFile = path.join(reportDir, 'inventory.json');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-const candidates = require('../test/candidate-corpus/manifest.json').candidates;
+const manifest = require('../test/candidate-corpus/manifest.json');
 const { APPS } = require('../lib/apps');
-const aliases = new Map(candidates.map(c => [c.id, c.id]));
-for (const [id, app] of Object.entries(APPS)) {
-  const candidate = candidates.find(c => (app.exe || '').includes('/candidates/' + c.id + '/'));
-  if (candidate) aliases.set(id, candidate.id);
+const { inventory: corpusInventory } = require('./corpus-inventory');
+const assessments = require('./corpus-status.json').entries || [];
+// Use the dashboard's complete inventory, including registry-only applications.
+// Preserve ambiguous aliases instead of assigning one candidate arbitrarily.
+const aliases = new Map();
+for (const candidate of corpusInventory(manifest, APPS, assessments)) {
+  for (const id of new Set([candidate.id, ...candidate.appIds])) {
+    if (!aliases.has(id)) aliases.set(id, new Set());
+    aliases.get(id).add(candidate.id);
+  }
 }
 function identify(file) {
   // Candidate names can be ordinary prose ("generally"). Only complete path
@@ -25,7 +31,7 @@ function identify(file) {
   const parts = file.split('/');
   if (parts.length < 2 || /[\n\r]/.test(file)) return null;
   parts[parts.length - 1] = parts.at(-1).replace(/\.(png|jpe?g|webp)$/i, '');
-  const found = new Set(parts.map(p=>aliases.get(p)).filter(Boolean));
+  const found = new Set(parts.flatMap(p=>[...(aliases.get(p) || [])]));
   return found.size === 1 ? [...found][0] : null;
 }
 function* walk(dir) {
@@ -47,8 +53,8 @@ function imagePaths(text) {
   return [...text.matchAll(/(?:\/(?:Users|private|tmp)\/|(?:build|scratch)\/)[^\s"'`<>;|(){}\[\]\\]*?\.(?:png|jpe?g|webp)\b/gi)]
     .map(m => path.resolve(root,m[0])).filter(p => !/[\$*]/.test(p));
 }
-async function inventory(codexOnly = false) {
-  const previous = codexOnly && fs.existsSync(inventoryFile) ? JSON.parse(fs.readFileSync(inventoryFile)) : null;
+async function inventory(codexOnly = false, filesOnly = false) {
+  const previous = (codexOnly || filesOnly) && fs.existsSync(inventoryFile) ? JSON.parse(fs.readFileSync(inventoryFile)) : null;
   const images = new Map((previous?.images || []).map(item=>[item.path,item]));
   function add(file, reference) {
     if (!(file.startsWith(root + '/') || file.startsWith('/tmp/') || file.startsWith('/private/tmp/'))) return;
@@ -57,16 +63,16 @@ async function inventory(codexOnly = false) {
     const item = images.get(file);
     if (reference && item.references.length < 20 && !item.references.some(r=>r.agentId===reference.agentId && r.at===reference.at)) item.references.push(reference);
   }
-  for (const directory of ['build','scratch']) for (const file of walk(path.join(root,directory))) if (/\.(png|jpe?g|webp)$/i.test(file)) add(file);
+  for (const directory of ['build','scratch','screenshots','test/output']) for (const file of walk(path.join(root,directory))) if (/\.(png|jpe?g|webp)$/i.test(file)) add(file);
   const logs = [];
-  for (const dir of ['sessions','archived_sessions']) for (const file of walk(path.join(os.homedir(),'.codex',dir))) {
+  for (const dir of (filesOnly ? [] : ['sessions','archived_sessions'])) for (const file of walk(path.join(os.homedir(),'.codex',dir))) {
     if (!file.endsWith('.jsonl')) continue;
     const prefix=head(file);
     let cwd; try { cwd=JSON.parse(prefix.match(/"cwd"\s*:\s*("(?:\\.|[^"\\])*")/)?.[1] || 'null'); } catch { continue; }
     if (prefix.includes('"session_meta"') && (cwd===root || cwd?.startsWith(root+'/'))) logs.push({file,provider:'codex'});
   }
   const claude = path.join(os.homedir(),'.claude/projects',root.replace(/[^a-zA-Z0-9]/g,'-'));
-  if (!codexOnly) for (const file of walk(claude)) if (file.endsWith('.jsonl')) logs.push({file,provider:'claude'});
+  if (!codexOnly && !filesOnly) for (const file of walk(claude)) if (file.endsWith('.jsonl')) logs.push({file,provider:'claude'});
   let scanned = 0;
   for (const {file,provider} of logs) {
     let session = path.basename(file,'.jsonl');
@@ -101,14 +107,24 @@ async function inventory(codexOnly = false) {
 }
 function publish() {
   const inventory=JSON.parse(fs.readFileSync(inventoryFile));
+  const selected = process.argv.find(arg=>arg.startsWith('--candidates='))?.slice('--candidates='.length).split(',');
   const existing=new Set();
-  for(const dir of ['scratch/runs','ops/runs']) for(const file of walk(path.join(root,dir))) if(/\.(png|jpe?g|webp)$/i.test(file)) existing.add(sha(fs.readFileSync(file)));
+  for(const dir of ['scratch/runs','ops/runs']) for(const file of walk(path.join(root,dir))) if(/\.(png|jpe?g|webp)$/i.test(file)) {
+    // Separate app variants can legitimately render identical images. Deduplicate
+    // within a candidate, not across the entire corpus.
+    const runDir=path.join(root,dir,path.relative(path.join(root,dir),file).split(path.sep)[0]);
+    try { const result=JSON.parse(fs.readFileSync(path.join(runDir,'result.json')));
+      existing.add(result.candidateId+':'+sha(fs.readFileSync(file)));
+    } catch { /* Unpublished folders do not establish a candidate association. */ }
+  }
   const report={importedAt:new Date().toISOString(),inventoryAt:inventory.scannedAt,logs:inventory.logs,imported:[],skipped:[]};
   for(const item of inventory.images) {
     // Revalidate old inventories too; never trust an earlier inferred mapping.
     item.candidateId=identify(item.path);
     item.mappingBasis=item.candidateId ? 'exact candidate or registered app ID path component' : null;
+    if (selected && !selected.includes(item.candidateId)) continue;
     const skip=reason=>report.skipped.push({path:item.path,candidateId:item.candidateId,reason});
+    if (/(?:\/v86[^/]*\/|\/win16-v86-comparison\/)/i.test(item.path)) {skip('reference-emulator or comparison capture; requires explicit review');continue;}
     if (/(?:\/icons\/|\/node_modules\/|\/test\/binaries\/)/.test(item.path)) {skip('application asset rather than captured evidence');continue;}
     if(!item.candidateId) { skip('candidate association ambiguous or absent'); continue; }
     let stat,bytes;
@@ -121,7 +137,7 @@ function publish() {
       if(after.size!==stat.size || after.mtimeMs!==stat.mtimeMs) {skip('changed while reading');continue;}
     } catch {skip('source missing or unreadable');continue;}
     const digest=sha(bytes);
-    if(existing.has(digest)) {skip('duplicate image content already published');continue;}
+    if(existing.has(item.candidateId+':'+digest)) {skip('duplicate image content already published for this candidate');continue;}
     let dimensions=null;
     if(/\.png$/i.test(item.path)) {
       try {
@@ -129,8 +145,11 @@ function publish() {
         const png=PNG.sync.read(bytes); dimensions={width:png.width,height:png.height};
         if(png.width<160 || png.height<100) {skip('small crop or asset, not a dashboard capture');continue;}
         let visible=0;
+        let different=0;
         for(let i=0;i<png.data.length;i+=4) if(png.data[i+3]>16 && Math.max(png.data[i],png.data[i+1],png.data[i+2])>16) visible++;
+        for(let i=0;i<png.data.length;i+=4) if(png.data.readUInt32BE(i)!==png.data.readUInt32BE(0)) different++;
         if(visible/(png.width*png.height)<0.005) {skip('near-black or transparent capture (<0.5% visible pixels); retained at source');continue;}
+        if(different/(png.width*png.height)<0.005) {skip('near-uniform capture (<0.5% pixels differ from background); retained at source');continue;}
       } catch {skip('invalid PNG');continue;}
     }
     const id='history-'+item.candidateId+'-'+digest.slice(0,16);
@@ -151,7 +170,7 @@ function publish() {
     if(/(?:diagram|architecture|flowchart)/i.test(path.basename(item.path))) {result.diagrams=result.screenshots;delete result.screenshots;}
     fs.writeFileSync(path.join(dir,'result.json.tmp'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
     fs.renameSync(path.join(dir,'result.json.tmp'),path.join(dir,'result.json'));
-    existing.add(digest);report.imported.push({id,candidateId:item.candidateId,agentId:result.agentId,source:item.path,bytes:bytes.length});
+    existing.add(item.candidateId+':'+digest);report.imported.push({id,candidateId:item.candidateId,agentId:result.agentId,source:item.path,bytes:bytes.length});
   }
   const file=path.join(reportDir,'report-'+report.importedAt.replace(/[:.]/g,'-')+'.json');
   fs.writeFileSync(file,JSON.stringify(report,null,2)+'\n');
@@ -183,8 +202,9 @@ function audit() {
 if(require.main===module) {
   const mode=process.argv[2];
   if(mode==='--scan' || mode==='--scan-codex') inventory(mode==='--scan-codex').catch(e=>{console.error(e);process.exitCode=1;});
+  else if(mode==='--scan-files') inventory(false,true).catch(e=>{console.error(e);process.exitCode=1;});
   else if(mode==='--publish') publish();
   else if(mode==='--audit') audit();
-  else console.log('Usage: node ops/backfill.js --scan | --publish | --audit\nScan project session references and local images, then publish path-associated historical bundles. Audit quarantines unsafe older imports, preserving their files. Reports stay in scratch/ops-backfill.');
+  else console.log('Usage: node ops/backfill.js --scan | --scan-files | --publish [--candidates=id,id] | --audit\nScan project session references and local images, then publish path-associated historical bundles. Audit quarantines unsafe older imports, preserving their files. Reports stay in scratch/ops-backfill.');
 }
 module.exports={identify,imagePaths};
