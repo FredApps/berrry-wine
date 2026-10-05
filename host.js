@@ -3457,6 +3457,14 @@ class WineAssembly {
     const transferOpts = options.transfer || {};
     const checkCancelled = () => WineAssembly._throwIfAssetAborted(transferOpts.signal);
     checkCancelled();
+    // A host can be loaded again after stop(). New mounts get a fresh lifetime;
+    // already stopped providers keep their captured aborted signal.
+    if (this._manifestAssetAbort && this._manifestAssetAbort.signal.aborted) {
+      this._manifestAssetAbort = new AbortController();
+      this._backgroundAssetJobs = [];
+      this._backgroundAssetsPromise = null;
+      this._backgroundAssetDeferred = 0;
+    }
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
     const concurrency = Math.max(1, options.concurrency || 6);
@@ -3468,6 +3476,7 @@ class WineAssembly {
     for (const item of urls) {
       if (!item || typeof item !== 'object' || item.loadMode === undefined) continue;
       if (!['required', 'lazy', 'background'].includes(item.loadMode)) throw new Error('Invalid asset loadMode: ' + item.loadMode);
+      if (item.loadMode === 'required' && item.optional) throw new Error('Required manifest asset cannot be optional: ' + item.url);
       if (!Number.isSafeInteger(item.size) || item.size < 0) throw new Error('Invalid manifest size: ' + item.url);
       if (item.loadMode !== 'required' && (item.decodeImage || item.preloadRanges)) throw new Error('Lazy manifest cannot require synchronous image decode or preload ranges: ' + item.url);
       const identity = item.loadMode + ':' + item.size;

@@ -15,7 +15,7 @@ test('aliases share provider and sparse future reads do not fetch intervening by
  const calls=[],fetch=response(),{wine,vfs}=fixture((u,i)=>{calls.push(i.headers.Range);return fetch(u,i);});await wine.loadFiles([{url:'x',size:200000,loadMode:'lazy',vfsPaths:['c:\\x','d:\\x']}]);const a=vfs.files.get('c:\\x')._provider,b=vfs.files.get('d:\\x')._provider;assert.equal(a,b);await a.fill(150000,4);assert.deepEqual(calls,['bytes=131072-196607']);assert.equal(a.gameData,true);
 });
 test('invalid modes, sizes, contradictory aliases and synchronous decode fail without I/O',async()=>{
- let calls=0;const{wine}=fixture(async()=>{calls++;throw Error('network');});for(const item of [{size:-1,loadMode:'lazy'},{size:1.2,loadMode:'lazy'},{size:4,loadMode:'magic'},{size:4,loadMode:'lazy',decodeImage:true}])await assert.rejects(wine.loadFiles([{url:'x',...item}]));await assert.rejects(wine.loadFiles([{url:'x',size:4,loadMode:'lazy'},{url:'x',size:5,loadMode:'lazy'}]));assert.equal(calls,0);
+ let calls=0;const{wine}=fixture(async()=>{calls++;throw Error('network');});for(const item of [{size:-1,loadMode:'lazy'},{size:1.2,loadMode:'lazy'},{size:4,loadMode:'magic'},{size:4,loadMode:'required',optional:true},{size:4,loadMode:'lazy',decodeImage:true}])await assert.rejects(wine.loadFiles([{url:'x',...item}]));await assert.rejects(wine.loadFiles([{url:'x',size:4,loadMode:'lazy'},{url:'x',size:5,loadMode:'lazy'}]));assert.equal(calls,0);
 });
 test('required bytes are awaited; lazy 200/error fails honestly and can retry',async()=>{
  let status=200,calls=0;const{wine,vfs}=fixture(async(_u,init)=>{calls++;return{ok:true,status: init?.headers?.Range?status:200,headers:{get:n=>n==='content-range'?'bytes 0-3/4':null},arrayBuffer:async()=>Uint8Array.of(1,2,3,4).buffer};});await wine.loadFiles([{url:'required',size:4,loadMode:'required',httpRange:true}],{required:true});assert.equal(calls,1);assert.deepEqual([...vfs.files.get('c:\\required').data],[1,2,3,4]);await wine.loadFiles([{url:'lazy',size:4,loadMode:'lazy'}]);const cache=vfs.files.get('c:\\lazy')._provider;await assert.rejects(cache.fill(0,4),/expected 206/);status=206;await cache.fill(0,4);assert.deepEqual([...cache.tryRead(0,4)],[1,2,3,4]);
@@ -43,4 +43,10 @@ test('explicit required failure rejects even when legacy requiredFiles is absent
 });
 test('known-size first read rejects stale smaller manifest or wrong Content-Range without HEAD',async()=>{
  let header='bytes 0-3/8',calls=0;const{wine,vfs}=fixture(async()=>{calls++;return{status:206,headers:{get:()=>header},arrayBuffer:async()=>new Uint8Array(4).buffer};});await wine.loadFiles([{url:'x',size:4,loadMode:'lazy'}]);assert.equal(calls,0);const cache=vfs.files.get('c:\\x')._provider;await assert.rejects(cache.fill(0,4),/Content-Range/);header='bytes 1-4/4';await assert.rejects(cache.fill(0,4),/Content-Range/);header='bytes 0-3/4';await cache.fill(0,4);assert.equal(cache.tryRead(0,4).length,4);
+});
+test('reload after stop has a new background lifetime; old providers retain aborted signals',async()=>{
+ const signals=[],real=response();const{wine,vfs}=fixture((u,i)=>{signals.push(i.signal);if(i.signal.aborted)return Promise.reject(Object.assign(Error('aborted'),{name:'AbortError'}));return real(u,i);});
+ await wine.loadFiles([{url:'old',size:200000,loadMode:'background'}]);await wine.startBackgroundAssets();const old=vfs.files.get('c:\\old')._provider;wine._manifestAssetAbort.abort();
+ await wine.loadFiles([{url:'new',size:200000,loadMode:'background'}]);await wine.startBackgroundAssets();assert.equal(signals.length,2);assert.notEqual(signals[0],signals[1]);assert.equal(signals[0].aborted,true);assert.equal(signals[1].aborted,false);
+ await assert.rejects(old.fill(65536,1),{name:'AbortError'});assert.equal(signals.at(-1),signals[0],'stopped provider cannot borrow fresh lifetime');assert.equal(wine.backgroundAssets.completed,1);
 });
