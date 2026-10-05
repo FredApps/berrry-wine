@@ -211,3 +211,15 @@ now matches only retained positive candlelit/Palace/actor regions before at
 most two held Space inputs. It does not authorize keys from black/fade frames,
 repeat the same movie input, dismiss parchment automatically, or extend the
 original session. Personal review remains required for the newly reached scene.
+
+## 2026-10-05: bounded movie route, still no dungeon qualification
+
+The seventh ordinary browser run retained the original GOG payload and pinned runtime source `94d18605` / module `2e2fd8d1`. It completed 11 attribute and 18 skill allocations with exact rendered-counter decrements, selected Average reflexes, and accepted final character review. These remain character creation, not gameplay.
+
+The movie helper captured 92 frames. Two positive book frames authorized an ordinary 1000 ms Space hold at 20:49:50.876Z; two positive Palace-title frames authorized another at 20:50:16.518Z. The last image was black, with no matched opening parchment or dungeon before the original 600-second deadline. Browser, server and recorder closed at 20:50:42.908Z with no cleanup errors, no pending streams, and Chrome exit 0. Both owned processes were absent afterward.
+
+This deadline is a scheduling limit, not a demonstrated compatibility failure. Receipts expose a 131.935-second operator/context gap between the completed title wait and the next command; it must not be attributed to guest slowness. The creator prefix itself took 14.830 seconds, attribute allocation 51.948 seconds, and skills 85.171 seconds. Final review was accepted only at 20:49:27Z, leaving about 74 seconds for cinematics and gameplay.
+
+Source review also identified an avoidable route policy: Palace title and actor shared the consumed `palace` key. Sending Space at the title therefore disabled the later actor-positive skip that had actually progressed to parchment in attempt 6. No actor was captured before attempt 7 ended, so this is proven helper behavior, not proof of the black frame's cause. The next prepared helper observes the Palace title without input and allows one actor skip only after two consecutive positive actor frames. It retains the two-key total, no-repeat, black/fade exclusions, release-on-error, 90-second movie phase and 160-capture bounds. A proposed 900-second whole-session budget provides room for personal parchment dismissal and ordinary dungeon forward/reverse/idle evidence; no new run or gameplay result is implied.
+
+Immutable evidence: `scratch/runs/20261005-daggerfall-movie-gated-route/result.json`; its `hashes.json` lists 683 verified artifacts. The actual ops reader ingests the run with no gameplay screenshots and `performance: null`. The final image is `movie-gate-91.png`. Source readiness and timing proposal are in `scratch/new-game-daggerfall-20261005/MOVIE-READY8.json` and `attempt7-findings-and-route8-plan.json`. Actual-image tests verify Palace causes no input or actor consumption, two-frame actor gating, one-shot behavior, two-key limit, wrong-scene/deadline rejection, and input release after down/hold/up failures. No FPS or full-game claim.
