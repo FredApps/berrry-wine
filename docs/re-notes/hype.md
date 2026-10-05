@@ -328,3 +328,9 @@ The first authenticated UI polygon is already `(0,0),(+Infinity,0),(+Infinity,+I
 Source486d51..486d71 copies XY from four16-byte input records to four60-byte staging vertices at835ae0. The input pointer is original ESP+0xc; context is original ESP+0x1c. The next minimal capture is function entry486d20 (actual caller/input64bytes) and post-copy486d73 (same pointer/staging240bytes), followed by the polygon entry to detect any intervening change. Do not assume the original source coordinates are infinite without this observation.
 
 Immutable evidence: `scratch/runs/20261005-hype-original-ui-quad-infinite`,207 artifact hashes verified; rawSHA256 `fa676bf6bc64403017f60ac961765e984dccee3c14f76e1bb3e8b80b59cb4ac7`. Session35108 exited0, browser/server closed10:42:22.298Z. The image remains menu-only; gameplay and FPS remain unqualified.
+
+### Incoming rectangle confirmed infinite (attempt8)
+
+The ordinary UI-phase probe captures the complete486d20 entry →486d73 copy →483670 polygon chain with zero observer errors. Actual caller469a5b authenticates the rectangle constructor469710. Incoming quad0420f988 already has `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)`; all XY bits match both copied staging and later polygon. Neither copying nor clipping introduces the first infinity in this capture.
+
+Immutable run `scratch/runs/20261005-hype-incoming-quad-infinite` has207 rechecked artifact hashes; rawSHA256 `da1af7a6181198834030fa7630b500c529e1adeb330a555c5d2d4cbd545fbe2c`. Browser7356 exited0, closed11:11:54.802Z. Menu-only image; no gameplay/FPS qualification. Next inspect actual469710 incoming rectangle, descriptor dimensions, live reciprocal table entries, and post-scaling arguments before its quad construction. Do not assume which size/angle branch executes.
