@@ -320,3 +320,11 @@ The corrected owning-Worker trace armed only after the successful world swap (EI
 The first UI pair already has yA=NaN (`ffc00000`), yB=0; its A vertex is (635,NaN). The second enters with yA=+Infinity (`7f800000`), yB=NaN. Later pairs also contain infinity. Therefore this observation does not establish Y interpolation as the first corruption and does not justify patching its arithmetic. Next trace the incoming quad and earlier X clipping to locate the first nonfinite value. Preserve raw float bits; JSON null is not a sufficient numeric description.
 
 Evidence: `scratch/runs/20261005-hype-ui-clipper-nonfinite-input` (207 artifact hashes rechecked); raw clipper SHA256 `c0ecfa49e04bc0a296f5f7d68696aa4d21665802e9788f66cf276e9ad87a45ee`. Session74195 exited0, browser/server closed10:33:12.696Z. `after-trace.png` shows the knight/street world, but this intermittent scene is not stable gameplay or input qualification. No FPS or normal-timing claim under trace.
+
+### UI polygon before X clipping (attempt7)
+
+The first authenticated UI polygon is already `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)` at483670. Its raw caller return4870c9 identifies the quad path486d20. Two X entry/post pairs are captured, with no observer errors; the next swap matches the expected UI caller and ends the phase. NaN X/Y interpolation results follow the already-infinite input rather than establishing an emulator clipping defect.
+
+Source486d51..486d71 copies XY from four16-byte input records to four60-byte staging vertices at835ae0. The input pointer is original ESP+0xc; context is original ESP+0x1c. The next minimal capture is function entry486d20 (actual caller/input64bytes) and post-copy486d73 (same pointer/staging240bytes), followed by the polygon entry to detect any intervening change. Do not assume the original source coordinates are infinite without this observation.
+
+Immutable evidence: `scratch/runs/20261005-hype-original-ui-quad-infinite`,207 artifact hashes verified; rawSHA256 `fa676bf6bc64403017f60ac961765e984dccee3c14f76e1bb3e8b80b59cb4ac7`. Session35108 exited0, browser/server closed10:42:22.298Z. The image remains menu-only; gameplay and FPS remain unqualified.
