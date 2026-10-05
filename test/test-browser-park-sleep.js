@@ -155,7 +155,10 @@ assert.strictEqual(WineAssembly.GUEST_TICK_POLL_STRIDE, 4,
   // A stopped host cancels its sleep rather than leaving a timer holding the
   // 512MB shared memory alive.
   wine._scheduleStep(step, 40);
+  let resetWait = 0;
+  wine._gameWait = { reset() { resetWait++; } };
   wine.stop({ repaint: false });
+  assert.strictEqual(resetWait, 1, 'stop() releases pending download decisions');
   assert.strictEqual(pendingTimers().length, 0, 'stop() cancels a pending parked sleep');
 }
 

@@ -691,6 +691,7 @@ class WineAssembly {
           }
           this.logToUI(`[io] ${pending.path}: ${error && error.message}`);
           const answer = wait ? await wait.fail(token, error) : 'quit';
+          if (!this.running) return false;
           if (answer === 'retry' && this.running) { attempt = 0; continue; }
           // Quit: leave the guest parked and stop it. The desktop shell's
           // ordinary close path tears the instance down.
@@ -702,7 +703,7 @@ class WineAssembly {
       }
       // The bytes are resident now; this takes the cache hit and retires the
       // parked request through the VFS's identity checks.
-      return await vfs.fillPendingRead(pending);
+      return this.running ? await vfs.fillPendingRead(pending) : false;
     } finally {
       if (wait) wait.end(token);
     }
@@ -4016,6 +4017,7 @@ class WineAssembly {
     }
     this._cancelPresentFrame();
     this.running = false;
+    if (this._gameWait) this._gameWait.reset();
     // A pending parked-sleep timeout and the visibilitychange listener both
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
     // Same leak the DX rAF chain had.

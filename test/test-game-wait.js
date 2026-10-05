@@ -155,5 +155,15 @@ function harness() {
     h.c.reset();
     assert.strictEqual(await answer, 'quit');
   }
+  for (const action of ['retry', 'quit', 'reset']) {
+    const h = harness();
+    const first = h.c.begin({}), second = h.c.begin({});
+    const a = h.c.fail(first, new Error('first read failed'));
+    const b = h.c.fail(second, new Error('second read failed'));
+    if (action === 'reset') h.c.reset(); else h.c.action(action);
+    assert.deepStrictEqual(await Promise.all([a, b]),
+      [action === 'retry' ? 'retry' : 'quit', action === 'retry' ? 'retry' : 'quit'],
+      'every failed reader receives the shared decision');
+  }
   console.log('test-game-wait: PASS');
 })().catch(e => { console.error(e); process.exit(1); });
