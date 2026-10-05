@@ -101,6 +101,31 @@ check('P2 with a short sweep is INCOMPLETE, not clean', () => {
   assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P2 sweep cand: 2 of 3 rows/);
 });
 
+// --- SMOKE mode -------------------------------------------------------------
+check('SMOKE sweep passes the listed programs, not --dir, and labels the journal', () => {
+  const W = workdir('smoke-sweep'); sweepTree(W);
+  const argvFile = path.join(W, 'sweep-argv.json');
+  for (const t of ['base', 'cand']) {
+    write(path.join(W, t, 'tools/toyvm/sweep-dos.js'),
+      `require('fs').writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));\n` + outStub(0, sweepBody(PROGS)));
+  }
+  const r = plan('sweep', W, { SMOKE: '3' });
+  assert.strictEqual(r.code, 0, r.out);
+  const argv = JSON.parse(fs.readFileSync(argvFile, 'utf8'));
+  assert.ok(!argv.some((a) => a.startsWith('--dir=')), `smoke sweep still used --dir: ${argv}`);
+  assert.ok(argv.includes('/demos/p0/P0.EXE') && argv.includes('--dispatches=2m'), `argv ${argv}`);
+  assert.match(r.journal, /\[SMOKE P2\] sweep gate clean, 3\/3/);
+});
+check('SMOKE P1 runs only the SMOKE_TESTS suites', () => {
+  const W = workdir('smoke-tests');
+  for (const t of ['base', 'cand']) {
+    write(path.join(W, t, 'test/test-toyvm-keep.js'), exitWith(0));
+    write(path.join(W, t, 'test/test-toyvm-skip.js'), exitWith(1));
+  }
+  const r = plan('tests', W, { SMOKE: '3', SMOKE_TESTS: 'test-toyvm-keep' });
+  assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[SMOKE P1\] tests ok \(1 suites\)/);
+});
+
 // --- P4 control (corpus-ab stub) ------------------------------------------
 // A corpus-ab stub: --compare writes the moved line; a run writes `rows`
 // distinct ndjson rows (one per program, arm l1, budget 8m).
