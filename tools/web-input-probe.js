@@ -90,6 +90,12 @@ const STEPS = (opt('steps', '') || '')
   .filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const LAUNCH_MS = Number(opt('launch', 90000));
+// The "Starting <app>" launch window sits over the page until the shell
+// recognises the app's first window. Input sent while it is up is input the
+// app may never see, so steps wait for it to come down first, up to this
+// long; a window that never clears is reported as `launcher: STILL UP`
+// (mobile-app-sweep.js records it per row) instead of passing silently.
+const LAUNCHER_MS = Number(opt('launcher-wait', 60000));
 const PROTOCOL_TIMEOUT_MS = Number(opt('protocol-timeout', 600000));
 const CPU_RATE = Number(opt('cpu', 1));
 const THREADS = argv.includes('--threads');
@@ -216,6 +222,38 @@ async function toPage(page, gx, gy) {
       y: r.top + cy * (r.height / c.height),
     };
   }, [gx, gy]);
+}
+
+// What the launch window shows right now: null when it is down, else its kind
+// and title. Reads the DOM, not the model, because the DOM is what covers the
+// game and what a click or key would land on.
+async function readLauncher(page) {
+  return page.evaluate(() => {
+    const lw = document.getElementById('wine-launch-window');
+    if (!lw || lw.hidden || lw.classList.contains('wa-launch-minimized')) return null;
+    const r = lw.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const a = document.activeElement;
+    return {
+      kind: lw.classList.contains('wa-launch-error') ? 'error' : 'progress',
+      title: ((document.getElementById('wine-launch-title') || {}).textContent || '').trim(),
+      status: ((lw.querySelector('.wa-launch-status') || {}).textContent || '').trim().slice(0, 120),
+      focusInside: !!(a && lw.contains(a)),
+    };
+  }).catch(() => null);
+}
+
+async function waitForLauncher(page, ms) {
+  const t0 = Date.now();
+  let last = await readLauncher(page);
+  while (last && Date.now() - t0 < ms) {
+    await wait(250);
+    last = await readLauncher(page);
+  }
+  const dt = Date.now() - t0;
+  if (last) console.log(`launcher: STILL UP after ${dt}ms ${JSON.stringify(last)}`);
+  else console.log(`launcher: cleared after ${dt}ms`);
+  return !last;
 }
 
 const readCursor = page => page.evaluate(() => {
@@ -433,6 +471,7 @@ async function main() {
       console.log(`launch diag ${JSON.stringify(diag)}`);
       throw e;
     }
+    await waitForLauncher(page, LAUNCHER_MS);
     await wait(READY_MS);
     console.log(`ready  cursor=${JSON.stringify(await readCursor(page))}`);
 
@@ -524,6 +563,11 @@ async function main() {
       const cur = await readCursor(page);
       console.log(`${step.padEnd(18)} cursor inline=${cur.inline || '(unset)'} computed=${cur.computed}`);
     }
+
+    // A launch window that comes back (an error) or never left is part of
+    // what the final picture shows; say so next to it.
+    const endLauncher = await readLauncher(page);
+    console.log(`launcher at end: ${endLauncher ? JSON.stringify(endLauncher) : 'down'}`);
 
     if (FINAL_EVAL) {
       const v = await page.evaluate(async expr => {

@@ -259,12 +259,25 @@ async function directStageUnknownStall(browser, base) {
   check('touch: buttons are at least 44px tall', g.buttons.every(h => h >= 44), g.buttons.join(','));
   check('a11y: dialog role, modal on a direct link, live region announced',
     g.role === 'dialog' && g.modal === 'true' && /Solitaire/.test(g.live), JSON.stringify(g));
-  const focus = await page.evaluate(() => document.activeElement && document.activeElement.textContent);
-  check('a direct link puts focus on Cancel', focus === 'Cancel', focus);
-  // Esc is Cancel, and the key does not reach anything behind the window.
+  // Progress takes no keyboard focus, even on a direct link: the game is often
+  // already running behind it, and with Cancel focused NFS III's own Enter
+  // cancelled the launch. Keys the game gets must not reach the window.
+  const focus = await page.evaluate(() => {
+    const a = document.activeElement;
+    return { inDialog: !!(a && a.closest && a.closest('#wine-launch-window')),
+      text: a && a.textContent };
+  });
+  check('progress does not take keyboard focus', !focus.inDialog, JSON.stringify(focus));
+  await page.keyboard.press('Enter');
   await page.keyboard.press('Escape');
+  await page.keyboard.press('Space');
+  await new Promise(r => setTimeout(r, 500));
+  const afterKeys = await page.evaluate(() => window.__launchProbe.states.slice(-1)[0].kind);
+  check('Enter/Esc/Space do not cancel a launch in progress', afterKeys === 'progress', afterKeys);
+  // Cancel is still one deliberate click away.
+  await page.click('#wine-launch-window [data-action="cancel"]');
   await waitState(page, () => window.__launchProbe.states.slice(-1)[0].kind === 'card', null, 10000);
-  check('Esc cancels the launch', true);
+  check('clicking Cancel cancels the launch', true);
   await page.close();
 }
 
