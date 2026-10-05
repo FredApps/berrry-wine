@@ -2203,6 +2203,186 @@ const vbImageFile=existing.find(api=>api.name==='IVBDirectDraw7_DirectSlot008');
 if (!vbImageFile) throw Error('Missing established VB image API');
 vbImageFile.nargs=4; vbImageFile.handler='VBDD_CreateSurfaceFromFile';
 
+
+// Native DX7VB DirectDraw7 has34slots. Preserve old API IDs and correct
+// unsupported ABI cleanup; append only the missing tail.
+const vbDd34Unsupported=[
+  {
+    "name": "IVBDirectDraw7_DirectSlot003",
+    "nargs": 2,
+    "slot": 3,
+    "nativeName": "InternalSetObject"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot004",
+    "nargs": 2,
+    "slot": 4,
+    "nativeName": "InternalGetObject"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot006",
+    "nargs": 4,
+    "slot": 6,
+    "nativeName": "CreatePalette"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot009",
+    "nargs": 5,
+    "slot": 9,
+    "nativeName": "CreateSurfaceFromResource"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot010",
+    "nargs": 3,
+    "slot": 10,
+    "nativeName": "DuplicateSurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot011",
+    "nargs": 1,
+    "slot": 11,
+    "nativeName": "FlipToGDISurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot012",
+    "nargs": 3,
+    "slot": 12,
+    "nativeName": "GetAvailableTotalMem"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot013",
+    "nargs": 3,
+    "slot": 13,
+    "nativeName": "GetCaps"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot014",
+    "nargs": 2,
+    "slot": 14,
+    "nativeName": "GetDirect3D"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot015",
+    "nargs": 2,
+    "slot": 15,
+    "nativeName": "GetDisplayMode"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot016",
+    "nargs": 4,
+    "slot": 16,
+    "nativeName": "GetDisplayModesEnum"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot017",
+    "nargs": 2,
+    "slot": 17,
+    "nativeName": "GetFourCCCodes"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot018",
+    "nargs": 3,
+    "slot": 18,
+    "nativeName": "GetFreeMem"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot019",
+    "nargs": 2,
+    "slot": 19,
+    "nativeName": "GetGDISurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot020",
+    "nargs": 2,
+    "slot": 20,
+    "nativeName": "GetMonitorFrequency"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot021",
+    "nargs": 2,
+    "slot": 21,
+    "nativeName": "GetNumFourCCCodes"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot022",
+    "nargs": 3,
+    "slot": 22,
+    "nativeName": "GetScanLine"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot023",
+    "nargs": 3,
+    "slot": 23,
+    "nativeName": "GetSurfaceFromDC"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot024",
+    "nargs": 4,
+    "slot": 24,
+    "nativeName": "GetSurfacesEnum"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot025",
+    "nargs": 2,
+    "slot": 25,
+    "nativeName": "GetVerticalBlankStatus"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot026",
+    "nargs": 3,
+    "slot": 26,
+    "nativeName": "LoadPaletteFromBitmap"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot027",
+    "nargs": 1,
+    "slot": 27,
+    "nativeName": "RestoreAllSurfaces"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot028",
+    "nargs": 1,
+    "slot": 28,
+    "nativeName": "RestoreDisplayMode"
+  }
+];
+for(const row of vbDd34Unsupported){const a=existing.find(a=>a.name===row.name);if(!a)throw Error('Missing existing VB DD method '+row.name);a.nargs=row.nargs;a.convention='stdcall';}
+const vbDd34Tail=[
+  {
+    "name": "IVBDirectDraw7_SetDisplayMode",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 28,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBDirectDraw7_TestCooperativeLevel",
+    "nargs": 2,
+    "convention": "stdcall",
+    "handler": "IVBDirectDraw7_TestCooperativeLevel"
+  },
+  {
+    "name": "IVBDirectDraw7_WaitForVerticalBlank",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBDirectDraw7_GetDeviceIdentifier",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  }
+];
+for(const row of vbDd34Tail){let a=existing.find(a=>a.name===row.name);if(!a){a={id:existing.length,...row};existing.push(a);seen.add(row.name);}Object.assign(a,row);}
 // Full native IDirectX7 typelib ABI:55 declared methods plus IUnknown3.
 // Old API IDs are retained; new table fixes missing/incorrect slots.
 const vbDirectX7Methods = [

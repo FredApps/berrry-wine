@@ -1479,7 +1479,7 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
     (local.set $obj_guest (call $dx_create_com_obj
-      (i32.const 33) (call $init_com_vtable (i32.const 2534) (i32.const 30))))
+      (i32.const 33) (call $init_vbdd34_vtable)))
     (if (i32.eqz (local.get $obj_guest))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)))
       (else
@@ -1523,9 +1523,9 @@
     (call $handle_IDirectDraw_QueryInterface
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectDraw7_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_IVBDirectDraw7_DirectSlot (param $stack_bytes i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $stack_bytes))))
   (func $handle_IVBDirectDraw7_CreateClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $native_obj i32) (local $entry i32) (local $slot i32) (local $wrapper i32)
     (local $vb_vtbl i32)
@@ -13686,3 +13686,64 @@
 (func $handle_VBImage_DrawText (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
  (i32.store (global.get $reg_base) (call $vbdd_draw_text (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+
+
+;; Full native DirectDraw7 table; old slots keep their established API IDs.
+  (func $init_vbdd34_vtable (result i32)
+    (local $i i32) (local $thunk_wa i32) (local $thunk_guest i32)
+    (local $vtbl_guest i32) (local $vtbl_wa i32)
+    ;; IDirectDraw is always the first generated interface. Resetting here
+    ;; makes repeated main-instance initialization deterministic.
+    (if (i32.eq (i32.const 2534) (global.get $API_ID_IDirectDraw_BASE))
+      (then (call $dx_vtable_registry_reset)))
+    ;; Allocate vtable from heap (count * 4 bytes)
+    (local.set $vtbl_guest (call $heap_alloc (i32.mul (i32.const 34) (i32.const 4))))
+    (local.set $vtbl_wa (call $g2w (local.get $vtbl_guest)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 34)))
+      ;; Compute thunk WASM addr
+      (local.set $thunk_wa (i32.add (global.get $THUNK_BASE)
+        (i32.mul (global.get $num_thunks) (i32.const 8))))
+      ;; Write COM marker as name_rva
+      (i32.store (local.get $thunk_wa) (i32.const 0xCACA0010))
+      ;; Write api_id
+      (i32.store (i32.add (local.get $thunk_wa) (i32.const 4))
+        (if (result i32) (i32.lt_u (local.get $i) (i32.const 30))
+          (then (i32.add (i32.const 2534) (local.get $i)))
+          (else (i32.add (i32.const 4089) (i32.sub (local.get $i) (i32.const 30))))))
+      ;; Compute guest address of this thunk
+      (local.set $thunk_guest (i32.add
+        (i32.sub (local.get $thunk_wa) (global.get $GUEST_BASE))
+        (global.get $image_base)))
+      ;; Write guest thunk addr into vtable slot
+      (i32.store (i32.add (local.get $vtbl_wa) (i32.mul (local.get $i) (i32.const 4)))
+        (local.get $thunk_guest))
+      (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (call $update_thunk_end)
+    (call $dx_vtable_registry_append (local.get $vtbl_guest))
+    (local.get $vtbl_guest))
+
+;; Native DX7VB7354220f writes the native TestCooperativeLevel HRESULT to
+;; statusOut and returns COM S_OK (RET8). Preserve that two-result contract.
+(func $handle_IVBDirectDraw7_TestCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (local $entry i32) (local $esp i32) (local $hr i32)
+ (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+ (local.set $hr (i32.const 0x80070057))
+ (block $done
+  (br_if $done (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg0) (i32.const 8))))
+  (local.set $entry (call $dx_from_this (local.get $arg0)))
+  (br_if $done (i32.eqz (local.get $entry)))
+  (br_if $done (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 33)))
+  ;; Only the actual primary wrapper published by the VB factory is valid.
+  (br_if $done (i32.ne (local.get $arg0) (call $w2g (i32.add (global.get $COM_WRAPPERS) (i32.mul (call $dx_slot_of (local.get $entry)) (i32.const 8))))))
+  (br_if $done (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0)))
+  (local.set $hr (i32.const 0x80004003))
+  (br_if $done (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg1) (i32.const 4))))
+  (call $handle_IDirectDraw4_TestCooperativeLevel (local.get $arg0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+  (call $gs32 (local.get $arg1) (i32.load (global.get $reg_base)))
+  (local.set $hr (i32.const 0)))
+ (i32.store (global.get $reg_base) (local.get $hr))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $esp) (i32.const 12))))
