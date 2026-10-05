@@ -83,6 +83,22 @@ Patch identical (4 files, +48/−2); the only conflict was both sides appending 
 - Live state rendered through the new view (no browser): 3 top-level rows (Codex coordinator with
   3 children, Claude coordinator with 6, one history) — every row two lines.
 
+### 4. Blockers: needs your input vs agent-resolvable (DASH-GAPS-BLOCKERS-SPLIT)
+
+- `blocker-model.js` `actor(snapshot, task)` → `['user'|'agent', basis]` from recorded fields only
+  (rule order in ops/README.md "Blockers and decisions"); `split()`; `blockerSummary()` adds
+  `needsUser` / `agentResolvable` over primary roots (existing ordering kept).
+- Web Blockers: "Needs your input" (live approvals + user roots) then "Agent-resolvable"; every
+  blocker row (also Overview's Needs attention) carries a badge and its basis line.
+- Telegram `/blockers`: second header line `N need your input · M agent-resolvable`, `NEEDS YOUR
+  INPUT` / `AGENT-RESOLVABLE` groups, `Who:` basis per task; existing lines unchanged.
+- Tests: `blocker-model.test.js` +1 (7 classification cases, groups, and web↔Telegram parity: same
+  task IDs in the same groups and order, same counts); existing empty-summary expectation extended
+  with the two new keys; `telegram.test.js` /blockers case asserts the groups and `Who:` line.
+- Live state: needs input = RESOURCE-RECONCILE-REMOTE (existing "Capacity needed" rule: hosts),
+  MIG-SAM-REP-RESTART (automated review); agent-resolvable = the two GAMEPLAY-* tasks
+  ("no user decision").
+
 ## Tests
 
 `node --test ops/<file>.test.js` per file in the worktree (node_modules symlinked from the shared
