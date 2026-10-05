@@ -135,6 +135,54 @@
         }
       ]
     },
+    "GetMessageHookNode": {
+      "file": "src/09a-handlers4-late.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 20,
+      "fields": [
+        {
+          "name": "magic",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "proc",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "next",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "retired_next",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "owner",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
     "DxObject": {
       "file": "src/09a8-handlers-directx.wat",
       "frozen": null,

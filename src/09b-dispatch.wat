@@ -1344,13 +1344,9 @@
         ;; ESP; restore the USER caller and the successful Get/PeekMessage
         ;; result. (Hook suppression on nonzero return is not modeled yet.)
         (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x314B484B))
-          (then
-            (call $hook_dispatch_leave
-              (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
-            (global.set $eip (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
-            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-            (return)))
+          (then (call $keyboard_hook_finish) (return)))
+        (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x314B4D47))
+          (then (call $getmessage_hook_continue) (return)))
         ;; TranslateAccelerator's WM_COMMAND returned: the accelerator was
         ;; translated, so the API reports TRUE whatever the wndproc said.
         (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x43434154))
