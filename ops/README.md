@@ -635,7 +635,16 @@ The source filter combines with search and survives refreshes. Commits include
 subject, author, timestamp, short hash and a GitHub link when the configured
 origin is recognized; local visibility does not certify remote publication.
 Git reads are bounded and cached for 30 seconds, without fetching. Dated items
-sort newest first; undated board messages keep their order after dated items. Narrow portrait and short landscape screens use compact navigation.
+sort newest first; undated board messages keep their order after dated items.
+Each commit shows where it is, from local refs only (no fetch, no GitHub call):
+**merged** (reachable from `origin/HEAD`, normally `origin/main`, via `rev-list`
+with an exact `merge-base --is-ancestor` fallback), **pushed** (on another remote
+branch, named) or **local only**; **tested** when a run's `build.commit` is this
+commit (count, passed, reviewed); **deployed: not recorded**, because the
+production snapshot records deployed files, not a commit. The Activity header
+gives the last fetch time. Task IDs named in a commit message link to the task;
+task rows summarise `Code: N commits · merged/pushed/local` and task details list
+them. Narrow portrait and short landscape screens use compact navigation.
 
 ## Live command approvals
 

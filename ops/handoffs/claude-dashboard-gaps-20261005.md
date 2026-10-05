@@ -99,6 +99,25 @@ Patch identical (4 files, +48/−2); the only conflict was both sides appending 
   MIG-SAM-REP-RESTART (automated review); agent-resolvable = the two GAMEPLAY-* tasks
   ("no user decision").
 
+### 5. Commit → pushed → merged → tested state (DASH-GAPS-CODE-STATE)
+
+- `activity.js` `codeState()`: per listed commit `merged` / `pushed` (+ up to 5 remote branch names)
+  / `local`, from `rev-list origin/HEAD` and `rev-list --remotes` (cap 20000, exact
+  `merge-base --is-ancestor` fallback when capped; `branch -r --contains` only for pushed-not-merged,
+  max 40), plus `FETCH_HEAD` mtime. No fetch, no network, no GitHub API, no tokens.
+- Commit messages (subject + body) yield task-like IDs; `linkCommits()` keeps only real task IDs and
+  attaches runs whose `build.commit` is that commit. Exposed as `commit.code/taskIds/runs`,
+  `task.commits`, `codeState`.
+- UI: Activity commit rows get chips (merged · origin/main | pushed · branch | local only; tested ·
+  N runs | no run records this commit; **deployed: not recorded**; task links); task rows get a
+  `Code:` summary line; task details a Code section.
+- Tests: `activity.test.js` +1 (bare remote + clone: merged/pushed-to-branch/local, fetch time, IDs,
+  run and task linking); `agents-view.test.js` +1 (chips, escaping, no deploy claim, task summary).
+- Real repo (own server 8197): last 150 commits = 100 merged, 44 pushed, 6 local; 3 commits have a
+  run recording them; no open task ID appears in those commit messages (honest empty state).
+- Deploy per commit stays "not recorded": the only production evidence is the 2026-10-03 file
+  snapshot (`ops/release-evidence/production-20261003/`), which names no commit.
+
 ## Tests
 
 `node --test ops/<file>.test.js` per file in the worktree (node_modules symlinked from the shared

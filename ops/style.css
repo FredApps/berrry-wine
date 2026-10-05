@@ -1276,3 +1276,9 @@ dd {
   .agent-line1 button { min-height:44px; }
   .subagent-rows { margin-left:8px; }
 }
+.code-chips { display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:4px; }
+.code-chip { padding:0 6px; border:1px solid var(--line); font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+.code-merged { color:var(--green); }
+.code-pushed { color:var(--cyan); }
+.code-local { color:var(--amber); }
+.code-task { font-size:11px; padding:0 6px; min-height:0; }
