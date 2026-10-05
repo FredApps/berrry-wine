@@ -1,0 +1,51 @@
+;; PRIVATE: guest front-door buffer validation without treating sparse pages
+;; as contiguous. No output mutation until every page of the output is mapped.
+(func $vbdd_guest_span_mapped (param $ptr i32) (param $length i32) (result i32)
+  (local $chunk i32)
+  (if (i32.or (i32.eqz (local.get $ptr))
+        (i32.or (i32.eqz (local.get $length))
+          (i64.gt_u (i64.add (i64.extend_i32_u (local.get $ptr)) (i64.extend_i32_u (local.get $length)))
+            (i64.const 0x100000000)))) (then (return (i32.const 0))))
+  (loop $pages
+    (local.set $chunk (i32.sub (i32.const 4096) (i32.and (local.get $ptr) (i32.const 4095))))
+    (if (i32.gt_u (local.get $chunk) (local.get $length)) (then (local.set $chunk (local.get $length))))
+    (if (i32.eq (call $g2w_affine_span (local.get $ptr) (local.get $chunk)) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (local.get $ptr) (local.get $chunk)))
+    (local.set $length (i32.sub (local.get $length) (local.get $chunk)))
+    (br_if $pages (local.get $length)))
+  (i32.const 1))
+
+;; Typelib VB slot40, HRESULT(this,DDSURFACEDESC2*), not native slot22.
+;; This internal result helper deliberately leaves x86 register cleanup to its
+;; eventual dispatch wrapper (12 bytes). Original native reverse converter is
+;; responsible for expanded VB field layout, rather than a native struct cast.
+(func $vbdd_surface_get_desc (param $obj i32) (param $out i32) (result i32)
+  (local $entry i32) (local $scratch_ga i32) (local $native i32) (local $vb i32) (local $i i32)
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 232)))
+    (then (return (i32.const 0x80004003))))
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $obj) (i32.const 8)))
+    (then (return (i32.const 0x80070057))))
+  (local.set $i (call $gl32 (i32.add (local.get $obj) (i32.const 4))))
+  (if (i32.ge_u (local.get $i) (global.get $DX_MAX))
+    (then (return (i32.const 0x80070057))))
+  (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $i) (i32.const 32))))
+  (if (i32.or (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+        (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0)))
+    (then (return (i32.const 0x80070057))))
+  (local.set $scratch_ga (call $heap_alloc (i32.const 356)))
+  (if (i32.eqz (local.get $scratch_ga)) (then (return (i32.const 0x8007000E))))
+  (local.set $native (call $g2w (local.get $scratch_ga)))
+  (local.set $vb (i32.add (local.get $native) (i32.const 124)))
+  (memory.fill (local.get $native) (i32.const 0) (i32.const 124))
+  (call $dx_fill_surface_desc (local.get $native) (local.get $entry))
+  (i32.store (local.get $native) (i32.const 124))
+  (call $vbdd_desc_from_native (local.get $vb) (local.get $native))
+  (local.set $i (i32.const 0))
+  (loop $write
+    (call $gs8 (i32.add (local.get $out) (local.get $i))
+      (i32.load8_u (i32.add (local.get $vb) (local.get $i))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br_if $write (i32.lt_u (local.get $i) (i32.const 232))))
+  (call $heap_free (local.get $scratch_ga))
+  (i32.const 0))
