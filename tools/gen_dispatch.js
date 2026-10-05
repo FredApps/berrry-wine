@@ -286,7 +286,7 @@ function handlerCall(api) {
   }
   const vbDdSlot = api.name.match(/^IVBDirectDraw7_DirectSlot(\d+)$/);
   if (vbDdSlot && !api.handler) {
-    const slot = parseInt(vbDdSlot[1], 10);
+    const slot = (api.nargs + 1) * 4;
     return `      (call $handle_IVBDirectDraw7_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
   const vbClipSlot = api.name.match(/^IVBDirectDrawClipper_DirectSlot(\d+)$/);

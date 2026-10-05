@@ -21546,14 +21546,14 @@
   {
     "id": 2537,
     "name": "IVBDirectDraw7_DirectSlot003",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 426316677
   },
   {
     "id": 2538,
     "name": "IVBDirectDraw7_DirectSlot004",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 308873344
   },
@@ -21567,7 +21567,7 @@
   {
     "id": 2540,
     "name": "IVBDirectDraw7_DirectSlot006",
-    "nargs": 1,
+    "nargs": 4,
     "convention": "stdcall",
     "hash": 342428582
   },
@@ -21589,14 +21589,14 @@
   {
     "id": 2543,
     "name": "IVBDirectDraw7_DirectSlot009",
-    "nargs": 1,
+    "nargs": 5,
     "convention": "stdcall",
     "hash": 526982391
   },
   {
     "id": 2544,
     "name": "IVBDirectDraw7_DirectSlot010",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2624331861
   },
@@ -21610,105 +21610,105 @@
   {
     "id": 2546,
     "name": "IVBDirectDraw7_DirectSlot012",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2590776623
   },
   {
     "id": 2547,
     "name": "IVBDirectDraw7_DirectSlot013",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2573999004
   },
   {
     "id": 2548,
     "name": "IVBDirectDraw7_DirectSlot014",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2557221385
   },
   {
     "id": 2549,
     "name": "IVBDirectDraw7_DirectSlot015",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2540443766
   },
   {
     "id": 2550,
     "name": "IVBDirectDraw7_DirectSlot016",
-    "nargs": 1,
+    "nargs": 4,
     "convention": "stdcall",
     "hash": 2523666147
   },
   {
     "id": 2551,
     "name": "IVBDirectDraw7_DirectSlot017",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2506888528
   },
   {
     "id": 2552,
     "name": "IVBDirectDraw7_DirectSlot018",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2758552813
   },
   {
     "id": 2553,
     "name": "IVBDirectDraw7_DirectSlot019",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2741775194
   },
   {
     "id": 2554,
     "name": "IVBDirectDraw7_DirectSlot020",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2725144670
   },
   {
     "id": 2555,
     "name": "IVBDirectDraw7_DirectSlot021",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2741922289
   },
   {
     "id": 2556,
     "name": "IVBDirectDraw7_DirectSlot022",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2691589432
   },
   {
     "id": 2557,
     "name": "IVBDirectDraw7_DirectSlot023",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2708367051
   },
   {
     "id": 2558,
     "name": "IVBDirectDraw7_DirectSlot024",
-    "nargs": 1,
+    "nargs": 4,
     "convention": "stdcall",
     "hash": 2792255146
   },
   {
     "id": 2559,
     "name": "IVBDirectDraw7_DirectSlot025",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 2809032765
   },
   {
     "id": 2560,
     "name": "IVBDirectDraw7_DirectSlot026",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 2758699908
   },
@@ -34581,5 +34581,37 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 4089,
+    "name": "IVBDirectDraw7_SetDisplayMode",
+    "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3405772288
+  },
+  {
+    "id": 4090,
+    "name": "IVBDirectDraw7_TestCooperativeLevel",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 586502962,
+    "handler": "IVBDirectDraw7_TestCooperativeLevel"
+  },
+  {
+    "id": 4091,
+    "name": "IVBDirectDraw7_WaitForVerticalBlank",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1356986969
+  },
+  {
+    "id": 4092,
+    "name": "IVBDirectDraw7_GetDeviceIdentifier",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1168585098
   }
 ]
