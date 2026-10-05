@@ -9,7 +9,7 @@ const { classifyCandidate } = require('./corpus-categories');
 const { inventory } = require('./corpus-inventory');
 const { getCatalog, getBuildIdentity, launchFor } = require('./emulator-server');
 const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
-const { createActivityReader, boardEntry } = require('./activity');
+const { createActivityReader, boardEntry, linkCommits } = require('./activity');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -477,7 +477,8 @@ function createReader(options = {}) {
       const launchCatalog = await getCatalog(root);
       for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,projectStatus,releaseReadiness,emulatorBuild,
+    linkCommits(activityResult.commits || [], tasks, runList);
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }
