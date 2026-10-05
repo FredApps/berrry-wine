@@ -8,8 +8,12 @@ Prepared 2026-10-05 16:46-16:49Z, source only. Evidence: stage 2 attempt 2 rows
 
 All 11 moved l1 rows (CHANGE, CAVEIRA, anarchy, do, rage, BLIQ x2, BYRON, CYCLE, ANSWER, ASSAULT):
 
-1. **Capture length is NOT the confound.** Final dispatched is equal or within +-1 in every row (CAVEIRA
-   -1, do +1; ANSWER 80001871 both), and every frame is identical. The two runs cover the same guest time.
+1. **Capture length: UNPROVEN either way.** Final dispatched is equal or within +-1 in every row (CAVEIRA
+   -1, do +1; ANSWER 80001871 both), and every frame is identical. That does NOT establish an identical
+   WAV sample count or render end time: dispatched counts guest work, not the audio clock, and the last
+   render instant depends on where the final stop falls. Whether length/duration contributes to the hash
+   change stays unproven until the WAVs are captured and their sample counts, durations and render clock
+   are compared (wav-run.js reports all three per tree).
 2. **Arm agreement cannot validate them.** In base and in cand the four arms already agree on these
    programs. BLIQ, CYCLE, rage and CHANGE are identical across l1/jit-early/jit-sepc/fold64 in both
    (for BYRON and ANSWER only fold64, and ANSWER's jit-sepc in base, differ). So the change is
@@ -24,15 +28,18 @@ All 11 moved l1 rows (CHANGE, CAVEIRA, anarchy, do, rage, BLIQ x2, BYRON, CYCLE,
    dispatched, so this is not an end-of-run effect. It is consistent with deliveries moving from
    early-on-date handbacks to the next real stop (v2/v3), and rate-limited lines (SB `irqEvery`)
    then counting differently.
-5. **BLIQ is the one with a guest-behaviour change:** `ints` 2985 -> 2978 (the guest made 7 fewer INT
-   calls). BLIQ reprograms PIT channel 0 and reads it back (docs/toyvm-irq-schedule.md; dos-loop.js
+5. **BLIQ is the only observed `ints` change:** 2985 -> 2978 (the guest made 7 fewer INT calls). This
+   is not evidence that BLIQ is the only program whose guest behaviour changed: the IRQ-count changes
+   (item 4) and the audio differences in the other rows are guest-observable too, and the preserved
+   rows carry no field that would show other behaviour changes. BLIQ reprograms PIT channel 0 and reads it back (docs/toyvm-irq-schedule.md; dos-loop.js
    comments). Its timer rate depends on what it reads, so the extra stops (PIT phase updated at more
    dates) plausibly change its readback and therefore its behaviour.
 
-None of this says the new audio is right or wrong. It says the hash change is dominated by render
-and delivery instants, and that only BLIQ shows a guest-visible behaviour change beyond audio.
+None of this says the new audio is right or wrong. It says render and delivery instants are the
+leading explanation for the hash change (unproven until the WAVs are compared), and that BLIQ is the
+only row with an observed `ints` change; IRQ and audio differences elsewhere are guest-observable too.
 
-## Smallest reference check (needs one slot; about 1 min estimated)
+## Smallest reference check (needs one slot; one total bound of 300 s, traced time unmeasured)
 
 Programs: BLIQ (1994-b-bliq; PIT reprogrammer, ints changed), CYCLE (1994-c-cyclewar; SB mixer cited
 in the schedule doc), CAVEIRA (1993-c-caveira; largest stop delta, irqs +7).
@@ -45,12 +52,35 @@ p4-attribution/attribution.js):
 - v2v3j_v4 (+4b00d26d);
 - stack (+b3371e21).
 
-The per-tree command is P3's witness recipe through the run-dos CLI, with the defaults variant
-tailcall and cpu 386, and audio rate 22050:
+Runner: `wav-validate/wav-run.js` (stub tests `wav-run.test.js`, 8/8; no emulator). Each run is
+`wav-drive.js`, which calls the tree's `runDos` with corpus-ab.js's exact `witness` recipe (variant
+tailcall, cpu 386, autoKey, pitClock, soundPref sb, ULTRASND=220,1,1,11,7, audioRate 22050, budget
+80M, schedule on) and hashes `audio.wavBytes(audioChunks)` exactly as corpus-ab does. The run-dos
+CLI is NOT used: its defaults are not corpus-ab's, so a P3 mismatch from it would say nothing about
+the patches. Traces are added as the read-only `traceIrq` (all three) and `traceIo` 40,43 (BLIQ
+only) options. The gate checks every guest field, so a trace that perturbed a run would be VOID.
 
-    node <tree>/tools/toyvm/run-dos.js <W>/demos/<prog> --dispatches=80m --pit-clock --auto-key \
-      --sound-pref=sb --env=ULTRASND=220,1,1,11,7 --audio=<out>/<tree>-<prog>.wav \
-      --trace-irq --trace-io=40,43 > <out>/<tree>-<prog>.log
+    node wav-run.js --w=<stage-1 work dir> --out=<new dir> --dry-run|--run \
+      [--total=300] [--log-cap-mb=64] [--out-cap-mb=512] [--no-trace]
+
+Exit codes:
+
+| code | status | meaning |
+|---|---|---|
+| 0 | PASS | completed with P3 reproduced; not an audio-correctness verdict |
+| 2 | — | prep, pin or driver failure, or a non-empty --out |
+| 3 | VOID | P3 not reproduced; the middle trees are not run |
+| 4 | — | missing or unhealthy WAV or row |
+| 5 | DEADLINE | the one total bound was reached; process groups are killed |
+| 6 | SIZE | hard per-log cap, or the remaining output budget, reached |
+| 130 | — | signalled |
+
+Inputs are pinned: base 2683a6e3, the five patches by sha256, and each program directory by a
+digest of its files. The trees are deleted on every exit; the logs, WAVs and rows are kept. Each
+row also carries the audio clock (frames, `audio.rendered`, the `outAcc` residue,
+guestSeconds(dispatched)). Per `audio.js` `Sound.advance`, the frame count is floor(rendered guest
+time x rate), carried across slices, which is why final dispatched alone cannot settle the length
+question.
 
 Gates and analysis:
 1. **Validity:** sha256 of head's and stack's WAV (first 16 hex) must equal P3's preserved l1 `wav` for

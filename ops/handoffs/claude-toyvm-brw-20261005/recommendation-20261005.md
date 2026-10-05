@@ -117,16 +117,23 @@ disassembly per the repo's optimization rule). That measurement does not exist.
 ## 6b. The 11 schedule-on l1 changes (wav-validate/PLAN.md)
 
 From the preserved rows:
-- Capture length is not the cause (final dispatched equal or +-1; frames identical).
+- Capture length/duration as a cause is UNPROVEN: final dispatched equal or +-1 and identical frames
+  do not establish identical WAV sample counts or render end times. Labelled unproven until the WAV
+  capture compares sample counts, durations and the render clock.
 - Arm agreement cannot validate them: all four arms already agree on most of these in base and cand,
   so the change is uniform across arms.
 - The leading confound is render instants: cand has more `date` stops (+1 to +6,377), each a render
   point where the SB DMA is read.
-- BLIQ is the only guest-behaviour change (ints 2985 -> 2978, a PIT reprogrammer).
+- BLIQ is the only observed `ints` change (2985 -> 2978, a PIT reprogrammer). That is not proof it is
+  the only guest-behaviour change: the IRQ-count and audio differences elsewhere are guest-observable.
 
-The smallest reference check (one slot, about 1 min): BLIQ, CYCLE and CAVEIRA on head, v2v3,
-v2v3j, v2v3j_v4 and stack, with --audio, --trace-irq and --trace-io=40,43. Validity gate: head and
-stack WAV hashes equal P3's. The run attributes which patch changes the audio, classifies the first
+The smallest reference check (one slot; 15 runs, about 3 s each untraced in P3, traced time
+unmeasured, so the total bound is 300 s): BLIQ, CYCLE and CAVEIRA on head, v2v3, v2v3j, v2v3j_v4 and
+stack. It runs wav-validate/wav-run.js, which drives runDos with corpus-ab's exact witness recipe,
+plus read-only irq traces and PIT port 40/43 traces for BLIQ. Validity gate: head and stack equal
+P3's l1 rows on every guest field (wav, frame, dispatched, irqs, ints, pixels); otherwise the result
+is VOID. Each row records the audio clock (frames, rendered, outAcc residue, guest seconds), so the
+length question is answered by measurement. The run attributes which patch changes the audio, classifies the first
 divergence against the schedule's date contract, and compares samples with wav-compare.js (tests 5/5).
 
 ## 7. Evidence gaps and follow-ups
