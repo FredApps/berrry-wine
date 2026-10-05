@@ -197,6 +197,36 @@ check('P4 rejects a malformed row even when the rest is complete', () => {
   assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /malformed row/);
 });
 
+// --- P3 under the stage-2 invocation cap ---------------------------------------
+// The real stage 2 (2026-10-05 15:47Z) exited 7 before P3 because a fixed
+// 1800 s reserve left exactly 600 s of a 2400 s invocation. A corpus-ab stub
+// that writes all four arms at 80M for every program and a clean compare.
+function armsStub(dir) {
+  programs(dir);
+  const f = path.join(dir, 'arms-stub.js');
+  const rows = [];
+  for (let i = 0; i < PROGS; i++) for (const arm of ['l1', 'jit-early', 'jit-sepc', 'fold64']) rows.push(JSON.stringify({ exe: `/demos/p${i}/P${i}.EXE`, arm, budget: 80e6 }));
+  write(f, `const a = process.argv.slice(2); const fs = require('fs');\n`
+    + `const md = a.find((x) => x.startsWith('--md=')); const mv = a.find((x) => x.startsWith('--moved='));\n`
+    + `if (a.some((x) => x.startsWith('--compare='))) {\n`
+    + `  if (md) fs.writeFileSync(md.slice(5), '   BROKE (agreed before, not after) -- BLOCKING: 0\\n');\n`
+    + `  if (mv) fs.writeFileSync(mv.slice(8), '');\n  process.exit(0);\n}\n`
+    + outStub(0, rows.join('\n') + '\n'));
+  return f;
+}
+check('P3 runs inside the stage-2 cap (INVOCATION_S=2400) and passes its gates', () => {
+  const W = workdir('p3-cap2400');
+  const r = plan('arms', W, { AB: armsStub(W), SLOT_S: '5700', INVOCATION_S: '2400' });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.journal, /\[P3\] \d+s for P3, 1200s reserved for P4-P6/);
+  assert.match(r.journal, /\(12\/12 rows per tree\)/);
+});
+check('P3 still refuses when the invocation cannot fit it plus the reserve', () => {
+  const W = workdir('p3-cap1700');
+  const r = plan('arms', W, { AB: armsStub(W), SLOT_S: '5700', INVOCATION_S: '1700' });
+  assert.strictEqual(r.code, 7, r.out); assert.match(r.journal, /P3: not enough slot left \(\d+s left, 1200s reserved/);
+});
+
 // --- P5 BRW parity gate (brw-bisect stubs) -----------------------------------
 // Each tree gets a stub brw-bisect.js that writes an IRQ list and a BRWBISECT
 // line; `cand` arms either agree or differ in one delivery / the frame.

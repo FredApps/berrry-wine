@@ -347,8 +347,16 @@ async function sweep() {
 
 async function arms() {
   diskok();
-  const secs = remainingS() - B(1800, 180);   // leave room for P4-P6
-  if (secs <= B(600, 60)) abort('P3: not enough slot left', 7);
+  // Leave room for P4-P6 after P3. A fixed 1800 s fit a single 2-hour slot and
+  // made stage 2's own 2400 s invocation cap refuse P3 outright (stage 2 on
+  // 2026-10-05 15:47Z exited 7 with nothing run). P3_RESERVE_S defaults to
+  // 1200 s: P4's expected ~2 min above its 600 s minimum, plus P5's 900 s
+  // minimum. If P3 then overruns its share, corpus-ab's --max-seconds stops it
+  // and the identity gate reports INCOMPLETE -- never a silent pass.
+  const reserve = Number(env.P3_RESERVE_S || B(1200, 180));
+  const secs = remainingS() - reserve;
+  if (secs <= B(600, 60)) abort(`P3: not enough slot left (${remainingS()}s left, ${reserve}s reserved for P4-P6)`, 7);
+  say('P3', `${secs}s for P3, ${reserve}s reserved for P4-P6`);
   const rcs = await Promise.all(TREES.map((t) => node([AB, `--tree=${p(t)}`, `--list=${p('programs.txt')}`,
     '--arms=l1,jit-early,jit-sepc,fold64', '--recipe=witness', `--budgets=${B('80m', '4m')}`,
     `--jobs=${Math.floor((JOBS + 1) / 2)}`, '--timeout=300', `--max-seconds=${secs}`,
