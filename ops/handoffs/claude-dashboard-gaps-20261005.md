@@ -118,13 +118,65 @@ Patch identical (4 files, +48/−2); the only conflict was both sides appending 
 - Deploy per commit stays "not recorded": the only production evidence is the 2026-10-03 file
   snapshot (`ops/release-evidence/production-20261003/`), which names no commit.
 
+### 6. Matched-scene performance comparison (DASH-GAPS-PERF-COMPARE)
+
+- `release-model.js` `perfComparisons()`: newest measurement vs each earlier one; comparable only
+  when metric, counterKind, scene, renderer, host and GPU are identical and both record
+  `wasmSha256`; returns delta %, metric label, same/different build; everything else is listed as
+  not comparable with the differing fields.
+- Candidate details show a **Before / after** section (only when a measurement exists).
+- Tests: `release-model.test.js` +1 (one comparable pair +25.0%, scene / missing-hash /
+  counter mismatches named, single-measurement and no-match texts, rendered section).
+- Live data: every measured game has exactly one recorded measurement (8 runs, 8 candidates), so
+  each shows "Not comparable: only one measurement recorded"; no comparison is invented.
+
 ## Tests
 
-`node --test ops/<file>.test.js` per file in the worktree (node_modules symlinked from the shared
-checkout, untracked): all pass except `terminal.test.js` 2 browser cases — `Browser was not found
-at the configured executablePath (/Applications/Google Chrome.app/…)`, a macOS-only Chrome path,
-pre-existing and unrelated.
+`node --test ops/<file>.test.js`, one file at a time in the worktree, at the final commit. The
+shared checkout's `node_modules` is symlinked in and left untracked. Exit codes: activity 0 (5),
+agents-view 0 (3), blocker-model 0 (5), coordinator-inbox 0 (10), dxball-frame-counter 0 (18),
+emulator-server 0 (6), gameplay-coverage 0 (9), gameplay-frame-counter 0 (11),
+icy-tower-frame-counter 0 (31), icy-tower-measurement 0 (21), ops 0 (27), release-model 0 (8),
+release-readiness 0 (8), telegram 0 (24). terminal exits 1 with 3 pass / 2 fail: both failures
+are browser cases that report `Browser was not found at the configured executablePath
+(/Applications/Google Chrome.app/…)`. That is a macOS-only Chrome path in an environment
+without Chrome. The failure predates this branch, and these commits don't touch that file.
+
+New tests use `ops/test-app-vm.js`. It runs `task-ui.js`, `approval-ui.js`, `blocker-model.js`,
+`release-model.js` and `app.js` in a vm with an inert DOM, so the views render against fixture
+snapshots without a browser.
+
+## Screenshots
+
+None taken. Browser review needs a runtime slot (REQUEST → root grant → CLAIM → one Chrome →
+RELEASE) and no grant was posted during this task. Real-data checks were made instead: a GET of
+`/api/state` from my own `ops/server.js` on 127.0.0.1:8197 against the shared root, plus views
+rendered from that snapshot in the vm. Still to do with a slot: Overview, Agents, a title's
+details and Ready for desktop at desktop width and at 390 px. Check that the two-line rows hold
+at ≥1000 px and wrap at 390 px, and that the ▸ and Terminal controls are ≥44 px on touch.
+
+## Integration order
+
+`c78d985f` → `2996f415` → `255aeab6` (cherry-pick -x of 63a248a6, unmodified patch) → `a3eba543`
+(depends on 255aeab6) → `5585d09c` → `246e9b83` → the perf-comparison commit. All are on
+`claude/dashboard-gaps-20261005`, base origin/main `dd0dd740`, not pushed. If ops-dashboard has
+already integrated 63a248a6, drop `255aeab6`: the only conflict was the shared end-of-file
+append in `style.css`.
 
 ## Remaining gaps
 
-Filled in as later commits land.
+- **Sound evidence:** there is no audio field in `result.json` and no sound gate, so the UI says
+  "not recorded". Adding a sound gate would change the readiness rules, so it needs a decision
+  from root or the user.
+- **Deploy per commit:** the production snapshot holds files and names no commit. Showing
+  "deployed" needs the deploy tool (`tools/deploy-berrry.js`) to record the commit and wasm it
+  shipped.
+- **Exact-build Play:** the launch serves the live tree. A pinned link refuses with an
+  explanation when the module has changed, but it cannot replay an older build. That would need
+  stored per-build artifacts.
+- **Release reviews:** all 4 recorded reviews are stale because the runtime source hashes no
+  longer match, so 0 games are "ready". The fix is a fresh review, not a dashboard change.
+- **Task ↔ commit links:** these depend on commits naming task IDs. None of the last 150 commit
+  messages name an open task. Agents should put the task ID in the commit message.
+- **Not done (in the earlier review backlog but outside this scope):** deep links / routes,
+  ETag/hidden-tab polling, public GitHub PR lookup.

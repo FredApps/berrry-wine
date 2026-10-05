@@ -128,3 +128,30 @@ test('launch shows the served build and compares it with the reviewed gameplay m
   assert.ok(!corpus.includes('build-chip'), 'corpus cards stay compact; build is shown once in the launch bar');
   assert.ok(vm.runInContext("corpusLaunchActions(state.candidates[0],true)", ctx).includes('build-chip'));
 });
+
+test('performance before/after compares only identical scene, counter, renderer, host, GPU with recorded builds', () => {
+  const base = {metric: 'guest-logical-frame-submissions', counterKind: 'guest-logical-frame-submissions', scene: 'Round one', renderer: 'GDI', host: 'box', gpu: 'sw', historical: false, samples: []};
+  const run = (key, fps, at, extra = {}) => ({key, candidateId: 'alpha', verification: 'reviewed', performance: {...base, fps, measuredAt: at, wasmSha256: 'w-' + key, ...extra}});
+  const candidate = {id: 'alpha', appIds: ['alpha_app']};
+  const s = {runs: [run('old', 20, '2026-10-01T00:00:00Z'), run('new', 25, '2026-10-03T00:00:00Z'), run('other-scene', 40, '2026-10-02T00:00:00Z', {scene: 'Menu'}),
+    run('no-build', 22, '2026-10-02T12:00:00Z', {wasmSha256: null}), run('flip', 60, '2026-10-02T06:00:00Z', {counterKind: 'guest-flip-events', metric: 'guest-presents'})]};
+  const cmp = ReleaseModel.perfComparisons(s, candidate);
+  assert.equal(cmp.count, 5);
+  assert.equal(cmp.pairs.length, 1);
+  assert.equal(cmp.pairs[0].before.runKey, 'old');
+  assert.equal(cmp.pairs[0].after.runKey, 'new');
+  assert.equal(cmp.pairs[0].deltaPct, 25);
+  assert.equal(cmp.pairs[0].sameBuild, false);
+  assert.equal(cmp.pairs[0].label, 'logical gameplay frames/s');
+  const reasons = Object.fromEntries(cmp.notComparable.map(n => [n.before.runKey, n.reasons.join(', ')]));
+  assert.equal(reasons['other-scene'], 'scene differs');
+  assert.equal(reasons['no-build'], 'module hash not recorded');
+  assert.equal(reasons.flip, 'metric differs, counter differs');
+  assert.equal(ReleaseModel.perfComparisons({runs: [s.runs[0]]}, candidate).text, 'Not comparable: only one measurement recorded');
+  assert.equal(ReleaseModel.perfComparisons({runs: [s.runs[1], s.runs[2]]}, candidate).pairs.length, 0);
+  const ctx = browserApp({...snapshot(), runs: s.runs});
+  const html = vm.runInContext("perfComparisonHtml({id:'alpha',appIds:[]})", ctx);
+  assert.match(html, /\+25\.0%<\/strong> logical gameplay frames\/s · different builds/);
+  assert.match(html, /3 not comparable/);
+  assert.match(html, /wasm w-old/);
+});
