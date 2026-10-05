@@ -14,6 +14,7 @@
 // 5 arms gate, 6 control gate, 7 slot deadline, 8 candidate incomplete,
 // 9 BRW interrupt-list/frame parity gate, 11 INCOMPLETE corpus coverage (a
 // partial comparison is never a pass, even when every compared row agrees),
+// 12 coverage integrity (a malformed, out-of-domain or duplicate row),
 // 130 the runner itself was signalled.
 //
 // Process hygiene (root review 116210a7): every child runs in its OWN process
@@ -259,20 +260,49 @@ async function tests() {
 // not reach every program (x arm x budget) is INCOMPLETE, exit 11, whatever
 // its compared rows say.
 const programList = () => read(p('programs.txt')).split('\n').filter(Boolean);
-function sweepRows(t) {
-  try { return (JSON.parse(read(p('out', `sweep-${t}.json`))).rows || []).length; } catch { return -1; }
-}
-function abKeys(file) {
-  const keys = new Set();
-  for (const l of read(file).split('\n')) {
-    if (!l) continue;
-    try { const r = JSON.parse(l); keys.add(`${r.exe}\t${r.arm}\t${r.budget}`); } catch {}
+// Coverage is checked by IDENTITY, not by count: every expected row present
+// exactly once and nothing else. A wrong program, arm or budget standing in for
+// a missing one would satisfy a count, so it is rejected here (root review).
+// Missing expected rows -> exit 11 INCOMPLETE; a malformed, identity-less,
+// out-of-domain or duplicate row -> exit 12 (the comparison cannot be trusted).
+const countOf = (s) => {   // corpus-ab's own budget parser: '80m' -> 80000000
+  const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(s).trim());
+  if (!m) throw new Error(`not a count: ${s}`);
+  return Math.round(Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, b: 1e9 })[m[2].toLowerCase()]);
+};
+const progIds = () => programList().map((l) => path.resolve(l));
+function exactCoverage(label, rows, expected, idOf) {
+  const want = new Set(expected);
+  if (!want.size) abort(`${label}: no expected rows to measure coverage against`, 11);
+  const seen = new Set(), bad = [];
+  for (const r of rows) {
+    if (r === null || typeof r !== 'object') { bad.push('malformed row'); continue; }
+    const id = idOf(r);
+    if (id === null) { bad.push('row without identity fields'); continue; }
+    if (!want.has(id)) { bad.push(`out-of-domain ${id.replace(/\t/g, ' ')}`); continue; }
+    if (seen.has(id)) { bad.push(`duplicate ${id.replace(/\t/g, ' ')}`); continue; }
+    seen.add(id);
   }
-  return keys.size;
+  if (bad.length) abort(`${label}: ${bad.length} invalid row(s): ${bad.slice(0, 3).join('; ')}`, 12);
+  const missing = [...want].filter((id) => !seen.has(id));
+  if (missing.length) {
+    abort(`${label}: ${missing.length} of ${want.size} expected rows missing (e.g. ${missing.slice(0, 2).map((m) => m.replace(/\t/g, ' ')).join(', ')}) -- a partial comparison, not a pass`, 11);
+  }
+  return want.size;
 }
-function needComplete(label, got, want) {
-  if (!(want > 0)) abort(`${label}: no program list to measure coverage against`, 11);
-  if (got < want) abort(`${label}: ${got} of ${want} rows -- a partial comparison, not a pass`, 11);
+function sweepCoverage(label, t) {
+  let rows;
+  try { rows = JSON.parse(read(p('out', `sweep-${t}.json`))).rows; } catch { abort(`${label}: unreadable sweep JSON`, 12); }
+  if (!Array.isArray(rows)) abort(`${label}: sweep JSON has no rows array`, 12);
+  return exactCoverage(label, rows, progIds(), (r) => (typeof r.exe === 'string' && r.exe ? path.resolve(r.exe) : null));
+}
+function abCoverage(label, file, arms, budgets) {
+  const rows = read(file).split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } });
+  const bs = budgets.map(countOf);
+  const expected = [];
+  for (const e of progIds()) for (const a of arms) for (const b of bs) expected.push(`${e}\t${a}\t${b}`);
+  return exactCoverage(label, rows, expected, (r) => ((typeof r.exe === 'string' && r.exe && typeof r.arm === 'string'
+    && Number.isFinite(Number(r.budget))) ? `${path.resolve(r.exe)}\t${r.arm}\t${Number(r.budget)}` : null));
 }
 
 async function sweep() {
@@ -297,8 +327,8 @@ async function sweep() {
   if (rc === 1) abort(`sweep gate: ${txt.split('\n').filter((l) => /^(REGRESSIONS|WENT BLANK)/.test(l)).join(' ')}`, 4);
   if (rc !== 0) abort(`sweep-diff failed (exit ${rc})`, 2);
   // A deadline-cut sweep compared a prefix: report it as INCOMPLETE, not clean.
-  const want = programList().length;
-  for (const t of TREES) needComplete(`P2 sweep ${t}${rcs[TREES.indexOf(t)] === 124 ? ' (deadline)' : ''}`, sweepRows(t), want);
+  let want = 0;
+  for (const t of TREES) want = sweepCoverage(`P2 sweep ${t}${rcs[TREES.indexOf(t)] === 124 ? ' (deadline)' : ''}`, t);
   say('P2', `sweep gate clean, ${want}/${want} programs in both trees`);
 }
 
@@ -320,8 +350,8 @@ async function arms() {
   if (rc !== 0) abort(`corpus-ab compare failed (exit ${rc})`, 2);
   // --max-seconds may have stopped both trees at the same prefix; that is a
   // partial comparison and must say so (4 arms x 1 budget per program).
-  const want = programList().length * 4;
-  for (const t of TREES) needComplete(`P3 arms ${t}`, abKeys(p('out', `arms-${t}.ndjson`)), want);
+  let want = 0;
+  for (const t of TREES) want = abCoverage(`P3 arms ${t}`, p('out', `arms-${t}.ndjson`), ['l1', 'jit-early', 'jit-sepc', 'fold64'], [B('80m', '4m')]);
   say('P3', `${summary} (${want}/${want} rows per tree)`);
 }
 
@@ -341,8 +371,7 @@ async function control() {
   if (Number(m[2]) === 0) abort('control gate: 0 l1 rows compared', 6);
   if (Number(m[1]) !== 0) abort(`control gate: ${line.trim()} (the patch leaks off the schedule)`, 6);
   if (rc !== 0) abort(`nosched compare failed (exit ${rc})`, 6);
-  const want = programList().length;          // 1 arm x 1 budget per program
-  for (const t of TREES) needComplete(`P4 nosched ${t}`, abKeys(p('out', `nosched-${t}.ndjson`)), want);
+  for (const t of TREES) abCoverage(`P4 nosched ${t}`, p('out', `nosched-${t}.ndjson`), ['l1'], [B('8m', '2m')]);
   say('P4', line.trim());
 }
 

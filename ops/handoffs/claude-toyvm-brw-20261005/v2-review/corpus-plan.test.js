@@ -65,7 +65,9 @@ const PROGS = 3;
 function programs(W, k = PROGS) {
   write(path.join(W, 'programs.txt'), Array.from({ length: k }, (_, i) => `/demos/p${i}/P${i}.EXE`).join('\n') + '\n');
 }
-const sweepBody = (rows) => JSON.stringify({ rows: Array.from({ length: rows }, (_, i) => ({ name: `P${i}.EXE` })) });
+const sweepRow = (i) => ({ exe: `/demos/p${i}/P${i}.EXE`, name: `P${i}.EXE` });
+// rows: a count (programs 0..n-1) or an explicit list of program indices
+const sweepBody = (rows) => JSON.stringify({ rows: (Array.isArray(rows) ? rows : Array.from({ length: rows }, (_, i) => i)).map(sweepRow) });
 
 // --- P2 sweep ------------------------------------------------------------
 function sweepTree(W, { baseRc = 0, candRc = 0, diffRc = 0, rows = PROGS, candRows = rows } = {}) {
@@ -98,7 +100,17 @@ check('P2 passes clean', () => {
 check('P2 with a short sweep is INCOMPLETE, not clean', () => {
   const W = workdir('p2-partial'); sweepTree(W, { candRows: 2 });
   const r = plan('sweep', W);
-  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P2 sweep cand: 2 of 3 rows/);
+  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P2 sweep cand: 1 of 3 expected rows missing/);
+});
+check('P2 rejects an equal-count sweep with a WRONG program in place of a missing one', () => {
+  const W = workdir('p2-wrong-prog'); sweepTree(W, { candRows: [0, 1, 9] });
+  const r = plan('sweep', W);
+  assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /P2 sweep cand: 1 invalid row\(s\): out-of-domain \/demos\/p9\/P9\.EXE/);
+});
+check('P2 rejects an equal-count sweep with a DUPLICATE row in place of a missing one', () => {
+  const W = workdir('p2-dup'); sweepTree(W, { candRows: [0, 1, 1] });
+  const r = plan('sweep', W);
+  assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /duplicate \/demos\/p1\/P1\.EXE/);
 });
 
 // --- SMOKE mode -------------------------------------------------------------
@@ -129,10 +141,13 @@ check('SMOKE P1 runs only the SMOKE_TESTS suites', () => {
 // --- P4 control (corpus-ab stub) ------------------------------------------
 // A corpus-ab stub: --compare writes the moved line; a run writes `rows`
 // distinct ndjson rows (one per program, arm l1, budget 8m).
+// `rows`: a count (programs 0..n-1, arm l1, budget 8m) or an explicit list of
+// row objects / raw strings (for malformed lines).
 function abStub(dir, moved, total, compareRc = 0, rows = PROGS) {
   programs(dir);
   const f = path.join(dir, 'ab-stub.js');
-  const nd = Array.from({ length: rows }, (_, i) => JSON.stringify({ exe: `/demos/p${i}/P${i}.EXE`, arm: 'l1', budget: 8e6 })).join('\n') + '\n';
+  const list = Array.isArray(rows) ? rows : Array.from({ length: rows }, (_, i) => ({ exe: `/demos/p${i}/P${i}.EXE`, arm: 'l1', budget: 8e6 }));
+  const nd = list.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
   write(f, `const a = process.argv.slice(2);\nconst fs = require('fs');\n`
     + `const md = a.find((x) => x.startsWith('--md='));\n`
     + `if (a.some((x) => x.startsWith('--compare='))) {\n`
@@ -163,7 +178,23 @@ check('P4 passes on 0 of N moved', () => {
 check('P4 with missing rows is INCOMPLETE even when 0 moved', () => {
   const W = workdir('p4-partial');
   const r = plan('control', W, { AB: abStub(W, 0, 2, 0, 2) });
-  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P4 nosched base: 2 of 3 rows/);
+  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P4 nosched base: 1 of 3 expected rows missing/);
+});
+const row = (i, arm = 'l1', budget = 8e6) => ({ exe: `/demos/p${i}/P${i}.EXE`, arm, budget });
+check('P4 rejects an equal-count run with a WRONG arm in place of a missing row', () => {
+  const W = workdir('p4-wrong-arm');
+  const r = plan('control', W, { AB: abStub(W, 0, 3, 0, [row(0), row(1), row(2, 'fold64')]) });
+  assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /out-of-domain \/demos\/p2\/P2\.EXE fold64 8000000/);
+});
+check('P4 rejects an equal-count run with a WRONG budget', () => {
+  const W = workdir('p4-wrong-budget');
+  const r = plan('control', W, { AB: abStub(W, 0, 3, 0, [row(0), row(1), row(2, 'l1', 2e6)]) });
+  assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /out-of-domain \/demos\/p2\/P2\.EXE l1 2000000/);
+});
+check('P4 rejects a malformed row even when the rest is complete', () => {
+  const W = workdir('p4-malformed');
+  const r = plan('control', W, { AB: abStub(W, 0, 3, 0, [row(0), row(1), row(2), '{not json']) });
+  assert.strictEqual(r.code, 12, r.out); assert.match(r.journal, /malformed row/);
 });
 
 // --- P5 BRW parity gate (brw-bisect stubs) -----------------------------------
