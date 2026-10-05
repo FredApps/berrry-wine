@@ -29,8 +29,10 @@ function decide(snapshot,terminal,config,previous={},now=Date.now()) {
   return {send:true,tasks,record:{...record,reason:'idle with actionable work'}};
 }
 function message(tasks,config) {
-  const names=tasks.slice(0,6).map(t=>`${t.id} (${t.status})`).join(', ');
-  return `You are idle with actionable assigned tasks: ${names}. Read current TODOS.md and latest messageboard before acting. Reconcile completed work against origin/main; do not redo already merged fixes or screenshots. Continue the next unblocked task and collect completed worker results. Keep the authorized two-new-games lane progressing toward ordinary input and gameplay screenshots; serialize builds/browser/performance work with current owners. Respect all user pauses, exclusions and ownership changes, especially laptop-owned Heroes II timing/music. Do not deploy publicly or answer approvals. If no work is actually actionable, update task blockers/ownership instead of claiming progress. For an intentional pause set scratch/work-watchdog/control.json paused=true (or add your terminal ID to pausedTerminals) and record why. Keep routine updates on the dashboard; Telegram only for requested replies or meaningful milestones. ${config.note||''}`;
+  const names=tasks.slice(0,2).map(t=>t.id).join(', ').slice(0,100);
+  // Short literal drafts avoid the TUI collapsing long input into a paste chip,
+  // whose hidden contents cannot be checked by the exact-draft delivery guard.
+  return `Resume assigned work (${names}). Read TODOS.md, messageboard.txt and ops/work-watchdog.json first; reconcile merged work and collect worker results. Respect pauses and laptop-owned Heroes II. Continue the two-game lane; serialize runtime tests. Do not deploy publicly or answer approvals. If blocked, update tasks. Intentional pause: scratch/work-watchdog/control.json paused=true.`;
 }
 async function run({root=path.resolve(__dirname,'..'),base=process.env.OPS_URL||'http://127.0.0.1:8098'}={}) {
   const dir=path.join(root,'scratch/work-watchdog');fs.mkdirSync(dir,{recursive:true});

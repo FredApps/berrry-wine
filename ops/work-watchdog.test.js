@@ -40,4 +40,5 @@ test('Claude submission only confirms the exact watchdog draft',()=>{
   assert.equal(workSubmitKey('❯ '+text+'\n─────\nbypass permissions on',text,'claude'),'Enter');
   assert.equal(workSubmitKey('❯ changed\n─────\nbypass permissions on',text,'claude'),null);
   assert.match(message([task],config),/Do not deploy publicly or answer approvals/);
+  assert.ok(message(Array.from({length:20},()=>({...task,id:'A'.repeat(150)})),config).length<600);
 });
