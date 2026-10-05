@@ -18,14 +18,18 @@ const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{
 const inside = (root, file) => file === root || file.startsWith(root + path.sep);
 
 function normalizePerformance(p) {
-  if(!p || !['guest-presents','guest-logical-frame-submissions'].includes(p.metric) || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
-  const logical=p.metric==='guest-logical-frame-submissions';
-  if(logical ? p.counterKind!==p.metric || p.qualification?.accepted!==true || !clip(p.qualification.sceneReview) || !clip(p.qualification.counterReview) || !clip(p.qualification.evidence) : p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
+  if(!p || !['guest-presents','guest-logical-frame-submissions','selected-window-presentations'].includes(p.metric) || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
+  const logical=p.metric==='guest-logical-frame-submissions', windowPresentations=p.metric==='selected-window-presentations';
+  if(windowPresentations){
+    const v=p.visibility, r=v?.client;
+    if(p.physicalFps!==null || !r || ![r.x,r.y,r.w,r.h].every(Number.isFinite) || r.w<=0 || r.h<=0 || !Number.isFinite(v.fraction) || v.fraction<=0 || v.fraction>1)return null;
+  }
+  if(logical || windowPresentations ? p.counterKind!==p.metric || p.qualification?.accepted!==true || !clip(p.qualification.sceneReview) || !clip(p.qualification.counterReview) || !clip(p.qualification.evidence) : p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
   if(p.samples.some(s=>!Number.isInteger(s.frames) || s.frames<0 || number(s.durationMs)===null || s.durationMs<=0))return null;
   const samples=p.samples.map(s=>({frames:s.frames,durationMs:s.durationMs,fps:s.frames*1000/s.durationMs,p95FrameMs:number(s.p95FrameMs)}));
   const fps=samples.reduce((n,s)=>n+s.frames,0)*1000/samples.reduce((n,s)=>n+s.durationMs,0);
   if(!Number.isFinite(fps))return null;
-  return {fps,samples,metric:p.metric,counterKind:p.counterKind,qualification:logical?{accepted:true,sceneReview:clip(p.qualification.sceneReview),counterReview:clip(p.qualification.counterReview),evidence:clip(p.qualification.evidence)}:undefined,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
+  return {fps,samples,metric:p.metric,counterKind:p.counterKind,physicalFps:windowPresentations?null:undefined,visibility:windowPresentations?{client:{...p.visibility.client},fraction:p.visibility.fraction}:undefined,qualification:logical || windowPresentations?{accepted:true,sceneReview:clip(p.qualification.sceneReview),counterReview:clip(p.qualification.counterReview),evidence:clip(p.qualification.evidence)}:undefined,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
 }
 
 async function safeFile(root, relative) {

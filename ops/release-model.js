@@ -16,8 +16,8 @@
   function rateLabels(perf) {
     const logical = perf?.metric === 'guest-logical-frame-submissions', flips = perf?.counterKind === 'guest-flip-events';
     return {
-      rate: logical ? 'logical gameplay frames/s' : flips ? 'guest Flip events/s' : 'guest presentation events/s',
-      interval: logical ? 'p95 submission interval' : flips ? 'p95 Flip interval' : 'p95 presentation interval',
+      rate: perf?.metric === 'selected-window-presentations' ? 'window presentations/s (coalesced GDI)' : logical ? 'logical gameplay frames/s' : flips ? 'guest Flip events/s' : 'guest presentation events/s',
+      interval: perf?.metric === 'selected-window-presentations' ? 'p95 window-presentation interval' : logical ? 'p95 submission interval' : flips ? 'p95 Flip interval' : 'p95 presentation interval',
       frames: logical,
     };
   }
@@ -80,6 +80,7 @@
     const [after, ...earlier] = measured, pairs = [], notComparable = [];
     for (const before of earlier) {
       const reasons = SAME.filter(([key]) => (before[key] || null) !== (after[key] || null)).map(([key, label]) => label + ' differs');
+      if ((before.metric === 'selected-window-presentations' || after.metric === 'selected-window-presentations') && JSON.stringify(before.visibility) !== JSON.stringify(after.visibility)) reasons.push('visible client differs');
       if (!before.wasmSha256 || !after.wasmSha256) reasons.push('module hash not recorded');
       if (reasons.length) { notComparable.push({before, after, reasons}); continue; }
       const labels = rateLabels(after);
