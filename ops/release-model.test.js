@@ -7,22 +7,7 @@ const vm = require('node:vm');
 const ReleaseModel = require('./release-model');
 const {deriveReleaseReadiness} = require('./release-readiness');
 
-// Load the browser scripts into one context with an inert DOM so view
-// functions can be rendered against a fixture snapshot.
-function browserApp(snapshot) {
-  const element = () => ({onclick: null, textContent: '', innerHTML: '', value: '', title: '', open: false, classList: {add() {}, remove() {}, toggle() {}}, addEventListener() {}, querySelector: () => element(), showModal() {}, close() {}});
-  const ctx = vm.createContext({
-    console, Intl, Date, JSON, Math, Number, String, Set, Map, Promise, encodeURIComponent,
-    location: {hash: ''}, window: {addEventListener() {}},
-    document: {querySelector: element, querySelectorAll: () => [], addEventListener() {}},
-    fetch: () => new Promise(() => {}), setInterval() {},
-  });
-  ctx.globalThis = ctx;
-  for (const file of ['blocker-model.js', 'release-model.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), ctx, {filename: file});
-  ctx.__snapshot = snapshot;
-  vm.runInContext('state = __snapshot;', ctx);
-  return ctx;
-}
+const {browserApp} = require('./test-app-vm');
 
 const shots = [{name: 'play.png', url: '/artifact?key=scratch%2Fruns%2Fplay%2Fplay.png'}];
 const gameplayRun = {key: 'scratch/runs/play', candidateId: 'alpha', verification: 'reviewed', outcome: 'passed', startedAt: '2026-10-03T10:00:00Z', route: 'gameplay', gameplayScreenshots: shots, screenshots: shots, visuals: shots,
