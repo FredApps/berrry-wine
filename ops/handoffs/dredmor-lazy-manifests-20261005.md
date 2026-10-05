@@ -1,0 +1,13 @@
+# Dredmor startup asset loading
+
+Implementation commits3e4cb3cf and its response-validation follow-up are based on main e227d71d in `scratch/wt-dredmor-lazy-20261005`. No canonical engine/WASM or shared dirty source changed. Generic schema semantics are documented in `docs/manifest-loading.md`.
+
+The old local manifests had6269 release /6571 beta entries with only URL/path metadata, all awaited before launch. Adding httpRange alone would still perform a HEAD for every file. The new preparation policy emits stat size and loadMode; lazy mounts directly construct sized range providers, with no startup request. The first actual read checks Content-Range offsets/total and exact response length. Native modules/fonts stay required. Optional background mode is a distinct, capped8×64KiB serial prefix warmup after run, with lifetime cancellation and explicit deferred/error state. Both Dredmor trees choose lazy, not background.
+
+Local ignored manifests regenerated with before snapshots in `scratch/dredmor-lazy-20261005/`: release6248lazy+21required, beta6553lazy+18required. Exact hashes/counts in manifest-receipt.json. Binary bytes unchanged and uncommitted. Generic preparation reproduces this metadata after checkout.
+
+Validation:10 focused tests exercise actual host/provider/VFS/generator paths; six existing asset-cancellation tests pass; range-preload compatibility passes; existing lazy VFS suite49/49 including compiled I/O adapters passes. Tier and browser-cache gates pass.6000 sized files produce zero startup network requests; a guest VFS read fetches exactly one64KiB range. Unknown modes, unsafe sizes, stale response totals, conflicting declarations, lazy decode/preload combinations, required failures, cancellation, retry and background bounds are covered. Test scripts use the production source; no scratch permission environment required.
+
+Prepared ordinary route helper: `scratch/dredmor-lazy-20261005/browser.js dungeons_of_dredmor_release attempt1 --slot-granted`, TTY,180sec. It needs a private current source module first (current WAT differs from prior COMI build in09a7/09a8); no runtime was launched before review. Records request methods/ranges/bytes, source identities, source copies, ordinary input, screenshots and cleanup. No hidden input/guest-state mutation. Runtime qualification remains pending; lazy mount tests alone do not prove Dredmor startup/gameplay or Steam behavior.
+
+Source-only remaining corpus audit saved remaining-route-missing.json from live dashboard: Snood3; BGnoninteractive8; BGinteractive89; BGchapters1–2 55; WinampMOD1 =156 paths. These are current missing route declarations, not a reason to blindly repeat bulk transfer; acquisition/path owners retain those tasks.
