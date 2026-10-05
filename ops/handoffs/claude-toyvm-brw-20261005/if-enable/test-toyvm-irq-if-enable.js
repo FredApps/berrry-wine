@@ -134,6 +134,49 @@ function deliveries(out) {
     .filter(Boolean).map((m) => ({ at: Number(m[1]), ip: parseInt(m[2], 16) }));
 }
 
+// What did the arm do in this run? LIMITED EVIDENCE by construction: parity
+// with l1 is trivially true for an arm that never installed or ran compiled
+// code, so each arm's OWN report line (run-dos.js, printed after every run) is
+// found first, parsed only within itself, and printed RAW beside the verdict.
+// Two levels are kept apart:
+//   installed/compiled  region installs, uop heads, uop-only programs, folds
+//   executed            uop entries/steps, uop-only entries and step share
+// The region JIT's execution counters (--step-audit, --exit-census) and the
+// fold's per-tree entry counts are NOT printed without instrumentation flags
+// that change the arm under test, so those arms report installed-only. And
+// no whole-run count shows that compiled code ran THROUGH the IRQ boundary
+// under test. An arm with nothing installed is "parity NOT EVIDENTIAL"; it is
+// reported, not failed (engagement is about the evidence, not the property).
+// Line formats: run-dos.js (base 2683a6e3) region jit ~1555, uop ~1540,
+// uop-only ~1530, and the handbacks summary line carrying "N tree folds" ~1626.
+const ARM_LINE = {
+  region: /^ {2}region jit \([^)\n]*\): [^\n]*$/m,
+  uop: /^ {2}uop: [^\n]*$/m,
+  uopOnly: /^ {2}uop-only: [^\n]*$/m,
+  fold: /^ {2}\d+ handbacks, \d+ interrupts[^\n]*$/m,
+};
+function engagement(arm, out) {
+  if (arm === 'l1') return { installed: true, executed: true, summary: 'reference', raw: '' };
+  const raw = (out.match(ARM_LINE[arm]) || [''])[0];
+  const num = (re) => { const m = raw.match(re); return m ? Number(m[1]) : 0; };
+  let installed = 0, executed = null, summary;
+  if (arm === 'region') {
+    installed = num(/ (\d+) install\(s\)/);
+    summary = `installed ${installed}; executed: not reported without --step-audit`;
+  } else if (arm === 'uop') {
+    installed = num(/ (\d+) head\(s\)/); executed = num(/ entries=(\d+)/);
+    summary = `installed ${installed} head(s); executed ${executed} entries, ${num(/ steps=(\d+)/)} steps`;
+  } else if (arm === 'uopOnly') {
+    installed = num(/ programs=(\d+)/); executed = num(/ entries=(\d+)/);
+    summary = `compiled ${installed} program(s); executed ${executed} entries`;
+  } else if (arm === 'fold') {
+    installed = num(/, (\d+) tree folds/);
+    summary = `installed ${installed} tree fold(s); executed: not reported without a histogram`;
+  }
+  if (!raw) summary = `NO REPORT LINE FOUND (${summary})`;
+  return { installed: installed > 0, executed: executed === null ? null : executed > 0, summary, raw };
+}
+
 const emit = (process.argv.find((a) => a.startsWith('--emit=')) || '').slice(7);
 const dir = emit || fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-ifen-'));
 let failed = 0;
@@ -142,7 +185,7 @@ for (const [name, c] of Object.entries(CASES)) {
   const file = path.join(dir, `${name}.com`);
   fs.writeFileSync(file, bytes);
   if (emit) { console.log(`${file}  X=0x${at.X.toString(16)}  ${c.forbid.map((f) => `${f}=0x${at[f].toString(16)}`).join(' ')}`); continue; }
-  const runs = {};
+  const runs = {}, engaged = {};
   for (const [arm, flags] of Object.entries(ARMS)) {
     // One total bound for the whole test (TOYVM_TEST_TOTAL_S, default 170 s):
     // each run gets only what is left, and none starts once it is spent.
@@ -151,6 +194,7 @@ for (const [name, c] of Object.entries(CASES)) {
     const out = execFileSync('node', [RUN, file, '--dispatches=6m', '--trace-irq', ...flags],
       { encoding: 'utf8', maxBuffer: 1 << 26, timeout: left, killSignal: 'SIGKILL' });
     runs[arm] = deliveries(out);
+    engaged[arm] = engagement(arm, out);
   }
   // Evaluate EVERY assertion on EVERY arm before deciding, and print each one:
   // the 8db463eb version threw on the first failure, so a HEAD run reported
@@ -161,9 +205,12 @@ for (const [name, c] of Object.entries(CASES)) {
     const atX = d.filter((x) => x.ip === at[c.expect]).length;
     const inShadow = c.forbid.filter((f) => d.some((x) => x.ip === at[f]));
     const same = JSON.stringify(d) === ref;
+    const e = engaged[arm];
     console.log(`  ${name}/${arm}: ${d.length} deliveries, ${atX} at X=0x${at[c.expect].toString(16)} (want >= ${ROUNDS - 1}), `
-      + `in shadow: ${inShadow.length ? inShadow.join(',') : 'none'}, same (dispatch, ip) sequence as l1: ${same}, `
+      + `in shadow: ${inShadow.length ? inShadow.join(',') : 'none'}, same (dispatch, ip) sequence as l1: ${same}`
+      + `${arm === 'l1' ? '' : ` [engagement, limited evidence: ${e.summary}${e.installed ? '' : ' -> parity NOT EVIDENTIAL for this arm'}]`}, `
       + `first return ips: ${d.slice(0, 6).map((x) => '0x' + x.ip.toString(16)).join(' ')}`);
+    if (e.raw) console.log(`    raw ${arm}: ${e.raw.trim()}`);
     if (atX < ROUNDS - 1) problems.push(`[1] ${arm}: ${atX} at X`);
     for (const f of inShadow) problems.push(`[2] ${arm}: delivered inside a shadow at ${f}=0x${at[f].toString(16)}`);
     if (!same) problems.push(`[3] ${arm}: (dispatch, ip) sequence differs from l1`);
