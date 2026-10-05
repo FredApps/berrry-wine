@@ -1396,6 +1396,9 @@ const extra = [
   // SHLWAPI — Cave Story resolves this dynamically during startup.
   { name: 'PathRemoveFileSpecA', nargs: 1 },
   { name: 'PathRemoveFileSpecW', nargs: 1 },
+  { name: 'PathAppendW', nargs: 2, args: [{ name: 'pszPath', type: 'LPWSTR', out: true }, { name: 'pszMore', type: 'LPCWSTR' }], ret: 'BOOL' },
+  { name: 'PathFileExistsW', nargs: 1, args: [{ name: 'pszPath', type: 'LPCWSTR' }], ret: 'BOOL' },
+  { name: 'SHCreateDirectoryExW', nargs: 3, args: [{ name: 'hwnd', type: 'HWND' }, { name: 'pszPath', type: 'LPCWSTR' }, { name: 'psa', type: 'LPVOID' }], ret: 'DWORD' },
   // DirectShow AMMultiMediaStream. Darkstone uses this legacy DirectX Media
   // object for optional full-motion-video playback during startup.
   { name: 'IAMMultiMediaStream_QueryInterface', nargs: 3 },

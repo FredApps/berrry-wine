@@ -34526,5 +34526,60 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1036335673
+  },
+  {
+    "id": 4086,
+    "name": "PathAppendW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1115347343,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPWSTR",
+        "out": true
+      },
+      {
+        "name": "pszMore",
+        "type": "LPCWSTR"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 4087,
+    "name": "PathFileExistsW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 959442917,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPCWSTR"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 4088,
+    "name": "SHCreateDirectoryExW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2815537801,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "pszPath",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "psa",
+        "type": "LPVOID"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

@@ -2264,45 +2264,24 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )
 
-  ;; SHCreateDirectoryExA(hwnd, pszPath, psa) — 3 args stdcall. Creating every
-  ;; missing component of the path, not just the last one, is the whole reason a
-  ;; program reaches for this instead of CreateDirectoryA, so walk the string and
-  ;; create each prefix in turn. A prefix that already exists fails its own
-  ;; create and is not an error here — only the leaf decides the result.
-  ;; Returns a Win32 error code, NOT a BOOL: 0, ERROR_ALREADY_EXISTS or
-  ;; ERROR_ACCESS_DENIED. Black & White 2 makes its profile directory this way
-  ;; once a land starts loading.
+  ;; ANSI uses the existing byte-to-wide conversion and the same recursive
+  ;; VFS implementation as W. The older standalone A body ignored file ancestors
+  ;; and accepted relative paths; those erroneous successes are not retained.
   (func $handle_SHCreateDirectoryExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $len i32) (local $copy i32) (local $i i32) (local $ch i32) (local $made i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 161))  ;; ERROR_BAD_PATHNAME
+    (local $len i32) (local $wide i32) (local $result i32)
+    (local.set $result (i32.const 161))
     (if (local.get $arg1) (then
-      (local.set $len (call $guest_strlen (local.get $arg1)))
-      (if (local.get $len) (then
-        (local.set $copy (call $guest_strdup (local.get $arg1)))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 8))  ;; ERROR_NOT_ENOUGH_MEMORY
-        (if (local.get $copy) (then
-          ;; Index 1 onwards: a leading separator is the root, never a component.
-          (local.set $i (i32.const 1))
-          (block $done (loop $walk
-            (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-            (local.set $ch (call $gl8 (i32.add (local.get $copy) (local.get $i))))
-            (if (i32.or (i32.eq (local.get $ch) (i32.const 92)) (i32.eq (local.get $ch) (i32.const 47))) (then
-              (call $gs8 (i32.add (local.get $copy) (local.get $i)) (i32.const 0))
-              (drop (call $host_fs_create_directory (call $g2w (local.get $copy)) (i32.const 0)))
-              (call $gs8 (i32.add (local.get $copy) (local.get $i)) (local.get $ch))))
-            (local.set $i (i32.add (local.get $i) (i32.const 1)))
-            (br $walk)))
-          (local.set $made (call $host_fs_create_directory (call $g2w (local.get $copy)) (i32.const 0)))
-          (call $heap_free (local.get $copy))
-          (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $made)
-            (then (i32.const 0))
-            (else (if (result i32)
-              (i32.ne (call $host_fs_get_file_attributes
-                (call $g2w (local.get $arg1)) (i32.const 0)) (i32.const -1))
-              (then (i32.const 183))    ;; ERROR_ALREADY_EXISTS
-              (else (i32.const 5))))))))))))  ;; ERROR_ACCESS_DENIED
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-  )
+      (local.set $result (i32.const 206))
+      (local.set $len (call $findexec_ansi_len (local.get $arg1) (i32.const 248)))
+      (if (i32.ge_s (local.get $len) (i32.const 0)) (then
+        (local.set $result (i32.const 8))
+        (local.set $wide (call $heap_alloc (i32.const 496)))
+        (if (local.get $wide) (then
+          (drop (call $ansi_to_wide (local.get $arg1) (local.get $wide) (i32.const 248)))
+          (local.set $result (call $shell_create_directory_w (local.get $wide) (local.get $arg2)))
+          (call $heap_free (local.get $wide))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $result))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; 468: IsBadCodePtr(lpfn) — 1 arg stdcall. Despite its name, Windows defines
   ;; this as a one-byte readability probe, not an execute-permission test.
@@ -3159,3 +3138,266 @@
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
       (else (global.set $last_error (i32.const 25))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+
+
+  ;; Bounded UTF-16 guest reads for the legacy MAX_PATH shell APIs. Validate
+  ;; each code unit, including across sparse page mappings, before translating.
+  (func $shell_path_wlen (param $path i32) (param $limit i32) (result i32)
+    (local $n i32) (local $p i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
+    (loop $scan
+      (if (i32.ge_u (local.get $n) (local.get $limit)) (then (return (i32.const -1))))
+      (local.set $p (i32.add (local.get $path) (i32.shl (local.get $n) (i32.const 1))))
+      (if (i32.or (i32.lt_u (local.get $p) (local.get $path))
+            (call $ptr_range_access_bad (local.get $p) (i32.const 2) (i32.const 0)))
+        (then (return (i32.const -1))))
+      (if (i32.eqz (call $gl16 (local.get $p))) (then (return (local.get $n))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1))) (br $scan))
+    (i32.const -1))
+
+  (func $shell_path_wc (param $path i32) (param $index i32) (result i32)
+    (call $gl16 (i32.add (local.get $path) (i32.shl (local.get $index) (i32.const 1)))))
+  (func $shell_path_put (param $path i32) (param $index i32) (param $value i32)
+    ;; Existing helper is an indexed guest WORD store, with no rectangle or
+    ;; Win16-mode state; sharing it avoids another address-arithmetic body.
+    (call $win16_rect_set (local.get $path) (local.get $index) (local.get $value)))
+
+  ;; Lexical canonicalization, not VFS resolution: drive/UNC roots are retained,
+  ;; dot components disappear and parent components cannot escape the root.
+  ;; Repeated separators and non-ASCII code units otherwise remain unchanged.
+  (func $shell_path_canonical (param $src i32) (param $len i32) (param $dst i32) (result i32)
+    (local $i i32) (local $out i32) (local $floor i32) (local $end i32)
+    (local $n i32) (local $c i32) (local $unc i32) (local $parts i32)
+    (if (i32.eqz (local.get $len)) (then
+      (call $shell_path_put (local.get $dst) (i32.const 0) (i32.const 92))
+      (call $shell_path_put (local.get $dst) (i32.const 1) (i32.const 0))
+      (return (i32.const 1))))
+    (if (i32.eq (call $shell_path_wc (local.get $src) (i32.const 0)) (i32.const 92))
+      (then
+        (local.set $floor (i32.const 1))
+        (if (i32.and (i32.gt_u (local.get $len) (i32.const 1))
+              (i32.eq (call $shell_path_wc (local.get $src) (i32.const 1)) (i32.const 92)))
+          (then (local.set $unc (i32.const 1)) (local.set $floor (i32.const 2)))))
+      (else
+        (if (i32.and (i32.gt_u (local.get $len) (i32.const 1))
+              (i32.eq (call $shell_path_wc (local.get $src) (i32.const 1)) (i32.const 58)))
+          (then
+            (local.set $floor (i32.const 2))
+            (if (i32.eq (call $shell_path_wc (local.get $src) (i32.const 2)) (i32.const 92))
+              (then (local.set $floor (i32.const 3))))))))
+    (block $root_done (loop $root
+      (br_if $root_done (i32.ge_u (local.get $i) (local.get $floor)))
+      (call $shell_path_put (local.get $dst) (local.get $i) (call $shell_path_wc (local.get $src) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $root)))
+    (local.set $out (local.get $i))
+    (block $done (loop $component
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $end (local.get $i))
+      (block $end_done (loop $find_end
+        (br_if $end_done (i32.ge_u (local.get $end) (local.get $len)))
+        (br_if $end_done (i32.eq (call $shell_path_wc (local.get $src) (local.get $end)) (i32.const 92)))
+        (local.set $end (i32.add (local.get $end) (i32.const 1))) (br $find_end)))
+      (local.set $n (i32.sub (local.get $end) (local.get $i)))
+      (local.set $c (call $shell_path_wc (local.get $src) (local.get $i)))
+      (if (i32.and (i32.eq (local.get $c) (i32.const 46)) (i32.eq (local.get $n) (i32.const 1)))
+        (then
+          ;; A terminal dot is a filename in legacy PathCanonicalize.
+          (if (i32.eq (local.get $end) (local.get $len)) (then
+            (call $shell_path_put (local.get $dst) (local.get $out) (local.get $c))
+            (local.set $out (i32.add (local.get $out) (i32.const 1))))))
+        (else
+          (if (i32.and (i32.eq (local.get $n) (i32.const 2))
+                (i32.and (i32.eq (local.get $c) (i32.const 46))
+                  (i32.eq (call $shell_path_wc (local.get $src) (i32.add (local.get $i) (i32.const 1))) (i32.const 46))))
+            (then
+              (if (i32.gt_u (local.get $out) (local.get $floor)) (then
+                (local.set $out (i32.sub (local.get $out) (i32.const 1)))
+                (block $back_done (loop $back
+                  (br_if $back_done (i32.le_u (local.get $out) (local.get $floor)))
+                  (br_if $back_done (i32.eq (call $shell_path_wc (local.get $dst) (i32.sub (local.get $out) (i32.const 1))) (i32.const 92)))
+                  (local.set $out (i32.sub (local.get $out) (i32.const 1))) (br $back)))))
+              (if (i32.eqz (local.get $out)) (then
+                (call $shell_path_put (local.get $dst) (i32.const 0) (i32.const 92))
+                (local.set $out (i32.const 1)) (local.set $floor (i32.const 1)))))
+            (else
+              (block $copy_done (loop $copy
+                (br_if $copy_done (i32.ge_u (local.get $i) (local.get $end)))
+                (call $shell_path_put (local.get $dst) (local.get $out) (call $shell_path_wc (local.get $src) (local.get $i)))
+                (local.set $out (i32.add (local.get $out) (i32.const 1)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $copy)))
+              (if (i32.lt_u (local.get $end) (local.get $len)) (then
+                (call $shell_path_put (local.get $dst) (local.get $out) (i32.const 92))
+                (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+              (if (i32.and (local.get $unc) (i32.ne (local.get $n) (i32.const 0))) (then
+                (local.set $parts (i32.add (local.get $parts) (i32.const 1)))
+                (if (i32.le_u (local.get $parts) (i32.const 2)) (then (local.set $floor (local.get $out))))))))))
+      (local.set $i (i32.add (local.get $end) (i32.const 1))) (br $component)))
+    (if (i32.and (i32.eq (local.get $out) (i32.const 2))
+          (i32.eq (call $shell_path_wc (local.get $dst) (i32.const 1)) (i32.const 58))) (then
+      (call $shell_path_put (local.get $dst) (local.get $out) (i32.const 92))
+      (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+    (call $shell_path_put (local.get $dst) (local.get $out) (i32.const 0))
+    (local.get $out))
+
+  (func $shell_path_append_w (param $dst i32) (param $more i32) (result i32)
+    (local $a i32) (local $b i32) (local $skip i32) (local $i i32) (local $n i32)
+    (local $tmp i32) (local $out i32) (local $ok i32)
+    (local.set $a (call $shell_path_wlen (local.get $dst) (i32.const 260)))
+    (local.set $b (call $shell_path_wlen (local.get $more) (i32.const 260)))
+    (if (i32.or (i32.lt_s (local.get $a) (i32.const 0)) (i32.lt_s (local.get $b) (i32.const 0)))
+      (then (return (i32.const 0))))
+    ;; A single leading slash is ignored; UNC and drive-qualified suffixes replace.
+    (if (i32.and (i32.ne (local.get $b) (i32.const 0))
+          (i32.eq (call $shell_path_wc (local.get $more) (i32.const 0)) (i32.const 92))) (then
+      (if (i32.eq (call $shell_path_wc (local.get $more) (i32.const 1)) (i32.const 92))
+        (then (local.set $a (i32.const 0))) (else (local.set $skip (i32.const 1))))))
+    (if (i32.gt_u (local.get $b) (i32.const 1)) (then
+      (if (i32.eq (call $shell_path_wc (local.get $more) (i32.const 1)) (i32.const 58))
+        (then (local.set $a (i32.const 0))))))
+    (local.set $n (i32.add (local.get $a) (i32.sub (local.get $b) (local.get $skip))))
+    (if (i32.and (i32.ne (local.get $a) (i32.const 0)) (i32.gt_u (local.get $b) (local.get $skip))) (then
+      (if (i32.ne (call $shell_path_wc (local.get $dst) (i32.sub (local.get $a) (i32.const 1))) (i32.const 92))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))))
+    (if (i32.ge_u (local.get $n) (i32.const 260)) (then
+      (if (i32.eqz (call $ptr_range_access_bad (local.get $dst) (i32.const 2) (i32.const 1)))
+        (then (call $gs16 (local.get $dst) (i32.const 0)))) (return (i32.const 0))))
+    (local.set $tmp (call $heap_alloc (i32.const 1044)))
+    (if (i32.eqz (local.get $tmp)) (then (return (i32.const 0))))
+    (local.set $out (i32.add (local.get $tmp) (i32.const 522)))
+    (block $base_done (loop $base
+      (br_if $base_done (i32.ge_u (local.get $i) (local.get $a)))
+      (call $shell_path_put (local.get $tmp) (local.get $i) (call $shell_path_wc (local.get $dst) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $base)))
+    (if (i32.gt_u (local.get $n) (i32.add (local.get $a) (i32.sub (local.get $b) (local.get $skip)))) (then
+      (call $shell_path_put (local.get $tmp) (local.get $i) (i32.const 92))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+    (block $more_done (loop $suffix
+      (br_if $more_done (i32.ge_u (local.get $skip) (local.get $b)))
+      (call $shell_path_put (local.get $tmp) (local.get $i) (call $shell_path_wc (local.get $more) (local.get $skip)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $skip (i32.add (local.get $skip) (i32.const 1))) (br $suffix)))
+    (call $shell_path_put (local.get $tmp) (local.get $i) (i32.const 0))
+    (local.set $n (call $shell_path_canonical (local.get $tmp) (local.get $n) (local.get $out)))
+    (if (i32.eqz (call $ptr_range_access_bad (local.get $dst)
+          (i32.shl (i32.add (local.get $n) (i32.const 1)) (i32.const 1)) (i32.const 1))) (then
+      (call $guest_wcscpy (local.get $dst) (local.get $out)) (local.set $ok (i32.const 1))))
+    (call $heap_free (local.get $tmp)) (local.get $ok))
+
+  (func $handle_PathAppendW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $shell_path_append_w (local.get $arg0) (local.get $arg1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  (func $shell_path_attrs_w (param $path i32) (param $len i32) (result i32)
+    (local $copy i32) (local $attrs i32)
+    ;; Per-call heap allocation avoids sharing a gather arena across Workers.
+    (local.set $copy (call $heap_alloc (i32.shl (i32.add (local.get $len) (i32.const 1)) (i32.const 1))))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const -1))))
+    (call $guest_wcscpy (local.get $copy) (local.get $path))
+    (local.set $attrs (call $host_fs_get_file_attributes (call $g2w (local.get $copy)) (i32.const 1)))
+    (call $heap_free (local.get $copy)) (local.get $attrs))
+
+  (func $handle_PathFileExistsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $len i32) (local $found i32) (local $i i32) (local $slashes i32)
+    (local.set $len (call $shell_path_wlen (local.get $arg0) (i32.const 260)))
+    ;; UNC server/share roots are not file objects for this API.
+    (if (i32.ge_s (local.get $len) (i32.const 2)) (then
+      (if (i32.and (i32.eq (call $shell_path_wc (local.get $arg0) (i32.const 0)) (i32.const 92))
+            (i32.eq (call $shell_path_wc (local.get $arg0) (i32.const 1)) (i32.const 92))) (then
+        (local.set $i (i32.const 2))
+        (block $unc_done (loop $unc_scan
+          (br_if $unc_done (i32.ge_u (local.get $i) (local.get $len)))
+          (if (i32.eq (call $shell_path_wc (local.get $arg0) (local.get $i)) (i32.const 92))
+            (then (local.set $slashes (i32.add (local.get $slashes) (i32.const 1)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $unc_scan)))
+        (if (i32.lt_u (local.get $slashes) (i32.const 2)) (then (local.set $len (i32.const -1))))))))
+    (if (i32.gt_s (local.get $len) (i32.const 0)) (then
+      (local.set $found (i32.ne (call $shell_path_attrs_w (local.get $arg0) (local.get $len)) (i32.const -1)))))
+    (if (i32.eqz (local.get $found)) (then (global.set $last_error (i32.const 2))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $found))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+  ;; Wide recursive directory creation uses actual VFS attributes and creation,
+  ;; never a success-only stub. SECURITY_ATTRIBUTES descriptors are unsupported:
+  ;; fail explicitly rather than silently accepting a security contract.
+  (func $shell_create_directory_w (param $path i32) (param $security i32) (result i32)
+    (local $len i32) (local $copy i32) (local $i i32) (local $ch i32)
+    (local $attrs i32) (local $result i32) (local $wa i32) (local $bytes i32) (local $letter i32)
+    (if (local.get $security) (then (return (i32.const 50)))) ;; ERROR_NOT_SUPPORTED
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 161))))
+    (local.set $len (call $shell_path_wlen (local.get $path) (i32.const 248)))
+    (if (i32.lt_s (local.get $len) (i32.const 0)) (then (return (i32.const 206))))
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 161))))
+    (if (i32.lt_u (local.get $len) (i32.const 3)) (then (return (i32.const 161))))
+    ;; No remote share provider exists; do not manufacture UNC directories.
+    (if (i32.and (i32.eq (call $shell_path_wc (local.get $path) (i32.const 0)) (i32.const 92))
+          (i32.eq (call $shell_path_wc (local.get $path) (i32.const 1)) (i32.const 92)))
+      (then (return (i32.const 53)))) ;; ERROR_BAD_NETPATH
+    ;; A fully-qualified local drive path is required.
+    (if (i32.lt_u (local.get $len) (i32.const 3)) (then (return (i32.const 161))))
+    (if (i32.or
+          (i32.ne (call $shell_path_wc (local.get $path) (i32.const 1)) (i32.const 58))
+          (i32.and (i32.ne (call $shell_path_wc (local.get $path) (i32.const 2)) (i32.const 92))
+            (i32.ne (call $shell_path_wc (local.get $path) (i32.const 2)) (i32.const 47))))
+      (then (return (i32.const 161))))
+    (local.set $letter (i32.or (call $shell_path_wc (local.get $path) (i32.const 0)) (i32.const 32)))
+    (if (i32.or (i32.lt_u (local.get $letter) (i32.const 97)) (i32.gt_u (local.get $letter) (i32.const 122)))
+      (then (return (i32.const 161))))
+    (local.set $i (i32.const 3))
+    (block $valid (loop $validate
+      (br_if $valid (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $ch (call $shell_path_wc (local.get $path) (local.get $i)))
+      (if (i32.or (i32.lt_u (local.get $ch) (i32.const 32))
+            (i32.or (i32.eq (local.get $ch) (i32.const 58))
+              (i32.or (i32.eq (local.get $ch) (i32.const 42))
+                (i32.or (i32.eq (local.get $ch) (i32.const 63))
+                  (i32.or (i32.eq (local.get $ch) (i32.const 34))
+                    (i32.or (i32.eq (local.get $ch) (i32.const 60))
+                      (i32.or (i32.eq (local.get $ch) (i32.const 62)) (i32.eq (local.get $ch) (i32.const 124)))))))))
+        (then (return (i32.const 123)))) ;; ERROR_INVALID_NAME
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $validate)))
+    (local.set $copy (call $heap_alloc (i32.const 520)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 8))))
+    (call $guest_wcscpy (local.get $copy) (local.get $path))
+    (local.set $i (i32.const 2))
+    (block $slashes_done (loop $slashes
+      (br_if $slashes_done (i32.ge_u (local.get $i) (local.get $len)))
+      (if (i32.eq (call $shell_path_wc (local.get $copy) (local.get $i)) (i32.const 47))
+        (then (call $shell_path_put (local.get $copy) (local.get $i) (i32.const 92))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $slashes)))
+    ;; Trim trailing separators before leaf/existing classification.
+    (block $trim_done (loop $trim
+      (br_if $trim_done (i32.le_u (local.get $len) (i32.const 3)))
+      (br_if $trim_done (i32.ne (call $shell_path_wc (local.get $copy) (i32.sub (local.get $len) (i32.const 1))) (i32.const 92)))
+      (local.set $len (i32.sub (local.get $len) (i32.const 1)))
+      (call $shell_path_put (local.get $copy) (local.get $len) (i32.const 0)) (br $trim)))
+    (local.set $ch (call $shell_path_wc (local.get $copy) (i32.const 3)))
+    (call $shell_path_put (local.get $copy) (i32.const 3) (i32.const 0))
+    (local.set $attrs (call $shell_path_attrs_w (local.get $copy) (i32.const 3)))
+    (call $shell_path_put (local.get $copy) (i32.const 3) (local.get $ch))
+    (if (i32.or (i32.eq (local.get $attrs) (i32.const -1))
+          (i32.eqz (i32.and (local.get $attrs) (i32.const 16)))) (then
+      (call $heap_free (local.get $copy)) (return (i32.const 3))))
+    (local.set $i (i32.const 3))
+    (block $done (loop $walk
+      (local.set $ch (call $shell_path_wc (local.get $copy) (local.get $i)))
+      (if (i32.or (i32.eqz (local.get $ch)) (i32.eq (local.get $ch) (i32.const 92))) (then
+        (call $shell_path_put (local.get $copy) (local.get $i) (i32.const 0))
+        (local.set $attrs (call $shell_path_attrs_w (local.get $copy) (local.get $i)))
+        (if (i32.ne (local.get $attrs) (i32.const -1))
+          (then
+            (if (i32.eqz (i32.and (local.get $attrs) (i32.const 16)))
+              (then
+                (local.set $result (select (i32.const 183) (i32.const 3) (i32.eqz (local.get $ch))))
+                (br $done)))
+            (if (i32.eqz (local.get $ch)) (then (local.set $result (i32.const 183)))))
+          (else
+            (local.set $attrs (call $host_fs_create_directory (call $g2w (local.get $copy)) (i32.const 1)))
+            (if (i32.eqz (local.get $attrs)) (then (local.set $result (i32.const 5)) (br $done)))))
+        (call $shell_path_put (local.get $copy) (local.get $i) (local.get $ch))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $walk)))
+    (call $heap_free (local.get $copy)) (local.get $result))
+
+  (func $handle_SHCreateDirectoryExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $shell_create_directory_w (local.get $arg1) (local.get $arg2)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
