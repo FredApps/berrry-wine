@@ -67,6 +67,14 @@ function deriveReleaseReadiness({candidates, runs, tasks, review = {}}) {
     const reviewedRun = matching.find(run => run.key === decision?.basedOnRunKey && run.verification === 'reviewed' && run.gameplayScreenshots?.length);
     const newerFailure = reviewedRun && matching.find(run => run.outcome === 'failed' && run.startedAt > reviewedRun.startedAt && (/gameplay/i.test(run.route || '') || /^GAMEPLAY-/.test(run.taskId || '')));
     const currentReview = !!(decision && text(decision.reviewer) && validDate(decision.reviewedAt) && reviewedRun && !newerFailure && decision.sourceValidation === 'current');
+    // Exact reasons a recorded review is not current, so a stale review names what to redo.
+    const staleReasons = !decision || currentReview ? [] : [
+      !text(decision.reviewer) && 'Review has no named reviewer.',
+      !validDate(decision.reviewedAt) && 'Review has no valid reviewedAt date.',
+      !reviewedRun && 'Review basedOnRunKey does not name a reviewed gameplay run with gameplay screenshots.',
+      newerFailure && 'A newer gameplay run failed after the reviewed run.',
+      decision.sourceValidation !== 'current' && 'Recorded runtime source hashes are missing or no longer match the current files.',
+    ].filter(Boolean);
     const blockers = [];
     const add = (code, summary, source) => blockers.push({code, summary, source});
     if (newerFailure) add('newer-gameplay-failure', 'A newer gameplay run failed after the reviewed release evidence.', newerFailure.key);
@@ -99,7 +107,7 @@ function deriveReleaseReadiness({candidates, runs, tasks, review = {}}) {
       localDesktopAppIds: candidate.localDesktopAppIds || [], blockers, gates, performance,
       reviewedGameplay: gameplay ? {runKey: gameplay.key, screenshots: gameplay.gameplayScreenshots} : null,
       reviewedAt: currentReview ? decision.reviewedAt : null, reviewer: currentReview ? decision.reviewer : null,
-      reviewStale: !!decision && !currentReview, prospect,
+      reviewStale: !!decision && !currentReview, staleReasons, prospect,
       summary: status === 'ready' ? 'Explicit release gates reviewed; not deployed by this dashboard.' : status === 'already-production' ? 'Present in the verified public desktop snapshot; compatibility is separate.' : blockers.length ? blockers[0].summary : gameplay ? 'Reviewed gameplay available; remaining release gates need review.' : 'Release evidence is incomplete.',
       next: text(decision?.next) || (productionMembership === 'unknown' ? 'Verify production desktop membership.' : 'Review remaining release gates and record a decision.'),
       rank: status === 'ready' ? 0 : productionMembership === 'no' && gameplay && !blockers.length ? 1 : status === 'review-needed' ? 2 : status === 'unknown' ? 3 : status === 'blocked' ? 4 : 5};

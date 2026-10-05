@@ -55,7 +55,7 @@ function taskOwner(t, details=false) {
 function taskRows(tasks) { return tasks.length ? sortedTasks(tasks).map(t => {
   const [status,label,,symbol] = taskState(t.status);
   const next = status === 'blocked' ? t.blocker || t.next : t.next;
-  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${t.status==='ready' && t.done?`<div class="task-next"><strong>Done when:</strong> ${escape(t.done)}</div>`:''}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}${dependencySummary(t)}${taskOwner(t)}<div class="sub">${escape(t.id)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div><div class="task-controls"><button class="task-details" data-task="${escape(t.id)}">${status==='review'?'Review →':'Details →'}</button>${taskControls(t)}</div></div>${taskPreview(t)}<div class="task-statuses">${badge(label, 'task-label task-label-' + status)}${pickupBadge(t)}</div></div>`;
+  return `<div class="task task-${status}"><span class="task-symbol" aria-hidden="true">${symbol}</span><div class="task-body">${taskButton(t)}${t.status==='ready' && t.done?`<div class="task-next"><strong>Done when:</strong> ${escape(t.done)}</div>`:''}${next ? `<div class="task-next"><strong>${status === 'blocked' ? 'Blocked by' : status === 'done' ? 'Result' : 'Next'}:</strong> ${escape(next)}</div>` : ''}${dependencySummary(t)}${taskOwner(t)}${t.commits?.length?`<div class="sub task-code">Code: ${t.commits.length} commit${t.commits.length===1?'':'s'} · ${['merged','pushed','local'].map(k=>[k,t.commits.filter(c=>c.code?.state===k).length]).filter(([,n])=>n).map(([k,n])=>n+' '+k).join(' · ') || 'location unknown'}</div>`:''}<div class="sub">${escape(t.id)}${t.progressAt ? ' · Updated ' + age(t.progressAt) + ' ago' : ''}</div><div class="task-controls"><button class="task-details" data-task="${escape(t.id)}">${status==='review'?'Review →':'Details →'}</button>${taskControls(t)}</div></div>${taskPreview(t)}<div class="task-statuses">${badge(label, 'task-label task-label-' + status)}${pickupBadge(t)}</div></div>`;
 }).join('') : empty('No matching tasks.'); }
 function health(a) {
   if (!a.lastActivityAt) return ['Unknown', ''];
@@ -109,21 +109,64 @@ function subagentSummary(a) {
   });
   return `<section class="subagent-summary" aria-label="Subagents"><h3>Subagents (${children.length})</h3><ul>${rows.slice(0, 3).join('')}</ul>${rows.length > 3 ? `<details><summary>Show ${rows.length - 3} more subagents</summary><ul>${rows.slice(3).join('')}</ul></details>` : ''}<p class="sub">From observed session logs; activity is not proof of progress.</p></section>`;
 }
+// One full-width row per agent: line 1 identity + status, line 2 the decision,
+// next step or latest result. Subagents get the same two lines. Everything else
+// (process, tokens, evidence, timestamps) stays in the agent detail view.
+function agentName(a) {
+  if(coordinator()?.agentId===a.id)return 'Coordinator';
+  if(a.taskTitle)return a.taskTitle;
+  const task=/\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+){2,})\b/.exec(a.title || '')?.[1];
+  // Codex child prompts often start with a bracketed role label: use it rather than the whole prompt.
+  const label=/^\[([^\]]{3,60})\]/.exec(a.title || '')?.[1];
+  return task || label || (a.title && a.title !== a.id ? a.title : 'Untitled session');
+}
+function agentLine2(a,signal) {
+  if(signal.reason)return signal.reason;
+  const task=state.tasks.find(t=>t.owner===a.id && t.status==='active');
+  if(task?.next)return 'Next: '+task.next;
+  if(a.summary)return 'Latest: '+a.summary;
+  return a.lastEvent && a.lastEvent!=='Unknown' ? 'Last operation: '+a.lastEvent+' · no result or next step recorded' : 'No result or next step recorded';
+}
+function agentActivity(a) {
+  return `<span class="agent-age" title="Last observed session activity. Activity is not proof of progress.">${a.lastActivityAt?'active '+age(a.lastActivityAt)+' ago':'activity unknown'}</span>`;
+}
+function subagentRows(a) {
+  const children=state.agents.filter(child=>child.parentAgentId===a.id && child.id!==a.id)
+    .sort((x,y)=>Number(y.state==='working' || y.state==='tool')-Number(x.state==='working' || x.state==='tool') || (y.lastActivityAt || '').localeCompare(x.lastActivityAt || ''));
+  if(!children.length)return '';
+  const rows=children.map(child=>{const signal=agentSignal(child);return `<li class="subagent-row"><div class="agent-line1"><span aria-hidden="true">↳</span><button class="agent-title" data-agent="${escape(child.id)}" title="${escape(child.title || child.id)}">${escape(agentName(child))}</button><span class="agent-status ${signal.color}">${escape(signal.label)}</span>${agentActivity(child)}</div><div class="agent-line2 sub" title="${escape(agentLine2(child,signal))}">${escape(agentLine2(child,signal))}</div></li>`;});
+  return `<ul class="subagent-rows" aria-label="Subagents of ${escape(agentName(a))}">${rows.slice(0,3).join('')}</ul>${rows.length>3?`<details class="subagent-more"><summary>Show ${rows.length-3} more subagents</summary><ul class="subagent-rows">${rows.slice(3).join('')}</ul></details>`:''}`;
+}
 function agentCard(a) {
-  const {label,color,reason,rank}=agentSignal(a);
-  const latest = agentRuns(a).find(r => r.visuals?.length);
-  const image = latest?.visuals.at(-1);
-  const candidate = latest && state.candidates.find(c => c.id === latest.candidateId);
-  const name = coordinator()?.agentId===a.id ? 'Coordinator' : a.taskTitle || (a.title && a.title !== a.id ? a.title : candidate?.name || 'Untitled session');
-  const contextPercent = a.contextLimit && a.contextEstimate !== null ? Math.round(100 * a.contextEstimate / a.contextLimit) : 0;
-  return `<article class="agent panel ${rank<3?'agent-attention':'agent-routine'}"><div class="agent-head"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span>${badge(label, color)}</div><div class="agent-content"><div class="agent-copy"><button class="agent-title" data-agent="${escape(a.id)}">${escape(name)}</button>${reason?`<p class="agent-decision">${escape(reason)}</p>`:''}<div class="agent-meta">${a.lastActivityAt ? `<span>Activity ${age(a.lastActivityAt)} ago</span>` : ''}${a.taskStartedAt ? `<span>On task ${age(a.taskStartedAt)}</span>` : ''}${a.progressAt ? `<span>Progress ${age(a.progressAt)} ago</span>` : ''}</div>${contextPercent >= 90 ? badge(`Context estimate ~${contextPercent}%`, 'warn') : ''}</div>${image ? `<button class="agent-preview" data-run="${escape(latest.key)}" aria-label="Open latest evidence for ${escape(candidate?.name || latest.candidateId)}"><img src="${escape(image.url)}" alt="${escape(candidate?.name || latest.candidateId)}" loading="lazy"><span>${age(latest.startedAt)} ago</span></button>` : ''}</div>${subagentSummary(a)}<div class="agent-footer">${processSummary(a.process, true)}${terminalLink(a)}<button class="details-button" data-agent="${escape(a.id)}">Details →</button></div></article>`;
+  const signal=agentSignal(a),line2=agentLine2(a,signal);
+  return `<article class="agent-row panel ${signal.rank<3?'agent-attention':'agent-routine'}"><div class="agent-line1"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span><span class="agent-short sub" title="${escape(a.id)}">${escape(a.id.split(':').at(-1).replace(/^agent-/,'').slice(0,6))}</span><button class="agent-title" data-agent="${escape(a.id)}" title="${escape(a.title || a.id)}">${escape(agentName(a))}</button><span class="agent-status ${signal.color}">${escape(signal.label)}</span>${agentActivity(a)}${terminalLink(a)}<button class="details-button row-open" data-agent="${escape(a.id)}" aria-label="Details for ${escape(agentName(a))}">▸</button></div><div class="agent-line2 ${signal.reason?'agent-decision':'sub'}" title="${escape(line2)}">${escape(line2)}</div>${subagentRows(a)}</article>`;
+}
+const matchesTree = a => matches(a) || state.agents.some(c=>c.parentAgentId===a.id && matches(c));
+// A current subagent is shown under its parent, so its parent row is current too.
+function topLevel(agents) {
+  const byId=new Map(state.agents.map(a=>[a.id,a])),out=[];
+  for(const a of agents){const row=a.parentAgentId && byId.get(a.parentAgentId) || a;if(!out.includes(row))out.push(row);}
+  return out;
+}
+// Committed → pushed → merged from local refs; tested from runs recording this
+// commit; deploy is not recorded per commit (the production snapshot is files only).
+function codeChips(c) {
+  const code=c.code,main=state.codeState?.mainRef || 'main';
+  const where=!code?'<span class="code-chip">location unknown</span>':code.state==='merged'?`<span class="code-chip code-merged">merged · ${escape(main)}</span>`:code.state==='pushed'?`<span class="code-chip code-pushed">pushed · not on ${escape(main)}${code.branches?.length?' · '+escape(code.branches.join(', ')):''}</span>`:'<span class="code-chip code-local">local only · not pushed</span>';
+  const runs=c.runs || [],tested=runs.length?`<span class="code-chip">tested · ${runs.length} run${runs.length===1?'':'s'} (${runs.filter(r=>r.outcome==='passed').length} passed, ${runs.filter(r=>r.verification==='reviewed').length} reviewed)</span>`:'<span class="code-chip code-unknown">tested: no run records this commit</span>';
+  return `${where}${tested}<span class="code-chip code-unknown" title="The production snapshot records deployed files, not a commit.">deployed: not recorded</span>${(c.taskIds || []).map(id=>`<button class="code-task" data-task="${escape(id)}">${escape(id)}</button>`).join('')}`;
+}
+function commitSection(t) {
+  const commits=t.commits || [];
+  if(!commits.length)return section('Code')+'<p class="sub">No commit message names this task ID.</p>';
+  return section('Code')+`<p class="source-note">${escape(state.codeState?.note || '')}${state.codeState?.fetchedAt?' Last fetch '+escape(when(state.codeState.fetchedAt))+'.':''}</p><div class="panel">${commits.map(c=>`<div class="feed-row feed-commit"><div class="sub activity-meta"><code>${escape(c.shortHash)}</code><time>${escape(when(c.time))}</time>${typeof c.url==='string'&&/^https:\/\/github\.com\//.test(c.url)?`<a class="commit-link" href="${escape(c.url)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div><div class="feed-text commit-subject">${escape(c.subject)}</div><div class="code-chips">${codeChips(c)}</div></div>`).join('')}</div>`;
 }
 function feedRows(rows, truncate = false) { return rows.map(row => {
   const commit=row.type==='commit',text=String(commit?(row.subject || row.text || 'Untitled commit'):(row.text || ''));
   const date=row.time && Number.isFinite(Date.parse(row.time)) ? `<time datetime="${escape(row.time)}">${escape(when(row.time))}</time>` : '<span>Date not recorded</span>';
   const metadata=commit?`<code>${escape(row.shortHash || row.hash?.slice(0,8) || 'unknown')}</code><span>${escape(row.author || 'Unknown author')}</span>`:'';
   const github=commit && typeof row.url==='string' && /^https:\/\/github\.com\//i.test(row.url) && !/[\u0000-\u0020]/.test(row.url)?`<a class="commit-link" href="${escape(row.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open commit '+(row.shortHash || row.hash || '')+' on GitHub')}">GitHub ↗</a>`:'';
-  return `<div class="feed-row${commit?' feed-commit':''}"><div class="sub activity-meta"><span>${commit?'COMMIT':'MESSAGEBOARD'}</span>${metadata}${date}${github}</div><div class="feed-text${commit?' commit-subject':''}">${escape(truncate && text.length>360?text.slice(0,360)+'…':text)}</div></div>`;
+  return `<div class="feed-row${commit?' feed-commit':''}"><div class="sub activity-meta"><span>${commit?'COMMIT':'MESSAGEBOARD'}</span>${metadata}${date}${github}</div><div class="feed-text${commit?' commit-subject':''}">${escape(truncate && text.length>360?text.slice(0,360)+'…':text)}</div>${commit?`<div class="code-chips">${codeChips(row)}</div>`:''}</div>`;
 }).join('') || empty('No messageboard entries.'); }
 function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
 function section(name, target) { return `<div class="section-head"><h2>${name}</h2>${target ? `<a href="#${target}">View all →</a>` : ''}</div>`; }
@@ -162,16 +205,18 @@ function blockerRows(tasks) {
     const owner=state.agents.find(a=>a.id===t.owner);
     const ownerName=blockerOwner(t);
     const next=dependencies.length?'Waiting for '+dependencies.map(d=>d.title).join('; '):kind==='Capacity needed'?(t.waitingOn||t.needs):t.needs||t.next||'Owner needs to record a concrete next step.';
-    return `<article class="blocker panel"><div class="blocker-heading">${taskButton(t)}${badge(kind,color)}</div><p class="blocker-ask">${escape(next)}</p>${kind==='Review blocked'?'<p class="source-note">Automated review stopped validation. No dashboard override.</p>':''}<div class="blocker-meta sub"><span title="${escape(t.owner)}">${escape(ownerName)}</span><span>${t.progressAt?'Task updated '+age(t.progressAt)+' ago':'Task update time not recorded'}</span>${t.blockedAt?`<span>Blocked ${age(t.blockedAt)}</span>`:''}</div>${t.replies?.length?'<p class="reply-pending">Reply posted · awaiting owner verification</p>':''}${children.length?`<div class="blocker-dependents"><span class="sub">Also holds up</span>${children.map(c=>`<button data-task="${escape(c.id)}">${escape(c.title)} →</button>`).join('')}</div>`:''}<details class="blocker-evidence"><summary>Evidence and background</summary><p>${escape(t.blocker||'Reason not recorded.')}</p>${t.needs?`<p>Needs: ${escape(t.needs)}</p>`:''}${dependencies.map(d=>`<p>Waiting on ${taskButton(d)}</p>`).join('')}</details><div class="blocker-footer">${terminalLink({id:t.owner})}${dependencies.length?`<button data-blocker="${escape(dependencies[0].id)}">View dependency →</button>`:''}<button data-blocker="${escape(t.id)}">${escape(dependencies.length?'Message owner':action)} →</button></div></article>`;
+    const [who,basis]=BlockerModel.actor(state,t);
+    return `<article class="blocker panel"><div class="blocker-heading">${taskButton(t)}${badge(kind,color)}${badge(who==='user'?'Needs your input':'Agent-resolvable',who==='user'?'warn':'')}</div><p class="blocker-ask">${escape(next)}</p><p class="sub blocker-basis">${escape(basis)}</p>${kind==='Review blocked'?'<p class="source-note">Automated review stopped validation. No dashboard override.</p>':''}<div class="blocker-meta sub"><span title="${escape(t.owner)}">${escape(ownerName)}</span><span>${t.progressAt?'Task updated '+age(t.progressAt)+' ago':'Task update time not recorded'}</span>${t.blockedAt?`<span>Blocked ${age(t.blockedAt)}</span>`:''}</div>${t.replies?.length?'<p class="reply-pending">Reply posted · awaiting owner verification</p>':''}${children.length?`<div class="blocker-dependents"><span class="sub">Also holds up</span>${children.map(c=>`<button data-task="${escape(c.id)}">${escape(c.title)} →</button>`).join('')}</div>`:''}<details class="blocker-evidence"><summary>Evidence and background</summary><p>${escape(t.blocker||'Reason not recorded.')}</p>${t.needs?`<p>Needs: ${escape(t.needs)}</p>`:''}${dependencies.map(d=>`<p>Waiting on ${taskButton(d)}</p>`).join('')}</details><div class="blocker-footer">${terminalLink({id:t.owner})}${dependencies.length?`<button data-blocker="${escape(dependencies[0].id)}">View dependency →</button>`:''}<button data-blocker="${escape(t.id)}">${escape(dependencies.length?'Message owner':action)} →</button></div></article>`;
   }).join('') || empty('No matching blockers.');
 }
 function blockersView() {
   const {blocked,approvals}=BlockerModel.blockerSummary(state);
   const relevant=blocked.filter(t=>matches(t)||blocked.some(c=>matches(c)&&blockerDependencies(c).some(d=>d.id===t.id)));
-  const roots=BlockerModel.primaryRoots(state,relevant);
-  return title('Blockers',`${approvals.length} live approval${approvals.length===1?'':'s'} · ${roots.length} primary blockers · ${relevant.length-roots.length} dependent task${relevant.length-roots.length===1?'':'s'}`) +
-    section('Your action')+(approvals.length?`<div class="blocker-list">${approvals.map(p=>`<article class="blocker panel blocker-action"><div class="blocker-heading"><strong>${escape(p.reason||'Command approval needed')}</strong>${badge('Live approval','warn')}</div><p class="sub">${escape(p.label)} · waiting ${age(p.firstSeenAt)} · checked against the live terminal</p><button data-approval="${escape(p.id)}">Review command →</button></article>`).join('')}</div>`:'<p class="sub">No live command approvals. Other requests and dependencies are below.</p>')+
-    section('Waiting / needs follow-up')+`<div class="blocker-list">${blockerRows(roots)}</div>`;
+  const roots=BlockerModel.primaryRoots(state,relevant),{user,agent}=BlockerModel.split(state,roots);
+  return title('Blockers',`${approvals.length} live approval${approvals.length===1?'':'s'} · ${user.length} need${user.length===1?'s':''} your input · ${agent.length} agent-resolvable · ${relevant.length-roots.length} dependent task${relevant.length-roots.length===1?'':'s'}`) +
+    section('Needs your input')+(approvals.length?`<div class="blocker-list">${approvals.map(p=>`<article class="blocker panel blocker-action"><div class="blocker-heading"><strong>${escape(p.reason||'Command approval needed')}</strong>${badge('Live approval','warn')}</div><p class="sub">${escape(p.label)} · waiting ${age(p.firstSeenAt)} · checked against the live terminal</p><button data-approval="${escape(p.id)}">Review command →</button></article>`).join('')}</div>`:'<p class="sub">No live command approvals.</p>')+
+    (user.length?`<div class="blocker-list">${blockerRows(user)}</div>`:'<p class="sub">No blocked task records a request for your input.</p>')+
+    section('Agent-resolvable')+`<p class="source-note">Classified from recorded waitingOn, needs and dependencies (shared with Telegram /blockers); a task that records nothing stays with its owner.</p><div class="blocker-list">${blockerRows(agent)}</div>`;
 }
 function blockerDetail(id) {
   const t = state.tasks.find(t => t.id === id); if (!t) return;
@@ -183,7 +228,7 @@ function overview() {
     statusSummary()+
     `<div class="stats">${['active','ready','blocked','review'].map(status=>`<a class="stat" href="#tasks"><div class="sub">${escape(taskState(status)[1])}</div><div class="value task-label-${status}">${state.tasks.filter(t=>t.status===status).length}</div><div class="sub">From the task ledger</div></a>`).join('')}</div>` +
     (state.tasks.some(t => t.status === 'blocked') ? section('Needs attention', 'blockers') + `<div class="blocker-list">${blockerRows(state.tasks.filter(t => t.status === 'blocked' && matches(t)).slice(0, 4))}</div>` : '') +
-    section('Current agents', 'agents') + `<div class="agent-list">${currentAgents().filter(matches).slice(0, 4).map(agentCard).join('') || empty('No current project session logs found. Open Agents for history.')}</div>` +
+    section('Current agents', 'agents') + `<div class="agent-list">${topLevel(currentAgents()).filter(matchesTree).slice(0, 4).map(agentCard).join('') || empty('No current project session logs found. Open Agents for history.')}</div>` +
     section('Current work and next steps', 'tasks') + `<div class="panel">${taskRows(tasks.slice(0, 6))}</div>` +
     section('Latest visuals', 'corpus') + visualCards(state.runs.filter(matches).filter((r, i, runs) => r.visuals?.length && !runs.slice(0, i).some(other => other.candidateId === r.candidateId && other.visuals?.length))) + notice();
 }
@@ -213,6 +258,12 @@ function corpusAssessment(c,details=false) {
   const a=c.assessment;if(!a)return '';
   const color=a.needsReview?'warn':a.status==='Needs repair'?'bad':['Strong next candidate','Strong local candidate'].includes(a.status)?'good':'';
   return `<div class="corpus-assessment">${badge(a.needsReview?'New evidence · review needed':a.status,color)}${details?`<p>${escape(a.summary)}</p><p class="sub">${escape(a.origin)} · ${escape(a.distribution)}</p><p class="sub">${escape(a.licenseNote)}</p><p><strong>Next:</strong> ${escape(a.next)}</p><p class="sub">Evidence reviewed ${escape(when(a.reviewedAt))}; no fresh run implied.${a.appIds.length?' Registered apps: '+escape(a.appIds.join(', ')):''}</p>${a.registeredExecutablePresent && c.fixtureStatus!=='present'?'<p class="sub">A registered executable exists even though the original candidate fixture is incomplete. Assets and runtime still need verification.</p>':''}`:''}</div>`;
+}
+function perfComparisonHtml(c) {
+  const cmp=ReleaseModel.perfComparisons(state,c),wasm=v=>v?escape(v.slice(0,12)):'not recorded';
+  if(!cmp.count)return '';
+  const side=(name,m)=>`${name} ${m.fps.toFixed(1)} · wasm ${wasm(m.wasmSha256)} · ${escape(when(m.measuredAt))}${m.reviewed?'':' · unreviewed'}`;
+  return `<section class="perf-compare"><h3>Before / after</h3><p class="sub">${escape(cmp.text)}. Only identical scene, counter, renderer, host and GPU with recorded module hashes are compared.</p>${cmp.pairs.map(p=>`<p><strong>${p.deltaPct===null?'change unknown (before was 0)':(p.deltaPct>=0?'+':'')+p.deltaPct.toFixed(1)+'%'}</strong> ${escape(p.label)} · ${p.sameBuild?'same build (repeat)':'different builds'}<br><span class="sub">${side('Before',p.before)}</span><br><span class="sub">${side('After',p.after)}</span></p>`).join('')}${cmp.notComparable.length?`<details><summary>${cmp.notComparable.length} not comparable</summary><ul>${cmp.notComparable.map(n=>`<li>${side('Earlier',n.before)}: ${escape(n.reasons.join(', '))}</li>`).join('')}</ul></details>`:''}</section>`;
 }
 function corpusFps(c,details=false) {
   const gameCategory = c.category && !['tools','graphics-demos','unclassified','collections'].includes(c.category.id);
@@ -246,21 +297,24 @@ function corpusReleaseBar() {
   const choices=[['ready','Ready for release'],['unreleased','Unreleased games'],['gameplay-reviewed','Unreleased · gameplay reviewed'],['blocked','Blocked']];
   return `<section class="release-bar" aria-label="Game release readiness"><div><strong>Game release readiness</strong><span class="sub">All ${games.length} game entries</span></div><div class="release-counts">${choices.map(([id,label])=>`<button data-release-filter="${id}" aria-pressed="${corpusRelease===id}"><strong>${games.filter(c=>matchesRelease(c,id)).length}</strong> ${label}</button>`).join('')}</div><p class="sub">${production?.status==='verified'?`Production snapshot checked ${escape(when(production.checkedAt))}.`:'Production membership is unverified; unknown entries are not counted as unreleased.'} ${games.filter(c=>c.releaseReadiness.productionMembership==='unknown').length} with unknown production membership.${production?.source?` Source: ${escape(production.source)}.`:''}</p></section>`;
 }
-function corpusLaunchActions(c,details=false) {
+function corpusLaunchActions(c,details=false,withBuild=details) {
   const launch=c.launch, routes=launch?.routes || [], production=launch?.productionRoutes || [];
   const safeUrl=value=>typeof value==='string' && (/^\/[^/\\]/.test(value) || /^https?:\/\//i.test(value)) && !/[\u0000-\u0020\\]/.test(value);
   const actions=routes.map(route=> {
     const label=routes.length>1 ? 'Launch in emulator · '+(route.label || route.appId) : 'Launch in emulator';
     if(route.available===true && safeUrl(route.url))return `<a class="emulator-launch" href="${escape(route.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(label+' — '+(c.name || c.id))}">${escape(label)} ↗</a>`;
-    return `<div class="launch-unavailable"><span>${routes.length>1?escape(route.label || route.appId)+': ':''}Launch unavailable</span><p class="sub">${escape(route.reason || 'No verified local launch route.')}</p>${details && route.missingPaths?.length?`<details><summary>Missing files (${route.missingPaths.length})</summary><pre>${escape(route.missingPaths.join('\n'))}</pre></details>`:''}</div>`;
+    const missing=route.missingPaths || [];
+    return `<div class="launch-unavailable"><span>${routes.length>1?escape(route.label || route.appId)+': ':''}Launch unavailable</span><p class="sub">${escape(route.reason || 'No verified local launch route.')}</p>${missing.length&&!details?`<p class="sub missing-files">Missing: ${missing.slice(0,3).map(escape).join(', ')}${missing.length>3?` +${missing.length-3} more (Details)`:''}</p>`:''}${details && missing.length?`<details open><summary>Missing files (${missing.length})</summary><pre>${escape(missing.join('\n'))}</pre></details>`:''}</div>`;
   }).join('');
   const publicLinks=production.filter(route=>safeUrl(route.url)).map(route=>`<a class="production-launch" href="${escape(route.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open production — '+(route.label || c.name || route.appId))}">Open production${production.length>1?' · '+escape(route.label || route.appId):''} ↗</a>`).join('');
-  return `<div class="corpus-launch${details?' launch-detail':''}" aria-label="Launch options">${actions || `<p class="sub">Launch unavailable: ${escape(launch?.reason || 'No verified local launch route.')}</p>`}${publicLinks}${details?'<p class="sub">Opens in a new tab. Launch availability does not establish gameplay compatibility or release readiness.</p>':''}</div>`;
+  const served=ReleaseModel.servedBuild(state),available=routes.some(route=>route.available===true);
+  const buildChip=available&&withBuild?`<span class="sub build-chip" title="${escape(state.emulatorBuild?.note || '')}">Build ${escape(served.text)}${served.reason?' · '+escape(served.reason):''}</span>`:'';
+  return `<div class="corpus-launch${details?' launch-detail':''}" aria-label="Launch options">${actions || `<p class="sub">Launch unavailable: ${escape(launch?.reason || 'No verified local launch route.')}</p>`}${buildChip}${publicLinks}${details?'<p class="sub">Opens in a new tab pinned to the served wasm shown; if the module changes first, the launch refuses instead of running another build. Launch availability does not establish gameplay compatibility or release readiness.</p>':''}</div>`;
 }
 function launchableCandidate(c) { return c.launch?.routes?.some(route=>route.available===true) === true; }
 function corpusLaunchBar() {
   const count=state.candidates.filter(launchableCandidate).length;
-  return `<div class="launch-availability" aria-label="Emulator launch availability"><button data-launch-filter="available" aria-pressed="${corpusLaunch==='available'}"><strong>${count}</strong> Launchable now</button><span class="sub">${state.candidates.length-count} without an available local route. Launch availability is separate from gameplay verification.</span>${corpusLaunch==='available'?'<button data-launch-filter="all">Show all launch states</button>':''}</div>`;
+  return `<div class="launch-availability" aria-label="Emulator launch availability"><button data-launch-filter="available" aria-pressed="${corpusLaunch==='available'}"><strong>${count}</strong> Launchable now</button><span class="sub">${state.candidates.length-count} without an available local route. Launch availability is separate from gameplay verification. Launches serve: ${escape(ReleaseModel.servedBuild(state).text)}.</span>${corpusLaunch==='available'?'<button data-launch-filter="all">Show all launch states</button>':''}</div>`;
 }
 function corpusView() {
   const workRank = c => ({active:0,review:1,blocked:2,ready:3})[candidateWork(c)?.status] ?? 4;
@@ -280,17 +334,44 @@ function corpusView() {
     }).join('')}</div></section>`;
     }).join('') || empty('No matching candidates.')}`;
 }
+let desktopSelection='all';
+function desktopRowHtml(row) {
+  const c=state.candidates.find(x=>x.id===row.id),[,label,color]=releaseState(c);
+  const gateMark=g=>g.met?'✓':g.status==='blocked'?'✕':'?';
+  const unmet=row.gates.filter(g=>!g.met);
+  const rate=row.rate.known?`<strong>${escape(row.rate.text)}</strong> <span class="sub">${row.rate.reviewed?'reviewed run':'unreviewed run'}${row.rate.historical?' · historical':''} · ${escape(row.rate.qualification)}${row.rate.measuredAt?' · '+age(row.rate.measuredAt)+' ago':''}${row.rate.scene?' · '+escape(row.rate.scene):''}</span>`:`<strong>${escape(row.rate.text)}</strong>`;
+  const shot=row.screenshot?`<button class="desktop-shot" data-run="${escape(row.screenshot.runKey)}" aria-label="Open reviewed gameplay evidence for ${escape(row.name)}"><img src="${escape(row.screenshot.url)}" alt="Reviewed gameplay: ${escape(row.name)} · ${escape(row.screenshot.name)}" loading="lazy"></button>`:'<div class="desktop-shot desktop-shot-missing">No reviewed gameplay screenshot</div>';
+  return `<article class="desktop-row panel" data-desktop-row="${escape(row.id)}">${shot}<div class="desktop-body"><div class="desktop-head"><h3>${escape(row.name)}</h3>${badge(label,color)}<span class="desktop-gates" aria-label="Release gates">${row.gates.map(g=>`<span class="gate gate-${g.met?'met':g.status==='blocked'?'blocked':'unknown'}" title="${escape(g.name+': '+g.status+' — '+g.detail)}">${gateMark(g)} ${escape(g.name)}</span>`).join('')}</span></div>`+
+    `<p class="desktop-line">${rate}</p><p class="desktop-line sub">${escape(row.input.text)} · ${escape(row.sound.text)} · Deploy not recorded${row.gameplayRun?` · Gameplay run ${escape(row.gameplayRun.build.text)} · <span class="build-${row.gameplayRun.servedMatch.status}">${escape(row.gameplayRun.servedMatch.text)}</span>`:''}</p>`+
+    `${row.staleReasons.length?`<p class="desktop-line notice-line">Review not current: ${escape(row.staleReasons.join(' '))}</p>`:''}`+
+    `<ul class="desktop-blockers">${row.blockers.map(b=>`<li class="blocker-item"><strong>Blocker:</strong> ${escape(b.summary)}${b.source?` <span class="sub">${escape(b.source)}</span>`:''}</li>`).join('')}${unmet.map(g=>`<li><strong>${escape(g.name)}</strong> ${escape(g.status.replaceAll('-',' '))}: ${escape(g.detail)}${g.source?` <span class="sub">${escape(g.source)}</span>`:''}</li>`).join('')}</ul>`+
+    `${row.next?`<p class="desktop-line"><strong>Next:</strong> ${escape(row.next)}</p>`:''}<div class="desktop-actions">${corpusLaunchActions(c,false,true)}<button data-candidate="${escape(row.id)}">Details →</button></div></div></article>`;
+}
+function desktopView() {
+  const q=ReleaseModel.desktopQueue(state,desktopSelection),rows=q.rows.filter(r=>matches(state.candidates.find(c=>c.id===r.id)));
+  const choices=[['all','All unreleased'],['playable','Playable (reviewed gameplay + launchable)'],['gameplay','Reviewed gameplay'],['review-needed','Review needed'],['unblocked','No recorded blockers'],['ready','Ready']];
+  const counts=[['playable',q.playable,'Playable unreleased','reviewed gameplay screenshot and a launch route available now'],['review-needed',q.reviewNeeded,'Review needed','release status review-needed: no blockers, gates still to review'],['ready',q.ready,'Ready','every gate passed in a current release review']];
+  const stale=q.staleReviews.length?`<p class="notice stale-reviews" role="status"><strong>${q.staleReviews.length} recorded release review${q.staleReviews.length===1?' is':'s are'} stale and need${q.staleReviews.length===1?'s':''} refreshing</strong> (${q.staleReviews.map(r=>escape(r.name)).join(', ')}): ${escape([...new Set(q.staleReviews.flatMap(r=>r.reasons))].join(' '))} Until refreshed their gates count as not reviewed.</p>`:'';
+  return title('Ready for desktop',`${q.unreleased} unreleased games. Sorted by fewest blockers and unmet gates.`)+
+    `<div class="release-counts desktop-counts">${counts.map(([id,n,label,hint])=>`<button data-desktop-filter="${id}" aria-pressed="${desktopSelection===id}" title="${escape(hint)}"><strong>${n}</strong> ${escape(label)}</button>`).join('')}</div>`+stale+
+    `<div class="toolbar"><select id="desktop-selection" aria-label="Desktop readiness filter">${choices.map(([id,l])=>`<option value="${id}" ${desktopSelection===id?'selected':''}>${l}</option>`).join('')}</select><span class="sub">${rows.length} shown · ${q.production.status==='verified'?'production snapshot checked '+escape(when(q.production.checkedAt)):'production membership unverified'} · ${q.unknownMembership} games with unknown membership are not listed</span></div>`+
+    `<p class="source-note">From recorded release reviews, runs and launch routes only. Rates use their recorded metric label; nothing is inferred from block or present counts. Sound and deploy evidence are not recorded for any game and are shown as such; they are not gates here. ✓ passed · ✕ blocked · ? not reviewed. This view does not publish or deploy.</p>`+
+    `<div class="desktop-list">${rows.map(desktopRowHtml).join('') || empty('No unreleased games match this filter.')}</div>`;
+}
+document.addEventListener('change',event=>{if(event.target.id==='desktop-selection'){desktopSelection=event.target.value;render();}});
+document.addEventListener('click',event=>{const el=event.target.closest?.('[data-desktop-filter]');if(el&&state){desktopSelection=desktopSelection===el.dataset.desktopFilter?'all':el.dataset.desktopFilter;render();}});
 function currentAgents() {
   const owners=new Set(state.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status)).map(t=>t.owner));
   return state.agents.filter(a=>a.id===coordinator()?.agentId || owners.has(a.id) || a.provider!=='claude' && a.state!=='idle' && Date.now()-Date.parse(a.lastActivityAt)<15*60000).sort((a,b)=>agentSignal(a).rank-agentSignal(b).rank || Number(b.id===coordinator()?.agentId)-Number(a.id===coordinator()?.agentId));
 }
 function agentsView() {
-  const current=currentAgents(),ids=new Set(current.map(a=>a.id)),history=state.agents.filter(a=>!ids.has(a.id) && matches(a));
-  return title('Agents', 'Decisions and sessions needing a check first. Recent activity is not proof of task progress.') + `<div class="agent-list">${current.filter(matches).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
+  const current=topLevel(currentAgents()),ids=new Set(current.map(a=>a.id)),history=topLevel(state.agents).filter(a=>!ids.has(a.id) && matchesTree(a));
+  return title('Agents', 'Decisions and sessions needing a check first. Recent activity is not proof of task progress.') + `<div class="agent-list">${current.filter(matchesTree).map(agentCard).join('') || empty('No current sessions observed.')}</div><details class="agent-history" ${agentHistoryOpen || query?'open':''}><summary>Other observed sessions (${history.length})</summary><div class="agent-list">${history.map(agentCard).join('')}</div></details>` + notice();
 }
 function activityView() {
   const rows=matchingActivity();
-  return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
+  const cs=state.codeState;
+  return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+(cs?`<p class="source-note">Commit state: ${cs.available?escape(cs.note)+(cs.mainRef?' Merged means reachable from '+escape(cs.mainRef)+'.':' No remote default branch found.')+(cs.fetchedAt?' Last fetch '+escape(when(cs.fetchedAt))+'.':' Last fetch time unknown.'):escape(cs.note)}</p>`:'')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
 }
 function matchingActivity() { return (state.activity || []).filter(row=>matches(row) && (activityFilter==='all' || (row.type==='commit'?'commit':'message')===activityFilter)); }
 function render() {
@@ -299,7 +380,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, agents: agentsView, activity: activityView }[view] || overview)();
+  $('#main').innerHTML = ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
@@ -307,13 +388,13 @@ function runRows(runs) { return runs.map(r => `<div class="run"><div class="run-
 function candidateDetail(id) {
   const c = state.candidates.find(c => c.id === id); if (!c) return;
   const {shot,run:captureRun,older,gameplay} = candidateCapture(c);
-  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${badge(c.category?.label || 'Unclassified')}<p class="sub">${escape(c.category?.basis)}</p>${corpusLaunchActions(c,true)}${corpusReleaseReview(c,true)}${corpusAssessment(c,true)}${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c,true)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt: '+escape(c.latestRun?.outcome || 'unknown'):'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id || c.appIds?.includes(r.candidateId)))}</div>`);
+  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${badge(c.category?.label || 'Unclassified')}<p class="sub">${escape(c.category?.basis)}</p>${corpusLaunchActions(c,true)}${corpusReleaseReview(c,true)}${corpusAssessment(c,true)}${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c,true)}${perfComparisonHtml(c)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt: '+escape(c.latestRun?.outcome || 'unknown'):'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id || c.appIds?.includes(r.candidateId)))}</div>`);
 }
 function agentDetail(id) {
   const a = state.agents.find(a => a.id === id); if (!a) return;
   const fields = [['Session', a.id], ['Model', a.model || 'unknown'], ['Worktree', a.cwd], ['Assigned task', a.taskId || 'unknown — no explicit owner match'], ['On task', age(a.taskStartedAt)], ['Current turn started', when(a.turnStartedAt)], ['Latest activity', when(a.lastActivityAt)], ['Last progress', when(a.progressAt)], ['Observed state', a.state], ['Process health', 'unknown — no process attachment'], ['Last operation', a.lastEvent], ['Last-request input', num(a.inputTokens)], ['Last-request output', num(a.outputTokens)], ['Cache read', num(a.cacheReadTokens)], ['Cache write', num(a.cacheWriteTokens)], ['Reported context limit', num(a.contextLimit)], ['Session total tokens', num(a.totalTokens)], ['Usage observed', when(a.usageAt)], ['Compactions observed', a.compactions + (a.partial ? ' in sampled log windows' : '')], ['Log coverage', a.partial ? 'head + tail only; history may be incomplete' : 'complete file']];
   fields.find(f => f[0] === 'Process health')[1] = 'unknown — PID presence does not establish responsiveness';
-  fields.push(['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
+  fields.push(['Latest result', a.summary || 'not recorded'], ['Parent session', a.parentAgentId || 'none'], ['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
   show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${subagentSummary(a)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
 }
 let activeRefresh=null;

@@ -126,3 +126,26 @@ test('NFS2SE build manifest exception binds exact registry identity and reports 
     await fs.rm(root, {recursive:true, force:true});
   }
 });
+
+test('launch links pin the served wasm; a changed module or missing files refuse with the exact reason',async()=>{
+ const {readBuildIdentity}=require('./emulator-server');
+ const {execFileSync}=require('node:child_process');
+ const root=await fixture(),serve=createEmulatorHandler(root);const server=http.createServer(async(req,res)=>{try{if(!await serve(req,res)){res.writeHead(404);res.end();}}catch(e){res.writeHead(500);res.end(e.message);}});await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+ try{
+  const sha=require('node:crypto').createHash('sha256').update('wasm').digest('hex');
+  let id=await readBuildIdentity(root);
+  assert.equal(id.wasmSha256,sha);assert.equal(id.commit,null,'no git checkout: commit stays unknown');assert.equal(id.dirty,null);
+  const git=(...args)=>execFileSync('git',['-C',root,'-c','user.name=t','-c','user.email=t@t',...args],{stdio:'pipe'});
+  git('init','-q');git('add','-A');git('commit','-qm','fixture');
+  id=await readBuildIdentity(root);assert.match(id.commit,/^[0-9a-f]{40}$/);assert.equal(id.dirty,false);assert.equal(id.dirtyFiles,0);
+  await fs.writeFile(path.join(root,'host.js'),'changed');id=await readBuildIdentity(root);assert.equal(id.dirty,true);assert.equal(id.dirtyFiles,1);
+  const route=launchFor({appIds:['game','missing']},await buildCatalog(root),null,id).routes;
+  assert.equal(route[0].url,'/emulator/?app=game&build='+sha);assert.equal(route[1].url,null,'unavailable routes get no link');
+  assert.equal(launchFor({appIds:['game']},await buildCatalog(root),null,{wasmSha256:null}).routes[0].url,'/emulator/?app=game');
+  assert.equal((await request(port,route[0].url)).status,200);
+  const missing=await request(port,'/emulator/?app=missing');assert.equal(missing.status,409);assert.match(missing.body,/missing test\/binaries\/no\.exe/);
+  await new Promise(r=>setTimeout(r,20));await fs.writeFile(path.join(root,'build/wine-assembly.wasm'),'rebuilt');
+  const changed=await request(port,route[0].url);assert.equal(changed.status,409);assert.match(changed.body,/Served build changed/);assert.match(changed.body,new RegExp(sha.slice(0,12)));
+  await fs.unlink(path.join(root,'build/wine-assembly.wasm'));assert.match((await readBuildIdentity(root)).reason,/missing/);
+ }finally{await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});}
+});

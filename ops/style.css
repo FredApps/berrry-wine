@@ -307,8 +307,8 @@ p {
 }
 .agent-list {
   display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:14px;
+  grid-template-columns:minmax(0,1fr);
+  gap:8px;
 }
 .agent {
   padding:19px 21px;
@@ -1222,3 +1222,71 @@ dd {
 .subagent-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .subagent-heading button { text-align: left; overflow-wrap: anywhere; flex: 1 1 180px; }
 .subagent-summary p { margin: 6px 0; overflow-wrap: anywhere; }
+
+/* Ready for desktop: one row per unreleased game */
+.desktop-list { display:grid; gap:12px; margin-top:12px; }
+.desktop-row { display:grid; grid-template-columns:200px minmax(0,1fr); gap:16px; padding:14px; }
+.desktop-shot { display:block; width:200px; aspect-ratio:4/3; padding:0; border:1px solid var(--line); background:var(--bg); overflow:hidden; }
+.desktop-shot img { width:100%; height:100%; object-fit:contain; display:block; }
+.desktop-shot-missing { display:flex; align-items:center; justify-content:center; text-align:center; color:var(--muted); padding:8px; }
+.desktop-body { min-width:0; }
+.desktop-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.desktop-head h3 { margin:0; font-size:15px; }
+.desktop-gates { display:flex; flex-wrap:wrap; gap:4px; }
+.gate { padding:1px 6px; border:1px solid var(--line); font-size:12px; }
+.gate-met { color:var(--green); }
+.gate-blocked { color:var(--red); border-color:var(--red); }
+.gate-unknown { color:var(--muted); }
+.desktop-line { margin:6px 0 0; overflow-wrap:anywhere; }
+.notice-line { color:var(--amber); }
+.desktop-blockers { margin:6px 0 0; padding-left:18px; overflow-wrap:anywhere; }
+.desktop-blockers .blocker-item { color:var(--red); }
+.desktop-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+.desktop-actions .corpus-launch { border-top:1px solid var(--line); padding:6px; }
+.desktop-actions button { min-height:40px; }
+@media(max-width:600px) {
+  .desktop-row { grid-template-columns:1fr; }
+  .desktop-shot { width:100%; }
+}
+.build-chip { overflow-wrap:anywhere; }
+.missing-files { overflow-wrap:anywhere; color:var(--amber); }
+.build-differs { color:var(--amber); }
+.build-match { color:var(--green); }
+
+/* Agents: one full-width column, two text lines per agent and per subagent */
+.agent-row { padding:8px 12px; min-width:0; }
+.agent-line1 { display:flex; align-items:center; gap:8px; min-width:0; white-space:nowrap; }
+.agent-line1 .agent-title { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0; border:0; background:none; color:#e2eee6; font-size:14px; text-align:left; }
+.agent-line1 .details-button { flex:0 0 auto; }
+.agent-short { flex:0 0 auto; }
+.agent-status { flex:0 0 auto; color:#a7c9ae; }
+.agent-status.warn { color:var(--amber); }
+.agent-status.bad { color:var(--red); }
+.agent-age { margin-left:auto; flex:0 0 auto; color:var(--muted); font-size:12px; }
+.agent-line2 { margin:2px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.agent-row .agent-line2.agent-decision { margin:2px 0 0; }
+.subagent-rows { list-style:none; margin:6px 0 0 18px; padding:0; }
+.subagent-row { padding:4px 0; border-top:1px dashed var(--line); }
+.subagent-row .agent-title { font-size:13px; }
+.subagent-more summary { margin:4px 0 0 18px; color:var(--muted); cursor:pointer; }
+@media(max-width:600px) {
+  /* Phone: line 1 may wrap once (name, then status/controls); the name stays one
+     clipped line and line 2 at most two lines. Full text is in the detail view. */
+  .agent-line1 { flex-wrap:wrap; row-gap:0; }
+  .agent-line1 .agent-title { flex:1 1 60%; }
+  .agent-short { display:none; }
+  .agent-age { margin-left:0; }
+  .agent-line1 button { min-height:44px; }
+  .agent-line2 { white-space:normal; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .subagent-rows { margin-left:8px; }
+}
+.code-chips { display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:4px; }
+.code-chip { padding:0 6px; border:1px solid var(--line); font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+.code-merged { color:var(--green); }
+.code-pushed { color:var(--cyan); }
+.code-local { color:var(--amber); }
+.code-task { font-size:11px; padding:0 6px; min-height:0; }
+.perf-compare { margin:12px 0; padding:10px 12px; border:1px solid var(--line); overflow-wrap:anywhere; }
+.perf-compare h3 { margin:0 0 6px; font-size:13px; }
+.desktop-counts { margin:4px 0 12px; }
+.stale-reviews { overflow-wrap:anywhere; }

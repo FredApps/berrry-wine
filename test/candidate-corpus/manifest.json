@@ -3,6 +3,89 @@
   "assetRoot": "test/binaries/candidates",
   "candidates": [
     {
+      "id": "dungeons-of-dredmor-release",
+      "name": "Dungeons of Dredmor (archived Steam release)",
+      "kind": "game",
+      "version": "Steam public depot 98801 revision 17; archive catalog timestamp 2012-08-29; no executable version resource",
+      "executables": [
+        "game/Dungeons of Dredmor.exe"
+      ],
+      "sourcePage": "https://archive.org/details/steam2-dump",
+      "license": "Proprietary commercial Steam release; local archival compatibility fixture, not a demo or redistribution grant",
+      "localOnly": true,
+      "packages": [],
+      "browser": {
+        "fileRoot": "game",
+        "exe": "game/Dungeons of Dredmor.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 20000,
+        "timeoutMs": 60000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "game/SDL.dll",
+          "game/SDL_ttf.dll",
+          "game/libexpat.dll",
+          "game/steam_api.dll",
+          "game/OpenAL32.dll"
+        ]
+      },
+      "notes": "Manually restored from the Archive.org steam2.torrent using only depot98801 revision17 parent-CRC closure:18verified blobs and16verified DATs. Complete6270-file manifest statically decoded; original binaries unchanged. Separate from beta98811. Startup/gameplay/audio/FPS untested; see docs/re-notes/dungeons-of-dredmor-release.md and local .candidate-source.json for exact hashes. --prepare regenerates browser manifest; packages intentionally empty because generic fetcher does not decode Steam2 archives."
+    },
+    {
+      "id": "dungeons-of-dredmor",
+      "name": "Dungeons of Dredmor (Steam beta)",
+      "kind": "game",
+      "version": "Steam2 depot 98811 revision 8; uploader dates build 2011-12-27; executable has no version resource",
+      "executables": [
+        "package/98811_8/Dungeons of Dredmor.exe"
+      ],
+      "sourcePage": "https://archive.org/details/dungeons-of-dredmor-beta-98811-steam2-builds",
+      "license": "Proprietary commercial game beta; community archival upload, not a verified demo or redistribution grant",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/dungeons-of-dredmor-beta-98811-steam2-builds/98811_8.7z",
+          "sha1": "7b32f7689a7ab31e48fc253da435968c99455109",
+          "type": "archive",
+          "into": "package"
+        }
+      ],
+      "browser": {
+        "fileRoot": "package/98811_8",
+        "exe": "package/98811_8/Dungeons of Dredmor.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 20000,
+        "timeoutMs": 60000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "package/98811_8/jpeg.dll",
+          "package/98811_8/libcurl.dll",
+          "package/98811_8/libexpat.dll",
+          "package/98811_8/libogg-0.dll",
+          "package/98811_8/libpng13.dll",
+          "package/98811_8/libvorbis-0.dll",
+          "package/98811_8/libvorbisfile-3.dll",
+          "package/98811_8/mikmod.dll",
+          "package/98811_8/msvcr80.dll",
+          "package/98811_8/SDL_image.dll",
+          "package/98811_8/SDL_mixer.dll",
+          "package/98811_8/SDL_ttf.dll",
+          "package/98811_8/SDL.dll",
+          "package/98811_8/steam_api.dll",
+          "package/98811_8/zlib1.dll"
+        ]
+      },
+      "notes": "Unmodified Windows x86 Steam beta with bundled SDL and steam_api.dll. Complete archive asset tree retained. Static registration only: startup, Steam availability, rendering, gameplay, audio and FPS untested. No Steam bypass or public desktop deployment. See docs/re-notes/dungeons-of-dredmor.md."
+    },
+    {
       "id": "pirates-2004",
       "name": "Sid Meier's Pirates! (2004)",
       "kind": "game",

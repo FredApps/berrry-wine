@@ -243,6 +243,15 @@ Use a stable explicit `id:` (letters, digits, underscore, dot or hyphen) to enab
 replies. Quiet sessions and unstructured messageboard prose are not inferred to
 be blocked tasks. `blocker`, `needs`, and `waiting-on` are single-line descriptions.
 
+Blockers are split into **Needs your input** and **Agent-resolvable** by
+`blocker-model.js` `actor()`, the same function Telegram `/blockers` uses, from
+recorded fields only: a blocked dependency → agent; `waiting-on` saying "no user
+decision" → agent; `waiting-on` naming the user, human, you, maintainer,
+dashboard-user or an approval → user; an automated-review stop or a capacity need
+(host/CPU/GPU) → user; any other `waiting-on` → agent; nothing recorded → agent
+(the owner must state the need). Each row shows the basis. Write
+`waiting-on: user` when the user must act.
+
 **Respond → Post reply to messageboard** appends one timestamped line:
 
 ```text
@@ -365,6 +374,20 @@ Only existing, safely contained screenshot artifacts qualify; diagrams and route
 text cannot promote an image. This records a review assertion, not automatic scene
 recognition or proof of controls/FPS. Without that metadata, ordinary captures
 remain visible without the gameplay badge.
+
+### Agent rows on Overview and Agents
+
+Agents are one full-width column. Each agent is exactly two text lines: line 1
+provider, short session id, name (task title, else the task ID named in its
+prompt), status word and last-activity age; line 2 the decision needed, else the
+active task's `Next:`, else `Latest:` (the session's last assistant text), else
+"No result or next step recorded". Each subagent (`parentAgentId`) is the same two
+lines under its parent; three are shown, the rest behind "Show N more". Status
+words are observations: "Quiet · check session" after 15 minutes without session
+activity, "Turn ended" when the log is idle; the age is activity, never progress.
+Process, tokens, evidence previews and timestamps are in the agent detail (▸).
+A current subagent keeps its parent row current; search matches subagents too.
+On phones lines wrap instead of truncating.
 
 ### Visuals on Overview and Agents
 
@@ -598,6 +621,13 @@ Their reported p95 uses sorted intervals at zero-based `floor(count*0.95)`;
 preserve that convention and each sample rather than averaging/recomputing it.
 See `ops/handoffs/ops-historical-fps-semantics.md` for exact collector evidence.
 
+Candidate details add **Before / after** when more than one measurement is
+recorded: the newest measurement is compared with each earlier one only when
+metric, counter, scene, renderer, host and GPU are identical and both runs
+recorded `wasmSha256`; the delta is shown with the metric label and whether the
+builds differ. Every other earlier measurement is listed as not comparable with
+the fields that differ. One measurement says "only one measurement recorded".
+
 ## Reviewed historical screenshot recovery
 
 `node ops/recover-visuals.js` imports the explicitly reviewed associations in
@@ -617,7 +647,16 @@ The source filter combines with search and survives refreshes. Commits include
 subject, author, timestamp, short hash and a GitHub link when the configured
 origin is recognized; local visibility does not certify remote publication.
 Git reads are bounded and cached for 30 seconds, without fetching. Dated items
-sort newest first; undated board messages keep their order after dated items. Narrow portrait and short landscape screens use compact navigation.
+sort newest first; undated board messages keep their order after dated items.
+Each commit shows where it is, from local refs only (no fetch, no GitHub call):
+**merged** (reachable from `origin/HEAD`, normally `origin/main`, via `rev-list`
+with an exact `merge-base --is-ancestor` fallback), **pushed** (on another remote
+branch, named) or **local only**; **tested** when a run's `build.commit` is this
+commit (count, passed, reviewed); **deployed: not recorded**, because the
+production snapshot records deployed files, not a commit. The Activity header
+gives the last fetch time. Task IDs named in a commit message link to the task;
+task rows summarise `Code: N commits · merged/pushed/local` and task details list
+them. Narrow portrait and short landscape screens use compact navigation.
 
 ## Live command approvals
 
@@ -667,6 +706,32 @@ New failed gameplay or source changes invalidate readiness. A short instrumented
 logical-frame sample remains distinct from release performance qualification.
 To review another game, add a record following the existing records and retain
 exact evidence paths and package-specific limitations.
+
+**Ready for desktop** (`#release`) lists one row per game whose verified
+production membership is `no`: the reviewed gameplay screenshot, the gameplay
+run's recorded build (`rev · dirty · wasm`, each "not recorded" when absent),
+the recorded rate with its own metric label and review state (or "Rate unknown"),
+the input gate, sound ("not recorded": no gate or run field holds audio
+evidence yet), every unmet gate with its status and summary, recorded blockers,
+and why a recorded review is not current (`staleReasons` from
+`release-readiness.js`). Rows sort ready first, then reviewed gameplay, then
+fewest blockers and unmet gates. Logic lives in `release-model.js`, shared by the
+page and `release-model.test.js`. Games with unknown membership are counted, not
+listed.
+
+Above the list: **Playable unreleased** (reviewed gameplay screenshot and a launch
+route available now), **Review needed** (status review-needed) and **Ready**
+counts, each a filter; and, separately, a notice naming the recorded release
+reviews that are stale and why. Sound and deploy evidence are shown as not
+recorded; they are not gates and add no approval requirement.
+
+Launch links carry `&build=<wasm sha256>` of the module the emulator route
+serves (`emulatorBuild` in `/api/state`: `rev · dirty (N tracked files) · wasm`,
+read from the live tree and cached 30 s). If `build/wine-assembly.wasm` changes
+before the click, `/emulator/` answers 409 naming both hashes instead of running
+another build; an unavailable app answers 409 listing its missing files. The
+Ready view compares the served module with the reviewed gameplay run's recorded
+wasm (match / differs / unknown); commits are not compared, only module hashes.
 
 ### Launch from EXE corpus
 

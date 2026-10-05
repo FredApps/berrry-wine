@@ -97,7 +97,7 @@ function createServer(options = {}) {
         return res.end(req.method === 'HEAD' ? undefined : JSON.stringify({...data,terminals:await terminals.list(),approvals:await terminals.approvals()}));
       }
       let file, type = 'text/plain; charset=utf-8';
-      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/blocker-model.js': ['blocker-model.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
+      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/blocker-model.js': ['blocker-model.js', 'text/javascript; charset=utf-8'], '/release-model.js': ['release-model.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],

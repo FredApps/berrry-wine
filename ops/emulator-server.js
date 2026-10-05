@@ -7,7 +7,10 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const PREFIX = '/emulator/';
 const LOCAL_DESKTOP = "    const LOCAL_DESKTOP = !new URLSearchParams(location.search).has('prod') &&\n      /^(localhost|127\\.|0\\.0\\.0\\.0|::1$|10\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.)/.test(location.hostname);";
-const caches = new Map();
+const crypto = require('node:crypto');
+const {execFile} = require('node:child_process');
+const caches = new Map(), buildCaches = new Map(), wasmDigests = new Map();
+const WASM = 'build/wine-assembly.wasm';
 function localPath(value) {
   if (typeof value !== 'string' || !value || /[\\\0?#]/.test(value) || path.posix.isAbsolute(value) || /^[a-z]+:/i.test(value)) return null;
   if (value.split('/').some(part => !part || part === '.' || part === '..')) return null;
@@ -105,6 +108,37 @@ async function getCatalog(root) {
   const record = {at:Date.now(),promise:buildCatalog(key)}; caches.set(key,record);
   try { return await record.promise; } catch (error) { caches.delete(key); throw error; }
 }
+function git(root, args) {
+  return new Promise(resolve => execFile('git', ['-C', root, ...args], {timeout: 5000, maxBuffer: 4 * 1024 * 1024}, (error, stdout) => resolve(error ? null : String(stdout))));
+}
+// SHA-256 of the module the emulator route would serve right now, cached by
+// size + mtime so a rebuild is noticed on the next request.
+async function servedWasm(root) {
+  const file = await realFile(root, WASM);
+  if (!file) return {sha256: null, bytes: null, modifiedAt: null};
+  const stat = await fsp.stat(file), key = file + ':' + stat.size + ':' + stat.mtimeMs, old = wasmDigests.get(file);
+  if (old?.key === key) return old.value;
+  const value = {sha256: crypto.createHash('sha256').update(await fsp.readFile(file)).digest('hex'), bytes: stat.size, modifiedAt: stat.mtime.toISOString()};
+  wasmDigests.set(file, {key, value});
+  return value;
+}
+// What a launch actually runs: the live tree's wasm plus the checkout it sits
+// in. Nothing is assumed when git or the module is unavailable.
+async function readBuildIdentity(inputRoot) {
+  const root = await fsp.realpath(inputRoot);
+  const [wasm, head, status] = await Promise.all([servedWasm(root), git(root, ['rev-parse', 'HEAD']), git(root, ['status', '--porcelain', '--untracked-files=no'])]);
+  const commit = head && /^[0-9a-f]{40}$/.test(head.trim()) ? head.trim() : null;
+  const dirtyFiles = commit && status !== null ? status.split('\n').filter(Boolean).length : null;
+  return {commit, dirty: dirtyFiles === null ? null : dirtyFiles > 0, dirtyFiles, wasmSha256: wasm.sha256, wasmBytes: wasm.bytes, wasmModifiedAt: wasm.modifiedAt,
+    checkedAt: new Date().toISOString(), reason: !wasm.sha256 ? WASM + ' is missing; launches cannot load a module.' : '',
+    note: 'Launches serve the live working tree. Dirty counts tracked files with uncommitted changes, which may or may not affect the module.'};
+}
+async function getBuildIdentity(root) {
+  const key = path.resolve(root), old = buildCaches.get(key);
+  if (old && Date.now() - old.at < 30000) return old.promise;
+  const record = {at: Date.now(), promise: readBuildIdentity(key)}; buildCaches.set(key, record);
+  try { return await record.promise; } catch (error) { buildCaches.delete(key); throw error; }
+}
 function privateIndex(bytes) {
   const source = bytes.toString('utf8');
   if (source.split(LOCAL_DESKTOP).length !== 2) throw Error('Private emulator entry anchor changed');
@@ -134,7 +168,10 @@ function createEmulatorHandler(root) {
     if (!catalog.allowed.has(relative)) return fail(404,'File is outside the emulator allowlist');
     if (relative === 'index.html') {
       const app = new URL(req.url,'http://localhost').searchParams.get('app');
-      if (app) {const route = catalog.routes.find(route => route.appId === app);if (!route) return fail(404,'Unknown registered app');if (!route.available) return fail(409,'Registered app files are unavailable');}
+      if (app) {const route = catalog.routes.find(route => route.appId === app);if (!route) return fail(404,'Unknown registered app');if (!route.available) return fail(409,'Registered app files are unavailable: '+(route.missingPaths.length ? 'missing '+route.missingPaths.join(', ') : route.reason));
+        // A dashboard link pins the module it displayed; refuse rather than silently run another build.
+        const pinned = new URL(req.url,'http://localhost').searchParams.get('build');
+        if (pinned) { const served = await servedWasm(catalog.root); if (served.sha256 !== pinned) return fail(409,'Served build changed since the dashboard snapshot: link expects wasm '+pinned.slice(0,12)+', now '+(served.sha256 ? served.sha256.slice(0,12) : 'missing')+'. Refresh the dashboard and launch again.'); }}
     }
     const file = await realFile(catalog.root, relative);
     if (!file) return fail(404,'Registered runtime or asset file is missing');
@@ -153,10 +190,11 @@ function createEmulatorHandler(root) {
     return true;
   };
 }
-function launchFor(candidate,catalog,production) {
-  const ids = candidate.appIds || [], routes=ids.map(id=>catalog.routes.find(route=>route.appId===id)).filter(Boolean);
+function launchFor(candidate,catalog,production,build) {
+  const pin = build?.wasmSha256 && /^[0-9a-f]{64}$/.test(build.wasmSha256) ? '&build=' + build.wasmSha256 : '';
+  const ids = candidate.appIds || [], routes=ids.map(id=>catalog.routes.find(route=>route.appId===id)).filter(Boolean).map(route=>route.available && route.url && pin ? {...route,url:route.url+pin} : route);
   const deployed = new Set(production?.status === 'verified' ? production.appIds : []);
   const productionRoutes = production?.status === 'verified' ? ids.filter(id=>deployed.has(id)).map(appId=>({appId,label:routes.find(r=>r.appId===appId)?.label || appId,url:new URL('/?app='+encodeURIComponent(appId),production.url).href})) : [];
   return {routes,productionRoutes,reason:routes.length ? '' : 'No registered emulator launch route is associated with this corpus entry.'};
 }
-module.exports={createEmulatorHandler,getCatalog,buildCatalog,privateIndex,rangeFor,launchFor,LOCAL_DESKTOP};
+module.exports={createEmulatorHandler,getCatalog,buildCatalog,getBuildIdentity,readBuildIdentity,privateIndex,rangeFor,launchFor,LOCAL_DESKTOP};
