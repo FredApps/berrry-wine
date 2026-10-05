@@ -23,3 +23,18 @@ Dispatcher counter498→514:16 callbacks. Guest accumulated timer progress incre
 Accompanying5sec audio capture:71 writes, first-to-last PCM3.250794seconds against4.876190audio-clock seconds, stream rebase1.625397seconds. Snapshot reads add observer cost, so these are diagnostic measurements, not pristine performance or sound acceptance. The inherited audio observer's endReason label says10sec-limit although the actual window is5000.09ms; raw preserved.
 
 Next bounded experiment: private latest-main exact source/module closure with its existing mmTimerThread option, compare default/option only after checking actual current app configuration and owner routing. Use the same normal scene and timer/audio fields, match phases, and verify callback state/queue validity. No parking suppression, buffer enlargement, timer catchup rewrite, or Heroes investigation is justified by this result. New module/source identities must remain separate from this old-runtime control.
+
+## Matched private latest-main comparison, 08:17 UTC
+
+Both arms use exact cc2dd28aa9e82506361aeb6891c34fafaea59d45 source and private production WASM fa14fcc62d0c4dd8ca31f851c511a07d7196cd75d5c9938fa5caea64688f24f1 (1,659,685bytes). No test exports or engine delta. Existing host URL selection `mm-thread=0/1` sets the same mmTimerThread property used by the app option. Same ship-hold scene and ordinary click/manual image readiness, but animation/dialog phase and pre-arm elapsed time differ. Both expected served source sets matched exactly. Private owning observer is separately pinned. Shared canonical f40 untouched.
+
+| Arm | Dispatcher count / sampled time | PCM / AudioContext time, first–last write | Stream rebase |
+|---|---|---|---|
+| Explicit0, session90155 |16 /1506.585ms |3.204354s /4.899410s |1.695057s |
+| Explicit1, session93122 |59 /1480.070ms |3.947392s /3.947392s |0s |
+
+Treatment reaches256-event cap at about4sec; baseline captures5sec. Preserve that difference. An equal3000ms interval `(first write, first write+3000ms]`, excluding the anchor write, yields baseline42 writes/172032bytes/1.950476sPCM versus treatment64/262144/2.972154sPCM. At last write within this interval rebases are1.033288s versus0. One chunk is46.44ms, so near3sec submitted PCM is the expected bounded-buffer result. Treatment has the auxiliary timer thread; baseline has only main thread. Timer groups are valid in both; nonpark return interpretation errors are retained.
+
+Artifacts: `scratch/comi-audio-investigation-20261003/matched-main/comparison.json`, each arm's raw observations/served files/receipt/cleanup. Source compiler completed cleanly; no canonical build modified. Both browsers/servers closed cleanly, final93122 at08:17:21.832Z; Jig received direct release. Preserved setup failures: missing private fixture link before browser, then legacy audio observer assuming numeric scheduled-header value. New source stores a submission object; passive observer now projects waveHdrGA, tested with an actual-source expression and circular owner record. Neither failure is a guest failure.
+
+Default change2745e045 was published during this comparison. Source review confirms host defaulttrue, browser shell `app.mmTimerThread !== false`, and installed programs inherit true unless explicitly opted out. COMI has no false override. This selects the same true mode as our explicit1 arm, but a current-default binary/browser run has not been performed. No redundant COMI registry flag or scheduler patch is needed. A short current-default audible recording/playback qualification remains: PCM queue continuity alone does not prove perceptual audio quality. No audible recording was collected in this pair. No Heroes source/timing changes were made.
