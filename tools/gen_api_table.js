@@ -1635,28 +1635,19 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_Blt",
     "nargs": 6,
     "convention": "stdcall",
-    "stub": {
-      "pop": 28,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_Blt"
   },
   {
     "name": "IVBImageSurface7_BltColorFill",
     "nargs": 4,
     "convention": "stdcall",
-    "stub": {
-      "pop": 20,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltColorFill"
   },
   {
     "name": "IVBImageSurface7_BltFast",
     "nargs": 7,
     "convention": "stdcall",
-    "stub": {
-      "pop": 32,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltFast"
   },
   {
     "name": "IVBImageSurface7_BltFx",
@@ -1743,10 +1734,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_DrawText",
     "nargs": 5,
     "convention": "stdcall",
-    "stub": {
-      "pop": 24,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_DrawText"
   },
   {
     "name": "IVBImageSurface7_Flip",
@@ -1992,19 +1980,13 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetClipper",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": {
-      "pop": 12,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetClipper"
   },
   {
     "name": "IVBImageSurface7_SetColorKey",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetColorKey"
   },
   {
     "name": "IVBImageSurface7_setDrawStyle",
@@ -2064,10 +2046,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetForeColor",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": {
-      "pop": 12,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetForeColor"
   },
   {
     "name": "IVBImageSurface7_SetLockedPixel",
@@ -2218,6 +2197,7 @@ for (const row of vbImageMethods) {
   let current=existing.find(api=>api.name===row.name);
   if (!current) { current={id:existing.length,...row}; existing.push(current); seen.add(row.name); }
   Object.assign(current,row);
+  if (row.handler) delete current.stub;
 }
 const vbImageFile=existing.find(api=>api.name==='IVBDirectDraw7_DirectSlot008');
 if (!vbImageFile) throw Error('Missing established VB image API');
