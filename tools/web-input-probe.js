@@ -97,6 +97,8 @@ const LAUNCH_MS = Number(opt('launch', 90000));
 // (mobile-app-sweep.js records it per row) instead of passing silently.
 const LAUNCHER_MS = Number(opt('launcher-wait', 60000));
 const PROTOCOL_TIMEOUT_MS = Number(opt('protocol-timeout', 600000));
+// How long browser.close() may take before Chrome is killed outright.
+const CLOSE_TIMEOUT_MS = 20000;
 const CPU_RATE = Number(opt('cpu', 1));
 const THREADS = argv.includes('--threads');
 const PRESENTATION_SCALE = opt('scale', '');
@@ -267,6 +269,40 @@ const readCursor = page => page.evaluate(() => {
     : v);
   return { inline: shorten(inline), computed: shorten(computed) };
 });
+
+// Close Chrome AND let go of its stdio, or this process never exits.
+//
+// Puppeteer spawns Chrome with stdout/stderr as pipes into this process. A
+// branded Chrome on macOS hands those same descriptors to the helpers it
+// starts, and one of them is not Chrome's to stop: on startup Chrome wakes
+// GoogleUpdater (`GoogleUpdater --wake-all --system`, reparented to launchd),
+// which inherits fds 1 and 2 and keeps running for minutes after the browser
+// is gone. Node holds the event loop open on those pipes until they EOF, so
+// the probe printed everything, closed the browser in ~400ms, and then sat
+// until mobile-app-sweep's 240s SIGKILL (`exit: null`). The wake is throttled
+// system-wide, so only the first Chrome(s) launched in a window spawn it --
+// which is why the first two jobs of a sweep hung and every later one exited.
+// No Chrome switch suppresses the wake, so the fix is here: once the browser
+// has closed, nothing it left behind may keep us alive.
+async function closeBrowser(browser) {
+  const proc = browser.process();
+  let timer;
+  const graceful = browser.close().then(() => true, () => false);
+  // Bounded fallback: a graceful close waits for the browser process to exit
+  // with no limit of its own.
+  const ok = await Promise.race([graceful,
+    new Promise(r => { timer = setTimeout(() => r(false), CLOSE_TIMEOUT_MS); })]);
+  clearTimeout(timer);
+  if (!ok && proc && proc.exitCode === null && proc.signalCode === null) {
+    console.error(`browser.close did not finish in ${CLOSE_TIMEOUT_MS}ms; killing Chrome pid ${proc.pid}`);
+    proc.kill('SIGKILL');
+  }
+  if (proc) {
+    for (const s of [proc.stdin, proc.stdout, proc.stderr, ...(proc.stdio || [])]) {
+      if (s && !s.destroyed) s.destroy();
+    }
+  }
+}
 
 async function main() {
   // --url points the probe at an already-running origin (the deployed site, or
@@ -576,8 +612,11 @@ async function main() {
       console.log(`eval => ${v}`);
     }
   } finally {
-    await browser.close();
-    if (server) server.close();
+    await closeBrowser(browser);
+    if (server) {
+      server.closeAllConnections();
+      server.close();
+    }
     fs.rmSync(profile, { recursive: true, force: true });
   }
   if (problems.length) {
