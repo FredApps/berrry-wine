@@ -85,7 +85,10 @@ const CLI = 0xFA, STI = 0xFB, NOP = 0x90, PUSHF = 0x9C, POPF = 0x9D, IRET = 0xCF
 const CALL = (l) => [0xE8, { rel16: l }];
 
 // Common frame around a case body. The body must leave IF=1 at label X.
-function program(body) {
+// opts.after names the IF=1 routine called at X (default `spin`, a 1-op
+// `loop $`); opts.work appends `work` AFTER the handler, so every label the
+// original six cases use keeps its address and their bytes are unchanged.
+function program(body, opts = {}) {
   return assemble([
     CLI,
     0x31, 0xC0,                                   // xor ax,ax
@@ -96,7 +99,7 @@ function program(body) {
     L('round'),
     ...body,
     L('X'),
-    ...CALL('spin'),                              // IF=1 for a while
+    ...CALL(opts.after || 'spin'),                // IF=1 for a while
     0x4D,                                         // dec bp
     0x74, 0x03,                                   // jz +3 (over the jmp)
     0xE9, { rel16: 'round' },                     // jmp round
@@ -106,6 +109,11 @@ function program(body) {
     L('spin'), 0xBA, ...w(3), L('s1'), 0xB9, 0xFF, 0xFF, L('s2'), 0xE2, { rel8: 's2' }, 0x4A, 0x75, { rel8: 's1' }, RET,
     L('stiret'), STI, L('stiret_ret'), RET,
     L('handler'), 0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, IRET, // push ax; mov al,20h; out 20h,al; pop ax; iret
+    // work: 3 x 65535 passes of a 5-op self-loop (add ax,bx; xor si,ax; inc bx;
+    // dec cx; jnz) -- at the region JIT's and tree-fold's minOps (4) and above,
+    // where the 1-op `loop $` spins are not, so those arms have a loop to take.
+    ...(opts.work ? [L('work'), 0xBA, ...w(3), L('w0'), 0xB9, 0xFF, 0xFF,
+      L('w1'), 0x01, 0xD8, 0x31, 0xC6, 0x43, 0x49, 0x75, { rel8: 'w1' }, 0x4A, 0x75, { rel8: 'w0' }, RET] : []),
   ]);
 }
 
@@ -124,6 +132,26 @@ const CASES = {
   // IRET to X with IF=1 in the popped FLAGS: delivered at X.
   iret: { body: [STI, PUSHF, CLI, ...CALL('delay'), 0x0E, 0x68, { abs16: 'X' }, IRET], forbid: [], expect: 'X' },
   // STI then MOV SS (its own shadow) then MOV SP: first boundary is X.
+  // ARM COVERAGE (added after the first candidate PASS, 18b17779, where the
+  // region JIT declined "no self-loop region found" and tree-fold built no
+  // folds -- every hot loop here was a 1-op `loop $`, below their minOps of 4).
+  // sti_nop's IF-enable sequence, with the IF=1 phase in `work`, a 5-op
+  // self-loop the region JIT and tree-fold can take. The boundary itself stays
+  // OUTSIDE any region; what this exercises is deliveries at stops inside a
+  // compiled loop, and that the arms then engage at all (read the raw lines).
+  region_coexist: { body: [CLI, ...CALL('delay'), STI, L('f_nop'), NOP], forbid: ['f_nop'], expect: 'X',
+    opts: { after: 'work', work: true } },
+  // The IF-enable sequence INSIDE a hot 6-op loop: each pass makes IF=1 for one
+  // follower (STI; NOP), then clears it (CLI). The pending IRQ is owed at the
+  // boundary after the NOP (label Y), never after the STI. The region JIT should
+  // DECLINE this loop ("contains sti (IF-enable boundary)", the candidate's
+  // buildRegion decline) -- read its raw line; that decline is the arm's
+  // expected behaviour here, not an engagement failure.
+  sti_in_loop: { body: [CLI, ...CALL('delay'), 0xB9, ...w(0x2000),
+    L('L'), STI, L('f_loopnop'), NOP, L('Y'), CLI, 0x01, 0xD8, 0x49, 0x75, { rel8: 'L' }, STI],
+  // X is forbidden too: the trailing STI follows the loop's CLI (IF=0), so the
+  // boundary right after it (X) is inside that STI's shadow.
+  forbid: ['f_loopnop', 'X'], expect: 'Y', opts: { work: false } },
   // INFORMATIONAL (composed oracle, see the header).
   sti_movss: { body: [CLI, ...CALL('delay'), 0x8C, 0xD0, 0x89, 0xE3, STI, L('f_movss'), 0x8E, 0xD0, L('f_movsp'), 0x89, 0xDC],
     forbid: ['f_movss', 'f_movsp'], expect: 'X', informational: true },
@@ -181,7 +209,7 @@ const emit = (process.argv.find((a) => a.startsWith('--emit=')) || '').slice(7);
 const dir = emit || fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-ifen-'));
 let failed = 0;
 for (const [name, c] of Object.entries(CASES)) {
-  const { bytes, at } = program(c.body);
+  const { bytes, at } = program(c.body, c.opts);
   const file = path.join(dir, `${name}.com`);
   fs.writeFileSync(file, bytes);
   if (emit) { console.log(`${file}  X=0x${at.X.toString(16)}  ${c.forbid.map((f) => `${f}=0x${at[f].toString(16)}`).join(' ')}`); continue; }
