@@ -1,4 +1,4 @@
-# BRW candidate stack: consolidated evidence and recommendation (2026-10-05 ~16:50Z, source-only)
+# BRW candidate stack: consolidated evidence and recommendation (source-only; first written 2026-10-05 16:44Z, commit 0c1fc9a7; revised 16:49Z after root review)
 
 Branch `claude/toyvm-brw-phase5-20261005`; every number below is from committed evidence
 (commits in brackets). Nothing here is promoted, and stage 2's original P4 failure stays recorded
@@ -56,14 +56,24 @@ P4' passes only if all of these hold:
 1. **Guest-visible identity off the schedule:** for every one of the 199 programs, l1 under
    --no-irq-schedule has identical frame, wav, irqs, ints and pixels, healthy status, and exact
    identity coverage (as P4 checks today).
-2. **Dispatched-only moves are attributed and bounded:** every row whose dispatched count moved is
-   named by an attribution run (as in 8f1985c4) to a patch declared to change L1 (J, SMC fix). Each
-   move is no larger than one block's overshoot. Proposed bound: at most 1024 dispatches; the largest
-   observed is +585.
+2. **Dispatched-only moves are attributed; no numeric bound is claimed yet.** Every row whose
+   dispatched count moved is named by an attribution run (as in 8f1985c4) to a patch declared to change
+   L1 (J, SMC fix). The earlier "<=1024" was picked from the observed +585 and is withdrawn. What the
+   semantics give:
+   - The budget is tested as `$steps < 0` at block transfers, so an end stop overshoots by at most the
+     ops between the date and the next budget-testing transfer.
+   - Under J, a `jmp_syn` no longer tests the budget, so that stretch can run through a chain of
+     jmp_syn-linked straight lines up to the next guest transfer. The bound is that chain's length,
+     a property of each program's compiled code, not a constant.
+   - The SMC fix adds self-modify handbacks rather than extending an overshoot, so its moves (COLORS
+     +70) need their own explanation.
+   Until the chain length is computed per program, report each move's size and leave the bound
+   unproven.
 3. **Schedule-only patches still meet the original rule:** a tree with only v2+v3+v4 (no J, no SMC
    fix) moves 0 of 199 rows under --no-irq-schedule. This tree is NOT yet run: the attribution
    covered v4 on top of v2v3j, not v2+v3 alone. It is the one new runtime check this criterion needs.
-4. **Schedule-on l1 changes are reviewed, not waved through:** the 11 wav moves (and the small irqs and
+4. **Schedule-on l1 changes are reviewed, not waved through** (findings and the reference check:
+   `wav-validate/PLAN.md`): the 11 wav moves (and the small irqs and
    BLIQ ints moves) are guest-observable. They come from the schedule fixes moving render and IRQ
    instants, which is the purpose of v2-v4. But nothing has yet shown the new audio is more correct,
    only more arm-independent. They need a listening or reference check, at least BLIQ (PIT
@@ -104,9 +114,32 @@ disassembly per the repo's optimization rule). That measurement does not exist.
 5. **Same-block forward SMC** (TOYVM-SMC-SAME-BLOCK-FORWARD-PATCH). Not part of this stack. It is a
    CPU-contract decision (386/486 prefetch vs Pentium snooping), blocked on that choice.
 
+## 6b. The 11 schedule-on l1 changes (wav-validate/PLAN.md)
+
+From the preserved rows:
+- Capture length is not the cause (final dispatched equal or +-1; frames identical).
+- Arm agreement cannot validate them: all four arms already agree on most of these in base and cand,
+  so the change is uniform across arms.
+- The leading confound is render instants: cand has more `date` stops (+1 to +6,377), each a render
+  point where the SB DMA is read.
+- BLIQ is the only guest-behaviour change (ints 2985 -> 2978, a PIT reprogrammer).
+
+The smallest reference check (one slot, about 1 min): BLIQ, CYCLE and CAVEIRA on head, v2v3,
+v2v3j, v2v3j_v4 and stack, with --audio, --trace-irq and --trace-io=40,43. Validity gate: head and
+stack WAV hashes equal P3's. The run attributes which patch changes the audio, classifies the first
+divergence against the schedule's date contract, and compares samples with wav-compare.js (tests 5/5).
+
 ## 7. Evidence gaps and follow-ups
 
 - No performance measurement for J, the SMC fix or the stack.
+- SMC fix regression risks, unmeasured:
+  - keeping code bits up after a pure program's first store adds self-modify breaks wherever a straight
+    line stores into its own later bytes; the CYCLE-style mixer the original comment cites is the case
+    to watch for speed;
+  - no synthetic reproducer reaches the pure-volatile path yet (repro2: the transfer-separated form
+    passes everywhere); BRW remains the only witness.
+- J residuals (jmp-syn-j README): an unresolved jmp_syn target still hands back; a uop deopt stub at a
+  jmp target reachable both ways can stop one block later; uop parity with L1 under J is unmeasured.
 - The v2+v3+v4-only off-schedule check (criterion 4.3) is not run.
 - The wav correctness of the 11 schedule-on moves is not assessed.
 - The uop tier is not among the corpus arms (P3 covers l1, jit-early, jit-sepc, fold64).
