@@ -427,7 +427,7 @@ function domHarness() {
   doc.createElement=node; doc.body=node('body');
   const taskHost=node('div'); doc.getElementById=id=>id==='launch-task-buttons'?taskHost:null;
   const view=createDomView(doc,{onAction:a=>actions.push(a)});
-  return {view,actions,flush(){while(frames.length) frames.shift()();}};
+  return {view,actions,doc,flush(){while(frames.length) frames.shift()();}};
 }
 
 test('actual DOM queued progress cannot overwrite a synchronous failure', () => {
@@ -452,6 +452,21 @@ test('actual DOM keeps action nodes across progress frames and invokes Cancel on
   assert.strictEqual(foot.querySelector('[data-action="cancel"]'),pressed);
   assert.strictEqual(pressed.parentNode,foot,'pressed node remains attached');
   pressed.fire('click'); assert.deepStrictEqual(d.actions,['cancel']);
+});
+
+test('actual DOM progress never takes the keyboard; an error does', () => {
+  // NFS III: the game ran behind a direct-link progress window whose Cancel
+  // had focus, so the game's own Enter cancelled the launch.
+  const h=harness(), launch=h.ui.begin({appId:'x',mode:'direct'}), d=domHarness();
+  const m=launch.model();
+  assert.strictEqual(m.kind,'progress'); assert(!m.windowed,'direct-link shape');
+  d.view.show(m);
+  assert.strictEqual(d.doc.activeElement,null,'progress focuses nothing');
+  launch.setPhase('starting'); d.view.render(launch.model()); d.flush();
+  assert.strictEqual(d.doc.activeElement,null,'still nothing while starting');
+  launch.fail({message:'Required file failed'}); d.view.render(launch.model());
+  const def=d.view.element.querySelector('.wa-launch-foot').querySelector('.wa-launch-default');
+  assert(def); assert.strictEqual(d.doc.activeElement,def,'an error focuses its default button');
 });
 
 let failed = 0;

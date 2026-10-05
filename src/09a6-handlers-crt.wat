@@ -109,6 +109,53 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; _mbsstr(str, substr) — cdecl. MBCS substring search: candidates start only
+  ;; on character boundaries (a DBCS lead byte and its trail byte are stepped
+  ;; over together, as in _mbschr), so a match can never begin on a trail
+  ;; byte. The compare itself is bytewise. Returns the guest pointer to the
+  ;; first match, str for an empty substr, or NULL if absent.
+  (func $handle__mbsstr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hay_base i32) (local $hay i32) (local $needle i32)
+    (local $h i32) (local $n i32) (local $cur i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (block $done
+      (br_if $done (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1))))
+      (local.set $hay_base (call $g2w (local.get $arg0)))
+      (local.set $hay (local.get $hay_base))
+      (local.set $needle (call $g2w (local.get $arg1)))
+      (if (i32.eqz (i32.load8_u (local.get $needle)))
+        (then
+          (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+          (br $done)))
+      (loop $candidate
+        (local.set $cur (i32.load8_u (local.get $hay)))
+        (br_if $done (i32.eqz (local.get $cur)))
+        (local.set $h (local.get $hay))
+        (local.set $n (local.get $needle))
+        (block $mismatch (loop $compare
+          (br_if $mismatch
+            (i32.ne (i32.load8_u (local.get $h)) (i32.load8_u (local.get $n))))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (if (i32.eqz (i32.load8_u (local.get $n)))
+            (then
+              (i32.store offset=0 (global.get $reg_base)
+                (i32.add (local.get $arg0) (i32.sub (local.get $hay) (local.get $hay_base))))
+              (br $done)))
+          (local.set $h (i32.add (local.get $h) (i32.const 1)))
+          (br_if $mismatch (i32.eqz (i32.load8_u (local.get $h))))
+          (br $compare)))
+        (local.set $hay
+          (i32.add (local.get $hay)
+            (select
+              (i32.const 2)
+              (i32.const 1)
+              (i32.and
+                (call $is_dbcs_lead_byte (local.get $cur))
+                (i32.ne (i32.load8_u (i32.add (local.get $hay) (i32.const 1))) (i32.const 0))))))
+        (br $candidate)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
   ;; Compare at most n unsigned bytes. _mbsnbcmp counts bytes rather than
   ;; characters, so unlike memcmp it stops after the shared terminating NUL.
   (func $crt_compare_bytes

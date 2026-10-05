@@ -401,3 +401,198 @@ test/test-toyvm-region-live.js case. A blend-shaped loop with a forward `jb` sid
 date placed inside the iteration, and an assertion that L1 and the region arm push the IRQ
 in front of the same cs:ip (from `onIrq`). That replaces scene B in
 test-toyvm-region-continuous.draft.js.
+
+# Phase 4, 2026-10-05 ~10:40Z: candidate fix in the working tree (uncommitted)
+
+Working-tree hunk in tools/toyvm/dos-loop.js `step` (claimed on the board):
+(a) `atStop = dispatched > stopAt || (cut >= 0 && dispatched >= stopAt)`;
+(b) `due()` accepts `at >= this.dispatched`; (c) exit label `left < 0 ? date/budget : early`.
+Also new: test/test-toyvm-irq-early-handback.js (draft, does NOT yet reproduce: its 16-bit loop's
+region exits re-link through $jlook, so no early handback lands on a date) and a section appended
+to docs/toyvm-irq-schedule.md.
+
+Single-run invariant that catches the bug: every timer IRQ must be raised at a handback with
+`left < 0` (slice log `dispatched left cs:ip` joined to `--trace-irq` `at=`). Pre-fix BRW K5 to
+100M: exactly 1 violation (at=88900000, 8:4299, left=0). Fixed: 0 in L1 and K5, and the 88.9M
+delivery matches (at=88900003 from 8:423a in both arms). Runs: runs-20261005b/inv-k5.*, fix-*.*.
+
+NOT DONE: by 100M the fixed arms still differ on 46 delivery addresses, all SB (vec 0f), at
+different DATES. Cause: the fix also changes L1 itself. Baseline (pre-fix, worktree
+scratchpad/wt-base-toyvm @HEAD) L1 cuts a slice to the SB date 80854061 (`left -2`); fixed L1 never
+cuts there (slices at ...051 left 264 -> stopAt ~80854315), so the SB date in `due()` moved, i.e.
+audioAt/lastSbIrq differ earlier. Suspect half (b) or (c): budget-1 slices (280 "tiny" slices by
+100M in fixed L1) render audio / move audioAt on the sbDueNow path (dos-loop ~1947, clockAt =
+dispatched when !atStop). Runs: base-l1.{irq,slog}, fix-l1.{irq,slog}.
+
+# Phase 5, 2026-10-05 ~10:45Z (brw-worker; runtime then stopped by coordinator: source-only on main box)
+
+- Main-box A/B before the stop (runs-20261005c/l1-{A,B,AB}.irq, BRW L1 to 81M, temporary env
+  toggles since removed): vs pre-fix baseline (runs-20261005b/base-l1.irq), half (a) alone moves
+  2 deliveries, (b) alone 0, (a)+(b) 2. Baseline L1 to 81M has 0 interrupts at a left==0
+  handback (timer 737 and sb 735 at left<0; 2 sb at left>0, which are machine cuts).
+- Mechanism (source): with (a), an early handback landing exactly on the SB block's last sample
+  still renders through `sbDueNow` (`dispatched - audioAt >= sbInterval`). That moves audioAt to
+  the date (consuming it from `due()`), while the IRQ needs atStop and waits for the next real
+  stop: hundreds of dispatches late, after which the guest's DMA restart and every later SB date
+  move.
+- Fix part (3) applied in the working tree: under the schedule `sbDueNow` is strict (`>`). NOT RUN.
+- Worker box: `boat`/`box` CLI present but not signed in (401 "run boat login"). Not provisioned.
+
+# Phase 6, 2026-10-05 10:43-10:47Z: validation in the root-queued ToyVM slot (~90 s CPU)
+
+Fix = the 4-part working-tree hunk in tools/toyvm/dos-loop.js `step` (saved as
+dos-loop-irq-fix.patch). Runs in runs-20261005d/.
+
+| check | result |
+|---|---|
+| L1 to 81M vs pre-fix baseline | 2 of 1474 deliveries differ (SB at 80854061 -> 80854318, 80954061 -> 80954513); endHash differs at 81M |
+| L1 to 500M vs S0 baseline | identical: frame a066bf27, endHash bb14e750 |
+| jit-sepc to 500M | still frame 2fa3dd95 (the S0 failure); 996 of 9871 deliveries on different cs:ip, 4212 differing incl. `at` |
+| invariant on jit-sepc 500M | 2 IRQs at left >= 0 handbacks (likely machine cuts, unchecked) |
+| test-toyvm-region-install-clock | PASS |
+| test-toyvm-region-live | PASS (3 cases) |
+
+- **The worker's Phase-5 sbDueNow explanation is incomplete**: with the strict sbDueNow included,
+  the 80854061 shift remains. The real cause of L1's change is upstream: baseline L1 ITSELF hands
+  back early exactly on a date (slice log line 57814: `32513981 0 8:c270`, three early handbacks
+  in a row at 8:c270 with left 25/13/0) and treated it as reached. The fix runs on to a real stop
+  (`32513985 -3`). So the L1 change is the fix applying to L1's own on-date early handbacks, as
+  intended, and it washes out by 500M.
+- **The fix is correct for its class but is not the BRW fix.** jit-sepc still diverges on 996
+  delivery addresses, so a second mechanism moves deliveries. Candidates: the generic residual
+  overshoot (region bills ops in chunks, so its budget stop lands on another instruction than the
+  interpreter's per-op `$next` charge, docs/toyvm-irq-schedule.md BLIQ section), or
+  more early-on-date cases the classification still admits (`cut`).
+- **Not committed**, deliberately: it changes L1's intermediate timing (a baseline change), so it
+  needs the corpus before/after run the schedule doc used for its own baseline changes before it can
+  land. The reproducer test is still a draft that does not reproduce.
+
+Next (runtime needed): first differing jit-sepc vs L1 delivery at 500M with slice logs on both arms,
+classified as on-date-early / overshoot / cut; a reproducer from the 8:c270 early-handback shape
+(three short early handbacks, kind unknown: read `exitwhy` with --slice-log plus exitKinds);
+corpus A/B before landing.
+
+# Phase 7, 2026-10-05 10:47Z: the second mechanism (root grant, 6 s CPU, private patched copy)
+
+Evidence: runs-20261005e/summary.txt (+ both IRQ lists; slice logs hashed there, then deleted).
+L1 and jit-sepc to 90M on a private copy of tools/toyvm with the Phase-6 patch applied (shared tree
+untouched; dos-loop.js sha256 71b288e0...).
+
+- First differing delivery is still the SB date at 89.25M (89255865 vs 89256120) after an identical
+  delivery at 89155864, and with the patch there are 0 IRQs at early handbacks in either arm. So the
+  remaining split does not involve early handbacks at all.
+- **Budget stops agree in COUNT and disagree in PLACE.** 88.9M-90M: of the stops at a dispatch
+  count both arms share, 1794 are at the same cs:ip and **632 are at different ones**. Identical
+  `left` values too (89155864 -1, 89156320 -6, ...). L1 stops spread over the 0x423a loop body
+  (8:423a/425f/427c/4299); jit-sepc stops are all at 8:4299 (785 there vs L1's 162).
+- Equal counts at different instructions mean the region's step counter is not aligned op-for-op
+  with the interpreter's. region-0x423a.wat charges in lumps ahead of the ops (`steps -7` before
+  the first cmp covering the six ops before it, `-3`/`-1` chunks later) and tests the budget only at
+  its jb exits, so $steps crosses zero at a different guest instruction than under `$next`'s per-op
+  charge. Interrupts and audio dates then attach to different guest states even though every
+  handback is a genuine budget stop. This is the class docs/toyvm-irq-schedule.md (BLIQ section)
+  already names: "make the fold's billed step count agree with the interpreter's op-for-op at the
+  exit edge, a billing question in tree-fold.js / region-jit.js".
+
+## Fix direction (source, region-jit.js; not started)
+
+At a budget exit the region must report the counter the interpreter would have had at the guest
+instruction it stops on: either charge each op at its own position (cost: more global.sets on the
+hot path; measure), or keep lump charges but refund the not-yet-executed part of the lump on the
+exit edge (exact, and only on the cold path). The test: the Phase-3 single-run invariant is not
+enough; compare (dispatched, cs:ip) of every budget stop between L1 and the region arm on a
+synthetic region whose lump spans a side exit (the 0x423a shape), plus BRW 500M frame parity.
+Both this and the Phase-6 dos-loop patch need a corpus A/B before landing.
+
+## Phase 7 correction (source read, region-jit.js 1520-1565)
+
+The "lump charge" reading above is too quick. The emitter bills `pending` before every branch (and
+before every clock-reading op), and its own comment calls that exact: $steps is only read at a
+branch. In the K5 dump of 0x423a, the internal jb checks stop at 425c/425f/4279/427c, which is where
+L1 stops too. Full jit-sepc installs 17 regions, not that one. At 89M its stops are all at 8:4299,
+so the region covering this loop there is probably a different one, with an exit-only shape. That
+region's billing or exit placement is the suspect. Next run (needs a slot): full jit-sepc with
+`--region-dump=DIR` to 90M, read the region whose span holds 0x423a-0x429d, and compare its
+charges and budget tests per branch with the interpreter's block transfers.
+
+## Phase 7b, 2026-10-05 11:02Z: region dump of full jit-sepc to 90M (root grant, 3 s)
+
+runs-20261005f/: full jit-sepc to 90M installs exactly the same 5 regions as K5
+([35959,36038,36117,17537,16954]); dump/region-0x423a.wat is the region covering the loop. **The
+"different region" correction above is wrong.** The region tests $steps at every branch it lowers,
+as the interpreter does. Equal dispatched AND equal `left` at a different cs:ip therefore leaves two
+explanations: (1) the arms take different paths through the loop, i.e. guest data already differs
+somewhere the 6M checkpoint hashes did not sample; or (2) a path whose charge differs from the
+interpreter's (e.g. the third jb's exit-always arm, or the clamp `mov_mi8` -1 placed inside the
+forward block). Next run: `--state-window=89155800:89160000` on L1 and jit-sepc (patched copy),
+then diff the register lines at equal dispatched.
+
+## Phase 7c, 2026-10-05 11:18Z: registers at every handback (root grant, private patched copy)
+
+runs-20261005g/{l1,sepc}.state (sha256 23ef7b52.../ded4eecd...), window 89155800-89160000.
+**At every dispatch count both arms share, the register file, flags AND cs:gip are identical**,
+including stops at 8:425f/423a/427c in both arms. So Phase 7's "632 budget stops at different
+instructions" is retracted: it came from the slice log's `cs:ip` field, which under a region does
+not name the guest instruction the state is at (brw-bisect's state log reads `gip`). There is no
+billing misalignment in this window.
+
+What is left is HOST-side. Guest state is equal through 89.16M, the SB delivery at 89155864 is equal,
+and the next SB date still differs (89255865 vs 89256120). The region arm makes far more early
+handbacks in the window (sepc 4818 with left >= 0 vs L1 38, from the 90M slice logs: the 0x423a
+third-jb exit to 8:4299 misses $jlook every iteration). Each early handback runs the host's
+audio/SB rungs. The off-schedule `sbDueNow` render stamps `audioAt` with the ODOMETER
+(`clockAt = this.dispatched` when !atStop), so the next SB date (`audioAt + sbInterval`, and
+machine.sbDue's DMA progress) depends on where the code cache handed back. That was the worker's
+Phase-5 hypothesis. Its strict `>` fixes equality only, not the odometer stamp.
+
+Next (needs a slot): log audioAt / lastSbIrq / machine.sbDue() / render clockAt per handback in
+89.15-89.26M for both arms (DosSession.prototype.step wrapper in brw-bisect.js, no source edit) to
+confirm. Candidate fix: under the schedule, an early handback renders no audio and leaves audioAt
+alone (render only at atStop, at clockAt = stopAt), with sbForced port cuts as the one exception.
+Also worth fixing separately: why $jlook misses 8:4299 on every iteration (a handback per pixel
+row costs speed).
+
+## Phase 8, 2026-10-05 11:29Z: host clock log (root grant), the last missing date
+
+runs-20261005h/{l1,sepc}.clock (sha256 a69e5595.../b48768be...): per handback d, steps, audioAt,
+lastSbIrq, lastIrq, sb.irqDue, sliceStart, cs:gip, 89155000-89260000, patched copy.
+- The arms' stop dates (the audioAt chain) agree until 89250000. L1 stops at 89250003 (left -3,
+  audioAt -> 89250000). jit-sepc hands back EARLY exactly on 89250000 (left 0, 8:4299). The patch
+  correctly declines that as a stop, but the next slice is not cut back to 89250000, so jit-sepc's
+  next stop is 89250262 (date 89250256) and every later stop date, and the SB IRQ that waits for the
+  first stop past lastSbIrq + irqEvery, moves (89255865 vs 89256120).
+- 89250000 is the GRAIN LATTICE (`stopAt = floor(d/grain)*grain + grain`), not a `due()` date, so
+  the Phase-6 `due() >=` change could not keep it. The floor+grain skips the lattice point the
+  odometer sits on exactly.
+- Patch v2 (dos-loop-irq-fix-v2.patch, dos-loop.js sha256 bd4f1ee9...): adds
+  `stopAt = Math.ceil(d / grain) * grain || grain`. Unrun; validation run requested.
+
+## Phase 8b, 2026-10-05 11:36Z: patch v2 validated (root grant, 22 s, private copy, sha256 bd4f1ee9...)
+
+runs-20261005i/: L1 and jit-sepc to 500918116 with IRQ lists; regression test outputs.
+
+| check | v1 (Phase 6) | v2 |
+|---|---|---|
+| first differing delivery, L1 vs jit-sepc | 88.9M | **115.06M** |
+| deliveries on a different cs:ip by 500M | 996 | 522 |
+| jit-sepc frame at 500M | 2fa3dd95 | 2fa3dd95 (S0 failure persists) |
+| L1 at 500M | frame a066bf27, endHash = S0 | frame a066bf27, endHash 94a0cf32 (changed) |
+| test-toyvm-region-install-clock / region-live | PASS / PASS | PASS / PASS (4 cases) |
+
+New first split: `sb at=115063087 from 8:8c77` (L1) vs `at=115063080 from 8:8c77` (jit-sepc). That is
+the same instruction (the head of region 0x8c77, a ~7-op loop) one iteration apart: the arms
+stopped on the same date at different trips round one loop. This is the separate,
+already-tolerated cost test-toyvm-region-live.js names ("allows the dispatch clock to move by one
+per install ... the lump step charge a region bills per straight line"), and Phase 2's H4 (+1
+dispatch drift; final dispatched 500918120 vs 500918117). Early-handback classification is no
+longer involved at the first split.
+
+State of BRW:
+1. v2 (early handback on a date never counts as reaching it, and that date, including a grain-lattice
+   point, stays the next slice's stop) is a strict improvement. It moved the first divergence from
+   88.9M to 115.06M and passes the region tests. It changes L1 intermediate timing (endHash at 500M),
+   so landing it needs the corpus before/after A/B the schedule doc did for its own baseline changes.
+2. The rest is the per-install dispatch-clock offset. Closing it means making an install, and a
+   region's entry refund (`$steps +1` at region entry), bill exactly what the interpreter would.
+   That is a region-live.js / region-jit.js billing change with its own test (the region-live test
+   currently tolerates the offset by design).

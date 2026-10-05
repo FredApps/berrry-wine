@@ -312,3 +312,47 @@ present counts agree; the run ends without errors. World visibility between
 actual publications was about 32–38 ms, versus 36–47 ms in the unpaced sample.
 These are diagnostic observations, not controlled performance measurements.
 Pacing alone did not fix stable presentation and was not promoted to production.
+
+## 2026-10-05: authenticated UI clipping starts with nonfinite inputs
+
+The corrected owning-Worker trace armed only after the successful world swap (EIP4f1644, returns4671d4/43f631), before nested UI422260. It retained four entry483bf0/post483c35 pairs, zero observer errors, then disabled its exact owned trace at the cap. Original EXE spans and actual served module/source are pinned in the immutable run.
+
+The first UI pair already has yA=NaN (`ffc00000`), yB=0; its A vertex is (635,NaN). The second enters with yA=+Infinity (`7f800000`), yB=NaN. Later pairs also contain infinity. Therefore this observation does not establish Y interpolation as the first corruption and does not justify patching its arithmetic. Next trace the incoming quad and earlier X clipping to locate the first nonfinite value. Preserve raw float bits; JSON null is not a sufficient numeric description.
+
+Evidence: `scratch/runs/20261005-hype-ui-clipper-nonfinite-input` (207 artifact hashes rechecked); raw clipper SHA256 `c0ecfa49e04bc0a296f5f7d68696aa4d21665802e9788f66cf276e9ad87a45ee`. Session74195 exited0, browser/server closed10:33:12.696Z. `after-trace.png` shows the knight/street world, but this intermittent scene is not stable gameplay or input qualification. No FPS or normal-timing claim under trace.
+
+### UI polygon before X clipping (attempt7)
+
+The first authenticated UI polygon is already `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)` at483670. Its raw caller return4870c9 identifies the quad path486d20. Two X entry/post pairs are captured, with no observer errors; the next swap matches the expected UI caller and ends the phase. NaN X/Y interpolation results follow the already-infinite input rather than establishing an emulator clipping defect.
+
+Source486d51..486d71 copies XY from four16-byte input records to four60-byte staging vertices at835ae0. The input pointer is original ESP+0xc; context is original ESP+0x1c. The next minimal capture is function entry486d20 (actual caller/input64bytes) and post-copy486d73 (same pointer/staging240bytes), followed by the polygon entry to detect any intervening change. Do not assume the original source coordinates are infinite without this observation.
+
+Immutable evidence: `scratch/runs/20261005-hype-original-ui-quad-infinite`,207 artifact hashes verified; rawSHA256 `fa676bf6bc64403017f60ac961765e984dccee3c14f76e1bb3e8b80b59cb4ac7`. Session35108 exited0, browser/server closed10:42:22.298Z. The image remains menu-only; gameplay and FPS remain unqualified.
+
+### Incoming rectangle confirmed infinite (attempt8)
+
+The ordinary UI-phase probe captures the complete486d20 entry →486d73 copy →483670 polygon chain with zero observer errors. Actual caller469a5b authenticates the rectangle constructor469710. Incoming quad0420f988 already has `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)`; all XY bits match both copied staging and later polygon. Neither copying nor clipping introduces the first infinity in this capture.
+
+Immutable run `scratch/runs/20261005-hype-incoming-quad-infinite` has207 rechecked artifact hashes; rawSHA256 `da1af7a6181198834030fa7630b500c529e1adeb330a555c5d2d4cbd545fbe2c`. Browser7356 exited0, closed11:11:54.802Z. Menu-only image; no gameplay/FPS qualification. Next inspect actual469710 incoming rectangle, descriptor dimensions, live reciprocal table entries, and post-scaling arguments before its quad construction. Do not assume which size/angle branch executes.
+
+### Actual rectangle caller and smallest missing divisor evidence (attempt9)
+
+Observed caller is41f17c, correcting the earlier static candidate41f352. The original rectangle arguments already contain `(0,+Infinity,0,+Infinity)`. Live descriptor dimensions are636x476, reciprocal table words are004ccccd/00088889, and the post-scale width factor is finite0.9937500357627869. Therefore469710 size scaling is not the first infinity producer in this capture.
+
+Original caller41f0e4 divides1 by71cdd0 (descriptor71cd74+5c), and41f125 divides1 by71cdd4 (+60), then multiplies actual dimensions and submits at41f177. Initializer4678ed/4678fa stores width/640 and height/480 in these fields after466cc0. Later466cc0 updates dimensions but does not write+5c/+60. This identifies a precise dependency, not proof that initialization was skipped or the fields are zero. Previous84-byte descriptor capture ended before them; the next approved extension reads exactly these8raw bytes at the same authenticated rectangle entry. Zero/denormal inputs can produce nonfinite results under correct arithmetic; finite-normal inputs still require exact x87 operands/precision proof before blaming CPU execution. No guest-state repair or clipping patch is justified yet.
+
+Immutable evidence `scratch/runs/20261005-hype-rectangle-caller-divisors` has207 verified artifact hashes; rawSHA256 `406e004704de98fa44f56bfb424cf0905944ddd4d557bf46927345754fc30624`. Browser78398 exited0, closed11:24:11.451Z. Intermittent world image is not stable gameplay qualification; no FPS claim.
+
+### Zero descriptor scales observed (attempt10)
+
+The exact eight bytes at71cdd0/71cdd4 are `0000000000000000`: both descriptor scale divisors are positive zero at authenticated rectangle entry from41f17c. This directly explains the positive infinities through the original1/+0 arithmetic, without establishing a CPU division bug. The observation does not yet explain why initialization or later lifetime handling left those fields zero. Do not replace guest values or suppress swaps.
+
+Immutable `scratch/runs/20261005-hype-zero-descriptor-scales` has207 verified artifact hashes; rawSHA256 `471da24aff6154699b09aafcc796cf6330fb68fc482d3f3bdb9e901b312020a0`. Session27505 exited0; browser/server closed11:33:01.065Z. One complete rectangle/quad chain, zero observer errors, exact trace disabled. Image remains menu; no gameplay/FPS claim.
+
+Static lifetime distinction:404c80 registers the UI descriptor71cd74 via466de0, which allocates a separate104-byte heap surface record, copies100bytes into it, updates dimensions with466cc0, copies100bytes back and stores the heap pointer in the device surface table.467730 later initializes+5c/+60 on the **heap surface**, not necessarily the static UI descriptor;467010 copies100bytes from heap to caller. Thus static-versus-heap identity must be checked before calling this skipped initialization. A bounded read of the live UI surface ID71cd70 and its device/surface-table pointer at use can distinguish a stale static descriptor from zero scales in both records. No broad renderer trace is needed.
+
+### Refined next observation: authenticated acquisition copy, no pointer walk
+
+The proposed ID/device-table lookup is superseded by the exact live copy path:4222b3 calls467070, which resolves the actual heap surface and copies100bytes to static71cd74 at4670ce on every UI acquisition. Read actual EAX source and EBX destination at4670c3, verify caller4222b8 at original stack+24, then record both100-byte records after the copy. Use known branch-entry checkpoints4670e1/467105, not an assumed post-REP block at4670d0; require same TID, ESP+8, ESI=source+100, EDI=0, ECX=0 and retained EDX/EBX identity. Compare dimensions and scales with the later authenticated rectangle-use snapshot. One acquisition/rectangle chain, three seconds or next swap, no guest mutation.29 focused tests pass.
+
+Source ordering within467730 is dimensions-update466cc0 before scale stores4678ed/4678fa for each heap surface. Surface creation itself466de0 updates dimensions and copies descriptor fields but does not compute scales. Actual ordering between initial creation, mode changes, scale initialization and later copying is not yet observed. A zero heap source would shift diagnosis to that lifecycle; different source/postcopy/use values require their own provenance before any repair.

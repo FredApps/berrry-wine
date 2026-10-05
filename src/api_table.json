@@ -33541,9 +33541,9 @@
     "id": 3962,
     "name": "IVBImageSurface7_Blt",
     "nargs": 6,
-    "stub": { "pop": 28, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1132678132
+    "hash": 1132678132,
+    "handler": "VBImage_Blt"
   },
   {
     "id": 3963,
@@ -34056,5 +34056,530 @@
     "stub": { "pop": 28, "ret": 2147500033 },
     "convention": "stdcall",
     "hash": 494854795
+  },
+  {
+    "id": 4027,
+    "name": "IVBDirectX7_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 123260090,
+    "handler": "IDirectX7_QueryInterface"
+  },
+  {
+    "id": 4028,
+    "name": "IVBDirectX7_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2057485729,
+    "handler": "dx_com_addref"
+  },
+  {
+    "id": 4029,
+    "name": "IVBDirectX7_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 403641174,
+    "handler": "dx_com_release_basic"
+  },
+  {
+    "id": 4030,
+    "name": "IVBDirectX7_Direct3DRMCreate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3702949342
+  },
+  {
+    "id": 4031,
+    "name": "IVBDirectX7_DirectDrawCreate",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3528583906,
+    "handler": "IDirectX7_DirectDrawCreate"
+  },
+  {
+    "id": 4032,
+    "name": "IVBDirectX7_GetDDEnum",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1728988838
+  },
+  {
+    "id": 4033,
+    "name": "IVBDirectX7_DirectSoundCreate",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 865874251,
+    "handler": "IDirectX7_DirectSoundCreate"
+  },
+  {
+    "id": 4034,
+    "name": "IVBDirectX7_DirectSoundCaptureCreate",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 250790003
+  },
+  {
+    "id": 4035,
+    "name": "IVBDirectX7_GetDSEnum",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4003356743
+  },
+  {
+    "id": 4036,
+    "name": "IVBDirectX7_GetDSCaptureEnum",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 692976257
+  },
+  {
+    "id": 4037,
+    "name": "IVBDirectX7_DirectInputCreate",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2752976748,
+    "handler": "IDirectX7_DirectInputCreate"
+  },
+  {
+    "id": 4038,
+    "name": "IVBDirectX7_DirectPlayCreate",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2172081738
+  },
+  {
+    "id": 4039,
+    "name": "IVBDirectX7_DirectPlayLobbyCreate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2787095442
+  },
+  {
+    "id": 4040,
+    "name": "IVBDirectX7_GetDPEnum",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1166373050
+  },
+  {
+    "id": 4041,
+    "name": "IVBDirectX7_ColorGetAlpha",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1941068272
+  },
+  {
+    "id": 4042,
+    "name": "IVBDirectX7_ColorGetBlue",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4213690912
+  },
+  {
+    "id": 4043,
+    "name": "IVBDirectX7_ColorGetGreen",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 113327735
+  },
+  {
+    "id": 4044,
+    "name": "IVBDirectX7_ColorGetRed",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 499782955
+  },
+  {
+    "id": 4045,
+    "name": "IVBDirectX7_CreateColorRGB",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1586742539
+  },
+  {
+    "id": 4046,
+    "name": "IVBDirectX7_CreateColorRGBA",
+    "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 748655486
+  },
+  {
+    "id": 4047,
+    "name": "IVBDirectX7_MatrixFromQuaternion",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2945656356
+  },
+  {
+    "id": 4048,
+    "name": "IVBDirectX7_QuaternionRotation",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1166128735
+  },
+  {
+    "id": 4049,
+    "name": "IVBDirectX7_QuaternionMultiply",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 594123077
+  },
+  {
+    "id": 4050,
+    "name": "IVBDirectX7_QuaternionSlerp",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3845501047
+  },
+  {
+    "id": 4051,
+    "name": "IVBDirectX7_VectorAdd",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3805468369
+  },
+  {
+    "id": 4052,
+    "name": "IVBDirectX7_VectorCrossProduct",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 815429897
+  },
+  {
+    "id": 4053,
+    "name": "IVBDirectX7_VectorDotProduct",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2875096480
+  },
+  {
+    "id": 4054,
+    "name": "IVBDirectX7_VectorModulus",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1736112463
+  },
+  {
+    "id": 4055,
+    "name": "IVBDirectX7_VectorNormalize",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2523441409
+  },
+  {
+    "id": 4056,
+    "name": "IVBDirectX7_VectorRandom",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3035489349
+  },
+  {
+    "id": 4057,
+    "name": "IVBDirectX7_VectorReflect",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 647164543
+  },
+  {
+    "id": 4058,
+    "name": "IVBDirectX7_VectorRotate",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2045386729
+  },
+  {
+    "id": 4059,
+    "name": "IVBDirectX7_VectorScale",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 307219744
+  },
+  {
+    "id": 4060,
+    "name": "IVBDirectX7_VectorSubtract",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 980518542
+  },
+  {
+    "id": 4061,
+    "name": "IVBDirectX7_VectorCopy",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3680522679
+  },
+  {
+    "id": 4062,
+    "name": "IVBDirectX7_RotateXMatrix",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3071331467
+  },
+  {
+    "id": 4063,
+    "name": "IVBDirectX7_RotateYMatrix",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2080829256
+  },
+  {
+    "id": 4064,
+    "name": "IVBDirectX7_RotateZMatrix",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1960877761
+  },
+  {
+    "id": 4065,
+    "name": "IVBDirectX7_ViewMatrix",
+    "nargs": 6,
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3532617785
+  },
+  {
+    "id": 4066,
+    "name": "IVBDirectX7_MatrixMultiply",
+    "nargs": 4,
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3530970380
+  },
+  {
+    "id": 4067,
+    "name": "IVBDirectX7_ProjectionMatrix",
+    "nargs": 5,
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3990817873
+  },
+  {
+    "id": 4068,
+    "name": "IVBDirectX7_CopyMatrix",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1391033285
+  },
+  {
+    "id": 4069,
+    "name": "IVBDirectX7_IdentityMatrix",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2091388118
+  },
+  {
+    "id": 4070,
+    "name": "IVBDirectX7_ZeroMatrix",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2312926414
+  },
+  {
+    "id": 4071,
+    "name": "IVBDirectX7_TickCount",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4213315811
+  },
+  {
+    "id": 4072,
+    "name": "IVBDirectX7_SystemBpp",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 752504498
+  },
+  {
+    "id": 4073,
+    "name": "IVBDirectX7_DirectMusicLoaderCreate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1096173496
+  },
+  {
+    "id": 4074,
+    "name": "IVBDirectX7_DirectMusicComposerCreate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2525960521
+  },
+  {
+    "id": 4075,
+    "name": "IVBDirectX7_DirectMusicPerformanceCreate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2651754595
+  },
+  {
+    "id": 4076,
+    "name": "IVBDirectX7_GetWindowRect",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 238158849
+  },
+  {
+    "id": 4077,
+    "name": "IVBDirectX7_CreateEvent",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 214104335
+  },
+  {
+    "id": 4078,
+    "name": "IVBDirectX7_SetEvent",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2741431321
+  },
+  {
+    "id": 4079,
+    "name": "IVBDirectX7_DestroyEvent",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 1603096711
+  },
+  {
+    "id": 4080,
+    "name": "IVBDirectX7_CreateD3DVertex",
+    "nargs": 10,
+    "stub": { "pop": 44, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 892446170
+  },
+  {
+    "id": 4081,
+    "name": "IVBDirectX7_CreateD3DLVertex",
+    "nargs": 9,
+    "stub": { "pop": 40, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 106286942
+  },
+  {
+    "id": 4082,
+    "name": "IVBDirectX7_CreateD3DTLVertex",
+    "nargs": 10,
+    "stub": { "pop": 44, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 4120706298
+  },
+  {
+    "id": 4083,
+    "name": "IVBDirectX7_DirectDraw4Create",
+    "nargs": 3,
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 2325110034
+  },
+  {
+    "id": 4084,
+    "name": "IVBDirectX7_CreateNewGuid",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "convention": "stdcall",
+    "hash": 3160843392
+  },
+  {
+    "id": 4085,
+    "name": "_mbsstr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1036335673
+  },
+  {
+    "id": 4086,
+    "name": "PathAppendW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1115347343,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPWSTR",
+        "out": true
+      },
+      {
+        "name": "pszMore",
+        "type": "LPCWSTR"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 4087,
+    "name": "PathFileExistsW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 959442917,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPCWSTR"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 4088,
+    "name": "SHCreateDirectoryExW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2815537801,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "pszPath",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "psa",
+        "type": "LPVOID"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]
