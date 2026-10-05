@@ -2148,6 +2148,7 @@
     (global.set $steps (i32.const 0)))
 
   (func $com_activate_begin (param $gco i32) (param $rclsid i32) (param $ppv i32)
+      (param $class_only i32) (param $requested_iid i32)
     (local $f i32)
     (if (i32.eqz (global.get $com_gco_thunk))
       (then
@@ -2164,7 +2165,14 @@
     (call $gs32 (i32.add (local.get $f) (i32.const 16)) (i32.const 0x46000000))
     (i32.store offset=16 (global.get $reg_base) (local.get $f))
     (call $io_apc_push (local.get $f))
-    (call $io_apc_push (i32.add (local.get $f) (i32.const 4)))
+    ;; Per-call mode tag at F+4: 1 is the normal IID_IClassFactory.Data1;
+    ;; 0 means factory-only and that unused IID buffer is NOT passed to GCO.
+    ;; GCO writes only F, so nested activations cannot change this frame's tag.
+    (if (local.get $class_only)
+      (then
+        (call $gs32 (i32.add (local.get $f) (i32.const 4)) (i32.const 0))
+        (call $io_apc_push (local.get $requested_iid)))
+      (else (call $io_apc_push (i32.add (local.get $f) (i32.const 4)))))
     (call $io_apc_push (local.get $rclsid))
     (call $io_apc_push (global.get $com_gco_thunk))
     (call $com_jump (local.get $gco)))
@@ -2185,6 +2193,18 @@
     (local.set $f (i32.load offset=16 (global.get $reg_base)))
     (local.set $e (i32.add (local.get $f) (i32.const 20)))
     (local.set $pf (call $gl32 (local.get $f)))
+    ;; F+4 mode tag is read before normal CreateInstance may reuse it for HR.
+    (if (i32.eqz (call $gl32 (i32.add (local.get $f) (i32.const 4))))
+      (then
+        ;; Preserve CoGetClassObject's nonzero-HR/null-factory normalization.
+        ;; Caller output was zeroed at begin; GCO's temporary output is F.
+        (if (i32.load offset=0 (global.get $reg_base))
+          (then (call $com_activate_finish (i32.load offset=0 (global.get $reg_base))) (return)))
+        (if (i32.eqz (local.get $pf))
+          (then (call $com_activate_finish (i32.const 0x80004005)) (return)))
+        (call $gs32 (call $gl32 (i32.add (local.get $e) (i32.const 20))) (local.get $pf))
+        (call $com_activate_finish (i32.const 0))
+        (return)))
     (if (i32.lt_s (i32.load offset=0 (global.get $reg_base)) (i32.const 0))
       (then (call $com_activate_finish (i32.load offset=0 (global.get $reg_base))) (return)))
     (if (i32.eqz (local.get $pf))
@@ -3246,7 +3266,7 @@
       (local.get $arg4)))             ;; ppv (guest addr)
     (if (i32.eq (local.get $hr) (i32.const 2)) ;; COM_RESOLVED_INPROC
       (then
-        (call $com_activate_begin (call $gl32 (local.get $arg4)) (local.get $arg0) (local.get $arg4))
+        (call $com_activate_begin (call $gl32 (local.get $arg4)) (local.get $arg0) (local.get $arg4) (i32.const 0) (i32.const 0))
         (return)))
     ;; Check if we need async DLL load (host returns 0x800401F0 = CO_E_DLLNOTFOUND)
     (if (i32.eq (local.get $hr) (i32.const 0x800401F0))
@@ -3287,13 +3307,24 @@
                 (i32.ne (local.get $factory) (i32.const 0))))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-    (local.set $host_ctx (i32.or (local.get $arg1) (i32.const 0x80000000)))
+    ;; Resolve on the host; guest factory code must execute on this CPU/stack.
+    ;; 0x80000000 preserves class-factory lookup; 0x40000000 resolves only.
+    (if (i32.eqz (local.get $arg4))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+        (return)))
+    (local.set $host_ctx (i32.or (local.get $arg1) (i32.const 0xC0000000)))
     (local.set $hr (call $host_com_create_instance
       (call $g2w (local.get $arg0))
       (local.get $arg2)
       (local.get $host_ctx)
       (call $g2w (local.get $arg3))
       (local.get $arg4)))
+    (if (i32.eq (local.get $hr) (i32.const 2))
+      (then
+        (call $com_activate_begin (call $gl32 (local.get $arg4)) (local.get $arg0) (local.get $arg4) (i32.const 1) (local.get $arg3))
+        (return)))
     (if (i32.eq (local.get $hr) (i32.const 0x800401F0))
       (then
         (global.set $com_clsid_ptr (local.get $arg0))

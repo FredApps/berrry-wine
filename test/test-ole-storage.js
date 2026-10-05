@@ -220,10 +220,10 @@ async function main() {
   const savedEsp = e.get_esp();
   const classHr = e.test_call_CoGetClassObject(comClsid, 3, 0, comIid, classOut);
   const classOutValue = dv.getUint32(wa(classOut), true);
-  check('CoGetClassObject requests a class factory through the shared COM host bridge',
+  check('CoGetClassObject requests owner-side resolution while accepting a direct registered factory',
     classHr === 0 &&
     comArgs !== null && comArgs[0] === wa(comClsid) && comArgs[1] === 0 &&
-    (comArgs[2] >>> 0) === 0x80000003 && comArgs[3] === wa(comIid) &&
+    (comArgs[2] >>> 0) === 0xc0000003 && comArgs[3] === wa(comIid) &&
     comArgs[4] === classOut && classOutValue === 0x456789,
     `hr=0x${(classHr >>> 0).toString(16)} args=${JSON.stringify(comArgs)} out=0x${classOutValue.toString(16)}`);
   e.set_esp(savedEsp);

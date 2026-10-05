@@ -12891,7 +12891,7 @@
   ;; Video for Windows ICM (ICOpen/ICInfo/ICClose...) lives in 09a7g-video-icm.wat.
 
   (global $DX_VTBL_VBIMAGE7 (mut i32) (i32.const 0))
-;; PRIVATE DRAFT: internal contiguous buffers only; guest front door must validate
+;; Internal contiguous buffers only; the guest front door validates
 ;; and marshal all 232 bytes with guest spans before using these adapters.
 ;; Original ce95fbf5 DLL: converters 7352be1a, 7352bdb4, 7352a286, 7352a3a5.
 ;; Return HRESULT; explicit RGB-only input support, never reinterpret 232 as 124.
@@ -12958,7 +12958,7 @@
     (i32.store offset=196 (local.get $vb) (i32.load offset=100 (local.get $native)))
 )
 
-;; PRIVATE draft: path_wa is an owned contiguous NUL-terminated UTF16 path.
+;; path_wa is an owned contiguous NUL-terminated UTF16 path.
   (func $vbdd_load_bmp24_wide (param $path_wa i32) (result i32)
     (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
     (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32) (local $width i32) (local $height i32) (local $extent i64)
@@ -13174,7 +13174,7 @@
   (call $heap_free (local.get $scratch_ga))
   (i32.const 0))
 
-;; PRIVATE integration draft. Generator must append the complete dedicated
+;; The generator appends the complete dedicated
 ;; IVBImageSurface7 interface at the registry tail and declare this global.
 (func $vbdd_surface_vtable (result i32) (global.get $DX_VTBL_VBIMAGE7))
 
