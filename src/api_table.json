@@ -34519,5 +34519,12 @@
     "stub": { "pop": 12, "ret": 2147500033 },
     "convention": "stdcall",
     "hash": 3160843392
+  },
+  {
+    "id": 4085,
+    "name": "_mbsstr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1036335673
   }
 ]
