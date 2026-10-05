@@ -44,7 +44,7 @@ Ordinary prior candidateee432681/module16247861 reached the rendered configurati
 
 ## Merged-source natural wait UI, attempt3
 
-On merged45e3f361, exact123 WAT/closure/compiler file comparison allowed reuse of root's full-gates module40cc834b014b46a9ea5c81f21ee000a41e3a70c6422e70c8aa42f22407bfaced (1,665,281 bytes), with path IDs4086–4088. No redundant compile or source change. Session77588 closed browser/server11:17:38.496Z errors[] at the180second guard; immutable run `scratch/runs/20261005-dredmor-natural-loading-ui` contains27 hashed artifacts and97 verified served pins.
+On merged45e3f361, exact123 WAT/closure/compiler file comparison allowed reuse of root's full-gates module40cc834b014b46a9ea5c81f21ee000a41e3a70c6422e70c8aa42f22407bfaced (1,665,281 bytes), with path IDs4086–4088. No redundant compile or source change. Session77588 closed browser/server11:17:38.496Z errors[] at the180second guard; immutable run `scratch/runs/20261005-dredmor-natural-loading-ui` contains26 hashed artifacts plus their hash manifest and97 verified served pins.
 
 This ordinary run visibly displayed the existing Loading window during natural lazy reads (`main-menu.png`, despite that provisional filename) and resumed automatically into the actual menu (`menu-resumed.png`). No artificial delay/error was injected. Same1,437 successful ranges/1,306 lazy files/16,918,607 lazy server-body bytes and zero game HEAD/HTTP errors. Thus successful on-demand loading **and visible wait/resumption** are now runtime evidenced. A failed read and ordinary Retry/Quit interaction are not yet tested.
 
