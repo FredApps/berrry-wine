@@ -14,6 +14,7 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const SP = 0x00300000;
+const STREAM = 0x70000014; // the VFS handle the fopen'd FILE wraps
 
 const extraWat = String.raw`
   (func (export "test_sc_alloc") (param $n i32) (result i32)
@@ -26,6 +27,12 @@ const extraWat = String.raw`
     (i32.store offset=16 (global.get $reg_base) (i32.const ${SP}))
     (call $handle_strncat (local.get $d) (local.get $s) (local.get $n)
       (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
+
+  (func (export "test_sc_fopen") (param $stack i32) (param $path i32) (param $mode i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (local.get $stack))
+    (call $handle_fopen (local.get $path) (local.get $mode)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
 
   ;; cdecl frame on a real guest stack: [esp] ret, [esp+4] c, [esp+8] stream.
@@ -46,6 +53,7 @@ const extraWat = String.raw`
     extraWat,
     fonts: 'none',
     extraHostOverrides: {
+      fs_create_file: () => STREAM,
       fs_write_file: (handle, bufGA, len, bytesWrittenGA) => {
         if (failWrites) return 0;
         const bytes = [];
@@ -77,14 +85,20 @@ const extraWat = String.raw`
   console.log('PASS  strncat appends, terminates, never pads, returns dest');
 
   const stack = e.test_sc_alloc(64);
-  const STREAM = 0x70000014;
-  assert.strictEqual(e.test_sc_fputc(stack, 0x1e6, STREAM), 0xe6,
+  const name = e.test_sc_alloc(16);
+  const mode = e.test_sc_alloc(4);
+  put(name, 'queen.asd');
+  put(mode, 'wb');
+  const file = e.test_sc_fopen(stack, name, mode) >>> 0;
+  assert.notStrictEqual(file, 0, 'fopen returns a FILE* wrapping the VFS handle');
+  assert.strictEqual(e.test_sc_fputc(stack, 0x1e6, file), 0xe6,
     'fputc returns the byte written as unsigned char');
   assert.strictEqual(e.get_esp() >>> 0, stack + 4, 'cdecl: pops only the return address');
   assert.deepStrictEqual(writes, [{ handle: STREAM, bytes: [0xe6] }],
     'exactly one byte, the low byte of c, reaches the stream');
   failWrites = true;
-  assert.strictEqual(e.test_sc_fputc(stack, 0x41, STREAM), -1, 'a failed write returns EOF');
+  assert.strictEqual(e.test_sc_fputc(stack, 0x41, file), -1, 'a failed write returns EOF');
+  assert.strictEqual(e.guest_read32(file + 0x0c) & 0x20, 0x20, 'a failed write latches _IOERR');
   console.log('PASS  fputc writes one byte and returns it, EOF on failure');
 })().catch(err => {
   console.error(err);

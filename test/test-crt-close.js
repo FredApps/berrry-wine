@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// fclose and _close are separate CRT front doors, but this minimal CRT maps
-// both FILE* and file descriptors directly to an unbuffered VFS handle. Pin
-// the shared close/result path without erasing either handler's cdecl ABI.
+// fclose and _close are separate CRT front doors. A descriptor is a raw VFS
+// handle; a FILE* is a real MSVCRT FILE whose _file (+0x10) holds that
+// handle. Pin the shared close/result path without erasing either handler's
+// cdecl ABI, and the stream ownership list that process exit drains.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -14,7 +15,7 @@ const STACK = 0x00300000;
 const source = fs.readFileSync(
   path.join(__dirname, '..', 'src', '09a6-handlers-crt.wat'), 'utf8');
 
-assert.strictEqual((source.match(/\$crt_close_unbuffered_handle/g) || []).length, 5,
+assert.strictEqual((source.match(/\$crt_close_raw_handle/g) || []).length, 5,
   'one close helper serves fclose, _close, freopen and termination');
 assert.strictEqual((source.match(/\$host_fs_close_handle/g) || []).length, 1,
   'CRT close result translation should have one host-close implementation');
@@ -107,25 +108,40 @@ const extraWat = String.raw`
       'one-argument cdecl handler pops only its return address');
   };
 
-  hostResult = 1;
-  invoke(e.test_fclose, 0x12345678, 0);
-  invoke(e.test__close, 0x87654321, 0);
-  hostResult = 0;
-  invoke(e.test_fclose, 0x10203040, -1);
-  invoke(e.test__close, 0xfedcba98, -1);
-
-  assert.deepStrictEqual(calls, [0x12345678, 0x87654321, 0x10203040, 0xfedcba98],
-    'both front doors pass the original FILE*/descriptor value to the VFS');
-  hostResult = 1;
-  events.length = 0;
   const filename = 0x1000, mode = 0x1100;
   const ascii = (p, s) => [...s, '\0'].forEach((c, i) => e.guest_write8(p + i, c.charCodeAt(0)));
   ascii(filename, 'cleanup.txt');
   ascii(mode, 'w');
+  // fopen returns a FILE* whose _file is the VFS handle the host opened.
+  const files = new Map();
   const open = (handle, instance = e) => {
     nextHandle = handle;
-    assert.strictEqual(instance.test_fopen(filename, mode), handle === -1 ? 0 : handle);
+    const file = instance.test_fopen(filename, mode) >>> 0;
+    if (handle === -1) {
+      assert.strictEqual(file, 0, 'failed fopen returns NULL');
+      return 0;
+    }
+    assert.notStrictEqual(file, 0);
+    assert.notStrictEqual(file, handle >>> 0, 'FILE* is a struct, not the raw handle');
+    assert.strictEqual(e.guest_read32(file + 0x10) >>> 0, handle >>> 0, '_file holds the handle');
+    files.set(handle, file);
+    return file;
   };
+
+  hostResult = 1;
+  open(0x12345678);
+  invoke(e.test_fclose, files.get(0x12345678), 0);
+  invoke(e.test__close, 0x87654321, 0);
+  open(0x10203040);
+  hostResult = 0;
+  invoke(e.test_fclose, files.get(0x10203040), -1);
+  invoke(e.test__close, 0xfedcba98, -1);
+  invoke(e.test_fclose, 0x0badf11e, -1); // not a FILE this CRT handed out
+
+  assert.deepStrictEqual(calls, [0x12345678, 0x87654321, 0x10203040, 0xfedcba98],
+    'fclose closes the FILE\'s own handle, _close the descriptor it was given');
+  hostResult = 1;
+  events.length = 0;
   const cleanup = normal => {
     e.test_stream_cleanup(normal);
     e.run(1000);
@@ -133,7 +149,7 @@ const extraWat = String.raw`
   };
   open(100);
   open(101);
-  invoke(e.test_fclose, 100, 0);
+  invoke(e.test_fclose, files.get(100), 0);
   events.length = 0;
   cleanup(0);
   assert.deepStrictEqual(events, [['close', 101]], 'returning cleanup closes only live CRT streams');
@@ -149,16 +165,18 @@ const extraWat = String.raw`
   cleanup(0);
   assert.deepStrictEqual(events, [], 'failed fopen adds no cleanup entry');
 
-  open(102);
+  const reopened = open(102);
   nextHandle = 103;
   events.length = 0;
-  assert.strictEqual(e.test_freopen(filename, mode, 102), 103);
+  assert.strictEqual(e.test_freopen(filename, mode, reopened) >>> 0, reopened,
+    'freopen reuses the caller\'s FILE, as MSVCRT does');
+  assert.strictEqual(e.guest_read32(reopened + 0x10), 103, 'the reused FILE now wraps the new handle');
   cleanup(0);
   assert.deepStrictEqual(events, [['close', 102], ['open', 103], ['close', 103]]);
   open(104);
   nextHandle = -1;
   events.length = 0;
-  assert.strictEqual(e.test_freopen(filename, mode, 104), 0, 'failed reopen cannot report the old stream as success');
+  assert.strictEqual(e.test_freopen(filename, mode, files.get(104)), 0, 'failed reopen cannot report the old stream as success');
   cleanup(0);
   assert.deepStrictEqual(events, [['close', 104], ['open', -1]], 'failed replacement still closes its original');
   open(107);
@@ -190,7 +208,8 @@ const extraWat = String.raw`
     0xff, 0xd0, 0x83, 0xc4, 8, 0xc3];
   callback.forEach((b, i) => e.guest_write8(0x480000 + i, b));
   for (const normal of [0, 1]) {
-    open(106);
+    const file106 = open(106);
+    le32(file106).forEach((b, i) => e.guest_write8(0x480001 + i, b)); // push FILE*
     assert.strictEqual(e.test_crt_atexit_register(0x480000), 0);
     events.length = 0;
     cleanup(normal);
@@ -207,12 +226,13 @@ const extraWat = String.raw`
   ascii(0x1200, 'callback output');
   const realFputs = e.test_stream_api(require('../src/api_table.json').find(row => row.name === 'fputs').id) >>> 0;
   for (const normal of [0, 1]) {
-    const stream = e.test_fopen(filename, mode) >>> 0;
-    assert.notStrictEqual(stream, 0);
+    const file = e.test_fopen(filename, mode) >>> 0;
+    assert.notStrictEqual(file, 0);
+    const stream = e.guest_read32(file + 0x10) >>> 0; // _file: the VFS handle
     const vfs = actual.hostCtx.vfs;
     const filePath = vfs.handles.get(stream).path;
     const address = 0x481000 + normal * 0x100;
-    const bytes = [0x68, ...le32(stream), 0x68, ...le32(0x1200), 0xb8, ...le32(realFputs),
+    const bytes = [0x68, ...le32(file), 0x68, ...le32(0x1200), 0xb8, ...le32(realFputs),
       0xff, 0xd0, 0x83, 0xc4, 8, 0xc3];
     bytes.forEach((b, i) => e.guest_write8(address + i, b));
     e.test_crt_atexit_register(address);

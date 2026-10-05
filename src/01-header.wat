@@ -2665,7 +2665,6 @@
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
   (global $msvcrt_acmdln_ptr  (mut i32) (i32.const 0))
   (global $msvcrt_environ_ptr (mut i32) (i32.const 0))
-  (global $msvcrt_iob_ptr     (mut i32) (i32.const 0))
   (global $msvcrt_pctype_ptr  (mut i32) (i32.const 0))
   (global $msvcrt_strerror_ptr (mut i32) (i32.const 0))
   (global $msvcrt_tmpnam_ptr  (mut i32) (i32.const 0))
