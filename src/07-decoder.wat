@@ -4795,6 +4795,24 @@
                 (then (local.set $a (call $emit_sib_or_abs)) (call $te (i32.const 195) (i32.const 0)) (call $te_raw (local.get $a))))
               (br $decode)))
 
+          ;; 0x0F 0x20: MOV r32, CRn. Privileged, but Win9x's VMM emulates the
+          ;; read for a ring-3 Win32 app instead of faulting, and games probe
+          ;; with it after CPUID: Tomb Raider III reads CR4 for PCE (rdpmc)
+          ;; and TSD (rdtsc). NT faults here, which is the documented TR3
+          ;; "privileged instruction" crash on 2000/XP. The values are fixed
+          ;; Win98 ones, lowered to MOV r32, imm32: CR0 = PG|WP|NE|ET|MP|PE,
+          ;; CR4 = PSE with TSD and PCE clear (rdtsc allowed, rdpmc not).
+          ;; CR1 and CR5-7 are #UD on real hardware and stay unhandled.
+          (if (i32.eq (local.get $op) (i32.const 0x20))
+            (then
+              (call $decode_modrm)
+              (if (i32.eq (global.get $mr_reg) (i32.const 0))
+                (then (call $te (i32.const 2) (global.get $mr_val)) (call $te_raw (i32.const 0x80010033)) (br $decode)))
+              (if (i32.or (i32.eq (global.get $mr_reg) (i32.const 2)) (i32.eq (global.get $mr_reg) (i32.const 3)))
+                (then (call $te (i32.const 2) (global.get $mr_val)) (call $te_raw (i32.const 0)) (br $decode)))
+              (if (i32.eq (global.get $mr_reg) (i32.const 4))
+                (then (call $te (i32.const 2) (global.get $mr_val)) (call $te_raw (i32.const 0x10)) (br $decode)))))
+
           ;; 0x0F 0xA2: CPUID
           (if (i32.eq (local.get $op) (i32.const 0xA2))
             (then (call $te (i32.const 175) (i32.const 0)) (br $decode)))

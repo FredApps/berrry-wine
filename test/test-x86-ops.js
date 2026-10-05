@@ -897,6 +897,14 @@ async function main() {
     tsc2hi > tsc1hi || (tsc2hi === tsc1hi && tsc2 > tsc1), true);
   test('rdtsc is non-zero', tsc1 !== 0 || tsc1hi !== 0, true);
 
+  // mov r32, CRn: Win9x emulates the ring-3 read. Tomb Raider III's CPU probe
+  // reads CR4 right after CPUID and tests TSD (bit 2) and PCE (bit 8).
+  // mov eax,cr4; mov ebx,cr0; mov esi,cr4 (rm=6 picks the destination).
+  runCode([0x0F, 0x20, 0xE0, 0x0F, 0x20, 0xC3, 0x0F, 0x20, 0xE6]);
+  test('mov eax,cr4 = PSE, TSD and PCE clear', e.get_eax() >>> 0, 0x10);
+  test('mov ebx,cr0 = PG|WP|NE|ET|MP|PE', e.get_ebx() >>> 0, 0x80010033);
+  test('mov esi,cr4 writes the ModRM rm register', e.get_esi() >>> 0, 0x10);
+
   // cpuid leaf 0 → "GenuineIntel" in EBX/EDX/ECX.
   runCode([0x31, 0xC0, 0x0F, 0xA2]);
   test('cpuid leaf 0 EBX = "Genu"', e.get_ebx() >>> 0, 0x756E6547);

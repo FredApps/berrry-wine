@@ -34620,5 +34620,49 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3025282013
+  },
+  {
+    "id": 4094,
+    "name": "acmDriverEnum",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3370924607,
+    "args": [
+      {
+        "name": "fnCallback",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwInstance",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwEnum",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 4095,
+    "name": "acmDriverDetailsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1073823375,
+    "args": [
+      {
+        "name": "hadid",
+        "type": "HANDLE"
+      },
+      {
+        "name": "padd",
+        "type": "LPVOID"
+      },
+      {
+        "name": "fdwDetails",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
   }
 ]

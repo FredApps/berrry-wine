@@ -1007,7 +1007,13 @@
     (if (local.get $rt_surf) (then
       (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
       (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
-      (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))))
+      (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))
+      ;; D3DRENDERSTATE_ZENABLE (7, state +284) defaults to D3DZB_TRUE when a
+      ;; depth buffer is attached to the render target at creation, FALSE
+      ;; otherwise. Tomb Raider III attaches one and never sets ZENABLE; with
+      ;; the old FALSE default its rooms drew without a depth test.
+      (if (call $d3dim_attached_zbuffer (local.get $rt_entry))
+        (then (call $gs32 (i32.add (local.get $state) (i32.const 284)) (i32.const 1))))))
     (call $gs32 (local.get $ppDev) (local.get $obj))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
@@ -3670,20 +3676,12 @@
   ;; draw caused the fallback plane to be allocated first: DirectDraw clears
   ;; and locks the attached surface, so a private plane would immediately
   ;; diverge from application-visible depth state.
-  (func $d3dim_ensure_zbuffer (param $this_guest i32) (result i32)
-    (local $state i32) (local $rt i32) (local $w i32) (local $h i32)
-    (local $bytes i32) (local $zbuf i32) (local $sw i32)
+  ;; The DDSCAPS_ZBUFFER surface attached to render target $rt (a DX_OBJECTS
+  ;; entry address), or 0. It must match the target's size and be a 16- or
+  ;; 32-bit surface with backing; anything else attached is a flip-chain or
+  ;; mipmap colour surface.
+  (func $d3dim_attached_zbuffer (param $rt i32) (result i32)
     (local $rt_slot i32) (local $i i32) (local $candidate i32)
-    (local.set $state (call $d3ddev_state (local.get $this_guest)))
-    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (local.set $sw (call $g2w (local.get $state)))
-    (local.set $zbuf (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))))
-    (local.set $rt (call $d3ddev_rt_entry (local.get $this_guest)))
-    (if (i32.eqz (local.get $rt)) (then (return (i32.const 0))))
-    (local.set $w (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
-    (local.set $h (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))
-    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
-      (then (return (i32.const 0))))
     (local.set $rt_slot (call $dx_slot_of (local.get $rt)))
     (local.set $i (i32.const 1))
     (block $attached_done (loop $attached_scan
@@ -3709,12 +3707,30 @@
                     (i32.eq (i32.load16_u offset=16 (local.get $candidate)) (i32.const 16))
                     (i32.eq (i32.load16_u offset=16 (local.get $candidate)) (i32.const 32)))
                   (i32.ne (i32.load offset=20 (local.get $candidate)) (i32.const 0))))))
-        (then
-          (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))
-            (local.get $candidate))
-          (return (local.get $candidate))))
+        (then (return (local.get $candidate))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $attached_scan)))
+    (i32.const 0))
+
+  (func $d3dim_ensure_zbuffer (param $this_guest i32) (result i32)
+    (local $state i32) (local $rt i32) (local $w i32) (local $h i32)
+    (local $bytes i32) (local $zbuf i32) (local $sw i32) (local $candidate i32)
+    (local.set $state (call $d3ddev_state (local.get $this_guest)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $zbuf (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $this_guest)))
+    (if (i32.eqz (local.get $rt)) (then (return (i32.const 0))))
+    (local.set $w (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+      (then (return (i32.const 0))))
+    (local.set $candidate (call $d3dim_attached_zbuffer (local.get $rt)))
+    (if (local.get $candidate)
+      (then
+        (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))
+          (local.get $candidate))
+        (return (local.get $candidate))))
     (if (local.get $zbuf) (then (return (local.get $zbuf))))
     (local.set $bytes (i32.mul (i32.mul (local.get $w) (local.get $h)) (i32.const 4)))
     (local.set $zbuf (call $heap_alloc (local.get $bytes)))

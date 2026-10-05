@@ -355,6 +355,100 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; 5 args stdcall
   )
 
+  ;; The one ACM driver acmMetrics counts: the built-in PCM converter, under
+  ;; a fixed HACMDRIVERID. No installable codec exists, so an app looking for
+  ;; one by name (Tomb Raider III wants "MS-ADPCM") finds only this and goes
+  ;; on without it, as on a machine where that codec was never installed.
+  (func $acm_pcm_driver_id (result i32) (i32.const 0x0ACD0001))
+
+  ;; acmDriverEnum(fnCallback, dwInstance, fdwEnum) calls
+  ;; fnCallback(hadid, dwInstance, fdwSupport) once per driver. With one
+  ;; driver the callback's continue/stop answer changes nothing, so this
+  ;; makes the single call and lets the CACA0007 continuation return
+  ;; MMSYSERR_NOERROR (0) to the caller. NOLOCAL (0x40000000) and DISABLED
+  ;; (0x80000000) are the only flags; the PCM converter is global and enabled,
+  ;; so neither one removes it.
+  (func $handle_acmDriverEnum (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32) (local $result i32)
+    (local.set $result (i32.const 0))
+    (if (i32.eqz (local.get $arg0))
+      (then (local.set $result (i32.const 11))))                          ;; MMSYSERR_INVALPARAM
+    (if (i32.and (local.get $arg2) (i32.const 0x3FFFFFFF))
+      (then (local.set $result (i32.const 10))))                          ;; MMSYSERR_INVALFLAG
+    (if (local.get $result)
+      (then
+        (i32.store offset=0 (global.get $reg_base) (local.get $result))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    ;; Drop the stdcall frame, keeping the caller's return address for the
+    ;; continuation, then build the callback frame on top of it.
+    (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0x2))   ;; fdwSupport = SUPPORTF_CONVERTER
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $arg1))  ;; dwInstance
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (call $acm_pcm_driver_id))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0)))
+
+  ;; One dword of ACMDRIVERDETAILS, written only if it lies inside the
+  ;; caller's cbStruct: a short struct is valid and gets just its prefix.
+  (func $acm_dd_put32 (param $padd i32) (param $cb i32) (param $off i32) (param $value i32)
+    (if (i32.le_u (i32.add (local.get $off) (i32.const 4)) (local.get $cb))
+      (then (call $gs32 (i32.add (local.get $padd) (local.get $off)) (local.get $value)))))
+
+  ;; acmDriverDetailsA(hadid, padd, fdwDetails). ACMDRIVERDETAILSA is 920
+  ;; bytes: +0 cbStruct +4 fccType +8 fccComp +12 wMid/wPid +16 vdwACM
+  ;; +20 vdwDriver +24 fdwSupport +28 cFormatTags +32 cFilterTags +36 hicon
+  ;; +40 szShortName[32] +72 szLongName[128] +200 szCopyright[80]
+  ;; +280 szLicensing[128] +408 szFeatures[512]. cbStruct is the caller's
+  ;; and is kept; everything else up to it is rewritten. The guest address
+  ;; is written field by field, so the struct may straddle pages.
+  (func $acm_driver_details (param $hadid i32) (param $padd i32) (param $fdw i32) (result i32)
+    (local $cb i32) (local $i i32)
+    (if (local.get $fdw) (then (return (i32.const 10))))                   ;; MMSYSERR_INVALFLAG
+    (if (i32.ne (local.get $hadid) (call $acm_pcm_driver_id))
+      (then (return (i32.const 5))))                                       ;; MMSYSERR_INVALHANDLE
+    (if (i32.eqz (local.get $padd)) (then (return (i32.const 11))))        ;; MMSYSERR_INVALPARAM
+    (local.set $cb (call $gl32 (local.get $padd)))
+    (if (i32.lt_u (local.get $cb) (i32.const 4)) (then (return (i32.const 11))))
+    (if (i32.gt_u (local.get $cb) (i32.const 920)) (then (local.set $cb (i32.const 920))))
+    (local.set $i (i32.const 4))
+    (block $done (loop $zero
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cb)))
+      (call $gs8 (i32.add (local.get $padd) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $zero)))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 4) (i32.const 0x63647561))  ;; 'audc'
+    ;; wMid MM_MICROSOFT (1), wPid MM_MSFT_ACM_PCM (38)
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 12) (i32.const 0x00260001))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 16) (i32.const 0x03320000)) ;; ACM 3.50
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 20) (i32.const 0x03320000))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 24) (i32.const 0x2))        ;; SUPPORTF_CONVERTER
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 28) (i32.const 1))          ;; PCM tag only
+    ;; "MS-PCM"
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 40) (i32.const 0x502D534D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 44) (i32.const 0x00004D43))
+    ;; "Microsoft PCM Converter"
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 72) (i32.const 0x7263694D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 76) (i32.const 0x666F736F))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 80) (i32.const 0x43502074))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 84) (i32.const 0x6F43204D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 88) (i32.const 0x7265766E))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 92) (i32.const 0x00726574))
+    (i32.const 0))
+
+  (func $handle_acmDriverDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_driver_details
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))  ;; 3 args stdcall
+  )
+
   ;; acmStreamOpen(phas, had, pwfxSrc, pwfxDst, pwfltr, dwCallback,
   ;;               dwInstance, fdwOpen) — 8 args stdcall.
   ;; No codec is installed, so any stream with a non-PCM end is

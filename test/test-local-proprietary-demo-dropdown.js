@@ -21,7 +21,7 @@ const proprietaryLocalIds = [
   'deus_ex_demo', 'icewind_dale_demo',
   'baldurs_gate_noninteractive_demo', 'baldurs_gate_interactive_demo',
   'baldurs_gate_chapters_1_2_demo',
-  'civ2_win16', 'civ2_mge',
+  'civ2_win16', 'civ2_mge', 'tomb_raider_3_demo',
 ];
 
 for (const id of proprietaryLocalIds) {
