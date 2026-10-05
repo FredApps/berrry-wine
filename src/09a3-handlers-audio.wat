@@ -2787,6 +2787,7 @@
     (i32.store offset=16 (local.get $slot) (call $host_get_ticks))
     (i32.store offset=20 (local.get $slot)
       (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+    (call $mm_timer_thread_ensure)
     (i32.store offset=0 (global.get $reg_base) (local.get $tid))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )

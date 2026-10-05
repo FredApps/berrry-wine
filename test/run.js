@@ -4402,6 +4402,12 @@ async function main() {
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
   if (NO_MMX && instance.exports.set_cpu_mmx) instance.exports.set_cpu_mmx(0);
+  // timeSetEvent callbacks on a winmm timer guest thread (the Windows model)
+  // instead of the main thread's message pump. Shared memory, so set once.
+  if ((hasFlag('mm-timer-thread') || (APP_ENTRY?.mmTimerThread === true && !hasFlag('no-mm-timer-thread'))) &&
+      instance.exports.set_mm_timer_thread_mode) {
+    instance.exports.set_mm_timer_thread_mode(1);
+  }
   if ((hasFlag('sse') || APP_ENTRY?.cpuSSE === true) && instance.exports.set_cpu_sse) {
     instance.exports.set_cpu_sse(1);
   }

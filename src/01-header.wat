@@ -3019,6 +3019,11 @@
   (global $MM_TIMER_TABLE_SIZE i32 (region.size $MM_TIMER_TABLE))
   (global $MM_TIMER_NEXT_ID i32 (region.addr $MM_TIMER_NEXT_ID 0))
   (global $MM_TIMER_NEXT_ID_SIZE i32 (region.size $MM_TIMER_NEXT_ID))
+  ;; The winmm timer thread, in TIMER_SHARED's tail: +0 mode (1 = callbacks
+  ;; run on their own guest thread), +4 thread handle (0 = not started), +8
+  ;; loop thunk guest address, +12 that thread's loop ESP. Process-wide, so
+  ;; every instance agrees on whether the thread owns the callbacks.
+  (global $MM_TIMER_THREAD i32 (region.addr $TIMER_SHARED 0x50))
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   ;; A system timer may interrupt a main thread parked in WaitForSingleObject.
   ;; The callback borrows this WASM context, then restores the parked wait.

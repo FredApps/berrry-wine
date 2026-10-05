@@ -622,7 +622,8 @@
   ;; (bytes transferred, completion key, OVERLAPPED*) after a 16-byte header.
   (region.declare $IOCP_TABLE (size 0x00008000) (align 0x00001000)
     (owner "01-header.wat:$IOCP_TABLE"))
-  (region.declare $TIMER_SHARED (size 0x00000050) (align 0x00000100)
+  ;; +0x50..0x5F: the winmm timer thread (09a-handlers.wat $MM_TIMER_THREAD).
+  (region.declare $TIMER_SHARED (size 0x00000060) (align 0x00000100)
     (owner "09a-handlers.wat:$timer_set"))
   (region.declare $EXTRA_CMDLINE_BUFFER (size 0x00000100) (align 0x00000100)
     (owner "10-helpers.wat:$EXTRA_CMDLINE_BUFFER"))
