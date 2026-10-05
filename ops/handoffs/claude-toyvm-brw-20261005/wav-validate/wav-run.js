@@ -19,6 +19,9 @@
 //  - output size: each log is polled while it is written and its run is killed
 //    past --log-cap-mb (default 64); the output directory, trees excluded, may
 //    not pass --out-cap-mb (default 512) (SIZE, exit 6);
+//  - trace completeness: under --trace-irq every run's irq line count must
+//    equal its `irqs` counter (each raise() both counts and logs); otherwise
+//    analysis.md is still written, marked prefix-only (TRACE-INCOMPLETE, exit 7);
 //  - --out must be new or empty; nothing earlier is ever overwritten;
 //  - the trees this script builds are deleted on every exit (they are
 //    reproducible from the pins); logs, WAVs and rows are kept.
@@ -281,7 +284,7 @@ function firstDivergence(a, b) {
   // --- analysis --------------------------------------------------------------------
   const md = ['# WAV reference check', '',
     'PASS = completed with P3 reproduced on every guest field. Not a verdict that the new audio is correct.', ''];
-  const an = {};
+  const an = {}, traceIncomplete = [];
   for (const p of Object.keys(PROGRAMS)) {
     const s = stem(p), h = result.runs[p].head.row;
     an[s] = { trees: {}, compare: {}, irq: null, io: null };
@@ -296,14 +299,26 @@ function firstDivergence(a, b) {
     }
     an[s].firstChange = Object.fromEntries(GUEST.map((g) => [g, LADDER.find((t) => result.runs[p][t].row[g] !== h[g]) || null]));
     const lh = path.join(OUT, `head-${s}.log`), ls = path.join(OUT, `stack-${s}.log`);
-    an[s].irq = firstDivergence(traceLines(lh, 'irq'), traceLines(ls, 'irq'));
-    if (PROGRAMS[p].some((a) => a.startsWith('--trace-io'))) an[s].io = firstDivergence(traceLines(lh, 'io'), traceLines(ls, 'io'));
-    md.push('', `first tree to change each field (ladder ${LADDER.join(' -> ')}): ${JSON.stringify(an[s].firstChange)}`,
-      `irq trace head vs stack: ${an[s].irq.identical ? `identical (${an[s].irq.lines} lines)` : `first divergence at line ${an[s].irq.index}`}`);
+    const traced = !flag('no-trace') && PROGRAMS[p].includes('--trace-irq');
+    // Completeness: every raise() is counted in `irqs` AND logged, so a log with
+    // fewer irq lines than the counter lost lines and is a prefix at best.
+    an[s].irqTrace = Object.fromEntries(LADDER.map((t) => {
+      const lines = traced ? traceLines(path.join(OUT, `${t}-${s}.log`), 'irq').length : null;
+      return [t, { lines, irqs: result.runs[p][t].row.irqs, complete: traced ? lines === result.runs[p][t].row.irqs : null }];
+    }));
+    const incomplete = LADDER.filter((t) => an[s].irqTrace[t].complete === false);
+    if (incomplete.length) traceIncomplete.push(`${s}: ${incomplete.map((t) => `${t} ${an[s].irqTrace[t].lines}/${an[s].irqTrace[t].irqs}`).join(', ')}`);
+    an[s].irq = traced ? firstDivergence(traceLines(lh, 'irq'), traceLines(ls, 'irq')) : null;
+    if (traced && PROGRAMS[p].some((a) => a.startsWith('--trace-io'))) an[s].io = firstDivergence(traceLines(lh, 'io'), traceLines(ls, 'io'));
+    md.push('', `first tree to change each field (ladder ${LADDER.join(' -> ')}): ${JSON.stringify(an[s].firstChange)}`);
+    if (an[s].irq) md.push(`irq trace head vs stack${incomplete.length ? ' (INCOMPLETE logs: prefix only, line totals unreliable)' : ''}: `
+      + `${an[s].irq.identical ? `identical (${an[s].irq.lines} lines)` : `first divergence at line ${an[s].irq.index}`}`);
     if (an[s].io) md.push(`PIT io trace head vs stack: ${an[s].io.identical ? `identical (${an[s].io.lines} lines)` : `first divergence at line ${an[s].io.index}`}`);
     md.push('');
   }
   result.analysis = an;
+  if (traceIncomplete.length) md.push(`TRACE-INCOMPLETE (irq log lines vs irqs counter): ${traceIncomplete.join('; ')}`, '');
   fs.writeFileSync(path.join(OUT, 'analysis.md'), md.join('\n') + '\n');
+  if (traceIncomplete.length) finish('TRACE-INCOMPLETE', 7, `irq trace lost lines: ${traceIncomplete.join('; ')}`);
   finish('PASS', 0, null);
 })().catch((e) => finish('FAIL', 1, String(e && e.stack || e)));

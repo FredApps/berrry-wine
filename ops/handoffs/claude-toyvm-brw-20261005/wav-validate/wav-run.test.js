@@ -63,9 +63,16 @@ if (require.main === module) {
     const go = () => { process.stdout.write(line, go); };
     go();
   } else {
-    console.log('  irq vec=08 pit     at=100 hb=' + (tree === 'stack' ? 7 : 3) + ' t=0.000010 from 0:0');
-    console.log('  irq vec=08 pit     at=' + (tree === 'stack' ? 250 : 200) + ' hb=4 t=0.000020 from 0:0');
     const bytes = wavFor(tree, prog);
+    // One irq line per counted irq (the runner's completeness gate); line 0's
+    // hb differs by tree and must be ignored, line 1's at= is the real divergence.
+    const irqs = rowFor(tree, prog, bytes).irqs - (mode === 'short-trace' ? 5 : 0);
+    let log = '';
+    for (let i = 0; i < irqs; i++) {
+      const at = i === 1 && tree === 'stack' ? 250 : 100 + 100 * i;
+      log += '  irq vec=08 timer   at=' + at + ' hb=' + (i === 0 && tree === 'stack' ? 7 : 3) + ' t=0.000010 from 0:0\\n';
+    }
+    process.stdout.write(log);
     if (mode !== 'no-wav') fs.writeFileSync(get('wav'), bytes);
     fs.writeFileSync(get('row'), JSON.stringify(rowFor(tree, prog, bytes)) + '\\n');
   }
@@ -118,6 +125,29 @@ check('a head row that differs from P3 base on a non-wav field is VOID and the m
     assert.match(r.res.failures.join(), /head BLIQ irqs 384 != P3 base 999/);
     assert.ok(!r.res.runs[PROGS[0]].v2v3, 'a middle tree ran after a VOID gate');
   } finally { fs.writeFileSync(p3b, keep); }
+});
+check('an irq log with fewer lines than the irqs counter is TRACE-INCOMPLETE (exit 7), analysis kept', () => {
+  const r = run('short', { FX_TREE: 'v2v3j', FX_PROG: 'CYCLE.EXE', FX_MODE: 'short-trace' });
+  assert.strictEqual(r.code, 7, r.out); assert.strictEqual(r.res.status, 'TRACE-INCOMPLETE');
+  assert.match(r.res.failures.join(), /CYCLE: v2v3j 379\/384/);
+  assert.strictEqual(r.res.analysis.CYCLE.irqTrace.head.complete, true);
+  assert.ok(fs.readFileSync(path.join(r.dir, 'analysis.md'), 'utf8').includes('TRACE-INCOMPLETE'));
+});
+check('the real wav-drive.js flushes a 254,307-line trace through a pipe before exiting', () => {
+  // A fake tree whose runDos logs like --trace-irq on CAVEIRA, then returns.
+  const t = path.join(ROOT, 'faketree');
+  write(path.join(t, 'tools/toyvm/run-dos.js'), `exports.runDos = async (o) => {
+    for (let i = 0; i < 254307; i++) o.log('  irq vec=08 timer   at=' + i + ' hb=' + i + ' t=0.000000 from 110:7ae');
+    return { audioChunks: [new Float32Array([0, 0])], audioRate: 22050, frame: 'f', pixels: 1, irqs: 254307, ints: 0,
+      dispatched: 80000000, handbacks: 1, exitKinds: {}, machine: { audio: { rendered: 1, outAcc: 0, dma: { writes: 0 }, speakerWrites: 0 } } };
+  };\n`);
+  write(path.join(t, 'tools/toyvm/audio.js'), `exports.wavBytes = () => new Uint8Array(48);\n`);
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'wav-drive.js'), `--tree=${t}`, '--exe=x', `--wav=${path.join(t, 'o.wav')}`,
+    `--row=${path.join(t, 'o.json')}`, '--trace-irq'], { encoding: 'utf8', maxBuffer: 1 << 26, timeout: 60000 });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const lines = r.stdout.split('\n').filter((l) => l.includes('irq vec='));
+  assert.strictEqual(lines.length, 254307, `received ${lines.length} of 254307 lines`);
+  assert.match(lines[lines.length - 1], /at=254306 /);
 });
 check('a run that leaves no WAV fails (exit 4)', () => {
   const r = run('nowav', { FX_TREE: 'stack', FX_PROG: 'CYCLE.EXE', FX_MODE: 'no-wav' });
