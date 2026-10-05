@@ -553,6 +553,19 @@ test('CreateFile on an existing directory fails ERROR_ACCESS_DENIED under every 
   assert(vfs.createFile('c:\\tags\\tags.gor', 0x80000000, 3), 'files beside it still open');
 });
 
+test('a directory implied by a mounted file exists for chdir, attributes and CreateFile', () => {
+  // Manifest mounts write file keys only. Myth's UBER.DLL chdirs to C:\\Modules,
+  // whose only content is a mounted TCPIP.DLL, to enumerate network modules.
+  const vfs = makeVFS({ 'c:\\modules\\tcpip.dll': 4 });
+  assert(!vfs.dirs.has('c:\\modules'), 'precondition: never declared');
+  assert.strictEqual(vfs.getFileAttributes('C:\\Modules'), 0x10);
+  assert.strictEqual(vfs.createFileResult('C:\\MODULES', 0x80000000, 3).error, 5);
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\Modules'), true);
+  assert.strictEqual(vfs.getCurrentDirectory().toLowerCase().replace(/\\$/, ''), 'c:\\modules');
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\Modul'), false, 'a name prefix is not a directory');
+  assert.strictEqual(vfs.getFileAttributes('C:\\modules\\tcpip.dll') & 0x10, 0, 'the file stays a file');
+});
+
 test('wildcard *.* in CWD finds files in c:\\', () => {
   const vfs = makeVFS({ 'c:\\foo.txt': 10, 'c:\\bar.dat': 20 });
   const r = vfs.findFirstFile('.\\*.*');

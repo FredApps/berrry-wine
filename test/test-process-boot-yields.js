@@ -12,7 +12,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
-  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+  handleLoadLibraryYield, serviceLoadLibraryYieldSync, handleComDllYield } = require('../lib/process-boot');
 const { hasPageScript, indexSource } = require('./browser-runtime-scripts');
 
 function syntheticLargePe() {
@@ -201,6 +201,25 @@ function fakeGuest(name, { nameGetter }) {
   assert.strictEqual(empty.state.eax, 0, 'a nameless LoadLibrary still answers');
   assert.strictEqual(empty.state.yield, 0);
   console.log('PASS  LoadLibrary yield: a nameless request answers instead of hanging');
+
+  // A LoadLibraryA inside a DllMain is serviced synchronously by callDllMain
+  // (UBER.DLL loading Myth's modules\TCPIP.DLL). Resident bytes / a definite
+  // miss answer in place; a lookup needing I/O leaves the yield untouched.
+  const s = fakeGuest('c:\\modules\\tcpip.dll', { nameGetter: 'get_loadlib_name' });
+  s.exports.get_yield_reason = () => s.state.yield;
+  assert.strictEqual(serviceLoadLibraryYieldSync({ exports: s.exports, memoryBuffer: s.memory,
+    findDllSync: () => Promise.resolve(new Uint8Array(4)) }), false, 'async lookup defers');
+  assert.strictEqual(s.state.yield, 5, 'a deferred yield stays pending for the async path');
+  assert.strictEqual(s.state.eax, 0xdeadbeef, 'a deferred yield does not touch EAX');
+  let syncAsked = null;
+  assert.strictEqual(serviceLoadLibraryYieldSync({ exports: s.exports, memoryBuffer: s.memory,
+    findDllSync: (fileName, fullName) => { syncAsked = [fileName, fullName]; return null; } }), true);
+  assert.deepStrictEqual(syncAsked, ['tcpip.dll', 'c:\\modules\\tcpip.dll']);
+  assert.strictEqual(s.state.eax, 0, 'a definite miss answers NULL in place');
+  assert.strictEqual(s.state.yield, 0, 'and clears the yield so DllMain can continue');
+  assert.strictEqual(serviceLoadLibraryYieldSync({ exports: s.exports, memoryBuffer: s.memory,
+    findDllSync: () => { throw new Error('no yield pending'); } }), false, 'no pending yield, nothing to do');
+  console.log('PASS  LoadLibrary yield inside DllMain: serviced synchronously or left for the async path');
 
   const c = fakeGuest('shdocvw.dll', { nameGetter: 'get_com_dll_name' });
   const comMissing = await handleComDllYield({

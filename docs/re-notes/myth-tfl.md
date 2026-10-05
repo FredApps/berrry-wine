@@ -97,7 +97,48 @@ Intro ≈ batch 11900, menu ≈ 21800 (after dismissing "no network modules"),
 briefing ≈ 40000, Crow's Bridge in-level ≈ 75000. F8 = key list; W/S/Z/X move,
 A/D turn, Q/E orbit, C/V zoom.
 
+## Network modules notice (fixed 2026-10-05)
+
+"Networking is unavailable because no network modules were found in the
+modules folder" came from UBER.DLL's **DllMain** (0x10002a7a orig): it chdirs to
+`.\Modules`, enumerates `*.*`, `LoadLibraryA`s each DLL and asks for
+`NMGetModuleInfo`, then restores the CWD. Three emulator faults stacked:
+
+1. CLI: `run.js` mounted the app's files after the static DllMains ran, so
+   `C:\Modules` did not exist yet (the page loads files first). It now mounts
+   the manifest before `loadDlls`.
+2. VFS: a directory that only exists because a mounted file lives under it was
+   refused by SetCurrentDirectory/GetFileAttributes (`_isDirectory`).
+3. Both hosts: `callDllMain` runs an initializer synchronously and treated the
+   LoadLibraryA yield (reason 5) as "resume", so LoadLibraryA returned a stale
+   EAX (0x074ff7b0) and the load was serviced only after DllMain had given up.
+   `serviceLoadLibraryYieldSync` (lib/process-boot.js) now maps the DLL in place
+   when its bytes are resident; anything needing a fetch keeps the async path.
+   (`--trace-api` still prints the stale EAX for that call: it records the
+   return at yield time.)
+
+After the fix "Multiplayer Game" is enabled in the main menu.
+
+## Performance and audio (browser, headless Chrome, 2026-10-05)
+
+- Metric: `WinePerf.snapshot().guestFps` = **PRESENT/s** (explicit DirectDraw
+  presents). In-level Crow's Bridge: **29.3–30.2 PRESENT/s** across five samples
+  over ~25 s; page 60 fps, ~26–34M blocks/s, throttled 0%. Myth runs its game
+  loop at 30 ticks/s, so this is at its cap. Menu presents only on change
+  (0/s idle). Headless Chrome only: no display/Xvfb on the box, so no headful
+  number; treat as indicative, not as a felt frame rate.
+- Audio: one AudioContext, `running`, 22050 Hz. Intro and menu music are
+  audible on the wave bus (menu peak 0.31, every 50 ms sample non-zero over
+  3 s). **In-level: peak 0.000 over 3 s at four separate samples.** The guest
+  does drive DirectSound in-level (CLI, batches 76000-77000: 3 one-shot
+  channel plays — Stop, SetCurrentPosition, Lock/Unlock, SetVolume −8.6/−12.1 dB,
+  SetPan, Play(LOOPING) — all on the main thread), so sounds are sparse;
+  whether in-level sound is actually broken is **not yet established**. The
+  decisive test (order a unit, sample for its voice acknowledgement) has not
+  succeeded yet: a drag from the screen edge pans the camera instead of
+  selecting.
+
 ## Open
 
-- "Networking is unavailable because no network modules were found" — the
-  modules scan does not accept `modules\tcpip.dll`; single-player unaffected.
+- In-level audio: see above.
+- CLI and browser both need a press held across one in-game frame.

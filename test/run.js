@@ -7,7 +7,8 @@ const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWi
 const { inputEventHwnd } = require('../lib/host-window');
 const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
   stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
-  setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+  setEnvironmentVariable, handleLoadLibraryYield, serviceLoadLibraryYieldSync,
+  handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
   applyLaunchPreferences: applyProfileLaunchPrefs,
@@ -4941,9 +4942,40 @@ async function main() {
     moduleBases['exe'] = { loadAddr: exeLoad, origBase: exeOrig };
     moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
   }
+  // The page loads a registered app's files before it loads any DLL
+  // (lib/browser-shell.js loadFiles, then the DLL graph), so a DllMain that
+  // enumerates its own data already sees them -- UBER.DLL's DllMain scans
+  // C:\Modules for Myth's network modules. Mount the same manifest here first;
+  // the full mount below re-adds each path idempotently.
+  if (ctx.vfs && ASSET_ENTRY) {
+    for (const item of getAssetFiles(ASSET_ENTRY)) {
+      const url = typeof item === 'string' ? item : (item && item.url);
+      if (!url) continue;
+      const hostPath = appAsset(url);
+      let size;
+      try { size = fs.statSync(hostPath).size; } catch (_) { continue; }
+      const guests = typeof item === 'object' && Array.isArray(item.vfsPaths) ? item.vfsPaths
+        : [typeof item === 'object' && item.vfsPath ? item.vfsPath : url.replace(/^.*[\\/]/, '')];
+      for (const raw of guests) {
+        let vfsPath = String(raw).toLowerCase().replace(/\//g, '\\');
+        if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+        if (ctx.vfs.files.has(vfsPath)) continue;
+        ctx.vfs.ensureParentDirs(vfsPath);
+        ctx.vfs.setLazyFile(vfsPath, { attrs: 0x20, size,
+          load: () => new Uint8Array(fs.readFileSync(hostPath)) });
+      }
+    }
+  }
   if (dlls.length > 0) {
     mountLoadedDllFiles(ctx.vfs, dlls);
+    // A LoadLibraryA from inside a DllMain (UBER.DLL loading Myth's
+    // modules\TCPIP.DLL) is serviced in place: callDllMain cannot await.
+    const onLoadLibraryYield = ex => serviceLoadLibraryYieldSync({
+      exports: ex, memoryBuffer: memory.buffer, resourceHost: ctx, log: console.log,
+      findDllSync: findRuntimeDllBytes, onLoadLibraryYield,
+    });
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
+      onLoadLibraryYield,
       exeName: path.basename(EXE_PATH),
       extraArgs: EXTRA_ARGS || '',
       registerDllResources: (dllConfigs, results) => {

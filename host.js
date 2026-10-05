@@ -3747,6 +3747,16 @@ class WineAssembly {
     } else {
       opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
         this.hostCtx && this.hostCtx.sharedAudio);
+      // A LoadLibraryA from inside a DllMain (UBER.DLL loading Myth's
+      // modules\TCPIP.DLL) must be serviced in place: callDllMain is
+      // synchronous. Only resident bytes qualify; anything needing a fetch
+      // falls back to the async yield path as before.
+      const onLoadLibraryYield = ex => ProcessBoot.serviceLoadLibraryYieldSync({
+        exports: ex, memoryBuffer: this.memory.buffer, resourceHost: this, log: console.log,
+        advanceGuestTime: opts.advanceGuestTime, onLoadLibraryYield,
+        findDllSync: (fileName, fullName) => this._findDllBytesSync(fileName, fullName),
+      });
+      opts.onLoadLibraryYield = onLoadLibraryYield;
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
     // Where a `module+0xVA` probe in the browser gets its arithmetic from. The
@@ -3776,6 +3786,26 @@ class WineAssembly {
   // VFS the app mounted, whatever was already fetched for it, then the served
   // directories. The CLI answers the same question against the filesystem —
   // the yield pumps themselves are shared (lib/process-boot.js).
+  // Synchronous subset of _findDllBytes: an exact VFS entry whose bytes are
+  // already resident, or a DLL this page already loaded. Anything else returns
+  // a Promise, which tells serviceLoadLibraryYieldSync to leave the yield for
+  // the async path.
+  _findDllBytesSync(fileName, fullName) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (vfs && typeof vfs._resolvePath === 'function') {
+      let resolved = '';
+      try { resolved = vfs._resolvePath(fullName); } catch (_) {}
+      const entry = resolved && vfs.files.get(resolved);
+      if (entry && !entry._provider) {
+        try { if (entry.data) return entry.data; } catch (_) {}
+      }
+    }
+    if (this._loadedDllBytesByName && this._loadedDllBytesByName[fileName]) {
+      return this._loadedDllBytesByName[fileName];
+    }
+    return Promise.resolve(null);
+  }
+
   async _findDllBytes(fileName, fullName, { exeDir = false, vfsPaths = null } = {}) {
     const ctx = this._helpCtx;
     // Resolve a bare LoadLibrary name exactly as the guest filesystem does
