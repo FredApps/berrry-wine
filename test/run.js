@@ -4404,7 +4404,9 @@ async function main() {
   if (NO_MMX && instance.exports.set_cpu_mmx) instance.exports.set_cpu_mmx(0);
   // timeSetEvent callbacks on a winmm timer guest thread (the Windows model)
   // instead of the main thread's message pump. Shared memory, so set once.
-  if ((hasFlag('mm-timer-thread') || (APP_ENTRY?.mmTimerThread === true && !hasFlag('no-mm-timer-thread'))) &&
+  // On by default, as in the browser; `--no-mm-timer-thread` or an app's
+  // `mmTimerThread: false` keeps the old main-thread delivery.
+  if (!hasFlag('no-mm-timer-thread') && (hasFlag('mm-timer-thread') || APP_ENTRY?.mmTimerThread !== false) &&
       instance.exports.set_mm_timer_thread_mode) {
     instance.exports.set_mm_timer_thread_mode(1);
   }

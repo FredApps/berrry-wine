@@ -40,7 +40,7 @@
 //
 // usage: node tools/mobile-app-sweep.js --out=DIR [--apps=a,b] [--orientations=portrait,landscape]
 //                                       [--settle=14000] [--jobs=4] [--timeout=240]
-//                                       [--url=http://127.0.0.1:8080]
+//                                       [--url=http://127.0.0.1:8080] [--query=mm-thread=0]
 
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -67,6 +67,9 @@ const TIMEOUT_S = Number(arg('timeout', 240));
 // default on a loaded box and report as launch failures they are not.
 const LAUNCH_MS = Number(arg('launch', 150000));
 const URL_BASE = arg('url', '');
+// Extra page switches on top of the shipping shell, e.g. `mm-thread=0`, so
+// one build can be swept both ways without an edit.
+const QUERY = String(arg('query', '')).replace(/^\?/, '');
 
 const ORIENTS = {
   portrait: '375x667',   // iPhone SE, the smallest screen we claim to support
@@ -189,7 +192,8 @@ function runOne(id, orient) {
   // --query='' is the SHIPPING shell. The probe's default is ?debug, which puts
   // a toolbar above the stage -- a different layout from the one a phone user
   // gets, and every number below describes the layout.
-  const args = [PROBE, `--app=${id}`, '--query=', `--viewport=${ORIENTS[orient]}`,
+  // --query=mm-thread=0 (no '?') adds A/B switches to that shell.
+  const args = [PROBE, `--app=${id}`, `--query=${QUERY ? '?' + QUERY : ''}`, `--viewport=${ORIENTS[orient]}`,
     `--launch=${LAUNCH_MS}`, '--touch', `--steps=${steps}`,
     `--eval=JSON.stringify({fit: window.__fit, fill: ${LAYOUT_OBJ}})`];
   if (URL_BASE) args.push(`--url=${URL_BASE}`);

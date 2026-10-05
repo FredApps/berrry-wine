@@ -1014,8 +1014,12 @@ class WineAssembly {
     this.asyncMultimediaTimer = false;
     // Run timeSetEvent callbacks on a winmm timer guest thread of their own,
     // the Windows model, instead of on the application's thread (via its
-    // message pump, or asyncMultimediaTimer's injection between slices).
-    this.mmTimerThread = false;
+    // message pump, or asyncMultimediaTimer's injection between slices). On
+    // for every app: through the pump, a callback stalls whenever the app is
+    // busy (Heroes II's Miles MIDI), and Threads mode never served
+    // asyncMultimediaTimer at all (Jardinains' menu froze). An app opts out
+    // with `mmTimerThread: false` in lib/apps.js; ?mm-thread=0 for one load.
+    this.mmTimerThread = true;
     // Decode-time x87 fusion is on by default. An app opts out with
     // `x87Fusion: false` in lib/apps.js (browser-shell copies it here), and the
     // page opts out with ?no-x87-fold or the debug toolbar box.
