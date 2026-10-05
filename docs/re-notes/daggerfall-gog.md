@@ -146,3 +146,37 @@ inside the unchanged600-second session and does not infer skill completion,
 reflexes, final-review acceptance, FPS or player control. Remaining creator
 transitions still require ordinary visual review; repeated cold allocation-only
 runs are not gameplay evidence.
+
+## Complete creator, then browser target loss (2026-10-05, attempt5)
+
+The ordinary original-GOG route completed character allocation: STR61 with
+attribute pool0, Mysticism37/Illusion27/Medical20 with all three skill pools0,
+Average reflexes, then the final character-review page. This remains creator
+evidence, not player-controlled dungeon gameplay.
+
+The strict attribute helper stopped after its third click left the visible
+counter unchanged at9. It was not rearmed. Manual groups of at most four
+ordinary1500ms holds, each followed by3000ms release time and a saved screenshot,
+advanced the remaining reviewed counters. Fixed observed plus coordinates in
+the1024x768 browser were75,68 (attributes),261,79 (primary),261,128 (major),
+261,177 (minor). No memory, counter or guest-message injection was used.
+Average was selected at183,214; separately reviewed OK clicks at306,226 advanced
+to final review and then requested entry to the game.
+
+The last OK was delivered19:43:58.844–19:44:00.358Z. Capturing the resulting scene
+failed with `TargetCloseError`; browser/server cleanup completed19:44:01.224Z,
+before the original600-second deadline. Both owned PIDs were absent afterward.
+Chrome exit status was unavailable and stderr/signal were not recorded. A
+separate owner reported host ENOSPC immediately before19:44Z; this is a temporal
+correlation, **not proof of the browser failure's cause or a guest exit**.
+Kernel logs were unavailable. Do not diagnose a Daggerfall compatibility fault
+from this receipt or label final-review pixels as gameplay.
+
+Immutable evidence: `scratch/runs/20261005-daggerfall-final-review-target-close`,
+523 verified hashed artifacts,121 reader-visible images, zero gameplay images.
+See `final-review.png`, `nr6.png`, `reflexes.png`, `inputs.json`,
+`allocation-events.json`, `cleanup.json`, served-byte receipts and frozen source
+pins. Existing runtime94d18605/module2e2fd8d1 and registration overlay were retained.
+Further ordinary continuation should use the successful finite allocation route
+and capture bounded browser exit/stderr plus host resource receipts, after the
+shared disk condition is addressed; no identical cause-blind rerun is justified.
