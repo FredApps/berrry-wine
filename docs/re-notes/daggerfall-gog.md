@@ -106,3 +106,14 @@ therefore remains unaccepted until it is replaced by a visually verified
 first-person dungeon frame. Do not substitute DOSBox-X or host Wine: this
 reproduction deliberately exercises GOG's bundled Windows `DOSBox.exe`
 directly inside Wine-Assembly.
+
+
+## 2026-10-05 — original browser route reaches attribute allocation
+
+The original GOG DOSBox browser recipe is registered as `daggerfall_gog` (main `67205c27`), with the original GOG configuration followed by the existing dynamic50000/mem63/surface/sound-disabled override and `FALL.EXE Z.CFG` launch configuration. The first private attempt stopped before guest launch because its server omitted exact browser URL aliases for the new manifest; that harness failure is preserved and is not a compatibility finding. Actual HTTP positive/negative route tests cover the correction.
+
+Attempt2 used tested runtime source `94d18605`/module `2e2fd8d1ca62cd87f0bc09312bc4836108df610d00cb7771bb5ae22755eceedc` and a pinned registration overlay. Ordinary physical input progressed through Bethesda intro, New Game, High Rock/Breton, male, Mage, generated background, visible name c, face selection and attribute allocation. The visible plus at browser(75,68) changed STR44→45→46; previous nonincrementing click coordinates are retained. These are character-creation pictures, not gameplay. No dungeon or final-review acceptance occurred.
+
+The run ended on ordinary quit before its original600-second guard, session69536 exit0; browser/server closed18:47:08.029 UTC, no errors or pending streams, Chrome exited0 and owned processes were absent. The manual screenshot/input review loop consumed much of the budget; this does not establish an emulator stall. Next is a bounded, scene-gated replay of the now-observed ordinary route and visible allocation counter changes, followed by actual dungeon movement proof. Do not silently use the historical19800-second driver ceiling as permission to extend the browser run.
+
+Immutable local evidence: `scratch/runs/20261005-daggerfall-character-creation/result.json`, exact inputs/served responses/source closure/review/hash manifest. Payload is read in place; frozen runtime bytes reuse immutable prior source files without duplicating the565MB original game. FPS, sound quality and gameplay qualification remain unknown.
