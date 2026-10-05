@@ -100,6 +100,8 @@ test('view: filter counts, real launch links only, escaped titles', async () => 
   assert.match(html, /Untested on ToyVM/); assert.match(html, /Blocked on ToyVM/);
   assert.match(html, /“Untested” is not a claim that it works/);
   assert.match(html, /Reached: title screen \(probe\)/);
+  assert.match(html, /Blocked by: a 32-bit DOS extender ToyVM has never run\. Details has the sources\./);
+  assert.match(html, /Blocked by: Needs a CD|Blocked by: needs a CD-ROM drive\./);
 });
 test('view: the blocked filter shows only blocked titles', async () => {
   const { html } = await rendered('blocked');

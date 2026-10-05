@@ -432,7 +432,7 @@
    ],
    "toyvm": {
     "status": "untested",
-    "verdict": "No static blocker; furthest recorded ToyVM run: title screen (scratch/runs/20261005T222004Z-toyvm-ultima4-cli-probe-a2). Gameplay untested; not a claim that it works.",
+    "verdict": "No static blocker; furthest recorded ToyVM run: main menu (scratch/runs/20261005T223531Z-toyvm-dos-corpus-browser). Gameplay untested; not a claim that it works.",
     "blockers": [],
     "cautions": [
      {
@@ -454,6 +454,12 @@
       "at": "2026-10-05T22:20:04Z",
       "reached": "title-screen",
       "summary": "CLI probe (run-dos.js, origin/main 9df4dc30): ULTIMA.COM started the title program, EGA 320x200, rendered the correct title screen; still running and polling the keyboard when the 200M-dispatch budget ended. No keys sent. One unhandled DOS call: INT 21h AH=2Ah (get date)."
+     },
+     {
+      "run": "scratch/runs/20261005T223531Z-toyvm-dos-corpus-browser",
+      "at": "2026-10-05T22:35:31Z",
+      "reached": "main-menu",
+      "summary": "Browser /toyvm/ session (headless Chrome, paced 10 MIPS, sound off): the title screen drew, and after Enter the game showed its own main menu (Options: Return to the view / Journey Onward / Initiate New Game), personally viewed -- keyboard input reaches the guest. Character creation and gameplay not attempted."
      }
     ]
    },

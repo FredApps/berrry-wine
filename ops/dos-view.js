@@ -11,12 +11,15 @@ const dosMatch = (r, f) => f === 'all' || (f === 'available' && r.flags.availabl
 const dosSafe = (u, prefix) => typeof u === 'string' && u.startsWith(prefix) && !/[\u0000- \\]/.test(u);
 const dosBytes = (n) => !Number.isFinite(n) ? '?' : n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB';
 const dosToyvmTone = { blocked: 'bad', untested: 'warn', unknown: '' };
+// Row cells stay brief; the full cited text is in Details. (Cutting the prose
+// at its first ". " broke on "e.g." -- a fixed phrase per blocker id cannot.)
+const DOS_BLOCKER_SHORT = { extender: 'a 32-bit DOS extender ToyVM has never run', 'flat-fs-collision': 'clashing file names in subfolders', cdrom: 'needs a CD-ROM drive', vbe2: 'needs VESA 2.0', 'entry-missing': 'entry program missing' };
 const dosLevelTone = { 'gameplay-reviewed': 'good', 'in-progress': 'warn', 'not-routed': '' };
 
 function dosToyvmCell(r) {
   const t = r.toyvm, label = t.status === 'blocked' ? 'Blocked on ToyVM' : t.status === 'untested' ? 'Untested on ToyVM' : 'ToyVM: unknown';
   const action = t.launch && dosSafe(t.launch.url, '/toyvm/') ? `<a class="emulator-launch" href="${escape(t.launch.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(t.launch.label + ' — ' + r.title)}">${escape(t.launch.label)} ↗</a>`
-    : `<p class="sub">${escape(t.blockers.length ? t.blockers.map((b) => b.text.split('. ')[0]).slice(0, 2).join('; ') + '.' : t.reason)}</p>`;
+    : `<p class="sub">${escape(t.blockers.length ? 'Blocked by: ' + t.blockers.map((b) => DOS_BLOCKER_SHORT[b.id] || b.id).join(', ') + '. Details has the sources.' : t.reason)}</p>`;
   const got = (t.evidence || []).at(-1);
   return `<div class="dos-route"><span class="dos-route-name">ToyVM</span>${badge(label, dosToyvmTone[t.status] || '')}${got ? badge('Reached: ' + got.reached.replace(/-/g, ' ') + ' (probe)', '') : ''}${action}</div>`;
 }

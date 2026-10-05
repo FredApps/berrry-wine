@@ -126,7 +126,7 @@ function build(only) {
     // run got; the status stays 'untested' for gameplay until a reviewed
     // gameplay scene exists, and a static blocker is never cleared by them.
     row.toyvm.evidence = (t.toyvmEvidence || []).map((e) => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary }));
-    if (row.toyvm.evidence.length && row.toyvm.status === 'untested') row.toyvm.verdict = `No static blocker; furthest recorded ToyVM run: ${row.toyvm.evidence.map((e) => e.reached.replace(/-/g, ' ')).join(', ')} (${row.toyvm.evidence.at(-1).run}). Gameplay untested; not a claim that it works.`;
+    if (row.toyvm.evidence.length && row.toyvm.status === 'untested') row.toyvm.verdict = `No static blocker; furthest recorded ToyVM run: ${row.toyvm.evidence.at(-1).reached.replace(/-/g, ' ')} (${row.toyvm.evidence.at(-1).run}). Gameplay untested; not a claim that it works.`;
     row.load = { policy: 'preload-all', preloadFiles: files.length, preloadBytes: bytes, lazyFiles: 0, reason: TOYVM_FACTS['sync-reads'].text };
     row.fileList = `test/toyvm-dos-corpus/files/${t.id}.json`;
     fileLists[t.id] = { schemaVersion: 1, id: t.id, gameDir: t.gameDir, files };
