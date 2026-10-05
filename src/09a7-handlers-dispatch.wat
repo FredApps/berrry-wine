@@ -386,18 +386,23 @@
 
   ;; 715: AdjustWindowRect(lpRect, dwStyle, bMenu) — adjust rect for window chrome
   (func $handle_AdjustWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $border i32) (local $caption i32)
+    (local $wa i32) (local $border i32) (local $caption i32) (local $frame i32)
+    ;; Match the existing non-client fixed/sizing frame. Bottom chrome keeps
+    ;; its established four-pixel extent; only side/top frame varies.
+    (local.set $frame
+      (select (call $defwndproc_style_frame_width (local.get $arg1)) (i32.const 4)
+        (i32.eq (i32.and (local.get $arg1) (i32.const 0x00C00000)) (i32.const 0x00C00000))))
     (local.set $wa (call $g2w (local.get $arg0)))
     (local.set $border (i32.ne (i32.and (local.get $arg1) (i32.const 0x00CC0000)) (i32.const 0)))
     (local.set $caption (i32.eq (i32.and (local.get $arg1) (i32.const 0x00C00000)) (i32.const 0x00C00000)))
     (if (i32.or (local.get $border) (local.get $caption)) (then
-      (i32.store (local.get $wa) (i32.sub (i32.load (local.get $wa)) (i32.const 4)))
+      (i32.store (local.get $wa) (i32.sub (i32.load (local.get $wa)) (local.get $frame)))
       (i32.store offset=4 (local.get $wa)
         (i32.sub (i32.load offset=4 (local.get $wa))
-          (i32.add (i32.const 4)
+          (i32.add (local.get $frame)
             (i32.add (select (i32.const 20) (i32.const 0) (local.get $caption))
-                     (select (i32.const 19) (i32.const 0) (local.get $arg2))))))
-      (i32.store offset=8 (local.get $wa) (i32.add (i32.load offset=8 (local.get $wa)) (i32.const 4)))
+                     (select (i32.const 18) (i32.const 0) (local.get $arg2))))))
+      (i32.store offset=8 (local.get $wa) (i32.add (i32.load offset=8 (local.get $wa)) (local.get $frame)))
       (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 4)))
     ))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))

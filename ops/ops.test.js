@@ -109,6 +109,24 @@ test('task parser preserves legacy uncertainty, links exact candidates, ignores 
   assert.deepEqual(tasks[2].candidateIds, []);
 });
 
+test('subagent summaries preserve explicit lineage without confusing shared process identity', () => {
+  const root = '/project', timestamp = '2026-10-04T12:00:00Z';
+  const records = [{type:'assistant', cwd:root, sessionId:'parent', timestamp,
+    message:{content:[{type:'text',text:'Found the rendering bottleneck.'}],stop_reason:'end_turn'}}];
+  const child = parseSession('claude', records, '/logs/parent/subagents/agent-child.jsonl', false, root);
+  assert.equal(child.id, 'claude:agent-child');
+  assert.equal(child.parentAgentId, 'claude:parent');
+  assert.equal(child.summary, 'Found the rendering bottleneck.');
+  assert.equal(child.state, 'idle');
+  assert.equal(parseSession('claude', records, '/logs/parent.jsonl', false, root).parentAgentId, null);
+  const codex = parseSession('codex', [
+    {type:'session_meta', payload:{id:'child',cwd:root,source:{subagent:{thread_spawn:{parent_thread_id:'parent'}}}}},
+    {type:'response_item',timestamp,payload:{type:'message',role:'assistant',content:[{type:'output_text',text:'x'.repeat(400)}]}},
+  ], '/logs/child.jsonl', true, root);
+  assert.equal(codex.parentAgentId, 'codex:parent');
+  assert(codex.summary.length <= 240);
+});
+
 test('PID association requires exact open log or live Claude registry with matching process start', () => {
   const processes = parseProcesses('101 1 S+ 01:02 Thu Oct 1 12:00:00 2026 /opt/bin/codex\n102 101 S 00:30 Thu Oct 1 12:00:32 2026 /bin/zsh\n103 102 R 00:15 Thu Oct 1 12:00:47 2026 node\n201 1 S 02:00 Thu Oct 1 11:59:02 2026 claude\n301 1 S 02:00 Thu Oct 1 11:59:02 2026 unrelated\n');
   const agents = [

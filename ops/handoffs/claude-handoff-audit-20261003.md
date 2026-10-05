@@ -21,7 +21,7 @@ The only Claude-lane subjects that appear are the generic GAMEPLAY-* coverage ro
 | sc2k-compare ac698f44 | 40c1c484 is on main. Its test file `test/test-invalidate-erase-children.js` exists. | Differences the user observed but never requested: the city menu bar shows only File/Help, budget dialog placement and sunken fields are wrong, and the Video Warning is missing a line. | No. These are optional. GAMEPLAY-simcity2000_demo/_net (`TODOS.md:2426-2448`) are separate coverage tasks. |
 | uop-merge / wine-assembly-d0 91494a3e | The listed merges (e4cd5e5d, 6acc6543, e09a1c2d, 1e59412e, 837f0a74, d2639c00) are on main. | **Retry ladder ec2bf87c**: present only on `origin/worktree-agent-aaa481e5bbddec58a`, not on main. Two unit cases (`movsd-nfs-record-loop`, `nobump-mark` under ladder mask 7) are unchecked and the A/B was never run. | **No task.** It is recorded only in memory `project_uop_retry_ladder_wip.md`. |
 | toyvm-uop 88bbcb9f | 604c71b9, b0f38372 and deddbe2b are on main (HEAD's ancestors). | **Correctness bug:** BRW DISAGREE under `jit-sepc` (`--region-jit-continuous`): 500918117/2fa3dd95 vs 500918116/a066bf27, plus an "only-naive" off-by-one. Perf work: inline region helpers, cheaper install gate. Missing x86-64 and V8/SpiderMonkey native captures (these are mandatory under CLAUDE.md's optimization-variant rule). | **No task.** The BRW bug is **not in memory either**: no memory file mentions jit-sepc/DISAGREE. It survives only in the handoff. |
-| marketing 361d8f4f | No commits. `MARKETING.md`, `BERRRY-TODO.md` and `berrry-issues.md` are present on this box. | User decisions: the next "live now" post (recommended: StarCraft on phone), a copy pack, a German Moorhuhn repost. Uncommitted owned hunks: the `.gitignore` `BERRRY-TODO.md` line and `README.md:40` (js-dos row). Both files also carry other agents' hunks. External dependency: berrry events API, per BERRRY-TODO #1. | Correctly unqueued. This is a non-engineering lane, and memory `feedback_marketing_session_no_engineering.md` forbids engineering in it. The two uncommitted hunks have no owner now. |
+| Marketing | Excluded by user instruction, 2026-10-04. | No work authorized on this box or repository. | Parked. |
 
 ## Stale blockers
 
@@ -34,7 +34,7 @@ The only Claude-lane subjects that appear are the generic GAMEPLAY-* coverage ro
 - **Mac paths that do not exist here:**
   - `/private/tmp/wa-release-20261001` (icons). The branch is on origin, so this is safe to drop.
   - `/private/tmp/claude-502/.../91494a3e.../scratchpad/jig` (d0 merge worktree, disposable).
-  - The `scratchpad/icall-results/` census logs, `scratchpad/is3/stage2.sh` (the IS3 headless repro), the marketing `tw.py`, and `/Users/vg/Downloads/moorhuhn-18s.mp4`. All of these live in Mac session scratchpads. **The IS3 repro script and the icall census are the only copies cited by a next step, and they are not on this box** (no repo `scratchpad/`).
+  - The `scratchpad/icall-results/` census logs, `scratchpad/is3/stage2.sh` (the IS3 headless repro). All of these live in Mac session scratchpads. **The IS3 repro script and the icall census are the only copies cited by a next step, and they are not on this box** (no repo `scratchpad/`).
   - Memory still names `/private/tmp`: `project_int_expr_fusion.md:12`, `project_page_compile_verdict.md:12`, `project_civ2_campaign_paused.md:22` (already annotated to substitute `scratch/civ2-campaign`), and `project_screensaver_sweep.md`. The handoff's `~/.claude/projects/-Users-vg-...` transcript path (`TODOS.md:248-249`) is historical.
 - **Remote, unreconciled:**
   - bx_xegf6upd (91.107.229.168): `~/toyvm-ab` is detached at deddbe2b, and its logs are `/home/user/sepc30.{txt,json}` and `sep30.*` on *that* box. They are not present on this box (`/home/user` glob: none). The host key was pinned only in a Mac scratchpad.
@@ -49,6 +49,6 @@ The only Claude-lane subjects that appear are the generic GAMEPLAY-* coverage ro
 3. **NFS2SE-INSTALL-ICON-VERIFY** (browser, one session): install NFS II SE and check the desktop icon. Also re-derive the IS3 copy-dialog repro, because the script is lost.
 4. **SYSMON-PERFSTATS-TRIAGE**: get a current pass/fail on `test/test-sysmon-perfstats.js`.
 5. **USER-DECISION: OPFS-SHORTCUTS**: blocked on the user. Record it as a waiting-on-user item so it stops living only in a handoff.
-6. **RESOURCE-RECONCILE**: either archive or release bx_xegf6upd `~/toyvm-ab` and any fast-near-9tb-1 `uop-ladder*` directory, and assign an owner to the orphaned marketing `.gitignore`/`README.md:40` hunks.
+6. **RESOURCE-RECONCILE**: either archive or release bx_xegf6upd `~/toyvm-ab` and any fast-near-9tb-1 `uop-ladder*` directory.
 
 Board note: this session could not append to `messageboard.txt` (shell redirection needed approval that was not granted). Its claim and release are therefore recorded in this file only.

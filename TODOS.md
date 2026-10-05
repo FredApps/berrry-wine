@@ -52,7 +52,7 @@ resources remain unverified. Existing correctness/review blockers remain.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Next: Migration custody complete; all five Claude handoffs read and local claims released. Unfinished engineering remains separately queued.
   Done: Owner handoffs received and local sessions exited; no foreign remote-service termination inferred.
-  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md; ops/handoffs/claude-migration-marketing-361d8f4f.md
+  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md
 
 - [x] Verify handed-off renderer specular correction in isolated candidate
   id: MIG-RENDER
@@ -171,7 +171,7 @@ resources remain unverified. Existing correctness/review blockers remain.
   Done: Owner handoffs received and local sessions exited; no foreign remote-service termination inferred.
   Evidence: ops/handoffs/reconstructed-remaining.md; ops/ORCHESTRATOR.md.
 
-  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md; ops/handoffs/claude-migration-marketing-361d8f4f.md
+  Evidence: ops/handoffs/migration-core-ready-20261003.md; ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-migration-wine-assembly-d0.md; ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-sc2k-compare-agent.md
 
 - [x] Revalidate transferred bounded wave capability writes
   id: MIG-AUDIO-CAPS
@@ -1871,11 +1871,11 @@ Ready means assets are present, not gameplay or counter correctness.
   id: GAMEPLAY-jigssawme
   status: active
   candidate: jigssawme
-  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  owner: /root/restore_evidence
   created: 2026-10-03T08:42:45.967Z
   accepted: 2026-10-03T08:42:45.967Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Localize valid BMP image-open failure from ordinary Upload; startup repair verified, no puzzle scene or FPS yet.
+  Next: restore_evidence owns sole180sec browser89047 validBMP upload/Open owning-call diagnostic; actual target4args/result at42e5b3, no COM override. Exact source/artifacts under scratch/new-games-pipeline-20261004/jigssawme.
   Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-jigssawme.json; scratch/runs/20261003-jigssawme-custom-bmp-image-failure/result.json
 
@@ -3134,13 +3134,13 @@ Ready means assets are present, not gameplay or counter correctness.
 
 ## Shared fixture restoration dependency
 
-- [~] Restore and verify missing game fixture sets
+- [ ] Restore and verify missing game fixture sets
   id: MIG-FIXTURE-RESTORE
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-03T09:34:17.069Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Continue exact-path selective recovery; wave3 restored 59 files for 2 game entries and 110 entries now have complete declared routes. Preserve2GiB free and existing files; dynamic gaps/review gates remain.
+  Next: Queued selective recovery: latest owner audit has218 complete declared routes,5 missing-file entries/156 exact paths and18 unregistered entries. Reconcile exact gaps in scratch/local-owner-restore-final/report.json; no active transfer claimed.
   Done: Owner receipts verified and each dependent game either ready with all assets or carries exact remaining missing paths. Presence alone does not establish gameplay or FPS.
   Evidence: scratch/selective-fixture-wave3-20261003/install-receipt.json; scratch/gameplay-coverage-20261003/tasks/; scratch/migration-transfer.json
   Notes: Migration-owner bulk transfer complete with verified receipt. Coordinator now owns selective missing-fixture recovery and per-task reconciliation; exact absent archive members remain documented, no foreign services/jobs claimed.
@@ -3260,11 +3260,11 @@ Ready means assets are present, not gameplay or counter correctness.
   Evidence: scratch/tetrinet-main-worker-ip-20261003/integration-receipt.json; test/test-browser-worker-vlan-address.js; scratch/runs/20261003-tetrinet-local-gameplay/result.json
 - [ ] Diagnose Age of Empires II graphics initialization failure
   id: AOE2-GRAPHICS-INIT
-  status: active
+  status: ready
   candidate: aoe2
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T18:00:26.667Z
-  Next: Capture exact palette resource50500 lookup/parser/GDI outcome. Initial graphics setup returns1; later parent error17 follows palette stage. Installed interfac.drs contains resource50500; guest lookup/parser result still unknown.
+  Next: Queued, no live worker/runtime. Capture exact palette resource50500 lookup/parser/GDI outcome. Initial graphics setup returns1; later parent error17 follows palette stage. Installed interfac.drs contains resource50500; guest lookup/parser result still unknown.
   Done: Exact rejection established, meaningful regression and reviewed fix if appropriate, ordinary startup requalified. Gameplay and FPS remain separate requirements.
   Evidence: ops/handoffs/aoe2-graphics-refined-diagnostic-20261003.md; scratch/aoe2-graphics-refined-20261003/root-artifact-review.json; scratch/aoe2-palette-stage-20261003/plan.json
 
@@ -3308,29 +3308,29 @@ Ready means assets are present, not gameplay or counter correctness.
 - [ ] Diagnose Monkey Island demo audio issues
   id: COMI-AUDIO-DIAG
   candidate: curse_monkey_island_demo
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T22:38:28.752Z
-  Next: Trace owning main Worker around COMI425030/4230e0 to distinguish guest pacing, execution budget and mixing cost. Reproduced waveOut starvation;19gaps859ms with priorDONE observed31–47ms before refill. No speculative scheduler fix.
+  Next: Queued, no live worker/runtime. Trace owning main Worker around COMI425030/4230e0 to distinguish guest pacing, execution budget and mixing cost. Reproduced waveOut starvation;19gaps859ms with priorDONE observed31–47ms before refill. No speculative scheduler fix.
   Done: Concrete audio issue diagnosed, meaningful regression/fix if supported, ordinary playback requalified with honest limits.
   Evidence: docs/re-notes/curse-monkey-island-demo.md; scratch/comi-audio-investigation-20261003/
 
 - [ ] Restore missing files for existing EXE corpus routes
   id: CORPUS-MISSING-RESTORE
-  status: active
+  status: ready
   owner: ops-dashboard migration owner; coordinator inventory
   created: 2026-10-03T22:48:41.992Z
-  Next: ops-dashboard restores exact remaining paths. Latest audit202declared/20missing/18unregistered; NFS2SE metadata reporting fixed and reviewed (5tests), exposes72missing assets instead of invalid-route. Patch pushed e105787d; service activation deferred until launch browser owner releases. See scratch/local-owner-restore-listed/report.json and scratch/nfs2se-route-metadata-20261003/manifest-audit.json.
+  Next: Bulk/local restore completed per owner handoff11:26:56Z; no live transfer claimed. Queue selective reacquisition/alternate source for156 exact missing paths across Snood(3), Baldurs Gate demos(8+89+55), winamp_mod(1). All paths listed in scratch/local-owner-restore-final/missing-files.txt; same archive only contains self-links/absent files. Independent game work continues.
   Done: Existing registered fixture closures restored and launch availability checked; gameplay qualification remains separate.
-  Evidence: ops/handoffs/corpus-missing-paths-20261003.md; scratch/corpus-missing-paths-20261003/missing-files.txt
+  Evidence: ops/handoffs/corpus-restoration-20261004.md; scratch/local-owner-restore-final/report.json; scratch/local-owner-restore-final/missing-files.txt
 
 - [ ] Investigate ScummVM fullscreen and missing sound
   id: SCUMMVM-AV-DIAG
   candidate: scummvm-fotaq
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-03T22:59:25.111Z
-  Next: Windowed default confirmed; AltEnter did not switch in browser. Audio stalls at44096bytes with2undelivered function callbacks. Implement owner-safe Worker completion delivery and separately diagnose fullscreen toggle; source proposal/evidence saved.
+  Next: Queued, no live worker/runtime. Windowed default confirmed; AltEnter did not switch in browser. Audio stalls at44096bytes with2undelivered function callbacks. Implement owner-safe Worker completion delivery and separately diagnose fullscreen toggle; source proposal/evidence saved.
   Done: Explain intended behavior and demonstrate any supported fix with real browser evidence.
   Evidence: docs/re-notes/scummvm-fotaq.md; scratch/scummvm-av-20261003/
 
@@ -3356,7 +3356,7 @@ Ready means assets are present, not gameplay or counter correctness.
   next: Complete: coordinator review corrections accepted;50browser checks and authenticated dashboard Solitaire route pass,28controller and6host cases pass. Pushed5a381fd2 to checkpoint/migrated-source-dashboard-20261003. No public game deployment. Existing fullscreen rotation issue remains separate.
   done: After user approves design, direct app URLs show no desktop flash or desktop startup work, fetch only selected-app assets plus required shared runtime, and show responsive loading feedback; desktop/multi-app mode uses the same loading dialog without disrupting other apps; the dialog appears only if the launch is still pending 500ms after launch initiation (one deadline, never shown or flashed for faster launches, stale timers cannot reopen it, closes on readiness with no minimum time). Validate cache, slow network, errors, cancellation, 500ms boundary/race cases, repeated launches, mobile portrait and landscape, and asset request scope.
   notes: User explicitly approved implementation via Telegram: "let's go with this UX looks good". User correction 2026-10-03 adds "only displays if load takes more than 0.5 s" (handoff section 3D, text-only, no resend). Known-size progress examples require every required file size known (coordinator review). Busy cursor alone is insufficient. Show honest download/preparation/startup states; no fabricated progress. Images must be labelled design mockups. Codex retains shared coordination; Claude owns this task.
-  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z (revision 1, superseded by user correction "more like windows file downloading dialog"); revision 2 scratch/claude-launch-ux/revision-2/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups), receipt scratch/claude-launch-ux/revision-2/telegram-delivery.json msgs 291-294 at 2026-10-03T23:45:48Z; IMPLEMENTATION 2026-10-04: scratch/claude-launch-ux/implementation/evidence/ (pins.txt with source sha256s + served wasm f40d4ca3, diffs/ vs pre-task snapshot, browser-receipt.json, screens/*.png inspected, logs/ incl. BASELINE runs); node test/test-launch-progress.js exit 0 (23 cases); node test/test-web-direct-launch.js exit 0 (42/42, headless Chrome 151 on loopback); cache-version, test-manifest, host-import-sigs, js-copies gates OK; launch-related web/unit regressions pass except pre-existing test-web-page-fullscreen (baseline fails identically) and one flaky double-tap run; ops/handoffs/launch-ux-coordinator-review-20261004.md; scratch/claude-launch-ux/implementation/{review-final-pins.json,review-final-browser-receipt.json,private-route-review.json,publication.json}
+  evidence: ops/handoffs/claude-launch-ux-design-20261003.md; scratch/claude-launch-ux/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups); Telegram receipt scratch/claude-launch-ux/telegram-delivery.json msgs 284-287 at 2026-10-03T23:36:35Z (revision 1, superseded by user correction "more like windows file downloading dialog"); revision 2 scratch/claude-launch-ux/revision-2/{ascii.txt,single-app.png,desktop.png} (labelled proposal mockups), receipt scratch/claude-launch-ux/revision-2/telegram-delivery.json msgs 291-294 at 2026-10-03T23:45:48Z; IMPLEMENTATION 2026-10-04: scratch/claude-launch-ux/implementation/evidence/ (pins.txt with source sha256s + served wasm f40d4ca3, diffs/ vs pre-task snapshot, browser-receipt.json, screens/*.png inspected, logs/ incl. BASELINE runs); node test/test-launch-progress.js exit 0 (23 cases); node test/test-web-direct-launch.js exit 0 (42/42, headless Chrome 151 on loopback); cache-version, test-manifest, host-import-sigs, js-copies gates OK; launch-related web/unit regressions pass except pre-existing test-web-page-fullscreen (baseline fails identically) and one flaky double-tap run; ops/handoffs/launch-ux-coordinator-review-20261004.md; scratch/claude-launch-ux/implementation/{review-final-pins.json,review-final-browser-receipt.json,private-route-review.json,publication.json}; MAIN RECEIPT verified 2026-10-04 by claude:1863d2b5: origin/main eb6d4d61 contains 2ba2673d (cherry-pick of 5a381fd2, merged at c9977df0); lib/launch-progress.js, lib/browser-shell.js and the three launch tests on main are byte-identical to the reviewed working-tree versions; ops/handoffs/claude-launch-ux-design-20261003.md identical on main
 
 - [x] Match Telegram blockers command to dashboard
   id: OPS-TELEGRAM-BLOCKERS
@@ -3365,3 +3365,261 @@ Ready means assets are present, not gameplay or counter correctness.
   created: 2026-10-03T23:38:00.490Z
   Next: Complete: /blockers registered live, shared web grouping and read-only snapshot;52tests plus browser/live formatter parity and getMyCommands verification PASS.
   Done: /blockers reads same dashboard task/approval snapshot; help/menu expose it and access controls remain intact.
+
+
+## Standing game pipeline
+
+- [~] Keep two new games moving toward playable gameplay with screenshots
+  id: NEW-GAMES-PIPELINE
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  accepted: 2026-10-04T02:11:10.446Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  next: Active new-game lanes JigSawedME (restore_evidence, validBMP load source diagnosis) and TileWorld (coverage_audit, actual callback/wait private tests). Runenlegen qualified narrow fullboard placement on private14aadaac, pending mainintegration.
+  done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
+  notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
+
+- [x] New-game lane: Zuma Deluxe
+  id: NEW-GAME-ZUMA-20261004
+  status: done
+  candidate: reflexive-zuma-deluxe
+  owner: /root/coverage_audit
+  created: 2026-10-04T02:14:45.168Z
+  accepted: 2026-10-04T02:14:45.168Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  next: Complete: root reviewed Level1-1 aim/fire projectile, green destruction +40 and score170 COMBOx2. Run 20261004-zuma-adventure-gameplay; source/input evidence preserved. FPS unmeasured; no public release approval. Refilled with Runenlegen.
+  done: Working registered launch, ordinary player input visibly changes actual gameplay, coordinator-reviewed gameplay screenshot and exact run/source identity. Menu, intro, installer or black frame does not qualify. FPS and public release approval remain separate.
+  evidence: scratch/new-games-pipeline-20261004/selection.json; scratch/new-games-pipeline-20261004/public-desktop.json; GAMEPLAY-reflexive-zuma-deluxe
+
+- [x] New-game lane: Crimsonland
+  id: NEW-GAME-CRIMSONLAND-20261004
+  status: done
+  candidate: reflexive-crimsonland
+  owner: /root/corpus_categories
+  created: 2026-10-04T02:14:45.168Z
+  accepted: 2026-10-04T02:14:45.168Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  next: Root reviewed tutorial movement-before/after/down on private production candidatefa783563; ordinary arrows advance tutorial and scroll terrain. Narrow gameplay criterion met; pointer alignment, full combat, FPS and integration remain separate follow-up. Refilled Tile World.
+  done: Working registered launch, ordinary player input visibly changes actual gameplay, coordinator-reviewed gameplay screenshot and exact run/source identity. Menu, intro, installer or black frame does not qualify. FPS and public release approval remain separate.
+  evidence: scratch/new-games-pipeline-20261004/selection.json; scratch/new-games-pipeline-20261004/public-desktop.json; GAMEPLAY-reflexive-crimsonland
+
+- [~] New-game lane: Runenlegen
+  id: NEW-GAME-RUNENLEGEN-20261004
+  status: review
+  candidate: runenlegen
+  owner: /root/restore_evidence
+  created: 2026-10-04T02:35:20.505Z
+  next: Private fullboard/player-input accepted; scoped commit3ad7ab07 pushed checkpoint/runenlegen-window-geometry-20261004. Ops-dashboard owns final clean-main build/checks and merge; prepared isolated review worktree/driver available. FPS unmeasured, no public deployment.
+  done: Working launch, actual player-controlled gameplay and coordinator-reviewed screenshot linked to exact run/source. Autoplay or cropped ambiguous board cannot qualify.
+  evidence: scratch/new-games-pipeline-20261004/runenlegen-preparation/frame-qualification/root-review.json; scratch/new-games-pipeline-20261004/runenlegen-preparation/child-layout/frame-fix/publication.json
+
+- [~] New-game lane: Tile World
+  id: NEW-GAME-TWORLD-20261004
+  status: active
+  candidate: tworld
+  owner: /root/coverage_audit
+  created: 2026-10-04T06:06:46.406Z
+  next: Actual WAT/Worker callback and ReleaseSemaphore tests pass including lost-ack exactlyonce, wait/TLS restoration and shadow isolation; controls fail as expected. coverage_audit continues isolated hostqueue/scheduler hookup and integrated tests; source-only, no gameplay yet.
+  done: Working launch, player-controlled gameplay, root-reviewed screenshot and exact run/source identity.
+  evidence: scratch/tworld-reserve-20261004/plan.json
+
+- [~] Claude subagent: diagnose Heroes II slowness and improvement options
+  id: CLAUDE-HEROES2-PERFORMANCE
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:40:00.181Z
+  next: Diagnosis delivered; user approved fix tracked in CLAUDE-HEROES2-TIMING-FIX. Findings commit3ae042a7 pushed on sanitized Claude handoffs branch; main receipt pending.
+  done: Evidence-backed bottleneck diagnosis, exact scene/source/module identity, ranked ideas and concrete validation plan; unknowns explicit. No unsupported speedup/FPS claim.
+  subagent: claude-subagent of claude:1863d2b5 (launched 2026-10-04T10:45Z)
+  evidence: scratch/claude-heroes2-performance-20261004/assignment.txt; docs/re-notes/heroes2-performance-20261004.md (pending); runtime ledger 516.7s/600; commit 3ae042a7
+
+- [~] Claude coordinator: reconcile previous handoffs and drive ready work
+  id: CLAUDE-HANDOFF-ORCHESTRATOR
+  status: active
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:46:53.669Z
+  next: Five lanes reconciled 2026-10-04 (ops/handoffs/claude-orchestrator-status.md); 7 follow-up tasks open (marketing lane parked and excluded by user 2026-10-04); TOYVM-REGION-JIT-BRW source audit delegated; review Heroes II findings when ready; run the runtime queue after the Heroes window.
+  done: Recurring coordination: current five-lane inventory, concrete next actions and evidence, reviewed worker results; preserve source/resource ownership and main integration boundary.
+  evidence: scratch/claude-orchestrator-20261004/assignment.txt; ops/handoffs/claude-orchestrator-status.md; handoff commit bdfd3c71 (branch claude/handoffs-20261004-v2, awaiting ops-dashboard integration)
+
+- [~] Toyvm region JIT: BRW checksum disagreement under continuous mode
+  id: TOYVM-REGION-JIT-BRW
+  status: ready
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  next: Phase 1 done (scratch/claude-orchestrator-20261004/toyvm-brw/notes.md): the failing value is the final frame hash (2fa3dd95 vs a066bf27), not the +1 dispatch (tolerated up to 64); a non-JIT only-naive arm showed the same BRW symptom, so suspect BRW amplifying 1-dispatch clock/cut changes. Top hypothesis: continuous mode multiplies per-install clock drift and cache side effects (invalidateRange, uninstall flush-all on guard failure, forced head compiles). Phase 2 needs BRW.EXE (absent on this box) and ~3 bounded runs with brw-probe.js after the Heroes and Hype slots; then add a continuous-mode case to test/test-toyvm-region-live.js.
+  done: Root cause of BRW 500918117/2fa3dd95 vs L1 500918116/a066bf27 under --region-jit-continuous and the only-naive off-by-one, with a failing then passing test in test/test-toyvm-*.js; fix reviewed. Native V8+SpiderMonkey captures required before any new region optimization.
+  evidence: ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-orchestrator-status.md; original logs on bx_xegf6upd /home/user/sepc30.* (not on this box)
+
+- [ ] Uop retry ladder ec2bf87c: correctness gate before any A/B
+  id: UOP-RETRY-LADDER
+  status: backlog
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  next: When a build slot is coordinated with root: isolated worktree at origin/worktree-agent-aaa481e5bbddec58a, run test/test-uop-compiler.js cases movsd-nfs-record-loop and nobump-mark (ladder mask 7) against base. A/B only on a quiet bench box with V8+SpiderMonkey disassembly. No merge (ops-dashboard integrates).
+  done: Unit gate result on base vs ladder recorded; if clean, a planned A/B (uop / uop+ladder / icall / icall+ladder x h3, rodent, sc, c3, diablo) with native captures.
+  evidence: ops/handoffs/claude-migration-wine-assembly-d0.md; memory project_uop_retry_ladder_wip.md
+
+- [ ] Verify NFS II SE browser install shows the installed-game icon; re-derive IS3 copy-dialog repro
+  id: NFS2SE-INSTALL-ICON-VERIFY
+  status: ready
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  next: After the runtime window frees: one bounded local browser session, media-import test/binaries/candidates/need-for-speed-2-se-full/sources/NFS2SE.ISO (present, 592 MB), finish setup, screenshot the desktop icon/label; then a headless repro of the IS3 copy dialog vanishing near batch 360-420k (original stage2.sh lost with the Mac scratchpad). Retail CD: never deploy.
+  done: Screenshot evidence of the icon and label from dd530167, and a saved repro command for the copy-dialog disappearance (or evidence it no longer happens).
+  evidence: ops/handoffs/claude-migration-5e92d715.md; ops/handoffs/claude-orchestrator-status.md
+
+- [ ] Current pass/fail for test-sysmon-perfstats
+  id: SYSMON-PERFSTATS-TRIAGE
+  status: ready
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  next: After the runtime window frees: timeout 60 node test/test-sysmon-perfstats.js; if it still fails "the guest heap is charted at all", root-cause read-only and propose an owner.
+  done: Current result with log; failure triaged to an owner or closed.
+  evidence: ops/handoffs/claude-migration-5e92d715.md
+
+- [x] User decision: should kept (OPFS) media record installer shortcuts?
+  id: USER-DECISION-OPFS-SHORTCUTS
+  status: done
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  decision: User explicitly approved2026-10-04: installed-game desktop icons should survive reload when files are saved.
+  next: Decision resolved; implement via OPFS-PERSIST-INSTALLED-SHORTCUTS with owned files, regression and remote-main receipt.
+  evidence: ops/handoffs/claude-migration-5e92d715.md
+
+- [ ] SimCity 2000 UI differences seen in the v86 comparison (not requested)
+  id: SC2K-UI-DIFFS-OPTIONAL
+  status: deferred
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  next: Not authorized work. Needs a user or coordinator yes before anyone fixes: city menu bar File/Help only, budget dialog placement/sunken fields, Video Warning missing a line.
+  evidence: ops/handoffs/claude-migration-sc2k-compare-agent.md
+
+- [!] Reconcile remote leftovers from Claude lanes
+  id: RESOURCE-RECONCILE-REMOTE
+  status: blocked
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:49:00Z
+  blocker: bx_xegf6upd ~/toyvm-ab (detached at deddbe2b, holds the only BRW sepc30/sep30 logs) and a possible fast-near-9tb-1 uop-ladder* dir are not in the ledger; host key was pinned only on the Mac
+  waiting-on: root
+  needs: Root says whether these hosts are reachable from here and who owns them; copy /home/user/sepc30.* and sep30.* into scratch/claude-orchestrator-20261004/ if reachable
+  next: Until then TOYVM-REGION-JIT-BRW proceeds from source and a local repro.
+  evidence: ops/handoffs/claude-migration-toyvm-uop-88bbcb9f.md; ops/handoffs/claude-migration-wine-assembly-d0.md
+
+- [~] Claude review: dashboard UX and emulator/GitHub integration
+  id: CLAUDE-OPS-DASHBOARD-UX-REVIEW
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:48:03.445Z
+  accepted: 2026-10-04T10:50:43.055Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: Exact two-line/single-column design delivered and branch claude/handoffs-20261004-v2 pushed (bdfd3c71). Ops-dashboard review/integration pending; compact layout implementation remains queued. No live design worker.
+  done: Evidence-backed UX review, screenshots/wireframes, concrete navigation/integration design and phased backlog. Proposals only until implementation scope is authorized.
+  evidence: scratch/claude-dashboard-ux-review-20261004/assignment.txt; ops/handoffs/claude-dashboard-ux-review-20261004.md
+
+- [~] Claude design: required, lazy and background game-file loading
+  id: CLAUDE-PROGRESSIVE-GAME-LOADING-DESIGN
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T10:50:06.074Z
+  accepted: 2026-10-04T10:50:43.055Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: User approved implementation and changed the pilot from Heroes II to Diablo shareware (spawn.mpq); implementation tracked in CLAUDE-DIABLO-LAZY-LOADING-PILOT. Design doc pilot section to be updated with S0 evidence. Docs commit bd46d620 awaits ops-dashboard integration.
+  done: Reviewable architecture/schema, wait-state UX sketches, rollout/pilot and validation plan; no full-file preload requirement by default, no fake missing files or unexplained hangs. Design proposal only.
+  evidence: scratch/claude-progressive-game-loading-20261004/assignment.txt; ops/handoffs/claude-progressive-game-loading-design-20261004.md; commit bd46d620
+
+- [ ] Hype: menu input and New Game progression reported stuck
+  id: HYPE-MENU-GAMEPLAY-20261004
+  status: ready
+  owner: /root/corpus_categories
+  created: 2026-10-04T10:52:34.559Z
+  next: Actual owningSpace0->32768->0 confirmed; bridge/layer/final12images identical retainedmenu despite newpublications. Upstream render-target observer prepared and queued, no live Hype runtime. No compositor-only fix justified.
+  done: Verified user-facing New Game controls and working gameplay progression or exact diagnosed blocker with screenshots/input/build identity; fix if concrete and reviewable.
+  evidence: docs/re-notes/hype.md; scratch/hype-menu-20261004; scratch/runs/20261004-hype-menu-enter-stall1
+
+- [~] Display subagent summaries on parent dashboard cards
+  id: OPS-AGENT-SUBAGENT-SUMMARIES
+  status: review
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  next: Live and tested; scoped commit63a248a is pushed on ops/subagent-summaries-20261004. Ops-dashboard must selectively integrate onto current main eb6d4d61 and verify remote presence before final completion.
+  done: Claude/Codex parent lineage, child task/status/latest summary, child detail links on cards and parent details; no inferred progress from activity.
+  evidence: scratch/ops-subagent-summaries-20261004/publication.json
+
+- [~] Integrate completed task commits into main and verify receipts
+  id: OPS-INTEGRATE-COMPLETED-TASKS
+  status: ready
+  owner: ops-dashboard
+  created: 2026-10-04T10:58:44.360Z
+  next: Selectively integrate63a248a dashboard subagent summaries onto current origin/main; include user main-completion policy and reviewed ledger/handoffs via scoped commits. Preserve unrelated dirty/runtime changes.
+  done: Each completed change has tested scoped commit and verified remote-main integration receipt. Pending changes remain review, not done.
+  evidence: scratch/ops-subagent-summaries-20261004/publication.json; ops/ORCHESTRATOR.md
+
+- [ ] Diablo II Glide: frozen menu animation and looping audio
+  id: DIABLO2-GLIDE-MENU-FREEZE-20261004
+  status: ready
+  candidate: diablo2_glide_demo
+  owner: /root/coverage_audit
+  created: 2026-10-04T11:24:08.494Z
+  next: Local menu animates; output audio quality unverified. Corrected investigation doc347e63b1 pushed checkpoint/diablo2-menu-observation-20261004, awaiting ops-dashboard integration. Further affected-environment/audio comparison queued; no live runtime.
+  done: Reproduce reported freeze, identify causal blocker and implement/review scoped fix where established, capture animation/input/audio validation and commit integrated into remote main.
+  evidence: scratch/runs/20261004-diablo2-glide-menu-observation; scratch/diablo2-glide-menu-20261004/attempt2; docs/re-notes/diablo2-demo.md
+
+- [ ] Preserve installed-game shortcuts for saved media across reload
+  id: OPFS-PERSIST-INSTALLED-SHORTCUTS
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T11:30:34.781Z
+  accepted: 2026-10-04T11:51:42.826Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: Implemented and tested; commit c9b563b2 on local branch claude/opfs-installed-shortcuts (parent origin/main eb6d4d61; no push credentials) awaits ops-dashboard review + main integration, then verify the main receipt and mark done. Not yet verified with a real installer end-to-end (NFS2SE-INSTALL-ICON-VERIFY covers that).
+  done: Installed-game icons survive reload with saved files, launch correctly, do not duplicate or falsely imply deleted media exists; verified remote-main commit.
+  evidence: USER-DECISION-OPFS-SHORTCUTS; commit c9b563b2 (lib/installed-shortcuts.js new, lib/media-library.js setShortcuts, lib/media-import-ui.js restore/persist/remove, lib/browser-shell.js publishGuestShortcuts+attachDynamicOverlay, index.html script list); node test/test-installed-shortcuts.js exit 0 (12 cases); node test/test-web-installed-shortcuts.js exit 0 twice (7 checks: saved on row, kept badge, unsaved not kept, reload restores exactly one kept icon, missing target pruned, restored entry launches installed exe from kept media, media removal removes icon now and after reload); check-browser-cache-versions + check-test-manifest OK; test-web-media-import fails identically on clean origin/main at its headless CD-audio clock assertion (pre-existing)
+
+- [~] Implement progressive loading with Diablo pilot
+  id: CLAUDE-DIABLO-LAZY-LOADING-PILOT
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T11:33:02.069Z
+  accepted: 2026-10-04T11:33:53.932Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: Slices S0-S4 delivered by the subagent; coordinator re-ran 7 unit tests (exit 0) and inspected cold-gameplay and wait-window screenshots. 6 commits on local branch claude/diablo-lazy-s0 (parent origin/main eb6d4d61): bf45ef82 trace+census, ebcfc133 range preload + split-asset range reads + needs-preload detector + CLI --lazy-ranges, 4fcf42ef in-game wait window, 20ca8cc5 diablo_shareware streams spawn.mpq with a measured 4.6 MB dialog-time preload, aa0ae4a3 browser-test evidence + re-notes, b4aaab7c ThreadManager hook fix. Awaiting ops-dashboard review + main integration. Open (not built): Quit confirm, clock freeze/mute and input drop during waits, own persistent cache. Manifest stays in lib/apps.js for the pilot (coordinator decision, size-mismatch fallback). Deploy is a separate decision; berrry Range support on .partNNN unverified (fallback = whole file).
+  done: Actual Diablo launch/gameplay with safe on-demand reads, honest wait/progress/retry/cancel and cold/warm/failure validation; scoped reviewed/tested commits verified on remote main.
+  evidence: Remote branch claude/diablo-lazy-s0 verified b4aaab7ce663a0073d93266a9443ddf90bad6aac (root pushed); scratch/claude-progressive-game-loading-20261004/diablo-pilot-approval.txt; ops/handoffs/claude-progressive-game-loading-design-20261004.md; runs scratch/claude-progressive-game-loading-20261004/runs/ (s1-eager, s2-lazy-nopreload broken menu, s4-cold/warm/fail8/delay1500/threads receipts); trace: 2302 reads of spawn.mpq on menu->Tristram, 77 dialog-time reads (0.61 MB) cannot park; preload 8 ranges 4.6 MB; cold browser fetched 16.5 of 50.3 MB by gameplay; no speed claim
+
+- [~] Remove excluded marketing material from GitHub and historical copies
+  id: OPS-REMOVE-MARKETING-20261004
+  status: review
+  owner: ops-dashboard
+  next: Integrate ops/remove-marketing-20261004 removal commit and sanitized Claude handoff; audit historical Git refs and restored archives for dedicated marketing content. Coordinate any history rewrite with integration owner; do not erase shared technical transcripts blindly.
+  done: Excluded marketing files/proposals absent from live checkout and GitHub with explicit historical-copy disposition; marketing stays deferred.
+  evidence: scratch/marketing-removal-20261004/publication.json
+
+- [~] Implement Heroes II short-clock-wait timing fix
+  id: CLAUDE-HEROES2-TIMING-FIX
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T16:28:37.592Z
+  accepted: 2026-10-04T17:38:02.623Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: Measured and in review. Fix fa639845 (host.js _scheduleStep: parked slice resumes through the existing MessageChannel, so 1 ms parks are not clamped to ~4 ms; no WAT; parking/K unchanged) on local branch claude/heroes2-timing-fix awaits ops-dashboard integration, then verify the main receipt. Matrix (headful, 3 rotated sets, all 9 runs valid by memory start (32,20)/arrival (32,24)): 4-tile walk arrival baseline 3.51-3.56 s vs candidate 1.31-1.33 s vs K=0 0.66 s (sample spacing ~0.65 s); menu/idle presents ~9/s unchanged; whole-Chrome CPU not separable at load ~5. Open: one set-2 candidate idle-map window parked 141/s (needs a dedicated idle check); D2 menu no regression but D2 gameplay not measured (bug not claimed fixed); test-web-agent-frozen fails 5/18 identically on origin/main host.js here (pre-existing).
+  done: Measured walking improvement with preserved idle/input/timing correctness, focused regressions and DiabloII check; scoped commit reviewed and verified on remote main.
+  evidence: docs/re-notes/heroes2-performance-20261004.md; scratch/claude-heroes2-timing-fix-20261004/assignment.txt; matrix scratch/claude-heroes2-timing-fix-20261004/matrix-heroes-table.txt + runs/2026-10-04T19-*; 1426 s runtime, released 19:30:18Z
+
+- [~] Claude: performance ideas for Diablo II, Heroes III and Warcraft III demos + latest ToyVM review
+  id: CLAUDE-THREE-GAME-PERFORMANCE-REVIEW
+  status: review
+  owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  created: 2026-10-04T19:05:30.470Z
+  accepted: 2026-10-04T19:05:30.470Z
+  accepted-by: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256
+  next: Review delivered (source-only; cited commits spot-checked). Top: D2 never re-measured in the browser after the c6e27758 clock-spin fix and has no tier census (D2 uop gain only -3.5%); H3 retry-ladder ec2bf87c gate + walk-pacing check; WC3 browser blocked first (profile-screen infinite wait, Worker ~1.9x slower). ToyVM: no arm beats L1 on CPU; BRW +1/different frame blocks continuous mode; region JIT itself does not transfer. First experiments: test-uop-compiler base vs ec2bf87c; per-thread uop census on d2/wc3g routes; one headful D2+H3 probe toggling park/spin knobs. Compare with Codex's independent review. Docs commit 174ec244 on branch claude/handoffs-20261004-v2 awaits integration.
+  done: Reviewable handoff ops/handoffs/claude-three-game-performance-review-20261004.md with ranked, evidence-labelled ideas and concrete next experiments; committed for ops-dashboard integration.
+  evidence: ops/handoffs/claude-three-game-performance-review-20261004.md commit 174ec244
+
+- [ ] Independent Claude and Codex performance review for three demo priorities
+  id: PERF-THREE-GAMES-TOYVM-20261004
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Claude and Codex independently review latest ToyVM results and rank experiments for Diablo II, Heroes III and Warcraft III; coordinator compares findings. Source-only alongside serialized Heroes II validation.
+  Done: reviewable findings name exact result/build/engine identities, transferable evidence, correctness risks, missing measurements and bounded experiments; scoped findings commit handed to ops-dashboard for main integration.
+  Evidence: ops/handoffs/codex-three-game-performance-review-20261004.md; ops/handoffs/claude-three-game-performance-review-20261004.md (assigned, pending).

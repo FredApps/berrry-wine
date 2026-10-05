@@ -38,7 +38,7 @@ The smoke matrix tracks 114 binaries. Its latest recorded complete run reported 
 | **[v86](https://copy.sh/v86/)** | Full PC emulator that boots a whole operating system from a disk image | Skips BIOS, kernel and disk: loads the PE file directly, so an app starts in seconds instead of booting Windows |
 | **[98.js](https://98.js.org/)** | Pixel-faithful JavaScript recreation of the Windows 98 desktop | Runs the actual `mspaint.exe` and `notepad.exe` that shipped with Windows 98, not a rewrite |
 | **[Webamp](https://webamp.org/)** | Winamp 2 reimplemented in HTML5 | Runs the actual `winamp.exe`, plus a hundred other unmodified binaries |
-| **[js-dos](https://js-dos.com/)** | DOSBox compiled to WebAssembly with Emscripten | Targets Win32 and Win16 rather than DOS, and is written directly in WAT rather than compiled from C |
+| **[js-dos](https://js-dos.com/)** | DOSBox compiled to WebAssembly with Emscripten | Targets Win32 and Win16 rather than DOS, and is written in WAT by hand rather than compiled from C |
 | **[Wine](https://www.winehq.org/)** | Win32 API on Linux and macOS, native CPU | The same idea, in a browser tab: the Win32 API is reimplemented, but the x86 code is interpreted in WebAssembly |
 
 ## How it works

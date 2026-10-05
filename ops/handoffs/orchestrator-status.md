@@ -1,5 +1,25 @@
 # Orchestrator status
 
+## Current live coordination (2026-10-04T18:28:49.925Z)
+
+Coordinator codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 is running. Claude1863d2b5 owns sole Heroes candidate smoke <=150sec from18:27:38Z. Source-only workers: JigSawedME restore_evidence actual image-load call/path diagnosis; TileWorld coverage_audit isolated hostqueue/scheduler integration after actual Worker semaphore/lost-ack/wait/TLS tests pass; Hype corpus_categories upstream render observer ready and queued. No other runtime claim. Next Hype bounded180sec, then ready Tile integrated suite/Jig repair tests and Heroes repeat comparison once smoke accepted. Main integration is exclusively ops-dashboard.
+
+Runenlegen root-qualified private14aadaac full12x8 Beginner and click56,98 yields71runes/95moves stable; FPSnull. Scoped12file commit3ad7ab07 pushed checkpoint/runenlegen-window-geometry-20261004, no inheritedhunks. Clean isolated index applied againsteb6; detached review worktree scratch/worktrees/runenlegen-review-20261004 and validate-clean.js prepared, no clean-base build run yet. Refillslot is existing GAMEPLAY-jigssawme; fresh public42desktop unchangedsha20f5 excludes and3asset hashes present.
+
+Jig browser89047 released18:26:10.936Z; actual owner API2542slot8 returnE_NOTIMPL,4args/ESP+8 and doubled-driveBSTR require separate ABI/path investigation. Hype88482 released; actual Space0->32768->0,12 bridge/layer/final images identical despitepublications; page-compositor-only cause excluded for captured samples. Upstreamhelper source-tested, no runtime yet. Tile transport69622PASS/before62535expectedfail, cleanupclear; production unchanged.
+
+Heroes fa639845 localcandidate: units pass. Exploratory firstset unmatchedheroes and invalidtimeheuristic rejected. Savedtutorial CLI verified, laterbrowser set allargs ending32,24; harness route-scope ReferenceError fixed, CPUreceiptlost preserved. Current singlebrowser smoke pins actual32,20->32,24 and cacheshero table outsidewindow. No speedup claim.
+
+Latest remote main dd0dd740 verified (TelegramEntersteeringfix), sharedHEAD16f764ad remainsdirty untouched. Telegramresponse389 delivered why-awaits-main/yo; Runenlegengameplayphoto388 delivered. DiabloII corrected local animation rootreviewed, audiooutputunknown; doc347e63b1 pushed checkpoint/diablo2-menu-observation-20261004. Diablo1lazy branchb4aaab7c pushed. These await ownerintegration, no userapprovalgate.
+
+## Active rolling new-game lanes (2026-10-04T02:42:41.554Z)
+
+NEW-GAMES-PIPELINE remains active. Zuma qualified with root-reviewed Level1-1 aim/fire, destruction and score170; scratch/runs/20261004-zuma-adventure-gameplay recognized in dashboard, FPS unknown. Refilled immediately with Runenlegen /root/restore_evidence: ordinary placement reviewed (runes72 to71), full-board clipping unresolved; source lead zero-size MoveWindow plus app WM_GETMINMAXINFO minimum dimensions. Run20261004-runenlegen-beginner-placement is overall unknown with explicit narrow input proof. Source-only investigation continues.
+
+Crimsonland /root/corpus_categories proved DirectSound Lock incorrect linear inverse: backing08228004 maps to sparse guest7e600004, returned08616004 unmapped across85pages; unique covering virtual record and stable owner snapshot. Run20261004-crimsonland-dsound-mapping4. Root authorized narrow existing-w2g conversion and actual-handler regression; sole isolated compile/test resource granted, canonical f40 WASM unchanged until reviewed. No blocked REP fixture/benchmark. Browser attempts4/Runenlegen1 closed cleanly.
+
+Tile World reserve prepared scratch/tworld-reserve-20261004/plan.json:16files present, publicexcluded, keyboard-only intro-ms route pending. Root reviews and refills on completion/blocker. Ops-dashboard alone owns main integration; checkpoint publication coordination requested on board.
+
 ## Current persistent-box checkpoint (2026-10-04)
 
 Coordinator: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5, /root in wine-orchestrator. Core migration hold released by migration-core-ready-20261003.md. Approved launch UX complete and reviewed; source pushed5a381fd2, no public game deployment. Root browser/server work is closed; no canonical build or benchmark running for this task. Claude1863d2b5 released implementation at00:40:22; ops-dashboard owns its persistent terminal migration and bulk fixture restore. Exact review receipts: launch-ux-coordinator-review-20261004.md. Existing REP automatic-review restriction and audio/gameplay blockers remain.

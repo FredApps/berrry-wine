@@ -312,3 +312,81 @@ present counts agree; the run ends without errors. World visibility between
 actual publications was about 32–38 ms, versus 36–47 ms in the unpaced sample.
 These are diagnostic observations, not controlled performance measurements.
 Pacing alone did not fix stable presentation and was not promoted to production.
+
+## 2026-10-04 user menu report: current source-only audit
+
+Registered closure is restored:59 manifest entries/60 unique required files,
+38,074,960bytes, all regular/present (stat-only inventory). The old20261003 task's
+missing-asset verdict is stale. Exact source/module/EXE identities and missing
+historical build capture paths are in scratch/hype-menu-20261004/asset-source-audit.json.
+Raw historical world/UI captures are not present locally; their conclusions above
+are documented history, not a new review.
+
+Current DIDC_ATTACHED keyboard/mouse fix remains in source. Current Glide swap
+still preserves both front/back flips; no interval/drop-empty workaround has been
+added. Thus first reproduction must distinguish failed New Game input from the
+known world/UI alternation. Use Up/Down to select menu, short Enter to activate;
+in world arrows move/turn, Shift runs, Ctrl jumps, Space acts, Enter uses magic.
+A menu screenshot never qualifies gameplay. New bounded route and optional passive
+adjacent-presentation capture proposal: scratch/hype-menu-20261004/PLAN.md.
+No runtime yet; Claude HeroesII profiling has exclusive resource ownership.
+
+## 2026-10-04 ordinary menu reproduction
+
+Run scratch/runs/20261004-hype-menu-enter-stall1 (24 hashed artifacts) uses
+canonical f40 WASM, current unmodified host/Worker, actual Intel UHD620 WebGL
+renderer. The menu has New Game highlighted. Enter150ms is followed in the log
+by window title "Chargement de la map", then Hype The Time Quest. The menu
+image remains. This contradicts a blanket claim that Enter is not delivered.
+
+Before Enter:1700 swaps. After Enter:2057 swaps/presents,143990 triangles/draws,
+2077 LFB reads/writes. These values remain exact through later focused Down and
+visible New Game click and final snapshot. Thread1 cached worker-slice count
+advances22079 ->72166 ->89451 with sampled lastEIP496635/49413c/493243, yield0;
+no critical-section waits/steals reported. Thread2 audio lastEIP4409d42/yield7.
+No guest exception reported, no world frame observed. HWND10001 remains640x480
+with636x476 viewport descendants.
+
+Unlike historical world/UI alternation, current reproduction stops publishing
+Glide frames while guest execution continues after the map-load title. This is
+not evidence that dropping an empty swap would fix anything. The exact phase
+and root cause remain unresolved: cached host PCs are not stopped owner stacks,
+and render publication stopping does not alone prove unfinished map loading.
+Menu-only screenshots do not count as gameplay; performance null.
+
+Next focused diagnostic: capture owning renderer-thread registers/stack at a
+bounded set of actual execution boundaries after Enter, plus current game frame
+callbacks43f180/43f610 and swap boundary467180 entry counts. Verify exact live
+EXE mapping and source identity, no BP/guest-state changes or shadow execution.
+Distinguish never reaching rendering, semaphore/frame-callback wait, and repeated
+guest interpreter/input loop. Only observe actual presentation pairs if swaps
+resume; do not assume historical alternation. Scope/helper review and a new serial
+grant are required. Ordinary browser66050 closed11:27:02.507Z, bothclosed/PIDgone.
+
+### Source follow-up: possible Action-key wait
+
+The sampled PCs are input evaluation:493243 is inside exported IPT_fn_vReadInput
+(entry4930e0),49413c returns from an input-command dispatch in IPT_Kwan.c, and
+496635 updates six-byte input records. A direct caller4208e0 has a no-render
+loop420925..42097d that looks up literal Action_Key and polls IPT_fn_vReadInput
+until its command state becomes positive. Readme maps Action to Space, matching
+the older Enter-then-Space route. Other input callers exist, so this is a specific
+hypothesis rather than an identified active frame. It may be waiting for a hidden
+Action prompt, not a loading failure.
+
+Next proof proposal scratch/hype-menu-20261004/OWNING-PHASE-PROPOSAL.md uses the
+existing owning get_key_down_state import with bounded passive stack/global reads,
+then ordinary Space. No trace flags/BP/guest mutation or swap suppression needed.
+No follow-up runtime or engine edit has run.
+
+### 2026-10-04 ordinary Space continuation: rendering resumes, menu remains
+
+Run `scratch/runs/20261004-hype-enter-space-menu2` uses actual served canonical f40d4ca3, no observer or engine modification. New Game highlighted→Enter150ms logs map-loading title; swaps6126 remain unchanged until ordinary Space300ms. Eight seconds later swaps6421 (+295), draws488471 (+59651), shader variants1→6; LFB reads/writes stay6146. Cached owner PC changes493243→482912. Nevertheless personally/root-reviewed1/3/8-second images all retain the menu. Space is therefore not a demonstrated visible fix, and failure to reach the owning input state is not established either. Exact wait caller/presentation ownership remain unproven. No gameplay screenshot or FPS claim. Browser/server closed cleanly17:59:30.414Z.
+
+### 2026-10-04 passive source capture rules out page-compositor-only explanation
+
+`20261004-hype-space-presentation3` observes actual owner VK_SPACE returns0→32768→0; raw down stack includes42097d (candidate return, not an unwind). Space reaches owning input. Publications1735→1775→1859→2029, but all12 sequential bridge/selected-layer/final PNGs across four phases hash b81ef4efd2344280d59180e8b43777177eb5dbd1fb8b4616816ad7bb74f8b824 and show menu. GPU layer on10001 is unmerged and sequence advances beyond oldGDIseq1742. This sample's retained menu is already in bridge source; pure page-child occlusion is insufficient. Investigate render-worker front/back/default drawable and bitmap transfer next, rather than blind input retries. Private passive Worker only; canonical f40 module/host, no gameplay claim. Clean release18:14:07.522Z.
+
+### 2026-10-04 current upstream capture confirms world/menu alternation
+
+`20261004-hype-upstream-alternation4` captures four consecutive swaps1408..1411: world/menu/world/menu. Naturalentry/front/returned pixels match within each group. Resource3/variant4 hasworld, resource1/variant2 menu;405newdraws betweenworldgroups versus3perinterveningmenu. Thus selection-to-presentationcopy preserves observed frames; do not patchcompositor or suppress swaps on this evidence. Actualpage space-1s showsworld, space-8s menu; capturessequential, notatomic. Need current owningcaller/three-menu-command purpose beforefix. No movement/control/FPS qualification. Private diagnostic only; canonicalf40, released18:32:21.719Z.

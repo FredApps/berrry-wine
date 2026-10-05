@@ -413,6 +413,11 @@
       (then (return (i32.const 112))))
     (if (i32.eq (local.get $index) (i32.const 35)) ;; SM_CYMINTRACK
       (then (return (i32.const 27))))
+    ;; Single virtual desktop, including the sizing frame on both edges.
+    (if (i32.eq (local.get $index) (i32.const 59)) ;; SM_CXMAXTRACK
+      (then (return (i32.add (call $screen_metric_w) (i32.mul (i32.const 2) (call $system_metric (i32.const 32)))))))
+    (if (i32.eq (local.get $index) (i32.const 60)) ;; SM_CYMAXTRACK
+      (then (return (i32.add (call $screen_metric_h) (i32.mul (i32.const 2) (call $system_metric (i32.const 33)))))))
     (if (i32.eq (local.get $index) (i32.const 36)) ;; SM_CXDOUBLECLK
       (then (return (i32.const 4))))
     (if (i32.eq (local.get $index) (i32.const 37)) ;; SM_CYDOUBLECLK
