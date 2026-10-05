@@ -134,31 +134,47 @@ function deliveries(out) {
     .filter(Boolean).map((m) => ({ at: Number(m[1]), ip: parseInt(m[2], 16) }));
 }
 
-// Did the arm actually do anything in this run? Parity with l1 is trivially
-// true for an arm that never installed or entered compiled code, so each
-// arm's own report line (run-dos.js prints them after every run) is parsed and
-// printed beside its parity verdict. An unengaged arm is reported as such; it
-// does not fail the case (engagement is about the evidence, not the property).
+// What did the arm do in this run? LIMITED EVIDENCE by construction: parity
+// with l1 is trivially true for an arm that never installed or ran compiled
+// code, so each arm's OWN report line (run-dos.js, printed after every run) is
+// found first, parsed only within itself, and printed RAW beside the verdict.
+// Two levels are kept apart:
+//   installed/compiled  region installs, uop heads, uop-only programs, folds
+//   executed            uop entries/steps, uop-only entries and step share
+// The region JIT's execution counters (--step-audit, --exit-census) and the
+// fold's per-tree entry counts are NOT printed without instrumentation flags
+// that change the arm under test, so those arms report installed-only. And
+// no whole-run count shows that compiled code ran THROUGH the IRQ boundary
+// under test. An arm with nothing installed is "parity NOT EVIDENTIAL"; it is
+// reported, not failed (engagement is about the evidence, not the property).
+// Line formats: run-dos.js (base 2683a6e3) region jit ~1555, uop ~1540,
+// uop-only ~1530, and the handbacks summary line carrying "N tree folds" ~1626.
+const ARM_LINE = {
+  region: /^ {2}region jit \([^)\n]*\): [^\n]*$/m,
+  uop: /^ {2}uop: [^\n]*$/m,
+  uopOnly: /^ {2}uop-only: [^\n]*$/m,
+  fold: /^ {2}\d+ handbacks, \d+ interrupts[^\n]*$/m,
+};
 function engagement(arm, out) {
-  const num = (re) => { const m = out.match(re); return m ? Number(m[1]) : 0; };
+  if (arm === 'l1') return { installed: true, executed: true, summary: 'reference', raw: '' };
+  const raw = (out.match(ARM_LINE[arm]) || [''])[0];
+  const num = (re) => { const m = raw.match(re); return m ? Number(m[1]) : 0; };
+  let installed = 0, executed = null, summary;
   if (arm === 'region') {
-    const line = (out.match(/^\s*region jit \([^)]*\): .*$/m) || ['(no region jit line)'])[0].trim();
-    const n = num(/(\d+) install\(s\)/);
-    return { engaged: n > 0, summary: `${n} region install(s); ${line.slice(0, 90)}` };
+    installed = num(/ (\d+) install\(s\)/);
+    summary = `installed ${installed}; executed: not reported without --step-audit`;
+  } else if (arm === 'uop') {
+    installed = num(/ (\d+) head\(s\)/); executed = num(/ entries=(\d+)/);
+    summary = `installed ${installed} head(s); executed ${executed} entries, ${num(/ steps=(\d+)/)} steps`;
+  } else if (arm === 'uopOnly') {
+    installed = num(/ programs=(\d+)/); executed = num(/ entries=(\d+)/);
+    summary = `compiled ${installed} program(s); executed ${executed} entries`;
+  } else if (arm === 'fold') {
+    installed = num(/, (\d+) tree folds/);
+    summary = `installed ${installed} tree fold(s); executed: not reported without a histogram`;
   }
-  if (arm === 'uop') {
-    const heads = num(/^\s*uop: .*?(\d+) head\(s\)/m), entries = num(/^\s*uop: .*?entries=(\d+)/m);
-    return { engaged: entries > 0, summary: `${heads} uop head(s), ${entries} entries` };
-  }
-  if (arm === 'uopOnly') {
-    const programs = num(/^\s*uop-only: .*?programs=(\d+)/m), entries = num(/^\s*uop-only: .*?entries=(\d+)/m);
-    return { engaged: entries > 0, summary: `${programs} uop-only program(s), ${entries} entries` };
-  }
-  if (arm === 'fold') {
-    const n = num(/(\d+) tree folds/);
-    return { engaged: n > 0, summary: `${n} tree fold(s)` };
-  }
-  return { engaged: true, summary: 'reference' };
+  if (!raw) summary = `NO REPORT LINE FOUND (${summary})`;
+  return { installed: installed > 0, executed: executed === null ? null : executed > 0, summary, raw };
 }
 
 const emit = (process.argv.find((a) => a.startsWith('--emit=')) || '').slice(7);
@@ -192,8 +208,9 @@ for (const [name, c] of Object.entries(CASES)) {
     const e = engaged[arm];
     console.log(`  ${name}/${arm}: ${d.length} deliveries, ${atX} at X=0x${at[c.expect].toString(16)} (want >= ${ROUNDS - 1}), `
       + `in shadow: ${inShadow.length ? inShadow.join(',') : 'none'}, same (dispatch, ip) sequence as l1: ${same}`
-      + `${arm === 'l1' ? '' : ` [engagement: ${e.summary}${e.engaged ? '' : ' -> parity NOT EVIDENTIAL for this arm'}]`}, `
+      + `${arm === 'l1' ? '' : ` [engagement, limited evidence: ${e.summary}${e.installed ? '' : ' -> parity NOT EVIDENTIAL for this arm'}]`}, `
       + `first return ips: ${d.slice(0, 6).map((x) => '0x' + x.ip.toString(16)).join(' ')}`);
+    if (e.raw) console.log(`    raw ${arm}: ${e.raw.trim()}`);
     if (atX < ROUNDS - 1) problems.push(`[1] ${arm}: ${atX} at X`);
     for (const f of inShadow) problems.push(`[2] ${arm}: delivered inside a shadow at ${f}=0x${at[f].toString(16)}`);
     if (!same) problems.push(`[3] ${arm}: (dispatch, ip) sequence differs from l1`);
