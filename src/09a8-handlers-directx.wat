@@ -9427,7 +9427,7 @@
         ;; Mouse — DIMOUSESTATE: lX(4), lY(4), lZ(4), rgbButtons[4](4)
         (local.set $dx (call $di_mouse_delta_take_x))
         (local.set $dy (call $di_mouse_delta_take_y))
-        (local.set $buttons (call $host_get_mouse_buttons))
+        (local.set $buttons (call $host_get_mouse_buttons_live))
         (if (i32.ge_u (local.get $arg1) (i32.const 4))
           (then (i32.store (local.get $wa) (local.get $dx))))
         (if (i32.ge_u (local.get $arg1) (i32.const 8))
@@ -9561,7 +9561,7 @@
         (return)))
     (if (i32.eq (local.get $dev_type) (i32.const 2))
       (then
-        (local.set $buttons (call $host_get_mouse_buttons))
+        (local.set $buttons (call $host_get_mouse_buttons_live))
         (if (i32.eqz (global.get $di_mouse_data_initialized))
           (then
             (global.set $di_mouse_data_initialized (i32.const 1))

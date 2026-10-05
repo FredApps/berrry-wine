@@ -171,7 +171,7 @@ const extraWat = `
     4,
     'EnumObjects metadata includes this + callback + ref + flags'
   );
-  const { exports: wat } = await bootRenderHarness({ extraWat });
+  const { exports: wat, renderer } = await bootRenderHarness({ extraWat });
   const stack = 0x074ff000;
 
   assert.strictEqual(
@@ -578,6 +578,19 @@ const extraWat = `
     'buffered read cannot deliver more records than DIPROP_BUFFERSIZE');
   assert.strictEqual(wat.guest_read32(data + 32) >>> 0, 0xfeedface,
     'buffered read leaves memory after the configured record array intact');
+
+  // Immediate device reads must ignore stale Win32 mouse-message snapshots.
+  for (const [live, message, expected] of [[1, 0, 0x80], [0, 1, 0], [3, 0, 0x8080]]) {
+    renderer._mouseButtonsMask = live;
+    renderer._activeInputEvent = {type:'mouse', hwnd:0x77777, mouseButtons:message};
+    assert.strictEqual(wat.test_di_mouse_get_state(mouse, data) >>> 0, 0);
+    assert.strictEqual(wat.guest_read32(data + 12) & 0xffff, expected,
+      'DirectInput returns current physical buttons, not an unrelated queued message');
+    assert.strictEqual(renderer.getMouseButtons(), message,
+      'message snapshot remains unchanged for message consumers');
+  }
+  renderer._mouseButtonsMask = 0;
+  renderer._activeInputEvent = null;
 
   console.log('PASS  DirectInput enumerates Win98 devices/objects and preserves browser input');
 })().catch(error => {
