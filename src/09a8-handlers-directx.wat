@@ -695,7 +695,8 @@
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 2))))
 
   ;; Per-surface creation metadata, 16 bytes a slot:
-  ;;   +0  creation caps    +4  parent slot + 1    +8  billed vidmem bytes
+  ;;   +0 creation caps +4 parent slot+1 +8 billed vidmem bytes
+  ;;   +12 owned VB drawing-state guest heap pointer (0 until needed).
   (func $dx_surf_meta_ptr (param $entry_wa i32) (result i32)
     (i32.add (global.get $DX_SURF_META)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 4))))
@@ -13593,24 +13594,39 @@
 ;; previous owned pen only after allocation succeeds. Constructor73543c3e
 ;; defaults PS_SOLID=0, width=1, foreground=0. Style/width setters remain
 ;; E_NOTIMPL; no unsupported state can silently alter these defaults.
-;; Shared slot sidecar is independent of transient GDI DC lifetime.
-(global $DX_VB_DRAW_STATE i32 (region.addr $DX_VB_DRAW_STATE 0))
-(global $DX_VB_DRAW_STATE_SIZE i32 (region.size $DX_VB_DRAW_STATE))
+;; The previously unused +12 word in declared16-byte DX_SURF_META owns an
+;; eight-byte heap state {raw COLORREF,pen}. No global layout/capacity grows.
+;; Native creation already zeros all16bytes before publication. State is
+;; shared by every interface view and freed on final surface retirement.
 (func $vbdd_draw_state_ptr (param $entry i32) (result i32)
- (i32.add (global.get $DX_VB_DRAW_STATE)
-  (i32.shl (i32.div_u (i32.sub (local.get $entry) (global.get $DX_OBJECTS)) (i32.const 32)) (i32.const 3))))
-(func $vbdd_draw_state_reset (param $entry i32)
- (local $state i32) (local $pen i32)
+ (local $guest i32)
+ (local.set $guest (i32.load offset=12 (call $dx_surf_meta_ptr (local.get $entry))))
+ (if (result i32) (local.get $guest) (then (call $g2w (local.get $guest))) (else (i32.const 0))))
+(func $vbdd_draw_state_ensure (param $entry i32) (result i32)
+ (local $state i32) (local $guest i32)
  (local.set $state (call $vbdd_draw_state_ptr (local.get $entry)))
+ (if (local.get $state) (then (return (local.get $state))))
+ (local.set $guest (call $heap_alloc (i32.const 8)))
+ (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+ (local.set $state (call $g2w (local.get $guest)))
+ (call $zero_memory (local.get $state) (i32.const 8))
+ (i32.store offset=12 (call $dx_surf_meta_ptr (local.get $entry)) (local.get $guest))
+ (local.get $state))
+(func $vbdd_draw_state_reset (param $entry i32)
+ (local $state i32) (local $pen i32) (local $guest i32)
+ (local.set $guest (i32.load offset=12 (call $dx_surf_meta_ptr (local.get $entry))))
+ (if (i32.eqz (local.get $guest)) (then (return)))
+ (i32.store offset=12 (call $dx_surf_meta_ptr (local.get $entry)) (i32.const 0))
+ (local.set $state (call $g2w (local.get $guest)))
  (local.set $pen (i32.load offset=4 (local.get $state)))
  (if (local.get $pen) (then (drop (call $gdi_object_delete_full (local.get $pen)))))
- (i32.store (local.get $state) (i32.const 0))
- (i32.store offset=4 (local.get $state) (i32.const 0)))
+ (call $heap_free (local.get $guest)))
 (func $vbdd_set_fore_color (param $obj i32) (param $color i32) (result i32)
  (local $entry i32) (local $state i32) (local $old i32) (local $pen i32)
  (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
  (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
- (local.set $state (call $vbdd_draw_state_ptr (local.get $entry)))
+ (local.set $state (call $vbdd_draw_state_ensure (local.get $entry)))
+ (if (i32.eqz (local.get $state)) (then (return (i32.const 0x8007000E))))
  (i32.store (local.get $state) (local.get $color))
  (local.set $pen (call $gdi_object_alloc (i32.const 1) (i32.const 0) (i32.const 1) (local.get $color) (i32.const 0)))
  (if (i32.eqz (local.get $pen)) (then (return (i32.const 0x80070057))))

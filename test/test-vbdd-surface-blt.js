@@ -1,6 +1,8 @@
 'use strict';
 const assert=require('assert/strict'),fs=require('fs');
 const extraWat=String.raw`
+(func (export "fore_meta") (param $obj i32) (result i32) (call $dx_surf_meta_ptr (call $dx_from_this (local.get $obj))))
+
 (func (export "vb_key") (param $obj i32) (result i32) (load.field DxObject misc2 (call $dx_from_this (local.get $obj))))
 (func (export "vb_flags") (param $obj i32) (result i32) (load.field DxObject flags (call $dx_from_this (local.get $obj))))
 ;; Test real shared native keyed consumer without pretending VB Blt supports
@@ -106,6 +108,7 @@ async function run(h,apis,notepad,fixture){
  check('native surface remains unchanged and is not silently cast to VB source',()=>{const nd=a(124);zero(nd,124);w(nd,124);w(nd+4,7);w(nd+8,4);w(nd+12,4);w(nd+104,0x840);e.vb_native(owner,nd,out);const native=r(out),nt=r(native);assert.notEqual(nt,table);assert.equal(call(dest,6,0,native,0,0,status+4),0x80070057);assert.equal(r(native),nt);assert.equal(call(native,2),0)});
  check('other unimplemented VB methods retain real-thunk E_NOTIMPL/stack ABI',()=>{for(let i=0;i<71;i++){const api=apis[r(r(table+i*4)+4)];if(api.stub)assert.equal(call(dest,i,...Array(api.nargs-1).fill(0)),0x80004001,api.name)}});
 
+ check('heap draw state uses only metadata owner word and preserves caps/parent/billed bytes',()=>{const p=e.fore_meta(dest),before=Buffer.from(u8.slice(p,p+12));assert.equal(call(dest,54,0x123456),0,'SetForeColor must persist real drawing state');assert.deepEqual(Buffer.from(u8.slice(p,p+12)),before);const guest=v.getUint32(p+12,true);assert(guest,'heap ownership pointer must be published');assert.equal(e.guest_to_wasm(guest)>>>0,e.fore_state(dest)>>>0)});
  check('SetForeColor actual slot54/ESP12 persistent raw color and pen replacement',()=>{
   assert.equal(call(dest,54,0x00123456),0,'SetForeColor must persist real drawing state');
   const p=e.fore_state(dest)>>>0,old=v.getUint32(p+4,true);assert(old);assert.equal(v.getUint32(p,true),0x00123456);assert.equal(e.fore_pen_live(old),1);
@@ -124,11 +127,11 @@ async function run(h,apis,notepad,fixture){
  check('SetForeColor forged receiver preserves live per-surface state',()=>{
   const fake=a(8);w(fake,r(dest));w(fake+4,r(dest+4));const p=e.fore_state(dest),before=Buffer.from(u8.slice(p,p+8));assert.equal(call(fake,54,0x999999),0x80070057);assert.deepEqual(Buffer.from(u8.slice(p,p+8)),before);
  });
- const drawState=e.fore_state(dest),sourceState=e.fore_state(src),destPen=v.getUint32(drawState+4,true),srcPen=v.getUint32(sourceState+4,true);
+ const drawMeta=e.fore_meta(dest),sourceMeta=e.fore_meta(src),drawState=e.fore_state(dest),sourceState=e.fore_state(src),destPen=v.getUint32(drawState+4,true),srcPen=v.getUint32(sourceState+4,true);
  const aux=new WebAssembly.Instance(h.module,{host:h.host,gdi:h.gdi}).exports;
  check('shared draw state survives auxiliary instance construction without reinitialization',()=>{assert.equal(aux.fore_load_wa(drawState)>>>0,0xffffff);assert.equal(aux.fore_load_wa(drawState+4)>>>0,destPen);assert.equal(aux.fore_load_wa(sourceState)>>>0,0xff00)});
  check('created and image lifetime release independently to zero',()=>{assert.equal(e.vb_refs(src),1);assert.equal(e.vb_refs(dest),1);assert.equal(call(src,2),0);assert.equal(call(dest,2),0)});
- check('final release retires both pens and clears shared state; fresh surface defaults remain black',()=>{for(const p of[destPen,srcPen])assert.equal(e.fore_pen_live(p),0);for(const p of[drawState,sourceState]){assert.equal(aux.fore_load_wa(p),0);assert.equal(aux.fore_load_wa(p+4),0)}descriptor(8,8);assert.equal(call(owner,7,d,out),0);const o=r(out),p=e.fore_state(o);assert.equal(v.getUint32(p,true),0);assert.equal(v.getUint32(p+4,true),0);assert.equal(call(o,2),0)});
+ check('final release retires both pens and clears shared state; fresh surface defaults remain black',()=>{for(const p of[destPen,srcPen])assert.equal(e.fore_pen_live(p),0);for(const p of[drawMeta,sourceMeta])assert.equal(aux.fore_load_wa(p+12),0);descriptor(8,8);assert.equal(call(owner,7,d,out),0);const o=r(out),p=e.fore_state(o);assert.equal(p,0);assert.equal(v.getUint32(e.fore_meta(o)+12,true),0);assert.equal(call(o,2),0)});
  return {cases,limits:['no gameplay qualification','bounded offscreen same-format copy/WAIT only','no broad native DirectDraw or VB drawing support claim']};
 }
 const {bootRenderHarness}=require('./render-helper');
