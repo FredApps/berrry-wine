@@ -1,0 +1,1 @@
+PASS test-toyvm-bt-addr32: 3 checks over bt/bts with a 32-bit address
