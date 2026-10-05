@@ -30,6 +30,15 @@ function track(ws) {
     throw Error('Timed out waiting for terminal event: '+JSON.stringify(events).slice(-1000));
   };
 }
+test('work nudges require same origin and refuse a registered pane that is only a shell',async t=>{
+  const f=await fixture();t.after(()=>f.close());
+  const body=JSON.stringify({terminalId:'fixture',screenHash:'stale',message:'Continue assigned tasks'});
+  assert.equal((await fetch(f.base+'/api/work-nudge',{method:'POST',headers:{'Content-Type':'application/json'},body})).status,403);
+  assert.equal((await fetch(f.base+'/api/work-nudge',{method:'POST',headers:{Origin:f.base,'Content-Type':'application/json'},body})).status,409);
+  const status=await(await fetch(f.base+'/api/work-status')).json();
+  assert.equal(status[0].idle,false);
+  assert.equal((await(await fetch(f.base+'/api/work-watchdog')).json()).checkedAt,null);
+});
 test('tmux bridge authenticates, enforces view mode, controls fixture only, and detaches without stopping it', {timeout:30000},async t=>{
   const f=await fixture();t.after(()=>f.close());
   const post=(id,origin=f.base)=>fetch(f.base+'/api/terminal-ticket',{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify({id})});

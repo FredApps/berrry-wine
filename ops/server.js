@@ -36,6 +36,13 @@ function createServer(options = {}) {
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
       if(req.method==='POST' && url.pathname==='/api/approval-decision') return await terminals.approvalDecision(req,res);
       if(req.method==='POST' && url.pathname==='/api/orchestrator-chat') return await terminals.chat(req,res);
+      if(req.method==='POST' && url.pathname==='/api/work-nudge') return await terminals.nudge(req,res);
+      if(req.method==='GET' && url.pathname==='/api/work-status') {res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(await terminals.workStatus()));return;}
+      if(req.method==='GET' && url.pathname==='/api/work-watchdog') {
+        let status={checkedAt:null,reason:'Work watchdog has not run'};
+        try{status=JSON.parse(await fs.promises.readFile(path.join(reader.root,'scratch/work-watchdog/state.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
+        res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(status));return;
+      }
       if(req.method==='GET' && url.pathname==='/api/orchestrator-screen') return await terminals.screen(req,res);
       if(req.method==='POST' && ['/api/tasks','/api/task-note'].includes(url.pathname)) {
         if(req.headers.origin!==`http://${host}`)return fail(403,'Same-origin request required');

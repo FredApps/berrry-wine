@@ -685,6 +685,33 @@ and disappear when the dashboard server restarts.
 
 For private orchestrator chat and approval buttons, see [Telegram setup and watchdog](TELEGRAM.md).
 
+### Work continuation watchdog
+
+`node ops/work-watchdog.js` checks both registered coordinators every 30 seconds.
+It only considers active/ready/review tasks owned by that exact agent, without
+blockers or unfinished dependencies. A session must report idle and its empty
+terminal prompt must remain unchanged for two minutes. Approval menus, drafts,
+running turns, changed PIDs, browser control, and visible stop/pause requests
+prevent delivery. The server rechecks the terminal fingerprint before entering
+an ordinary `[Work watchdog]` message; it never sends approval keys or slash commands.
+
+Policy lives in `ops/work-watchdog.json`. Local overrides belong in
+`scratch/work-watchdog/control.json`: use `{"paused":true}` to pause all wakeups,
+or `{"pausedTerminals":["claude-launch-ux"]}` to pause one coordinator. Agents
+must record intentional user pauses here as well as in their task state.
+Heroes II timing/music tasks are excluded while the laptop owns that work.
+
+Nudges have a 15-minute cooldown. Two nudges without a change in the owned task
+records produce a stalled status requiring inspection. This is a safety net for
+idle turns, not a replacement for native Goals/loops or a hung-process killer.
+It does not restart agents, clear drafts, resolve blockers, approve commands, or
+deploy releases. Task/ownership changes reset the attempt budget.
+
+State and append-only events are plain JSON/JSONL in `scratch/work-watchdog/`;
+`GET /api/work-watchdog` exposes status. Install the system service from
+`ops/hosting/wine-work-watchdog.service` on the box. It survives disconnects and
+reboots independently of Telegram, which remains responsible for message delivery.
+
 ### Game release readiness
 
 EXE corpus has independent release filters: **Unreleased games**, **Ready for
