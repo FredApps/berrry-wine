@@ -42,7 +42,25 @@ below 300 MB.
 
 ## Phases
 
-Run as `W=<dir> CAND=v3 JOBS=3 node corpus-plan.js all`, or phase by phase. Each line below says
+**Not schedulable yet.** The scheduled A/B is `CAND=v3j`: v2 + the v3 delta + the jmp_syn
+budget-test fix (cause 2 of BRW, confirmed by the synthetic regression). That jmp_syn patch has
+NOT been written; it waits on the user's choice between fix J (jmp_syn drops its budget test
+everywhere) and the region-only variant R. `all` refuses any other CAND (exit 8), and `prep`
+refuses `v3j` without `JMPSYN=<patch>` and a matching `JMPSYN_SHA` (exit 8). It also refuses a
+candidate whose dos-loop.js or emit.js came out unpatched.
+
+Runner contract (root review 12:29Z, all enforced and fixture-tested by `corpus-plan.test.js`,
+18/18 passing; stub tools only, no corpus run):
+- Every gate EXITS rather than only logging: 3 test gate, 4 sweep gate, 5 arms gate, 6 control gate.
+- Every child's exit code is checked (prep's tar/patch/bundle/unpack/smoke, the sweep, corpus-ab,
+  the compares, BRW, nudge). A child that cannot start resolves 127 and aborts.
+- P1 aborts on an empty or mismatched suite.
+- P4 needs exactly "0 of N l1 rows moved" with N > 0 and a clean compare.
+- One slot deadline (`SLOT_S`, persisted in `$W/out/slot-start.txt`) caps every child's timeout
+  and is checked before each phase, including phases run one at a time (exit 7).
+
+Run as `W=<dir> CAND=v3j JMPSYN=<patch> JMPSYN_SHA=<sha256> JOBS=3 node corpus-plan.js all`, or
+phase by phase. Each line below says
 what the phase gates.
 
 **P0 `prep`** (about 3 min)
