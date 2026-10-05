@@ -471,3 +471,35 @@ Next (runtime needed): first differing jit-sepc vs L1 delivery at 500M with slic
 classified as on-date-early / overshoot / cut; a reproducer from the 8:c270 early-handback shape
 (three short early handbacks, kind unknown: read `exitwhy` with --slice-log plus exitKinds);
 corpus A/B before landing.
+
+# Phase 7, 2026-10-05 10:47Z: the second mechanism (root grant, 6 s CPU, private patched copy)
+
+Evidence: runs-20261005e/summary.txt (+ both IRQ lists; slice logs hashed there, then deleted).
+L1 and jit-sepc to 90M on a private copy of tools/toyvm with the Phase-6 patch applied (shared tree
+untouched; dos-loop.js sha256 71b288e0...).
+
+- First differing delivery is still the SB date at 89.25M (89255865 vs 89256120) after an identical
+  delivery at 89155864, and with the patch there are 0 IRQs at early handbacks in either arm. So the
+  remaining split does not involve early handbacks at all.
+- **Budget stops agree in COUNT and disagree in PLACE.** 88.9M-90M: of the stops at a dispatch
+  count both arms share, 1794 are at the same cs:ip and **632 are at different ones**. Identical
+  `left` values too (89155864 -1, 89156320 -6, ...). L1 stops spread over the 0x423a loop body
+  (8:423a/425f/427c/4299); jit-sepc stops are all at 8:4299 (785 there vs L1's 162).
+- Equal counts at different instructions mean the region's step counter is not aligned op-for-op
+  with the interpreter's. region-0x423a.wat charges in lumps ahead of the ops (`steps -7` before
+  the first cmp covering the six ops before it, `-3`/`-1` chunks later) and tests the budget only at
+  its jb exits, so $steps crosses zero at a different guest instruction than under `$next`'s per-op
+  charge. Interrupts and audio dates then attach to different guest states even though every
+  handback is a genuine budget stop. This is the class docs/toyvm-irq-schedule.md (BLIQ section)
+  already names: "make the fold's billed step count agree with the interpreter's op-for-op at the
+  exit edge, a billing question in tree-fold.js / region-jit.js".
+
+## Fix direction (source, region-jit.js; not started)
+
+At a budget exit the region must report the counter the interpreter would have had at the guest
+instruction it stops on: either charge each op at its own position (cost: more global.sets on the
+hot path; measure), or keep lump charges but refund the not-yet-executed part of the lump on the
+exit edge (exact, and only on the cold path). The test: the Phase-3 single-run invariant is not
+enough; compare (dispatched, cs:ip) of every budget stop between L1 and the region arm on a
+synthetic region whose lump spans a side exit (the 0x423a shape), plus BRW 500M frame parity.
+Both this and the Phase-6 dos-loop patch need a corpus A/B before landing.
