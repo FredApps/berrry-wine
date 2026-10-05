@@ -15,6 +15,7 @@
 // 9 BRW interrupt-list/frame parity gate, 11 INCOMPLETE corpus coverage (a
 // partial comparison is never a pass, even when every compared row agrees),
 // 12 coverage integrity (a malformed, out-of-domain or duplicate row),
+// 13 stage checkpoint (stage2 without a matching, unchanged stage1),
 // 130 the runner itself was signalled.
 //
 // Process hygiene (root review 116210a7): every child runs in its OWN process
@@ -89,13 +90,22 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
 
 // ONE deadline for the slot, whichever phase runs first sets it and every later
 // invocation reads it back: phases may be run one at a time.
-let deadline = 0;
+// ONE budget across every invocation of this work dir (root, checkpointed
+// stages): $W/out/slot-spent.txt accumulates the seconds each invocation
+// actually ran, and an invocation's deadline is now + (SLOT_S - spent). So
+// stage 2 can start in a later grant without the gap counting against it,
+// and the two stages together can never exceed SLOT_S.
+let deadline = 0, invokedAt = 0, spentBefore = 0;
+const spentFile = () => p('out', 'slot-spent.txt');
 function startSlot() {
-  const f = p('out', 'slot-start.txt');
-  let start = Number(read(f).trim());
-  if (!start) { start = Date.now(); fs.writeFileSync(f, String(start) + '\n'); }
-  deadline = start + SLOT_S * 1000;
+  spentBefore = Number(read(spentFile()).trim()) || 0;
+  invokedAt = Date.now();
+  deadline = invokedAt + (SLOT_S - spentBefore) * 1000;
+  process.on('exit', () => {
+    try { fs.writeFileSync(spentFile(), String(Math.ceil(spentBefore + (Date.now() - invokedAt) / 1000)) + '\n'); } catch {}
+  });
 }
+const spentNow = () => Math.ceil(spentBefore + (Date.now() - invokedAt) / 1000);
 const remainingS = () => Math.floor((deadline - Date.now()) / 1000);
 function needSlot(phase, minS) {
   if (SMOKE) minS = Math.ceil(minS / 10);
@@ -457,12 +467,45 @@ async function p1p2() {
   await t;
 }
 
-const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge };
+// Checkpointed stages (root, 2026-10-05 ~15:00Z): stage1 = P0 prep + P1 || P2,
+// then a checkpoint; stage2 = P3..P6, only on top of a passed stage1 whose
+// trees are byte-identical to what stage1 recorded.
+function treeDigest() {
+  const files = [];
+  for (const tr of TREES) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) {
+    const file = p(tr, 'tools/toyvm', `${fn}.js`);
+    if (fs.existsSync(file)) files.push(`${tr}/${fn} ${sha256(file)}`);
+  }
+  return files;
+}
+async function stage1() {
+  await prep();
+  await p1p2();
+  const cp = { stage: 1, cand: CAND, patches: STACK, smoke: SMOKE, programs: programList().length,
+    trees: treeDigest(), spentS: spentNow(), at: new Date().toISOString() };
+  fs.writeFileSync(p('out', 'stage1.done.json'), JSON.stringify(cp, null, 1) + '\n');
+  say('STAGE1', `checkpoint written: ${cp.programs} programs, ${cp.trees.length} tree files pinned, ${cp.spentS}s of ${SLOT_S}s spent`);
+}
+async function stage2() {
+  let cp;
+  try { cp = JSON.parse(read(p('out', 'stage1.done.json'))); } catch { abort('stage2 needs a passed stage1 (no stage1.done.json)', 13); }
+  if (cp.cand !== CAND || JSON.stringify(cp.patches) !== JSON.stringify(STACK) || cp.smoke !== SMOKE) {
+    abort('stage2 candidate/patches/smoke differ from stage1', 13);
+  }
+  const now = treeDigest();
+  if (JSON.stringify(now) !== JSON.stringify(cp.trees)) abort('stage2: tree files changed since stage1', 13);
+  if (programList().length !== cp.programs) abort('stage2: program list changed since stage1', 13);
+  say('STAGE2', `resuming on stage1 checkpoint ${cp.at}; ${spentBefore}s of ${SLOT_S}s already spent`);
+  await arms(); await control(); await brw(); await nudge();
+  say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}both stages complete, ${spentNow()}s of ${SLOT_S}s spent`);
+}
+
+const PHASES = { prep, tests, sweep, p1p2, arms, control, brw, nudge, stage1, stage2 };
 
 async function main(cmd) {
   if (!W) { console.error('set W to an empty work dir (needs ~90 MB)'); process.exit(2); }
   if (!PHASES[cmd] && cmd !== 'all') {
-    console.error(`usage: W=DIR [CAND=stack PATCHES=file:sha,...|CAND=v2|v3|v3j JMPSYN=patch JMPSYN_SHA=sha] [JOBS=N] node ${path.basename(__filename)} prep|tests|sweep|p1p2|arms|control|brw|nudge|all`);
+    console.error(`usage: W=DIR [CAND=stack PATCHES=file:sha,...|CAND=v2|v3|v3j JMPSYN=patch JMPSYN_SHA=sha] [JOBS=N] node ${path.basename(__filename)} prep|tests|sweep|p1p2|arms|control|brw|nudge|stage1|stage2|all`);
     process.exit(2);
   }
   // Every phase can run on its own, so every phase needs both directories.
@@ -473,7 +516,7 @@ async function main(cmd) {
   await prep();
   await p1p2();
   await arms(); await control(); await brw(); await nudge();
-  say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}elapsed ${Math.floor((Date.now() - (deadline - SLOT_S * 1000)) / 1000)}s`);
+  say('DONE', `${SMOKE ? 'harness smoke only, NOT the corpus A/B; ' : ''}${spentNow()}s of ${SLOT_S}s spent`);
 }
 
 if (require.main === module) {
