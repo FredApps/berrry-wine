@@ -3,6 +3,26 @@
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let state, view = location.hash.slice(1) || 'overview', filter = 'all', query = '', loading = false;
+let analyticsData=null,analyticsPending=false,analyticsError='',analyticsDay='';
+async function loadAnalytics() {
+  if(analyticsPending || analyticsData && Date.now()-Date.parse(analyticsData.generatedAt)<60000)return;
+  analyticsPending=true;
+  try {const r=await fetch('/api/analytics');if(!r.ok)throw Error(`HTTP ${r.status}`);analyticsData=await r.json();analyticsError='';}
+  catch(e){analyticsError=e.message;}
+  finally {analyticsPending=false;if(view==='analytics')render();}
+}
+const duration=ms=>ms<60000?Math.round(ms/1000)+'s':ms<3600000?Math.round(ms/60000)+'m':(ms/3600000).toFixed(1)+'h';
+function analyticsView() {
+  if(!analyticsPending && !analyticsError && (!analyticsData || Date.now()-Date.parse(analyticsData.generatedAt)>60000))loadAnalytics();
+  const heading=title('Agent analytics','Daily usage, output and observed time · UTC');
+  if(!analyticsData)return heading+empty(analyticsError?'Analytics unavailable: '+analyticsError:'Indexing session logs… first load can take a minute.')+(analyticsError?'<button data-analytics-retry>Retry</button>':'');
+  const data=analyticsData,day=analyticsDay||data.days[0]?.day;
+  const rows=data.rows.filter(r=>r.day===day && matches(r)).sort((a,b)=>b.estimatedUsd-a.estimatedUsd);
+  const daily=data.days.find(d=>d.day===day),sum=k=>rows.reduce((n,r)=>n+(r[k]||0),0),tokens=rows.reduce((n,r)=>n+r.tokens.input+r.tokens.read+r.tokens.write+r.tokens.writeHour+r.tokens.output,0);
+  const kinds=[['model','Thinking / response'],['tools','Tools / process wait'],['tests','Test / benchmark wait'],['idle','Idle between turns'],['unknown','Unknown']];
+  return heading+`<div class="analytics-days">${data.days.map(d=>`<button data-analytics-day="${escape(d.day)}" aria-pressed="${d.day===day}">${escape(d.day)}</button>`).join('')}</div><div class="analytics-totals"><div><strong>$${sum('estimatedUsd').toFixed(2)}</strong><span>API-equivalent estimate${sum('unpricedTokens')?' · partial':''}</span></div><div><strong>${num(tokens)}</strong><span>Tokens · ${num(sum('unpricedTokens'))} unpriced</span></div><div><strong>${rows.reduce((n,r)=>n+r.commits.length,0)}</strong><span>Attributed commits · ${daily?.unattributedCommits||0} unattributed across project</span></div></div><p class="source-note">Own usage per session; child usage is separate. Dollar amounts are estimates, not your subscription bill. Times are inferred from logs, not CPU measurements.</p><div class="analytics-legend">${kinds.map(([k,label])=>`<span class="analytics-key time-${k}">${label}</span>`).join('')}</div><div class="analytics-rows">${rows.map(r=>{const total=Object.values(r.ms).reduce((a,b)=>a+b,0);return `<article class="panel analytics-agent"><div class="analytics-heading"><strong>${escape(agentName({id:r.agentId,title:r.title}))}</strong><span>${escape(r.provider)} · ${escape(r.agentId.split(':').at(-1).slice(0,8))}${r.parentAgentId?' · subagent':''}</span><b>$${r.estimatedUsd.toFixed(2)}${r.unpricedTokens?' + unpriced':''}</b></div><div class="analytics-timebar" aria-label="Observed time distribution">${kinds.filter(([k])=>r.ms[k]>0).map(([k,label])=>`<span class="time-${k}" style="width:${100*r.ms[k]/total}%" title="${label}: ${duration(r.ms[k])}"></span>`).join('')}</div><div class="analytics-times">${kinds.map(([k,label])=>`<span>${label} <b>${duration(r.ms[k])}</b></span>`).join('')}</div><div class="analytics-numbers"><span>Input ${num(r.tokens.input)}</span><span>Cache read ${num(r.tokens.read)}</span><span>Cache write ${num(r.tokens.write+r.tokens.writeHour)}</span><span>Output ${num(r.tokens.output)}</span><span>${r.requests} requests</span><span>${r.commits.length} commits</span></div><details><summary>Models, attribution and identity</summary><p class="sub">${escape(r.agentId)}${r.parentAgentId?' · Parent '+escape(r.parentAgentId):''}</p>${Object.entries(r.models).map(([model,m])=>`<p>${escape(model)} · ${m.requests} requests · $${m.estimatedUsd.toFixed(2)}${m.unpricedTokens?' + '+num(m.unpricedTokens)+' unpriced tokens':''}</p>`).join('')}<p>Commit hashes: ${r.commits.map(h=>escape(h.slice(0,10))).join(', ')||'None attributed'}</p></details></article>`;}).join('')||empty('No usage recorded for this day.')}</div><details class="panel"><summary>Coverage and accounting rules · ${data.scannedSessions} sessions</summary>${data.notes.map(n=>`<p>${escape(n)}</p>`).join('')}<p>Rates checked ${escape(data.rates.checkedAt)}; editable in ops/analytics-rates.json.</p>${data.rates.sources.map(s=>link(s,'Pricing source')).join(' · ')}${data.warnings.map(w=>`<p class="warn">${escape(w)}</p>`).join('')}</details>`;
+}
+document.addEventListener('click',event=>{if(event.target.closest?.('[data-analytics-retry]')){analyticsError='';loadAnalytics();return;}const button=event.target.closest?.('[data-analytics-day]');if(button){analyticsDay=button.dataset.analyticsDay;render();}});
 const num = n => n === null || n === undefined ? 'unknown' : new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 function age(value) { if (!value) return 'unknown'; const minutes = Math.max(0, (Date.now() - Date.parse(value)) / 60000); return minutes < 1 ? '<1m' : minutes < 60 ? `${Math.floor(minutes)}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${Math.floor(minutes % 60)}m` : `${Math.floor(minutes / 1440)}d`; }
 const when = value => value ? new Date(value).toLocaleString() : 'unknown';
@@ -391,7 +411,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, activity: activityView }[view] || overview)();
+  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }

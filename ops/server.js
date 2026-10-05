@@ -8,9 +8,11 @@ const { createReader, safeFile, parseTasks } = require('./readers');
 const { createTerminalBridge } = require('./terminal-server');
 const { createTaskStore } = require('./task-store');
 const { createEmulatorHandler } = require('./emulator-server');
+const { createAnalytics } = require('./analytics');
 
 function createServer(options = {}) {
   const reader = createReader(options);
+  const analytics = createAnalytics(reader.root);
   const serveEmulator = createEmulatorHandler(reader.root);
   const taskStore=createTaskStore(reader.root);
   let cached, refreshedAt = 0, pending;
@@ -33,6 +35,7 @@ function createServer(options = {}) {
     try {
       if (await serveEmulator(req,res)) return;
       const url = new URL(req.url, `http://${host}`);
+      if(req.method==='GET' && url.pathname==='/api/analytics') { const data=await analytics(await reader.analyticsSnapshot());res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(data));return; }
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
       if(req.method==='POST' && url.pathname==='/api/approval-decision') return await terminals.approvalDecision(req,res);
       if(req.method==='POST' && url.pathname==='/api/orchestrator-chat') return await terminals.chat(req,res);

@@ -781,3 +781,24 @@ service restart described in the dashboard handoff.
 ## Telegram blocker parity
 
 `/blockers` reads the same `/api/state` snapshot as the dashboard and uses the shared `blocker-model.js` for primary blockers, dependent tasks, ordering and live approvals. It lists the next action, reason, owner and dependent titles without changing tasks or answering approvals. `/approvals` remains the command for reviewing an orchestrator approval. The bot menu and `/help` are generated from one command catalog in `telegram-core.js`.
+
+### Daily agent analytics
+
+`#analytics` reads `GET /api/analytics`: daily UTC tokens (fresh input, cache read/write,
+output), API-equivalent cost estimates, observed time distribution and attributable
+Git commits, per Codex/Claude session. Children have their own rows. Dollar amounts
+are **not subscription charges or invoices**. Rates and source links live in
+`ops/analytics-rates.json`; unknown models stay unpriced.
+
+Accounting reads full logs for the same project sessions discovered by the dashboard
+(up to 100 recent logs per provider), and shows 14 UTC days. Incremental offsets,
+deduplication state and daily aggregates are readable JSON in `scratch/analytics/`.
+Delete that directory to rebuild it; no database or external telemetry is required.
+Changes to rates take effect after restarting Ops and rebuilding the cache.
+
+Time is inferred from event boundaries: model response, pending tools, test/benchmark
+commands, idle between observed turns, and unknown. Silent model gaps over five
+minutes and tool gaps over thirty minutes become unknown. No time is extrapolated
+after the last event. Concurrent sessions overlap; these are not CPU hours. Commit
+attribution requires a git-commit tool result plus a matching local Git hash. Missing
+or ambiguous attribution remains visible in the project total.

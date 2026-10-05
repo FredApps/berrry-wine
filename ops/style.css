@@ -1302,3 +1302,22 @@ dd {
 .agent-age.activity-quiet { color:#ffc46b; }
 .agent-age.activity-stale { color:#ff948a; }
 .agent-age.activity-unknown { color:var(--muted); }
+
+.analytics-days,.analytics-legend,.analytics-times,.analytics-numbers { display:flex; flex-wrap:wrap; gap:10px 20px; margin:16px 0; }
+.analytics-days button[aria-pressed="true"] { border-color:var(--green); color:var(--green); }
+.analytics-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:24px 0; }
+.analytics-totals > div { border:1px solid var(--line); padding:20px; }
+.analytics-totals strong { display:block; font-size:28px; color:#dceecf; }
+.analytics-totals span,.analytics-numbers,.analytics-times { font-size:13px; color:var(--muted); }
+.analytics-rows { display:grid; gap:16px; }
+.analytics-agent { min-width:0; padding:20px; }
+.analytics-heading { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+.analytics-heading strong { flex:1 1 260px; overflow-wrap:anywhere; }
+.analytics-heading > span { color:var(--muted); font-size:12px; }
+.analytics-heading > b { color:#c6f399; }
+.analytics-timebar { display:flex; height:14px; margin-top:18px; overflow:hidden; background:#15201c; }
+.analytics-timebar span { min-width:1px; }
+.time-model { background:#70b7ee; }.time-tools { background:#a98fe3; }.time-tests { background:#77c99a; }.time-idle { background:#f1b765; }.time-unknown { background:#748078; }
+.analytics-key { font-size:12px; padding:4px 8px; color:#07100c; }
+.analytics-times b { color:#deeadf; }.analytics-agent details { border-top:1px solid var(--line); padding-top:12px; overflow-wrap:anywhere; }
+@media(max-width:650px) { .analytics-totals { grid-template-columns:1fr; gap:8px; }.analytics-totals > div { padding:12px; }.analytics-agent { padding:14px; } }

@@ -487,7 +487,12 @@ function createReader(options = {}) {
     const file = value ? await safeFile(value.root, value.name) : null;
     return file && inside(await fs.realpath(root), file) ? file : null;
   }
-  return { root, snapshot, artifact };
+  // Internal only: retain log paths for accounting without exposing them in /api/state.
+  async function analyticsSnapshot() {
+    const warnings = [];
+    return { agents: await sessions(warnings), warnings };
+  }
+  return { root, snapshot, artifact, analyticsSnapshot };
 }
 
 module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows };
