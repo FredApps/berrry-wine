@@ -106,7 +106,7 @@ function agentSignal(a) {
 function stoppedAgentBanner() {
   const stopped=currentAgents().filter(a=>agentSignal(a).stopped);
   if(!stopped.length)return '';
-  return `<aside class="stopped-agents" role="status" aria-label="Stopped agents"><strong>■ ${stopped.length} agent${stopped.length===1?' has':'s have'} stopped with work remaining</strong>${stopped.map(a=>`<div><span><b>${escape(agentName(a))}</b> · ${escape(agentSignal(a).reason)}</span>${terminalLink(a)}<button data-agent="${escape(a.id)}">Inspect agent →</button></div>`).join('')}</aside>`;
+  return `<section class="stopped-agents" role="status" aria-label="Stopped agents"><strong>■ ${stopped.length} agent${stopped.length===1?' has':'s have'} stopped with work remaining</strong>${stopped.map(a=>`<div><span><b>${escape(agentName(a))}</b> · ${escape(agentSignal(a).reason)}</span>${terminalLink(a)}<button data-agent="${escape(a.id)}">Inspect agent →</button></div>`).join('')}</section>`;
 }
 function subagentSummary(a) {
   const children = state.agents.filter(child => child.parentAgentId === a.id && child.id !== a.id)
