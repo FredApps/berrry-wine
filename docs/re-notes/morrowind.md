@@ -868,3 +868,53 @@ locale. It is exact only while the app stays in the "C" locale. That holds
 for `Morrowind.exe`: its msvcrt imports include `_stricmp` but no `setlocale`
 (`tools/pe-imports.js --all --dll=msvcrt.dll`). A DLL it loads could still
 change the locale, and that path was not checked.
+
+## 2026-10-05: ordinary browser title reached; input qualification pending
+
+A headful, audio-enabled ordinary run on tested module
+`2638e876e6002d0e34cf7acba3d85ddbabb02069f559695f28fe6bad4620eb95`
+(source implementation `6604fb90`, subsequently integrated on main) reached the
+Bethesda movie and Morrowind title. The registered running instance exposed an
+actual 2,147,483,648-byte memory and owning guest Worker; presentation used WebGL.
+These are observed values, not an inference from the registry's `bigMemory` flag.
+
+The first harness attempt denied the required shared `msvcp60`, `msvcrt` and
+`comctl32` DLL URLs, then trapped at `0x4012e0`. That was an invalid reproduction,
+not evidence for an emulator fix. The corrected attempt loaded all four seeded/
+required DLLs including Bink and reached the title. A reviewed Bethesda movie
+received Escape for 200 ms. Later captures alternated between the rendered title
+and black frames; the run did not establish their cause.
+
+One normal pointer move/click requested `(319,247)` over New, then a separately
+reviewed 200 ms Enter did not leave the title. The pictured game cursor was near
+`(616,471)` within a 640×480 title drawn into a 1024×768 page. This is not enough to
+prove a viewport mapping bug: `lib/browser-input.js` maps CSS to logical canvas,
+`renderer-input.js` applies the exclusive presentation mapping, and
+`handleMouseMove` also accumulates relative DirectInput deltas per input memory.
+A game-owned cursor can therefore differ from the browser click position. The
+next ordinary route needs actual canvas/client/exclusive viewport and lock state
+alongside before/after cursor captures, rather than another guessed click or a
+forced guest cursor/text write. No character-generation or gameplay was reached.
+
+The runtime COM search also made HTTP probes for `quartz.dll`, `devenum.dll`, and
+`l3codecx.ax` under `binaries/dlls`, `binaries/plugins`, and `dlls`. Although the
+strict harness mistakenly returned 403, all three subsequently loaded via the
+existing app VFS fallback at `0x7ece0000`, `0x7ecb0000`, and `0x7ec90000`.
+Thus these probes do not establish missing filters or failed music initialization.
+The normal search order must remain intact: absent shared copies should return
+404, not be replaced with invented shared aliases to app-local copies.
+
+Prepared harness parity now inventories finite native names from the frozen DLL
+registry plus the declared native images/imports: 60 names, 22 present exact
+search paths, and 218 explicitly absent probes. Present bytes are hash-pinned;
+normal negative probes receive recorded 404s without poisoning the run, while
+unlisted paths remain refused. Native COM and LoadLibrary search paths and the
+VFS fallback remain the emulator's original behavior. Runtime closure is not a
+claim that all possible dynamic names have been observed.
+
+Local evidence: `scratch/new-game-morrowind-20261005/attempt2`, its
+`attempt2-classification.json`, and `runtime-dependency-closure.json`. Session
+63255 closed browser/server at 15:34:22.353 UTC with browser exit 0 and no pending
+streams; driver exit 1 retains the harness's negative-probe errors. No FPS, audio
+quality, or gameplay qualification is claimed. The subsequent helper is prepared
+only; it has not been run.
