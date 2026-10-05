@@ -132,3 +132,7 @@ ZIPs prepare Track 01 into a local `cd/` tree and retain the CUE plus all raw
 CD-audio tracks. The CLI attaches that CUE lazily through MCI, so launching the
 game does not load the soundtrack. GOG does not currently sell a Civilization
 II release, so there is no GOG package recipe to maintain yet.
+
+## Dungeons of Dredmor archived beta
+
+Fetch with `node tools/fetch-candidate-corpus.js --id=dungeons-of-dredmor`. This is the community-archived Windows Steam beta depot 98811 revision 8, not a demo. The local experimental selector `dungeons_of_dredmor` mounts its complete asset tree, including the original Steam DLL. No compatibility or Steam availability claim is made; the entry is excluded from the public desktop. See [provenance and static dependency notes](../../docs/re-notes/dungeons-of-dredmor.md).
