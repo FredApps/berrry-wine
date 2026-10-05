@@ -77,6 +77,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Over 1000 Games for Windows (Nodtronics CD) | [over1000games-shareware.md](over1000games-shareware.md) |
 | Pawn 3 | [pawn.md](pawn.md) |
 | Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |
+| Tomb Raider II demo (Venice) | [tomb-raider-2-demo.md](tomb-raider-2-demo.md) |
 | Tomb Raider III demo (India/Jungle) | [tomb-raider-3-demo.md](tomb-raider-3-demo.md) |
 | Total Annihilation demo | [total-annihilation.md](total-annihilation.md) |
 | The Elder Scrolls: Arena (GOG) | [elder-scrolls-arena-gog.md](elder-scrolls-arena-gog.md) |
