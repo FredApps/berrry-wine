@@ -283,27 +283,48 @@ check('spent time accumulates across invocations', () => {
 });
 
 // --- checkpointed stages -------------------------------------------------------
+// A small but real tree closure in both trees; the checkpoint itself is written
+// by the runner's own `checkpoint` phase, so the test cannot drift from it.
 function stageTree(W) {
   programs(W);
-  for (const t of ['base', 'cand']) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) {
-    write(path.join(W, t, 'tools/toyvm', fn + '.js'), `// ${t} ${fn}\n`);
+  for (const tr of ['base', 'cand']) {
+    for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) write(path.join(W, tr, 'tools/toyvm', fn + '.js'), `// ${tr} ${fn}\n`);
+    write(path.join(W, tr, 'lib/compile-wat.js'), `// ${tr} lib\n`);
+    write(path.join(W, tr, 'scratch/o/toyvm-brw/brw-bisect.js'), '// bisect\n');
   }
-  const sha = (fl) => require('crypto').createHash('sha256').update(fs.readFileSync(fl)).digest('hex');
-  const trees = [];
-  for (const t of ['base', 'cand']) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) trees.push(`${t}/${fn} ${sha(path.join(W, t, 'tools/toyvm', fn + '.js'))}`);
-  return { cand: 'v3j', patches: [], smoke: 0, programs: PROGS, trees, spentS: 10, at: 'fixture' };
+  const cp = plan('checkpoint', W);
+  assert.strictEqual(cp.code, 0, cp.out);
 }
 check('stage2 refuses to run without a stage1 checkpoint', () => {
-  const W = workdir('stage2-nocp'); stageTree(W);
+  const W = workdir('stage2-nocp'); programs(W);
   const r = plan('stage2', W);
   assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /stage2 needs a passed stage1/);
+  assert.match(r.journal, /SLOT\] stage2: \d+s this invocation \(cap 2400s/);   // default stage-2 cap
 });
 check('stage2 refuses when a tree file changed after stage1', () => {
-  const W = workdir('stage2-changed'); const cp = stageTree(W);
-  fs.writeFileSync(path.join(W, 'out/stage1.done.json'), JSON.stringify(cp));
-  write(path.join(W, 'cand/tools/toyvm/dos-loop.js'), '// edited after stage1\n');
+  const W = workdir('stage2-changed'); stageTree(W);
+  write(path.join(W, 'cand/lib/compile-wat.js'), '// edited after stage1\n');   // outside the old 4-file set
   const r = plan('stage2', W);
   assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /tree files changed since stage1/);
+});
+check('stage2 refuses a same-count substitution in the program list', () => {
+  const W = workdir('stage2-sublist'); stageTree(W);
+  write(path.join(W, 'programs.txt'), ['/demos/p0/P0.EXE', '/demos/p1/P1.EXE', '/demos/pX/PX.EXE'].join('\n') + '\n');
+  const r = plan('stage2', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /program list \(programs\.txt\) changed since stage1/);
+});
+check('stage2 refuses an added file in a tree closure', () => {
+  const W = workdir('stage2-added'); stageTree(W);
+  write(path.join(W, 'base/tools/toyvm/extra.js'), '// new\n');
+  const r = plan('stage2', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /tree files changed since stage1/);
+});
+check('INVOCATION_S bounds one invocation even with total budget left', () => {
+  const W = workdir('invocation-cap');
+  for (const tr of ['base', 'cand']) write(path.join(W, tr, 'test/test-toyvm-a.js'), exitWith(0));
+  const r = plan('tests', W, { SLOT_S: '7200', INVOCATION_S: '100' });   // P1 needs 300 s
+  assert.strictEqual(r.code, 7, r.out); assert.match(r.journal, /P1: slot deadline \(\d+s left/);
+  assert.match(r.journal, /SLOT\] tests: 100s this invocation \(cap 100s; 0s of 7200s already spent\)/);
 });
 
 // --- candidate completeness -------------------------------------------------

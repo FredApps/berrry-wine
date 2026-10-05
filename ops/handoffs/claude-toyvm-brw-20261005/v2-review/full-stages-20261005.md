@@ -4,13 +4,15 @@ Same pinned candidate stack as the passing smoke (95828542), base 2683a6e3:
 1. v2-v3-j-combined.patch     54de1b1368d0aeefc39916b4af2f506036d079af7f2504d5424c00be4d3e6f82
 2. v4-delta-on-combined.patch 4b00d26def9852864b62b93bbb513e4328500765120c7b0b9cf86ad83210949b
 3. smc-pure-forward-fix.patch b3371e2185dafad8399bfec7250805b1a9b9960e0791f7c063d17f6ddfd3c612
-Runner corpus-plan.js sha256 9aa742ed2f32f787ea713a0866623cb24ce9a52f6b14a3a16f3a8060d41df147; fixture tests corpus-plan.test.js c9968d986a902ca34bb8a3df52e0f2b8556570bd058fb174527ed3b979029325 (36/36).
+Runner corpus-plan.js sha256 b2eb63e4f79a0b7c9d66c39ef6a4d1bec3e52bdd77fb40fce4d79bc5658e2fc4; fixture tests corpus-plan.test.js (39/39).
 
 ## One deadline account
 
 `SLOT_S=5700` (95 min) is the budget for BOTH stages together. `$W/out/slot-spent.txt` accumulates the
 seconds each invocation actually ran; each invocation gets `SLOT_S - spent`. So the gap between the two
-grants is not charged, and the stages together can never exceed 95 min. `$W` persists between the
+grants is not charged, and the stages together can never exceed 95 min. Each invocation is ALSO
+capped on its own by `INVOCATION_S` (default 3300 s for `stage1`, 2400 s for `stage2`; root review
+~15:10Z), so stage 1 cannot spend the whole 95 minutes. `$W` persists between the
 stages (about 100 MB: both trees, the unpacked corpus, outputs).
 
 ## Stage 1: P0 prep, then P1 || P2, then a checkpoint
@@ -25,15 +27,17 @@ stages (about 100 MB: both trees, the unpacked corpus, outputs).
   failing on cand aborts.
 - P2 (concurrently): sweep-dos 8M over all 199 programs on both trees (SWEEP_S 3000 s cap), sweep-diff
   gate, and identity coverage of all 199 programs (a cut sweep is INCOMPLETE).
-- Writes `out/stage1.done.json` (candidate, patches, program count, sha256 of both trees' dos-loop,
-  run-dos, emit and compile, spent seconds).
+- Writes `out/stage1.done.json`: candidate, patches, program count, the exact sha256 of programs.txt,
+  and a digest of EVERY file in each tree's closure (all extracted files plus brw-bisect.js, path by
+  path; node_modules is the shared symlink), and the spent seconds.
 - Estimate (extrapolated from the smoke, unmeasured): P2 about 10 s per program at 8M, about 35 min per
   tree (trees in parallel); P1 about 5-15 min, overlapping. **Request a 55-minute slot.**
 
 ## Stage 2: P3, P4, P5, P6 on the stage-1 checkpoint
 
 The same command with `stage2`. It refuses (exit 13) without a stage-1 checkpoint, if the
-candidate/patches differ, if either tree's files changed, or if the program list changed.
+candidate/patches differ, if any file in either tree's closure changed or appeared, or if programs.txt
+changed in any way (a same-count substitution included).
 - P3: corpus-ab, 4 arms (l1, jit-early, jit-sepc, fold64) at 80M, witness recipe, 2 jobs per tree,
   796 rows per tree, identity coverage.
 - P4: --no-irq-schedule control at 8M, 199 rows per tree, exactly "0 of 199 l1 rows moved".
