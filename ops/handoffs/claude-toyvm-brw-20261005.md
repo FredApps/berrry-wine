@@ -514,3 +514,40 @@ so the region covering this loop there is probably a different one, with an exit
 region's billing or exit placement is the suspect. Next run (needs a slot): full jit-sepc with
 `--region-dump=DIR` to 90M, read the region whose span holds 0x423a-0x429d, and compare its
 charges and budget tests per branch with the interpreter's block transfers.
+
+## Phase 7b, 2026-10-05 11:02Z: region dump of full jit-sepc to 90M (root grant, 3 s)
+
+runs-20261005f/: full jit-sepc to 90M installs exactly the same 5 regions as K5
+([35959,36038,36117,17537,16954]); dump/region-0x423a.wat is the region covering the loop. **The
+"different region" correction above is wrong.** The region tests $steps at every branch it lowers,
+as the interpreter does. Equal dispatched AND equal `left` at a different cs:ip therefore leaves two
+explanations: (1) the arms take different paths through the loop, i.e. guest data already differs
+somewhere the 6M checkpoint hashes did not sample; or (2) a path whose charge differs from the
+interpreter's (e.g. the third jb's exit-always arm, or the clamp `mov_mi8` -1 placed inside the
+forward block). Next run: `--state-window=89155800:89160000` on L1 and jit-sepc (patched copy),
+then diff the register lines at equal dispatched.
+
+## Phase 7c, 2026-10-05 11:18Z: registers at every handback (root grant, private patched copy)
+
+runs-20261005g/{l1,sepc}.state (sha256 23ef7b52.../ded4eecd...), window 89155800-89160000.
+**At every dispatch count both arms share, the register file, flags AND cs:gip are identical**,
+including stops at 8:425f/423a/427c in both arms. So Phase 7's "632 budget stops at different
+instructions" is retracted: it came from the slice log's `cs:ip` field, which under a region does
+not name the guest instruction the state is at (brw-bisect's state log reads `gip`). There is no
+billing misalignment in this window.
+
+What is left is HOST-side. Guest state is equal through 89.16M, the SB delivery at 89155864 is equal,
+and the next SB date still differs (89255865 vs 89256120). The region arm makes far more early
+handbacks in the window (sepc 4818 with left >= 0 vs L1 38, from the 90M slice logs: the 0x423a
+third-jb exit to 8:4299 misses $jlook every iteration). Each early handback runs the host's
+audio/SB rungs. The off-schedule `sbDueNow` render stamps `audioAt` with the ODOMETER
+(`clockAt = this.dispatched` when !atStop), so the next SB date (`audioAt + sbInterval`, and
+machine.sbDue's DMA progress) depends on where the code cache handed back. That was the worker's
+Phase-5 hypothesis. Its strict `>` fixes equality only, not the odometer stamp.
+
+Next (needs a slot): log audioAt / lastSbIrq / machine.sbDue() / render clockAt per handback in
+89.15-89.26M for both arms (DosSession.prototype.step wrapper in brw-bisect.js, no source edit) to
+confirm. Candidate fix: under the schedule, an early handback renders no audio and leaves audioAt
+alone (render only at atStop, at clockAt = stopAt), with sbForced port cuts as the one exception.
+Also worth fixing separately: why $jlook misses 8:4299 on every iteration (a handback per pixel
+row costs speed).
