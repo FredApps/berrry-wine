@@ -695,7 +695,8 @@
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 2))))
 
   ;; Per-surface creation metadata, 16 bytes a slot:
-  ;;   +0  creation caps    +4  parent slot + 1    +8  billed vidmem bytes
+  ;;   +0 creation caps +4 parent slot+1 +8 billed vidmem bytes
+  ;;   +12 owned VB drawing-state guest heap pointer (0 until needed).
   (func $dx_surf_meta_ptr (param $entry_wa i32) (result i32)
     (i32.add (global.get $DX_SURF_META)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 4))))
@@ -996,6 +997,7 @@
   (func $dx_surf_state_reset (param $entry_wa i32)
     (if (local.get $entry_wa)
       (then
+        (call $vbdd_draw_state_reset (local.get $entry_wa))
         (call $dx_cursor_reset (local.get $entry_wa))
         (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32))
         (call $dx_surf_fmt_set (local.get $entry_wa) (i32.const 0))
@@ -1198,6 +1200,7 @@
     (local.set $type (i32.load (local.get $entry_wa)))
     (if (i32.eq (local.get $type) (i32.const 2))
       (then (call $dx_surf_note_write (local.get $entry_wa))))
+    (call $vbdd_draw_state_reset (local.get $entry_wa))
     ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
     (i32.store (local.get $entry_wa) (i32.const 0))
     (i32.store (call $dx_surf_owner_ptr (local.get $entry_wa)) (i32.const 0))
@@ -1547,26 +1550,9 @@
         (call $gs32 (local.get $arg2) (local.get $wrapper))))))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
   (func $handle_IVBDirectDraw7_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $native_obj i32) (local $entry i32) (local $slot i32)
-    (local $vb_vtbl i32) (local $wrapper i32)
-    (call $handle_IDirectDraw_CreateSurface
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (i32.const 0) (i32.const 0) (local.get $name_ptr))
-    (if (i32.and (i32.eqz (i32.load offset=0 (global.get $reg_base))) (i32.ne (local.get $arg2) (i32.const 0))) (then
-      (local.set $native_obj (call $gl32 (local.get $arg2)))
-      (if (local.get $native_obj) (then
-        (local.set $entry (call $dx_from_this (local.get $native_obj)))
-        (local.set $slot (call $dx_slot_of (local.get $entry)))
-        ;; Preserve native Surface2 slots 0-38 and append DX7VB's observed
-        ;; wrapper tail through SetClipper at slot 46.
-        (local.set $vb_vtbl (call $extend_com_vtable
-          (global.get $DX_VTBL_DDSURF2) (i32.const 39)
-          (i32.const 2585) (i32.const 47)))
-        (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-          (local.get $slot) (local.get $vb_vtbl)))
-        (call $gs32 (local.get $arg2) (local.get $wrapper))))))
-    ;; The native method includes pUnkOuter; DX7VB does not expose it.
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+    (i32.store (global.get $reg_base) (call $vbdd_create_surface (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   (func $handle_IVBDirectDraw7_SetCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectDraw_SetCooperativeLevel
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -13352,3 +13338,351 @@
     (else (call $gs32 (local.get $arg1) (call $host_get_ticks))))
   (i32.store offset=0 (global.get $reg_base) (local.get $hr))
   (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+;; VB Surface7 CreateSurface receives the expanded 232-byte VB descriptor.
+;; Publish only a fresh owned primary wrapper with the same 71-slot identity
+;; as CreateSurfaceFromFile; never retag a previously published native object.
+(func $vbdd_create_surface (param $owner i32) (param $desc i32) (param $out i32) (result i32)
+ (local $ga i32) (local $wa i32) (local $native i32) (local $obj i32)
+ (local $slot i32) (local $entry i32) (local $i i32) (local $hr i32)
+ (local $esp i32) (local $eax i32) (local $w i32) (local $h i32) (local $primary i32)
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (call $gs32 (local.get $out) (i32.const 0))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $desc) (i32.const 232))) (then (return (i32.const 0x80004003))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $owner) (i32.const 8))) (then (return (i32.const 0x80070057))))
+ (local.set $slot (call $gl32 (i32.add (local.get $owner) (i32.const 4))))
+ (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then (return (i32.const 0x80070057))))
+ (if (i32.ne (local.get $owner) (call $w2g (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8))))) (then (return (i32.const 0x80070057))))
+ (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+ (if (i32.or (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 33)) (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0))) (then (return (i32.const 0x80070057))))
+ (local.set $ga (call $heap_alloc (i32.const 360)))
+ (if (i32.eqz (local.get $ga)) (then (return (i32.const 0x8007000E))))
+ (local.set $wa (call $g2w (local.get $ga)))
+ (local.set $native (i32.add (local.get $wa) (i32.const 232)))
+ (loop $copy
+  (i32.store8 (i32.add (local.get $wa) (local.get $i)) (call $gl8 (i32.add (local.get $desc) (local.get $i))))
+  (local.set $i (i32.add (local.get $i) (i32.const 1))) (br_if $copy (i32.lt_u (local.get $i) (i32.const 232))))
+ (block $done
+  (local.set $hr (call $vbdd_desc_rgb_to_native (local.get $wa) (local.get $native))) (br_if $done (local.get $hr))
+  ;; Bounded plain offscreen or primary-only storage: no chains or foreign bits,
+  ;; padding override, non-RGB, or unchecked dimensions/allocation arithmetic.
+  (local.set $hr (i32.const 0x80004001))
+  (local.set $primary (i32.eq (i32.load offset=104 (local.get $native)) (i32.const 0x200)))
+  (if (i32.eqz (local.get $primary)) (then
+   (br_if $done (i32.and (i32.load offset=104 (local.get $native)) (i32.const 0xFFFFF7BF)))))
+  (br_if $done (i32.load offset=36 (local.get $native)))
+  (br_if $done (i32.and (i32.load offset=4 (local.get $native)) (i32.const 0xFFFFEFF8)))
+  (if (local.get $primary)
+   (then
+    ;; Match the real allocator: primary dimensions come from current process
+    ;; display state, not descriptor fields or an application-specific size.
+    (br_if $done (i32.ne (i32.load offset=4 (local.get $native)) (i32.const 1)))
+    (local.set $w (call $dx_display_w_get)) (local.set $h (call $dx_display_h_get)))
+   (else (local.set $w (i32.load offset=12 (local.get $native))) (local.set $h (i32.load offset=8 (local.get $native)))))
+  (br_if $done (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h))))
+  (br_if $done (i32.or (i32.gt_u (local.get $w) (i32.const 4096)) (i32.gt_u (local.get $h) (i32.const 4096))))
+  (if (i32.and (i32.load offset=4 (local.get $native)) (i32.const 0x1000)) (then
+   (local.set $i (i32.load offset=84 (local.get $native)))
+   (br_if $done (i32.eqz (i32.or (i32.eq (local.get $i) (i32.const 16)) (i32.or (i32.eq (local.get $i) (i32.const 24)) (i32.eq (local.get $i) (i32.const 32))))))))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=356 (local.get $wa) (i32.const 0))
+  (call $handle_IDirectDraw_CreateSurface (local.get $owner) (i32.add (local.get $ga) (i32.const 232)) (i32.add (local.get $ga) (i32.const 356)) (i32.const 0) (i32.const 0) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax))
+  (br_if $done (local.get $hr))
+  (local.set $obj (i32.load offset=356 (local.get $wa)))
+  (if (i32.or (i32.eqz (local.get $obj)) (i32.eqz (call $vbdd_surface_vtable))) (then
+   (local.set $hr (i32.const 0x80004005)) (br $done)))
+  (call $gs32 (local.get $obj) (call $vbdd_surface_vtable))
+  (call $gs32 (local.get $out) (local.get $obj)))
+ (if (i32.and (i32.ne (local.get $hr) (i32.const 0)) (i32.ne (local.get $obj) (i32.const 0))) (then (drop (call $dx_surface_release (local.get $obj)))))
+ (call $heap_free (local.get $ga)) (local.get $hr))
+
+;; Native DX7VB 73544b16 treats a zero RECT as NULL/full extent. RECT's four
+;; signed LONG fields are already native order; copy sparse guest fields into
+;; owned contiguous storage, never infer width/height from the field names.
+(func $vbdd_blt_rect (param $rect i32) (param $copy i32) (param $entry i32) (result i32)
+ (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+ (local.set $r (load.field DxObject width (local.get $entry)))
+ (local.set $b (load.field DxObject height (local.get $entry)))
+ (if (local.get $rect) (then
+  (local.set $l (call $gl32 (local.get $rect))) (local.set $t (call $gl32 (i32.add (local.get $rect) (i32.const 4))))
+  (if (i32.or (i32.or (local.get $l) (local.get $t)) (i32.or (call $gl32 (i32.add (local.get $rect) (i32.const 8))) (call $gl32 (i32.add (local.get $rect) (i32.const 12))))) (then
+   (local.set $r (call $gl32 (i32.add (local.get $rect) (i32.const 8)))) (local.set $b (call $gl32 (i32.add (local.get $rect) (i32.const 12))))))))
+ (if (i32.or (i32.or (i32.lt_s (local.get $l) (i32.const 0)) (i32.lt_s (local.get $t) (i32.const 0)))
+  (i32.or (i32.or (i32.le_s (local.get $r) (local.get $l)) (i32.le_s (local.get $b) (local.get $t)))
+   (i32.or (i32.gt_u (local.get $r) (load.field DxObject width (local.get $entry))) (i32.gt_u (local.get $b) (load.field DxObject height (local.get $entry))))))
+  (then (return (i32.const 0x80004001))))
+ (call $gs32 (local.get $copy) (local.get $l)) (call $gs32 (i32.add (local.get $copy) (i32.const 4)) (local.get $t))
+ (call $gs32 (i32.add (local.get $copy) (i32.const 8)) (local.get $r)) (call $gs32 (i32.add (local.get $copy) (i32.const 12)) (local.get $b)) (i32.const 0))
+
+(func $vbdd_blt (param $dst i32) (param $dr i32) (param $src i32) (param $sr i32) (param $flags i32) (param $out i32) (result i32)
+ (local $de i32) (local $se i32) (local $tmp i32) (local $esp i32) (local $eax i32) (local $hr i32)
+ (local.set $de (call $vbdd_surface_entry (local.get $dst))) (local.set $se (call $vbdd_surface_entry (local.get $src)))
+ (if (i32.or (i32.eqz (local.get $de)) (i32.eqz (local.get $se))) (then (return (i32.const 0x80070057))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (if (i32.and (i32.ne (local.get $dr) (i32.const 0)) (i32.eqz (call $vbdd_guest_span_mapped (local.get $dr) (i32.const 16)))) (then (return (i32.const 0x80004003))))
+ (if (i32.and (i32.ne (local.get $sr) (i32.const 0)) (i32.eqz (call $vbdd_guest_span_mapped (local.get $sr) (i32.const 16)))) (then (return (i32.const 0x80004003))))
+ ;; The Blt (not BltFx) ABI has no DDBLTFX. Support copy/WAIT only, same
+ ;; format. Explicit unsupported status is a drawing result, not COM success
+ ;; masquerading as completed drawing: original wrapper returns it via retval.
+ (local.set $hr (i32.const 0x80004001))
+ (block $done
+  (br_if $done (i32.and (local.get $flags) (i32.const 0xFEFFFFFF)))
+  (br_if $done (i32.ne (load.field DxObject bpp (local.get $de)) (load.field DxObject bpp (local.get $se))))
+  (br_if $done (i32.ne (call $dx_surf_fmt_get (local.get $de)) (call $dx_surf_fmt_get (local.get $se))))
+  (br_if $done (i32.eq (local.get $dst) (local.get $src)))
+  (local.set $tmp (call $heap_alloc (i32.const 64)))
+  (if (i32.eqz (local.get $tmp)) (then (local.set $hr (i32.const 0x8007000E)) (br $done)))
+  (local.set $hr (call $vbdd_blt_rect (local.get $dr) (i32.add (local.get $tmp) (i32.const 32)) (local.get $de))) (br_if $done (local.get $hr))
+  (local.set $hr (call $vbdd_blt_rect (local.get $sr) (i32.add (local.get $tmp) (i32.const 48)) (local.get $se))) (br_if $done (local.get $hr))
+  ;; Native Blt reads optional FX from ESP+24. Supply a private frame with
+  ;; NULL FX; never reinterpret caller statusOut as DDBLTFX or edit its stack.
+  (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (i32.const 0))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_Blt (local.get $dst) (i32.add (local.get $tmp) (i32.const 32)) (local.get $src) (i32.add (local.get $tmp) (i32.const 48)) (local.get $flags) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
+ (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
+ (call $gs32 (local.get $out) (local.get $hr)) (i32.const 0))
+(func $handle_VBImage_Blt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_blt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+  (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+
+;; Native73544d21 unwraps the optional VB clipper and returns native SetClipper's
+;; HRESULT directly (unlike Blt's statusOut). Validate only allocated wrappers;
+;; do not interpret a caller-fabricated pair of DWORDs as an owned clipper.
+(func $vbdd_clipper_entry (param $obj i32) (result i32)
+ (local $offset i32) (local $wa i32) (local $slot i32) (local $entry i32)
+ (local.set $offset (i32.sub (local.get $obj) (call $w2g (global.get $COM_WRAPPERS))))
+ (if (i32.lt_u (local.get $offset) (global.get $COM_WRAPPERS_SIZE))
+  (then (local.set $wa (i32.add (global.get $COM_WRAPPERS) (local.get $offset))))
+  (else
+   (local.set $offset (i32.sub (local.get $obj) (call $w2g (global.get $COM_WRAPPERS_AUX))))
+   (if (i32.ge_u (local.get $offset) (global.get $COM_WRAPPERS_AUX_SIZE)) (then (return (i32.const 0))))
+   (if (i32.ge_u (i32.shr_u (local.get $offset) (i32.const 3)) (i32.load (global.get $COM_AUX_NEXT_SHARED))) (then (return (i32.const 0))))
+   (local.set $wa (i32.add (global.get $COM_WRAPPERS_AUX) (local.get $offset)))))
+ (if (i32.and (local.get $offset) (i32.const 7)) (then (return (i32.const 0))))
+ (if (i32.eqz (i32.load (local.get $wa))) (then (return (i32.const 0))))
+ (local.set $slot (i32.load offset=4 (local.get $wa)))
+ (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then (return (i32.const 0))))
+ (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+ (if (i32.or (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 10))
+  (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0))) (then (return (i32.const 0))))
+ (local.get $entry))
+(func $handle_VBImage_SetClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (if (i32.or (i32.eqz (call $vbdd_surface_entry (local.get $arg0)))
+   (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.eqz (call $vbdd_clipper_entry (local.get $arg1)))))
+  (then
+   (i32.store (global.get $reg_base) (i32.const 0x88760082))
+   (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+  (else (call $handle_IDirectDrawSurface_SetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))))
+
+;; Original DX7VB7354329b: raw packed color -> DDBLTFX.dwFillColor at80,
+;; zero RECT -> NULL, native Blt(COLORFILL|WAIT,NULL source), native result
+;; -> statusOut, COM S_OK. Color is not an OLE_COLOR/RGB conversion request.
+(func $vbdd_color_fill (param $obj i32) (param $rect i32) (param $color i32) (param $out i32) (result i32)
+ (local $entry i32) (local $tmp i32) (local $fx i32) (local $hr i32) (local $esp i32) (local $eax i32) (local $bpp i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (if (i32.and (i32.ne (local.get $rect) (i32.const 0)) (i32.eqz (call $vbdd_guest_span_mapped (local.get $rect) (i32.const 16)))) (then (return (i32.const 0x80004003))))
+ (local.set $hr (i32.const 0x80004001))
+ (block $done
+  (local.set $bpp (load.field DxObject bpp (local.get $entry)))
+  ;; Existing native fill has byte/word/dword paths, but its 24bpp path is not
+  ;; a three-byte fill. Do not falsely support that format through this ABI.
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  (local.set $tmp (call $heap_alloc (i32.const 148)))
+  (if (i32.eqz (local.get $tmp)) (then (local.set $hr (i32.const 0x8007000E)) (br $done)))
+  (local.set $hr (call $vbdd_blt_rect (local.get $rect) (i32.add (local.get $tmp) (i32.const 32)) (local.get $entry)))
+  (br_if $done (local.get $hr))
+  (local.set $fx (i32.add (local.get $tmp) (i32.const 48)))
+  (call $zero_memory (call $g2w (local.get $fx)) (i32.const 100))
+  (call $gs32 (local.get $fx) (i32.const 100))
+  (call $gs32 (i32.add (local.get $fx) (i32.const 80)) (local.get $color))
+  (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (local.get $fx))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_Blt (local.get $obj) (i32.add (local.get $tmp) (i32.const 32)) (i32.const 0) (i32.const 0) (i32.const 0x01000400) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
+ (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
+ (call $gs32 (local.get $out) (local.get $hr)) (i32.const 0))
+(func $handle_VBImage_BltColorFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_color_fill (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+
+;; DX7VB73543135 forwards SetColorKey(flags,key) unchanged to native slot29
+;; and returns native HRESULT directly. Only SRCBLT single-key is supported
+;; here: native storage/consumer has one low packed key, not ranges/dest keys.
+(func $handle_VBImage_SetColorKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (local $entry i32) (local $hr i32) (local $bpp i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $arg0)))
+ (block $done
+  (local.set $hr (i32.const 0x88760082))
+  (br_if $done (i32.eqz (local.get $entry)))
+  (local.set $hr (i32.const 0x80004001))
+  (br_if $done (i32.ne (local.get $arg1) (i32.const 8)))
+  (local.set $bpp (load.field DxObject bpp (local.get $entry)))
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  ;; NULL removes the source key. The old native setter dereferences NULL
+  ;; and sets key0 instead; avoid claiming that behavior implements removal.
+  (if (i32.eqz (local.get $arg2)) (then
+   (call $d3dim_worker_fence)
+   (store.field DxObject flags (local.get $entry) (i32.and (load.field DxObject flags (local.get $entry)) (i32.const -257)))
+   (store.field DxObject misc2 (local.get $entry) (i32.const 0))
+   (local.set $hr (i32.const 0)) (br $done)))
+  (local.set $hr (i32.const 0x80004003))
+  (br_if $done (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg2) (i32.const 8))))
+  ;; No COLORSPACE flag: high field is not a range; native masks the low
+  ;; packed value to16bpp. It also owns fencing and the original ESP+16 ABI.
+  (call $handle_IDirectDrawSurface_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  (return))
+ (i32.store (global.get $reg_base) (local.get $hr))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+;; DX7VB735432ff: NULL source/RECT is COM E_INVALIDARG; zero-valued RECT
+;; means full source. Native drawing result is statusOut, COM is S_OK.
+;; Unlike the shared native helper's safety clipping, this front door rejects
+;; OOB with DDERR_INVALIDRECT: BltFast is documented not to clip.
+(func $vbdd_blt_fast (param $dst i32) (param $x i32) (param $y i32) (param $src i32) (param $rect i32) (param $flags i32) (param $out i32) (result i32)
+ (local $de i32) (local $se i32) (local $tmp i32) (local $hr i32) (local $esp i32) (local $eax i32) (local $bpp i32) (local $rw i32) (local $rh i32)
+ (local.set $de (call $vbdd_surface_entry (local.get $dst))) (local.set $se (call $vbdd_surface_entry (local.get $src)))
+ (if (i32.or (i32.or (i32.eqz (local.get $de)) (i32.eqz (local.get $se))) (i32.eqz (local.get $rect))) (then (return (i32.const 0x80070057))))
+ (if (i32.or (i32.eqz (call $vbdd_guest_span_mapped (local.get $rect) (i32.const 16))) (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4)))) (then (return (i32.const 0x80004003))))
+ (local.set $hr (i32.const 0x80004001))
+ (block $done
+  (br_if $done (i32.and (local.get $flags) (i32.const -34))) ;; copy/WAIT/source-key only
+  (local.set $bpp (load.field DxObject bpp (local.get $de)))
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  (br_if $done (i32.ne (local.get $bpp) (load.field DxObject bpp (local.get $se))))
+  (br_if $done (i32.ne (call $dx_surf_fmt_get (local.get $de)) (call $dx_surf_fmt_get (local.get $se))))
+  (br_if $done (i32.eq (local.get $dst) (local.get $src)))
+  (br_if $done (call $dx_surface_clipper_get (local.get $de)))
+  (local.set $hr (i32.const 0x887600D7)) ;; DDERR_NOCOLORKEY
+  (br_if $done (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))
+   (i32.eqz (i32.and (load.field DxObject flags (local.get $se)) (i32.const 0x100)))))
+  (local.set $tmp (call $heap_alloc (i32.const 48)))
+  (local.set $hr (i32.const 0x8007000E)) (br_if $done (i32.eqz (local.get $tmp)))
+  (local.set $hr (i32.const 0x88760096)) ;; DDERR_INVALIDRECT
+  (br_if $done (call $vbdd_blt_rect (local.get $rect) (i32.add (local.get $tmp) (i32.const 32)) (local.get $se)))
+  (br_if $done (i32.ge_u (local.get $x) (load.field DxObject width (local.get $de))))
+  (br_if $done (i32.ge_u (local.get $y) (load.field DxObject height (local.get $de))))
+  (local.set $rw (i32.sub (call $gl32 (i32.add (local.get $tmp) (i32.const 40))) (call $gl32 (i32.add (local.get $tmp) (i32.const 32)))))
+  (local.set $rh (i32.sub (call $gl32 (i32.add (local.get $tmp) (i32.const 44))) (call $gl32 (i32.add (local.get $tmp) (i32.const 36)))))
+  (br_if $done (i32.gt_u (local.get $rw) (i32.sub (load.field DxObject width (local.get $de)) (local.get $x))))
+  (br_if $done (i32.gt_u (local.get $rh) (i32.sub (load.field DxObject height (local.get $de)) (local.get $y))))
+  (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (local.get $flags))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_BltFast (local.get $dst) (local.get $x) (local.get $y) (local.get $src) (i32.add (local.get $tmp) (i32.const 32)) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
+ (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
+ (call $gs32 (local.get $out) (local.get $hr)) (i32.const 0))
+(func $handle_VBImage_BltFast (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_blt_fast (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+  (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+  (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+
+
+;; DX7VB73544f69: persist raw COLORREF before CreatePen; replace/delete the
+;; previous owned pen only after allocation succeeds. Constructor73543c3e
+;; defaults PS_SOLID=0, width=1, foreground=0. Style/width setters remain
+;; E_NOTIMPL; no unsupported state can silently alter these defaults.
+;; The previously unused +12 word in declared16-byte DX_SURF_META owns an
+;; eight-byte heap state {raw COLORREF,pen}. No global layout/capacity grows.
+;; Native creation already zeros all16bytes before publication. State is
+;; shared by every interface view and freed on final surface retirement.
+(func $vbdd_draw_state_ptr (param $entry i32) (result i32)
+ (local $guest i32)
+ (local.set $guest (i32.load offset=12 (call $dx_surf_meta_ptr (local.get $entry))))
+ (if (result i32) (local.get $guest) (then (call $g2w (local.get $guest))) (else (i32.const 0))))
+(func $vbdd_draw_state_ensure (param $entry i32) (result i32)
+ (local $state i32) (local $guest i32)
+ (local.set $state (call $vbdd_draw_state_ptr (local.get $entry)))
+ (if (local.get $state) (then (return (local.get $state))))
+ (local.set $guest (call $heap_alloc (i32.const 8)))
+ (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+ (local.set $state (call $g2w (local.get $guest)))
+ (call $zero_memory (local.get $state) (i32.const 8))
+ (i32.store offset=12 (call $dx_surf_meta_ptr (local.get $entry)) (local.get $guest))
+ (local.get $state))
+(func $vbdd_draw_state_reset (param $entry i32)
+ (local $state i32) (local $pen i32) (local $guest i32)
+ (local.set $guest (i32.load offset=12 (call $dx_surf_meta_ptr (local.get $entry))))
+ (if (i32.eqz (local.get $guest)) (then (return)))
+ (i32.store offset=12 (call $dx_surf_meta_ptr (local.get $entry)) (i32.const 0))
+ (local.set $state (call $g2w (local.get $guest)))
+ (local.set $pen (i32.load offset=4 (local.get $state)))
+ (if (local.get $pen) (then (drop (call $gdi_object_delete_full (local.get $pen)))))
+ (call $heap_free (local.get $guest)))
+(func $vbdd_set_fore_color (param $obj i32) (param $color i32) (result i32)
+ (local $entry i32) (local $state i32) (local $old i32) (local $pen i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (local.set $state (call $vbdd_draw_state_ensure (local.get $entry)))
+ (if (i32.eqz (local.get $state)) (then (return (i32.const 0x8007000E))))
+ (i32.store (local.get $state) (local.get $color))
+ (local.set $pen (call $gdi_object_alloc (i32.const 1) (i32.const 0) (i32.const 1) (local.get $color) (i32.const 0)))
+ (if (i32.eqz (local.get $pen)) (then (return (i32.const 0x80070057))))
+ (local.set $old (i32.load offset=4 (local.get $state)))
+ (if (local.get $old) (then (drop (call $gdi_object_delete_full (local.get $old)))))
+ (i32.store offset=4 (local.get $state) (local.get $pen))
+ (i32.const 0))
+(func $handle_VBImage_SetForeColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_set_fore_color (local.get $arg0) (local.get $arg1)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+;; Native DX7VB73545219 DrawText: counted BSTR -> ExtTextOutW, default
+;; transparent stock-font DC and persistent COLORREF. Low16 updateCP toggles
+;; TA_UPDATECP. Native ignores raster BOOL and ReleaseDC HRESULT: S_OK alone
+;; never proves pixels. Custom font/background setters remain unsupported.
+(func $vbdd_draw_text (param $obj i32) (param $x i32) (param $y i32) (param $bstr i32) (param $update i32) (result i32)
+ (local $entry i32) (local $bytes i32) (local $count i32) (local $text i32)
+ (local $tmp i32) (local $esp i32) (local $eax i32) (local $hr i32) (local $hdc i32) (local $align i32)
+ (if (i32.eqz (local.get $bstr)) (then (return (i32.const 0x80070057))))
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (if (i32.lt_u (local.get $bstr) (i32.const 4)) (then (return (i32.const 0x80004003))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (i32.sub (local.get $bstr) (i32.const 4)) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (local.set $bytes (call $gl32 (i32.sub (local.get $bstr) (i32.const 4))))
+ (local.set $count (i32.shr_u (local.get $bytes) (i32.const 1)))
+ ;; The actual GDI rasterizer accepts at most65536 UTF16 units. Reject the
+ ;; unsupported larger contract before any DC/pixel change, rather than
+ ;; silently making the rasterizer's early no-op look like implemented text.
+ (if (i32.gt_u (local.get $count) (i32.const 65536)) (then (return (i32.const 0x80004001))))
+ (local.set $bytes (i32.shl (local.get $count) (i32.const 1)))
+ (if (local.get $bytes) (then
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $bstr) (local.get $bytes))) (then (return (i32.const 0x80004003))))
+  (local.set $text (call $guest_span_in (local.get $bstr) (local.get $bytes)))
+  (if (i32.eqz (local.get $text)) (then (return (i32.const 0x8007000E))))))
+ (local.set $hr (i32.const 0x8007000E))
+ (local.set $tmp (call $heap_alloc (i32.const 16)))
+ (if (local.get $tmp) (then
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_GetDC (local.get $obj) (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (if (i32.ge_s (local.get $hr) (i32.const 0)) (then
+   (local.set $hdc (call $gl32 (local.get $tmp)))
+   (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+   (drop (call $gdi_native_set_text_color (local.get $hdc) (if (result i32) (call $vbdd_draw_state_ptr (local.get $entry)) (then (i32.load (call $vbdd_draw_state_ptr (local.get $entry)))) (else (i32.const 0)))))
+   (local.set $align (call $gdi_native_get_text_align (local.get $hdc)))
+   (drop (call $gdi_native_set_text_align (local.get $hdc)
+    (i32.or (i32.and (local.get $align) (i32.const -2)) (i32.ne (i32.and (local.get $update) (i32.const 65535)) (i32.const 0)))))
+   (drop (call $gdi_native_ext_text_out (local.get $hdc) (local.get $x) (local.get $y) (i32.const 0) (i32.const 0) (local.get $text) (local.get $count) (i32.const 0) (i32.const 1)))
+   (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+   (call $handle_IDirectDrawSurface_ReleaseDC (local.get $obj) (local.get $hdc) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+   (local.set $hr (i32.const 0))))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax))
+  (call $heap_free (local.get $tmp))))
+ (if (local.get $text) (then (call $guest_span_release (local.get $text) (local.get $bytes))))
+ (local.get $hr))
+(func $handle_VBImage_DrawText (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_draw_text (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))

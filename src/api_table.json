@@ -33541,25 +33541,25 @@
     "id": 3962,
     "name": "IVBImageSurface7_Blt",
     "nargs": 6,
-    "stub": { "pop": 28, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1132678132
+    "hash": 1132678132,
+    "handler": "VBImage_Blt"
   },
   {
     "id": 3963,
     "name": "IVBImageSurface7_BltColorFill",
     "nargs": 4,
-    "stub": { "pop": 20, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1926458746
+    "hash": 1926458746,
+    "handler": "VBImage_BltColorFill"
   },
   {
     "id": 3964,
     "name": "IVBImageSurface7_BltFast",
     "nargs": 7,
-    "stub": { "pop": 32, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2728014834
+    "hash": 2728014834,
+    "handler": "VBImage_BltFast"
   },
   {
     "id": 3965,
@@ -33637,9 +33637,9 @@
     "id": 3974,
     "name": "IVBImageSurface7_DrawText",
     "nargs": 5,
-    "stub": { "pop": 24, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 352336527
+    "hash": 352336527,
+    "handler": "VBImage_DrawText"
   },
   {
     "id": 3975,
@@ -33861,17 +33861,17 @@
     "id": 4002,
     "name": "IVBImageSurface7_SetClipper",
     "nargs": 2,
-    "stub": { "pop": 12, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 412866071
+    "hash": 412866071,
+    "handler": "VBImage_SetClipper"
   },
   {
     "id": 4003,
     "name": "IVBImageSurface7_SetColorKey",
     "nargs": 3,
-    "stub": { "pop": 16, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2615454496
+    "hash": 2615454496,
+    "handler": "VBImage_SetColorKey"
   },
   {
     "id": 4004,
@@ -33925,9 +33925,9 @@
     "id": 4010,
     "name": "IVBImageSurface7_SetForeColor",
     "nargs": 2,
-    "stub": { "pop": 12, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2326229631
+    "hash": 2326229631,
+    "handler": "VBImage_SetForeColor"
   },
   {
     "id": 4011,
