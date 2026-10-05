@@ -5568,25 +5568,28 @@
             (else (i32.const 0x80070057)))))) ;; DDERR_INVALIDPARAMS
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; GetCaps(this, lpDDSCaps)
+  ;; GetCaps(this, lpDDSCaps): legacy Surface1/2/3 DDSCAPS is one dword.
+  ;; Report the same allocation metadata as GetSurfaceDesc. Synthesizing caps
+  ;; from primary/back/offscreen roles discarded VIDEOMEMORY and made SDL
+  ;; reject successful hardware-surface creation as "No room in video memory".
   (func $handle_IDirectDrawSurface_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $flags i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $flags (load.field DxObject flags (local.get $entry)))
-    ;; Write DDSCAPS.dwCaps
-    (if (i32.and (local.get $flags) (i32.const 1))
-      (then
-        ;; A primary created as FLIP|COMPLEX keeps its attached back buffer in
-        ;; misc0. Applications such as Worms 2 query caps/desc before asking
-        ;; for the attachment, so preserve those creation-time capabilities.
-        (call $gs32 (local.get $arg1)
-          (select (i32.const 0x218) (i32.const 0x200)
-            (i32.ne (load.field DxObject misc0 (local.get $entry)) (i32.const 0)))))
+    (local $entry i32) (local $hr i32)
+    (if (i32.eqz (call $ddraw_surface_live (local.get $arg0)))
+      (then (local.set $hr (i32.const 0x88760082))) ;; DDERR_INVALIDOBJECT
       (else
-        (if (i32.and (local.get $flags) (i32.const 2))
-          (then (call $gs32 (local.get $arg1) (i32.const 0x1C))) ;; BACKBUFFER|COMPLEX|FLIP
-          (else (call $gs32 (local.get $arg1) (i32.const 0x840)))))) ;; OFFSCREEN|SYSTEMMEMORY
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        ;; Four bytes cross at most one guest page boundary. Check both ends
+        ;; without raising a guest access fault, then gs32 handles split pages.
+        (if (i32.or
+              (i32.or (i32.eqz (local.get $arg1))
+                (i32.gt_u (local.get $arg1) (i32.const -4)))
+              (i32.or (i32.eqz (call $guest_addr_mapped (local.get $arg1)))
+                (i32.eqz (call $guest_addr_mapped (i32.add (local.get $arg1) (i32.const 3))))))
+          (then (local.set $hr (i32.const 0x80070057))) ;; DDERR_INVALIDPARAMS
+          (else
+            (local.set $entry (call $dx_from_this (local.get $arg0)))
+            (call $gs32 (local.get $arg1)
+              (i32.load (call $dx_surf_meta_ptr (local.get $entry))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; GetClipper(this, lplpDDClipper) — return an independently owned COM
