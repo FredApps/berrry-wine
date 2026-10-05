@@ -366,6 +366,20 @@ text cannot promote an image. This records a review assertion, not automatic sce
 recognition or proof of controls/FPS. Without that metadata, ordinary captures
 remain visible without the gameplay badge.
 
+### Agent rows on Overview and Agents
+
+Agents are one full-width column. Each agent is exactly two text lines: line 1
+provider, short session id, name (task title, else the task ID named in its
+prompt), status word and last-activity age; line 2 the decision needed, else the
+active task's `Next:`, else `Latest:` (the session's last assistant text), else
+"No result or next step recorded". Each subagent (`parentAgentId`) is the same two
+lines under its parent; three are shown, the rest behind "Show N more". Status
+words are observations: "Quiet · check session" after 15 minutes without session
+activity, "Turn ended" when the log is idle; the age is activity, never progress.
+Process, tokens, evidence previews and timestamps are in the agent detail (▸).
+A current subagent keeps its parent row current; search matches subagents too.
+On phones lines wrap instead of truncating.
+
 ### Visuals on Overview and Agents
 
 Within each category the EXE corpus prioritizes candidates linked to running

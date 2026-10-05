@@ -60,6 +60,29 @@ Source `[SRC]` and one read-only `/api/state` `[API]` (4.3 MB, 12 agents, 333 ru
 - Real tree (own server 8197): rev 16f764ad, dirty (196 tracked files), wasm f40d4ca33822; pinned
   nfs2_demo link 200, wrong pin 409, snood 409 listing its two missing files.
 
+### 3a. Cherry-pick of 63a248a6 (dependency)
+
+`255aeab6` = `git cherry-pick -x 63a248a6` ("Show subagent summaries on parent dashboard cards",
+author Codex, from `origin/ops/subagent-summaries-20261004`, which ops-dashboard is integrating).
+Patch identical (4 files, +48/−2); the only conflict was both sides appending to the end of
+`style.css`, resolved by keeping both blocks. Integrate in order, or drop together with commit 3.
+
+### 3. Agents: one column, two lines (DASH-GAPS-AGENTS-2LINE) — depends on 3a
+
+- `.agent-list` is one full-width column everywhere. `agentCard` is now a two-line row: line 1
+  provider · short id · name · status word · `active Nm ago` (titled "activity is not proof of
+  progress") · Terminal · ▸; line 2 decision reason / `Next:` / `Latest:` / "No result or next step
+  recorded". Subagents: same two lines nested under the parent, three visible + "Show N more".
+  Process, previews, token/timestamp meta and the old subagent block stay in the agent detail
+  (which also gains Latest result and Parent session fields).
+- Names: task title, else the task ID in the session prompt (`task CLAUDE-…`), else the title.
+- A current subagent pulls its parent row in; parents are never duplicated; search matches children.
+- Tests: new `ops/agents-view.test.js` (2): exactly 2 lines per agent and per subagent, nesting,
+  collapse after 3, escaping, quiet-session wording, no process/preview/meta rows, single-column CSS,
+  overview parent pull-in, search on children. Shared vm harness moved to `ops/test-app-vm.js`.
+- Live state rendered through the new view (no browser): 3 top-level rows (Codex coordinator with
+  3 children, Claude coordinator with 6, one history) — every row two lines.
+
 ## Tests
 
 `node --test ops/<file>.test.js` per file in the worktree (node_modules symlinked from the shared
