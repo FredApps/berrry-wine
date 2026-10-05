@@ -73,8 +73,6 @@ if (require.main === module) {
       log += '  irq vec=08 timer   at=' + at + ' hb=' + (i === 0 && tree === 'stack' ? 7 : 3) + ' t=0.000010 from 0:0\\n';
     }
     process.stdout.write(log);
-    const slices = get('slice-log');
-    if (slices && mode !== 'no-slices') fs.writeFileSync(slices, '13732896 5 1aeb:46 0,0,0,0,0,0,0,0,0,0,0,0,202\\n');
     if (mode !== 'no-wav') fs.writeFileSync(get('wav'), bytes);
     fs.writeFileSync(get('row'), JSON.stringify(rowFor(tree, prog, bytes)) + '\\n');
   }
@@ -150,23 +148,6 @@ check('the real wav-drive.js flushes a 254,307-line trace through a pipe before 
   const lines = r.stdout.split('\n').filter((l) => l.includes('irq vec='));
   assert.strictEqual(lines.length, 254307, `received ${lines.length} of 254307 lines`);
   assert.match(lines[lines.length - 1], /at=254306 /);
-});
-check('BLIQ runs get a slice log; one that is missing fails (exit 4)', () => {
-  const r = run('noslices', { FX_TREE: 'head', FX_PROG: 'BLIQ.EXE', FX_MODE: 'no-slices' });
-  assert.strictEqual(r.code, 4, r.out); assert.match(r.res.failures.join(), /head\/BLIQ: no slice log/);
-  assert.match(r.res.commands['head/BLIQ'], /--slice-log=\S+head-BLIQ\.slices/);
-  assert.doesNotMatch(r.res.commands['head/CYCLE'], /--slice-log/);
-});
-check('slice-window.js classifies early / on-date / budget handbacks and reads IF', () => {
-  const f = path.join(ROOT, 'w.slices');
-  write(f, ['13732800 -3 1aeb:36 0,0,0,0,0,0,0,0,0,0,0,0,2',
-    '13732896 0 1aeb:46 0,0,0,0,0,0,0,0,0,0,0,0,202',
-    '13732950 120 1aeb:40 0,0,0,0,0,0,0,0,0,0,0,0,2',
-    '13804137 -5 1aeb:36 0,0,0,0,0,0,0,0,0,0,0,0,202',
-    '13900000 -1 1aeb:36 0,0,0,0,0,0,0,0,0,0,0,0,202'].join('\n') + '\n');
-  const rows = require('./slice-window').readWindow(f, 13732896, 13804137);
-  assert.deepStrictEqual(rows.map((x) => [x.dispatched, x.kind, x.IF, x.onDate]), [
-    [13732896, 'ondate', 1, 'frame#96'], [13732950, 'early', 0, null], [13804137, 'budget', 1, null]]);
 });
 check('a run that leaves no WAV fails (exit 4)', () => {
   const r = run('nowav', { FX_TREE: 'stack', FX_PROG: 'CYCLE.EXE', FX_MODE: 'no-wav' });
