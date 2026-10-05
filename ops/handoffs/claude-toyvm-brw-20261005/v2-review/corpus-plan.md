@@ -42,29 +42,42 @@ below 300 MB.
 
 ## Phases
 
-**Not schedulable yet.** The scheduled A/B is `CAND=v3j`: v2 + the v3 delta + the jmp_syn
-budget-test fix (cause 2 of BRW, confirmed by the synthetic regression). A reviewable fix-J
-candidate now exists, unapplied and unrun: `../jmp-syn-j/jmp-syn-j.patch`, sha256
-`7f8a7275d3b8a234e2fc8f1f23930e74426cddc30316fbfaecbb11ab65412239`, with `--jmp-syn-budget-test`
-restoring HEAD exactly. Before this corpus run: (1) the short J A/B in that README (synthetic
-spec on HEAD / HEAD+J / HEAD+J+flag, plus region-live and install-clock with and without the
-flag) must pass; (2) the patch must be re-based onto v2+v3, since both touch toyvm and it was cut
-against HEAD; (3) J versus the region-only variant R is still a user decision, and nothing here
-promotes either. `all` refuses any other CAND (exit 8), and `prep`
-refuses `v3j` without `JMPSYN=<patch>` and a matching `JMPSYN_SHA` (exit 8). It also refuses a
-candidate whose dos-loop.js or emit.js came out unpatched.
+**Candidate: the BRW stack (`CAND=stack`).** BRW reached L1/jit-sepc parity (frame 4dbd3ff0, same
+full-state hash and dispatch count, 0 of 9871 interrupt deliveries differing) with these three
+patches applied in order to HEAD (`../jmp-syn-j/full-20261005/summary.md`). All are unapplied
+candidates; none is promoted, and J versus the region-only variant, the L1 baseline change
+(a066bf27 -> 4dbd3ff0) and the SMC fix are user decisions:
+1. `../jmp-syn-j/v2-v3-j-combined.patch` `54de1b1368d0aeefc39916b4af2f506036d079af7f2504d5424c00be4d3e6f82`
+   (v2 + v3 delta + fix J)
+2. `../jmp-syn-j/v4-delta-on-combined.patch` `4b00d26def9852864b62b93bbb513e4328500765120c7b0b9cf86ad83210949b`
+3. `../jmp-syn-j/smc-pure-forward-fix.patch` `b3371e2185dafad8399bfec7250805b1a9b9960e0791f7c063d17f6ddfd3c612`
 
-Runner contract (root review 12:29Z, all enforced and fixture-tested by `corpus-plan.test.js`,
-18/18 passing; stub tools only, no corpus run):
-- Every gate EXITS rather than only logging: 3 test gate, 4 sweep gate, 5 arms gate, 6 control gate.
+`all` requires `CAND=stack` with `PATCHES` (or the older `CAND=v3j`); `prep` refuses a missing or
+mis-hashed patch, and a candidate whose dos-loop.js or emit.js came out unpatched (exit 8).
+The same-block forward-SMC defect (`../jmp-syn-j/repro2-20261005`) is NOT addressed by this stack
+and is tracked separately; BRW parity does not close it.
+
+Runner contract (root reviews 12:29Z and 116210a7; all enforced and fixture-tested by
+`corpus-plan.test.js`, 26/26 passing with stub tools, no corpus run):
+- Every gate EXITS rather than only logging: 3 test gate, 4 sweep gate, 5 arms gate, 6 control
+  gate, 9 BRW parity gate.
 - Every child's exit code is checked (prep's tar/patch/bundle/unpack/smoke, the sweep, corpus-ab,
   the compares, BRW, nudge). A child that cannot start resolves 127 and aborts.
-- P1 aborts on an empty or mismatched suite.
-- P4 needs exactly "0 of N l1 rows moved" with N > 0 and a clean compare.
+- Process hygiene: every child runs in its own process group. A timeout signals the group (SIGKILL
+  after 5 s), and any abort -- including a gate in P2 while P1 still runs, or a signal to the
+  runner -- kills every live group first. Fixture-tested: a sibling suite's grandchild and a
+  timed-out child's grandchild are both gone afterwards.
+- Coverage: P2 (sweep rows per tree), P3 (4 arms per program) and P4 (1 row per program) must cover
+  the whole program list; otherwise exit 11 INCOMPLETE, even when every compared row agrees.
+- P5: the candidate's L1 and jit-sepc interrupt lists (vec, src, at, cs:ip; `hb=` ignored) and
+  frames and dispatch counts must be identical, else exit 9; the base tree is informational.
+- P1 aborts on an empty or mismatched suite. P4 needs exactly "0 of N l1 rows moved" with N > 0.
 - One slot deadline (`SLOT_S`, persisted in `$W/out/slot-start.txt`) caps every child's timeout
   and is checked before each phase, including phases run one at a time (exit 7).
 
-Run as `W=<dir> CAND=v3j JMPSYN=<patch> JMPSYN_SHA=<sha256> JOBS=3 node corpus-plan.js all`, or
+Run as
+`W=<dir> CAND=stack PATCHES="<p1>:<sha1>,<p2>:<sha2>,<p3>:<sha3>" JOBS=3 node corpus-plan.js all`
+(the three patches above, absolute paths), or
 phase by phase. Each line below says
 what the phase gates.
 

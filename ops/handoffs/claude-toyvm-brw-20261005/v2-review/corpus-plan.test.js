@@ -60,10 +60,18 @@ check('P1 passes when both trees pass', () => {
   assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[P1\] tests ok \(1 suites/);
 });
 
+// The program list coverage is measured against.
+const PROGS = 3;
+function programs(W, k = PROGS) {
+  write(path.join(W, 'programs.txt'), Array.from({ length: k }, (_, i) => `/demos/p${i}/P${i}.EXE`).join('\n') + '\n');
+}
+const sweepBody = (rows) => JSON.stringify({ rows: Array.from({ length: rows }, (_, i) => ({ name: `P${i}.EXE` })) });
+
 // --- P2 sweep ------------------------------------------------------------
-function sweepTree(W, { baseRc = 0, candRc = 0, diffRc = 0 } = {}) {
-  write(path.join(W, 'base/tools/toyvm/sweep-dos.js'), outStub(baseRc, '{"rows":[]}'));
-  write(path.join(W, 'cand/tools/toyvm/sweep-dos.js'), outStub(candRc, '{"rows":[]}'));
+function sweepTree(W, { baseRc = 0, candRc = 0, diffRc = 0, rows = PROGS, candRows = rows } = {}) {
+  programs(W);
+  write(path.join(W, 'base/tools/toyvm/sweep-dos.js'), outStub(baseRc, sweepBody(rows)));
+  write(path.join(W, 'cand/tools/toyvm/sweep-dos.js'), outStub(candRc, sweepBody(candRows)));
   write(path.join(W, 'cand/tools/toyvm/sweep-diff.js'),
     `console.log('REGRESSIONS: run status got worse (block the change) (${diffRc === 1 ? 1 : 0})');\n${exitWith(diffRc)}`);
 }
@@ -85,17 +93,26 @@ check('P2 aborts when sweep-diff itself fails', () => {
 check('P2 passes clean', () => {
   const W = workdir('p2-ok'); sweepTree(W);
   const r = plan('sweep', W);
-  assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[P2\] sweep gate clean/);
+  assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[P2\] sweep gate clean, 3\/3 programs/);
+});
+check('P2 with a short sweep is INCOMPLETE, not clean', () => {
+  const W = workdir('p2-partial'); sweepTree(W, { candRows: 2 });
+  const r = plan('sweep', W);
+  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P2 sweep cand: 2 of 3 rows/);
 });
 
 // --- P4 control (corpus-ab stub) ------------------------------------------
-function abStub(dir, moved, total, compareRc = 0) {
+// A corpus-ab stub: --compare writes the moved line; a run writes `rows`
+// distinct ndjson rows (one per program, arm l1, budget 8m).
+function abStub(dir, moved, total, compareRc = 0, rows = PROGS) {
+  programs(dir);
   const f = path.join(dir, 'ab-stub.js');
+  const nd = Array.from({ length: rows }, (_, i) => JSON.stringify({ exe: `/demos/p${i}/P${i}.EXE`, arm: 'l1', budget: 8e6 })).join('\n') + '\n';
   write(f, `const a = process.argv.slice(2);\nconst fs = require('fs');\n`
     + `const md = a.find((x) => x.startsWith('--md='));\n`
     + `if (a.some((x) => x.startsWith('--compare='))) {\n`
     + `  if (md) fs.writeFileSync(md.slice(5), '   ${moved} of ${total} l1 rows moved\\n');\n  process.exit(${compareRc});\n}\n`
-    + outStub(0, '{}'));
+    + outStub(0, nd));
   return f;
 }
 check('P4 aborts when l1 rows moved off the schedule', () => {
@@ -118,6 +135,77 @@ check('P4 passes on 0 of N moved', () => {
   const r = plan('control', W, { AB: abStub(W, 0, 5) });
   assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[P4\] 0 of 5 l1 rows moved/);
 });
+check('P4 with missing rows is INCOMPLETE even when 0 moved', () => {
+  const W = workdir('p4-partial');
+  const r = plan('control', W, { AB: abStub(W, 0, 2, 0, 2) });
+  assert.strictEqual(r.code, 11, r.out); assert.match(r.journal, /\[INCOMPLETE\] P4 nosched base: 2 of 3 rows/);
+});
+
+// --- P5 BRW parity gate (brw-bisect stubs) -----------------------------------
+// Each tree gets a stub brw-bisect.js that writes an IRQ list and a BRWBISECT
+// line; `cand` arms either agree or differ in one delivery / the frame.
+function brwTree(W, { candSepcDelivery = 'from 8:423a', candSepcFrame = 'f00d' } = {}) {
+  for (const t of ['base', 'cand']) {
+    const sepcLine = t === 'cand' ? candSepcDelivery : 'from 8:4299';
+    const frameSepc = t === 'cand' ? candSepcFrame : 'beef';
+    write(path.join(W, t, 'scratch/o/toyvm-brw/brw-bisect.js'),
+      `const a = process.argv.slice(2); const fs = require('fs');\n`
+      + `const arm = a.find((x) => x.startsWith('--arm=')).slice(6);\n`
+      + `const out = a.find((x) => x.startsWith('--irq-out=')).slice(10);\n`
+      + `const last = arm === 'sepc' ? ${JSON.stringify(sepcLine)} : 'from 8:423a';\n`
+      + `fs.writeFileSync(out, 'irq vec=08 timer at=100 hb=' + (arm === 'sepc' ? 7 : 3) + ' t=0.1 from 8:1000\\nirq vec=08 timer at=200 hb=9 t=0.2 ' + last + '\\n');\n`
+      + `console.log('BRWBISECT ' + JSON.stringify({ arm, dispatched: 500918122, frame: arm === 'sepc' ? ${JSON.stringify(frameSepc)} : 'f00d' }));\n`);
+  }
+}
+check('P5 passes when the candidate arms agree (hb ignored)', () => {
+  const W = workdir('p5-ok'); brwTree(W);
+  const r = plan('brw', W);
+  assert.strictEqual(r.code, 0, r.out); assert.match(r.journal, /\[P5\] BRW parity on cand: 2 identical deliveries/);
+});
+check('P5 aborts on one differing candidate delivery', () => {
+  const W = workdir('p5-irq'); brwTree(W, { candSepcDelivery: 'from 8:4299' });
+  const r = plan('brw', W);
+  assert.strictEqual(r.code, 9, r.out); assert.match(r.journal, /delivery #1 differs/);
+});
+check('P5 aborts on a differing candidate frame', () => {
+  const W = workdir('p5-frame'); brwTree(W, { candSepcFrame: 'beef' });
+  const r = plan('brw', W);
+  assert.strictEqual(r.code, 9, r.out); assert.match(r.journal, /frame f00d vs beef/);
+});
+
+// --- process hygiene ---------------------------------------------------------
+// A stub that starts a grandchild which records its pid and sleeps.
+const spawner = (pidFile, sleepMs, rc = 0, delayMs = 0) => `const { spawn } = require('child_process');\n`
+  + `const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${sleepMs})'], { stdio: 'ignore' });\n`
+  + `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));\n`
+  + `setTimeout(() => process.exit(${rc}), ${delayMs || sleepMs});\n`;
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const waitDead = (pid, ms = 3000) => { const t = Date.now(); while (alive(pid) && Date.now() - t < ms) spawnSync('sleep', ['0.1']); return !alive(pid); };
+check('an abort in P2 kills the concurrent P1 suite and its grandchild (p1p2)', () => {
+  const W = workdir('p1p2-sibling');
+  const pidFile = path.join(W, 'sibling-grandchild.pid');
+  write(path.join(W, 'base/test/test-toyvm-slow.js'), spawner(pidFile, 30000));
+  write(path.join(W, 'cand/test/test-toyvm-slow.js'), spawner(pidFile + '.cand', 30000));
+  sweepTree(W, { candRc: 3 });
+  // give P1 a moment to start before P2's child fails: the sweep stub sleeps first
+  write(path.join(W, 'cand/tools/toyvm/sweep-dos.js'), `setTimeout(() => process.exit(3), 800);\n`);
+  const t0 = Date.now();
+  const r = plan('p1p2', W);
+  assert.strictEqual(r.code, 2, r.out);
+  assert.ok(Date.now() - t0 < 20000, 'the runner waited for the sibling suite instead of aborting');
+  assert.match(r.journal, /\[CLEANUP\] killing \d+ live child group/);
+  const gp = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.ok(waitDead(gp), `sibling grandchild ${gp} survived the abort`);
+});
+check('a stack candidate with a wrong patch hash is refused', () => {
+  const W = workdir('stack-hash');
+  const patch = path.join(W, 'x.patch'); write(patch, 'not a patch\n');
+  // prep checks the v2 hash first: give it an empty v2 file and that file's hash.
+  const v2 = path.join(W, 'empty.patch'); write(v2, '');
+  const r = plan('prep', W, { CAND: 'stack', PATCHES: `${patch}:${'0'.repeat(64)}`, V2: v2,
+    V2_SHA: require('crypto').createHash('sha256').update('').digest('hex') });
+  assert.strictEqual(r.code, 8, r.out); assert.match(r.journal, /stack patch hash: x\.patch/);
+});
 
 // --- slot deadline across invocations --------------------------------------
 check('a later phase honours the slot deadline set by an earlier one', () => {
@@ -132,7 +220,7 @@ check('a later phase honours the slot deadline set by an earlier one', () => {
 check('`all` refuses a candidate without the jmp_syn fix', () => {
   const W = workdir('all-v3');
   const r = plan('all', W, { CAND: 'v3' });
-  assert.strictEqual(r.code, 8, r.out); assert.match(r.journal, /needs CAND=v3j/);
+  assert.strictEqual(r.code, 8, r.out); assert.match(r.journal, /needs CAND=stack \(PATCHES=\.\.\.\) or CAND=v3j/);
 });
 
 // --- prep exit codes, on a tiny fixture git repo ----------------------------
@@ -187,6 +275,16 @@ const sleeper = path.join(ROOT, 'sleep-stub.js'); write(sleeper, 'setTimeout(() 
   });
   const slow = await run(process.execPath, [sleeper], { timeoutS: 1 });
   check('run() resolves 124 on timeout', () => assert.strictEqual(slow, 124));
+  const gpFile = path.join(ROOT, 'timeout-grandchild.pid');
+  const parentStub = path.join(ROOT, 'spawner-stub.js'); write(parentStub, spawner(gpFile, 30000));
+  const t0 = Date.now();
+  const rc = await run(process.execPath, [parentStub], { timeoutS: 1 });
+  check('a timeout kills the child AND its descendants', () => {
+    assert.strictEqual(rc, 124);
+    assert.ok(Date.now() - t0 < 10000, 'run() waited for the grandchild');
+    const gp = Number(fs.readFileSync(gpFile, 'utf8'));
+    assert.ok(waitDead(gp), `grandchild ${gp} survived the timeout`);
+  });
   console.log(`${n - failed}/${n} passed`);
   fs.rmSync(ROOT, { recursive: true, force: true });
   process.exit(failed ? 1 : 0);
