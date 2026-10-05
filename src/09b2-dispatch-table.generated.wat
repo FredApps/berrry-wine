@@ -336,11 +336,6 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
-  ;; IVBImageSurface7_SetColorKey: pop 16, return 0x80004001
-  (func $handle_IVBImageSurface7_SetColorKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
-
   ;; IVBImageSurface7_setDrawStyle: pop 12, return 0x80004001
   (func $handle_IVBImageSurface7_setDrawStyle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
@@ -19830,7 +19825,7 @@
       (call $handle_VBImage_SetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 4003: IVBImageSurface7_SetColorKey
-      (call $handle_IVBImageSurface7_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_VBImage_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 4004: IVBImageSurface7_setDrawStyle
       (call $handle_IVBImageSurface7_setDrawStyle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

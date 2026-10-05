@@ -1,6 +1,19 @@
 'use strict';
 const assert=require('assert/strict'),fs=require('fs');
 const extraWat=String.raw`
+(func (export "vb_key") (param $obj i32) (result i32) (load.field DxObject misc2 (call $dx_from_this (local.get $obj))))
+(func (export "vb_flags") (param $obj i32) (result i32) (load.field DxObject flags (call $dx_from_this (local.get $obj))))
+;; Test real shared native keyed consumer without pretending VB Blt supports
+;; flags that its bounded front door still explicitly rejects.
+(func (export "vb_native_key_copy") (param $dst i32) (param $src i32) (param $frame i32) (result i32)
+ (local $esp i32) (local $eax i32) (local $hr i32)
+ (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+ (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const 0))
+ (i32.store offset=16 (global.get $reg_base) (local.get $frame))
+ (call $handle_IDirectDrawSurface_Blt (local.get $dst) (i32.const 0) (local.get $src) (i32.const 0) (i32.const 0x8000) (i32.const 0))
+ (local.set $hr (i32.load (global.get $reg_base)))
+ (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)) (local.get $hr))
+
 (func (export "vb_mode") (param $w i32) (param $h i32) (call $dx_display_w_set (local.get $w)) (call $dx_display_h_set (local.get $h)))
 (func (export "vb_clipper") (param $obj i32) (result i32) (call $dx_surface_clipper_get (call $dx_from_this (local.get $obj))))
 (func (export "vb_factory") (param $out i32) (call $handle_IDirectX7_DirectDrawCreate (i32.const 0) (i32.const 0) (local.get $out) (i32.const 0) (i32.const 0) (i32.const 0)))
@@ -42,6 +55,26 @@ async function run(h,apis,notepad,fixture){
  check('BltColorFill null/full and sparse subrect affect only requested pixels',()=>{assert.equal(call(dest,7,0,0,status+4),0);assert.equal(r(status+4),0);const b=0x3a000000,n=b+0x10000;for(const p of[b,n,b+4096])e.test_virtual_map_commit(p,4096);assert.notEqual(e.guest_to_wasm(b)+4096,e.guest_to_wasm(b+4096));for(let i=0;i<128;i++)e.guest_write8(n+i,0xac);const q=b+4091;[3,4,6,8].forEach((x,i)=>w(q+i*4,x));assert.equal(call(dest,7,q,0xbeef,status+4),0);assert.equal(r(status+4),0);for(let y=0;y<128;y++)for(let x=0;x<128;x++)assert.equal(v.getUint16(db+y*dp+x*2,true),x>=3&&x<6&&y>=4&&y<8?0xbeef:0);assert.equal(call(dest,7,0,0x3456,b+4095),0);assert.equal(r(b+4095),0);for(let i=0;i<128;i++)assert.equal(e.guest_read8(n+i),0xac)});
  check('observed128x1 and1x123 offscreen strips fill all allocated rows',()=>{for(const[width,height]of[[128,1],[1,123]]){descriptor(width,height);assert.equal(call(owner,7,d,out),0);const o=r(out),bits=e.vb_bits(o)>>>0,pitch=e.vb_pitch(o);assert.equal(call(o,7,0,0xffffff,status+4),0);assert.equal(r(status+4),0);for(let y=0;y<height;y++)for(let x=0;x<width;x++)assert.equal(v.getUint16(bits+y*pitch+x*2,true),0xffff);assert.equal(call(o,2),0)}});
  check('BltColorFill invalid pointers/OOB/24bpp never fabricate fill',()=>{const before=snapshot(db);[0,0,129,128].forEach((x,i)=>w(rect+i*4,x));assert.equal(call(dest,7,rect,0,status+4),0);assert.equal(r(status+4),0x80004001);assert.deepEqual(snapshot(db),before);assert.equal(call(dest,7,1,0,status+4),0x80004003);assert.equal(call(dest,7,0,0,0),0x80004003);assert.deepEqual(snapshot(db),before);descriptor(9,7);w(d+4,0x1007);w(d+76,0x40);w(d+104,24);w(d+128,0xff0000);w(d+148,0xff00);w(d+164,0xff);assert.equal(call(owner,7,d,out),0);const rgb24=r(out),bits=e.vb_bits(rgb24)>>>0,pitch=e.vb_pitch(rgb24);u8.fill(0xa5,bits,bits+pitch*7);assert.equal(call(rgb24,7,0,0,status+4),0);assert.equal(r(status+4),0x80004001);assert(u8.slice(bits,bits+pitch*7).every(x=>x===0xa5));assert.equal(call(rgb24,2),0)});
+
+ const key=a(16),nativeFrame=a(32);w(key,0xface1234);w(key+4,0x12345678);w(key+8,0xdeadbeef);w(key+12,0xcafeabcd);
+ check('SetColorKey raw16 packed key and real native keyed pixels, NULL removes key',()=>{
+  const oldFlags=e.vb_flags(src)>>>0;assert.equal(call(src,47,8,key+4),0,'SetColorKey must support source key');assert.equal(e.vb_key(src)>>>0,0x5678);assert.equal(e.vb_flags(src)>>>0,oldFlags|0x100);
+  for(let y=0;y<128;y++)for(let x=0;x<128;x++){v.setUint16(sb+y*sp+x*2,(x+y)%2?0x7777:0x5678,true);v.setUint16(db+y*dp+x*2,0x4242,true)}
+  assert.equal(e.vb_native_key_copy(dest,src,nativeFrame)>>>0,0);for(let y=0;y<128;y++)for(let x=0;x<128;x++)assert.equal(v.getUint16(db+y*dp+x*2,true),(x+y)%2?0x7777:0x4242);
+  assert.equal(call(src,47,8,0),0);assert.equal(e.vb_flags(src)>>>0,oldFlags);assert.equal(e.vb_key(src),0);assert.equal(call(src,47,8,0),0);assert.equal(e.vb_native_key_copy(dest,src,nativeFrame)>>>0,0);for(let y=0;y<128;y++)assert.deepEqual(u8.slice(db+y*dp,db+y*dp+256),u8.slice(sb+y*sp,sb+y*sp+256));
+  assert.equal(r(key),0xface1234);assert.equal(r(key+4),0x12345678);assert.equal(r(key+8),0xdeadbeef);assert.equal(r(key+12),0xcafeabcd);
+ });
+ check('SetColorKey primary and32bit surface identity/packed value preserved',()=>{
+  e.vb_mode(37,29);zero(d,232);w(d+4,1);w(d+200,0x200);assert.equal(call(owner,7,d,out),0);let o=r(out),vt=r(o),flags=e.vb_flags(o)>>>0;assert.equal(call(o,47,8,key+4),0);assert.equal(e.vb_key(o)>>>0,0x5678);assert.equal(call(o,47,8,0),0);assert.equal(e.vb_flags(o)>>>0,flags);assert.equal(r(o),vt);assert.equal(call(o,2),0);e.vb_mode(0,0);
+  descriptor(3,2);w(d+4,0x1007);w(d+76,0x40);w(d+104,32);w(d+128,0xff0000);w(d+148,0xff00);w(d+164,0xff);assert.equal(call(owner,7,d,out),0);o=r(out);assert.equal(call(o,47,8,key+4),0);assert.equal(e.vb_key(o)>>>0,0x12345678);assert.equal(call(o,47,8,0),0);assert.equal(e.vb_flags(o)&0x100,0);assert.equal(call(o,2),0);
+ });
+ check('SetColorKey sparse8byte input and bounds preserve adjacent backing',()=>{
+  const b=0x3b000000,n=b+0x10000;for(const q of[b,n,b+4096])e.test_virtual_map_commit(q,4096);assert.notEqual(e.guest_to_wasm(b)+4096,e.guest_to_wasm(b+4096));for(let i=0;i<128;i++)e.guest_write8(n+i,0xa9);w(b+4093,0xbeef);w(b+4097,0x99999999);assert.equal(call(src,47,8,b+4093),0);assert.equal(e.vb_key(src)>>>0,0xbeef);for(let i=0;i<128;i++)assert.equal(e.guest_read8(n+i),0xa9);
+  const beforeFlags=e.vb_flags(src)>>>0;for(const q of[1,0xfffffffc,b+8190])assert.equal(call(src,47,8,q),0x80004003);assert.equal(e.vb_key(src)>>>0,0xbeef);assert.equal(e.vb_flags(src)>>>0,beforeFlags);
+ });
+ check('SetColorKey unsupported range/destination flags and forged receiver never mutate key',()=>{
+  const flags=e.vb_flags(src)>>>0;for(const f of[0,1,2,4,9,16,0xffffffff])assert.equal(call(src,47,f,key+4),0x80004001);const fake=a(8);w(fake,r(src));w(fake+4,r(src+4));assert.equal(call(fake,47,8,key+4),0x88760082);assert.equal(e.vb_key(src)>>>0,0xbeef);assert.equal(e.vb_flags(src)>>>0,flags);assert.equal(call(src,47,8,0),0);
+ });
  check('unsupported FX flags do not dereference statusOut as FX or draw',()=>{const before=snapshot(db);assert.equal(call(dest,6,0,src,0,0x400,status+4),0);assert.equal(r(status+4),0x80004001);assert.deepEqual(snapshot(db),before);assert.equal(r(status+8),0x87654321)});
  check('invalid source and output return COM failure without drawing or status write',()=>{const before=snapshot(db);w(status+4,0xabcdef01);assert.equal(call(dest,6,0,0,0,0,status+4),0x80070057);assert.equal(r(status+4),0xabcdef01);assert.equal(call(dest,6,0,src,0,0,0),0x80004003);assert.deepEqual(snapshot(db),before)});
  const base=0x39000000,neighbor=base+0x10000;for(const p of [base,neighbor,base+4096])e.test_virtual_map_commit(p,4096);assert.notEqual(e.guest_to_wasm(base)+4096,e.guest_to_wasm(base+4096));for(let i=0;i<256;i++)e.guest_write8(neighbor+i,0xa7);const split=base+4091;

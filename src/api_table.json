@@ -33869,9 +33869,9 @@
     "id": 4003,
     "name": "IVBImageSurface7_SetColorKey",
     "nargs": 3,
-    "stub": { "pop": 16, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2615454496
+    "hash": 2615454496,
+    "handler": "VBImage_SetColorKey"
   },
   {
     "id": 4004,

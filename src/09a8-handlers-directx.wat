@@ -13511,3 +13511,32 @@
 (func $handle_VBImage_BltColorFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
  (i32.store (global.get $reg_base) (call $vbdd_color_fill (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+
+;; DX7VB73543135 forwards SetColorKey(flags,key) unchanged to native slot29
+;; and returns native HRESULT directly. Only SRCBLT single-key is supported
+;; here: native storage/consumer has one low packed key, not ranges/dest keys.
+(func $handle_VBImage_SetColorKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (local $entry i32) (local $hr i32) (local $bpp i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $arg0)))
+ (block $done
+  (local.set $hr (i32.const 0x88760082))
+  (br_if $done (i32.eqz (local.get $entry)))
+  (local.set $hr (i32.const 0x80004001))
+  (br_if $done (i32.ne (local.get $arg1) (i32.const 8)))
+  (local.set $bpp (load.field DxObject bpp (local.get $entry)))
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  ;; NULL removes the source key. The old native setter dereferences NULL
+  ;; and sets key0 instead; avoid claiming that behavior implements removal.
+  (if (i32.eqz (local.get $arg2)) (then
+   (call $d3dim_worker_fence)
+   (store.field DxObject flags (local.get $entry) (i32.and (load.field DxObject flags (local.get $entry)) (i32.const -257)))
+   (store.field DxObject misc2 (local.get $entry) (i32.const 0))
+   (local.set $hr (i32.const 0)) (br $done)))
+  (local.set $hr (i32.const 0x80004003))
+  (br_if $done (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg2) (i32.const 8))))
+  ;; No COLORSPACE flag: high field is not a range; native masks the low
+  ;; packed value to16bpp. It also owns fencing and the original ESP+16 ABI.
+  (call $handle_IDirectDrawSurface_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  (return))
+ (i32.store (global.get $reg_base) (local.get $hr))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))

@@ -1992,10 +1992,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetColorKey",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetColorKey"
   },
   {
     "name": "IVBImageSurface7_setDrawStyle",
