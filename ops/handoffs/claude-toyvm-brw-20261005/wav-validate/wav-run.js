@@ -68,7 +68,8 @@ const TREES = { head: [], stack: ['v2v3j', 'v4', 'smc'], v2v3: ['v2', 'v3'], v2v
 const LADDER = ['head', 'v2v3', 'v2v3j', 'v2v3j_v4', 'stack'];
 // Program -> extra driver args (PIT port trace only where the PIT is the question).
 const PROGRAMS = {
-  '1994-b-bliq/BLIQ.EXE': ['--trace-irq', '--trace-io=40,43'],
+  // --slice-log: run-dos's per-handback log with FLAGS (BLIQ-DIVERGENCE-20261005.md).
+  '1994-b-bliq/BLIQ.EXE': ['--trace-irq', '--trace-io=40,43', '--slice-log'],
   '1994-c-cyclewar/CYCLE.EXE': ['--trace-irq'],
   '1993-c-caveira/CAVEIRA.COM': ['--trace-irq'],
 };
@@ -206,9 +207,10 @@ for (const name of Object.keys(TREES)) {
   }
 }
 const stem = (p) => path.basename(p).replace(/\.[^.]+$/, '');
+const sliceFile = (tree, p) => path.join(OUT, `${tree}-${stem(p)}.slices`);
 const cmd = (tree, p) => ['--max-old-space-size=1536', DRIVE, `--tree=${path.join(treesDir, tree)}`, `--exe=${progs[p]}`,
   `--wav=${path.join(OUT, `${tree}-${stem(p)}.wav`)}`, `--row=${path.join(OUT, `${tree}-${stem(p)}.json`)}`,
-  ...(flag('no-trace') ? [] : PROGRAMS[p])];
+  ...(flag('no-trace') ? [] : PROGRAMS[p].map((a) => (a === '--slice-log' ? `--slice-log=${sliceFile(tree, p)}` : a)))];
 result.commands = Object.fromEntries(Object.keys(TREES).flatMap((t) => Object.keys(PROGRAMS).map((p) => [`${t}/${stem(p)}`, `node ${cmd(t, p).join(' ')}`])));
 if (flag('dry-run')) finish('DRY-RUN', 0, null);
 
@@ -229,6 +231,7 @@ function readRow(tree, p) {
   for (const g of GUEST) if (!(g in r)) finish('FAIL', 4, `${tree}/${stem(p)}: row has no ${g}`);
   if (!fs.existsSync(w)) finish('FAIL', 4, `${tree}/${stem(p)}: no WAV`);
   if (r.wavSha256 !== sha(w)) finish('FAIL', 4, `${tree}/${stem(p)}: WAV on disk does not match its row`);
+  if (!flag('no-trace') && PROGRAMS[p].includes('--slice-log') && !fs.existsSync(sliceFile(tree, p))) finish('FAIL', 4, `${tree}/${stem(p)}: no slice log`);
   return r;
 }
 

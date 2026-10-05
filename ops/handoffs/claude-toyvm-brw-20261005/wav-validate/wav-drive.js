@@ -20,7 +20,7 @@
 // dispatched alone does not fix. Reported: frames, audio.rendered, the outAcc
 // residue, guestSeconds(dispatched), and frames/rate.
 //
-//   node wav-drive.js --tree=DIR --exe=PATH --wav=OUT.wav --row=OUT.json [--trace-irq] [--trace-io=40,43]
+//   node wav-drive.js --tree=DIR --exe=PATH --wav=OUT.wav --row=OUT.json [--trace-irq] [--trace-io=40,43] [--slice-log=FILE]
 // Trace lines go to stdout; the parent redirects them into a size-capped log.
 
 const crypto = require('crypto');
@@ -46,8 +46,13 @@ const BUDGET = 80e6;
   const { wavBytes } = T('audio');
   const out = (s) => process.stdout.write(s + '\n');
   const t0 = process.hrtime.bigint();
+  // --slice-log=FILE: run-dos's own per-handback log (dispatched, left, cs:ip,
+  // registers, FLAGS), written by runDos with writeFileSync at the end -- read-
+  // only, and not through the pipe.
+  const sliceLog = arg('slice-log');
   const r = await runDos({ exe, budget: BUDGET, log: out, seconds: 0,
-    traceIrq: argv.includes('--trace-irq'), traceIo, ...RECIPE });
+    traceIrq: argv.includes('--trace-irq'), traceIo,
+    ...(sliceLog ? { sliceLogFile: sliceLog, sliceLogRegs: true } : {}), ...RECIPE });
   const bytes = r.audioChunks && r.audioChunks.length ? Buffer.from(wavBytes(r.audioChunks, r.audioRate)) : null;
   if (bytes) fs.writeFileSync(wavOut, bytes);
   const full = bytes ? crypto.createHash('sha256').update(bytes).digest('hex') : null;
