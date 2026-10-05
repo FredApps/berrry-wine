@@ -176,3 +176,11 @@ test('release view counts playable, review-needed and ready, and flags stale rev
   assert.match(html, /not gates here/);
   assert.equal(snapshot().candidates[0].releaseReadiness.gates.sound, undefined, 'no new gate');
 });
+
+test('window presentation comparison rejects different clipping and labels its narrower rate', () => {
+  const perf={metric:'selected-window-presentations',counterKind:'selected-window-presentations',fps:13,wasmSha256:'a',scene:'room',host:'box',renderer:'GDI',visibility:{client:{x:0,y:10,w:1024,h:758},fraction:758/768}};
+  const a={candidateId:'dredmor',key:'a',performance:{...perf,measuredAt:'2026-10-05T00:00:00Z'}},b={candidateId:'dredmor',key:'b',performance:{...perf,measuredAt:'2026-10-05T01:00:00Z',visibility:{client:{x:0,y:0,w:1024,h:768},fraction:1}}};
+  const result=ReleaseModel.perfComparisons({runs:[a,b]},{id:'dredmor'});
+  assert.equal(result.pairs.length,0);assert.ok(result.notComparable[0].reasons.includes('visible client differs'));
+  assert.equal(ReleaseModel.rateLabels(perf).frames,false);assert.match(ReleaseModel.rateLabels(perf).rate,/coalesced GDI/);
+});

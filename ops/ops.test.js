@@ -523,3 +523,21 @@ test('task APIs require same origin, retain discussion beyond activity window an
   assert.equal(snapshot.tasks.find(t=>t.id===taskId).pickup,'accepted');
   assert.equal(snapshot.tasks.find(t=>t.id===taskId).status,'ready');
 });
+
+test('selected window presentations retain explicit scope and reject invalid qualification or visibility', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const performance={metric:'selected-window-presentations',counterKind:'selected-window-presentations',measuredAt:'2026-10-05T15:51:14Z',renderer:'normal CanvasSurface GDI',scene:'Dredmor Level1',host:'fixture',physicalFps:null,visibility:{client:{x:0,y:10,w:1024,h:758},fraction:758/768},qualification:{accepted:true,sceneReview:'root image review',counterReview:'root source/raw review',evidence:'receipt.json'},samples:[{frames:67,durationMs:5003.51}]};
+  const save=()=>f.write('scratch/runs/WINDOW/result.json',JSON.stringify({candidateId:'demo',startedAt:performance.measuredAt,outcome:'passed',performance}));
+  await save();let p=(await reader.snapshot()).candidates[0].performance;
+  assert.equal(p.fps,67000/5003.51);assert.equal(p.physicalFps,null);assert.deepEqual(p.visibility,performance.visibility);
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const src=app.match(/function corpusFps\([\s\S]*?(?=\nfunction corpusView\()/)[0];
+  const render=require('node:vm').runInNewContext(src+'\ncorpusFps',{escape:String,age:()=>'<1m',when:String});
+  assert.match(render({performance:p},true),/13\.4 window presentations\/s \(coalesced GDI\)/);
+  assert.match(render({performance:p},true),/98\.70% visible/);assert.match(render({performance:p},true),/Physical-display FPS not measured/);
+  assert.equal(require('./release-model').rateLabels(p).rate,'window presentations/s (coalesced GDI)');
+  for(const [target,key,value] of [[performance,'physicalFps',60],[performance.qualification,'accepted',false],[performance.qualification,'counterReview',''],[performance.visibility,'fraction',0],[performance.visibility,'fraction',1.1],[performance.visibility.client,'w',0],[performance.visibility.client,'x',null]]){
+    const prior=target[key];target[key]=value;await save();assert.equal((await reader.snapshot()).candidates[0].performance,null,key);target[key]=prior;
+  }
+});
