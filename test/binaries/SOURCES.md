@@ -621,3 +621,7 @@ node tools/cue-bin-to-iso.js downloads/Computer_2001-23_cd.cue
 7z x -o'test/binaries/candidates/delphi7-personal/cd' downloads/PCWJAN03.iso software/delphi7personal
 unzip -d test/binaries/candidates/vb6-working-model/cd downloads/VB6_WME.zip
 ```
+
+## Dungeons of Dredmor Steam beta (local only)
+
+Community-uploaded Windows Steam2 depot 98811 revision 8, dated 2011-12-27 by the uploader; not a verified demo or redistribution grant. [Archive item](https://archive.org/details/dungeons-of-dredmor-beta-98811-steam2-builds), [exact 147,086,215-byte package](https://archive.org/download/dungeons-of-dredmor-beta-98811-steam2-builds/98811_8.7z). SHA-1: 7b32f7689a7ab31e48fc253da435968c99455109; SHA-256: 191ac33d78863dbbe7ef62f0f30711ecaef6d3690d15a9a7623de99acecdcd9a. All 6,572 regular files were statically extracted; original EXE and Steam DLL remain unmodified. Fetch with --id=dungeons-of-dredmor; local experimental app dungeons_of_dredmor. Startup/gameplay/audio/FPS untested. [Detailed provenance](../../docs/re-notes/dungeons-of-dredmor.md).
