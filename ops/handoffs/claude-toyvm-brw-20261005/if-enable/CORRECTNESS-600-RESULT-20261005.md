@@ -22,7 +22,18 @@ There is no REGRESSION, no FIXED and nothing SKIPPED. The two TIMEOUTs are not c
 
 ## Diagnosis (source plus run artifacts; no rerun)
 
-**Neither timeout is a hang or a failure: both tests were making steady case-by-case progress and were cut by the 60 s cap.** Both are setup-light and work-heavy: almost all their time goes into executing cases, not into setup.
+**Both timeouts remain unclassified and incomplete until a replay.**
+
+What the artifacts do show is limited:
+- no assertion failure was observed in either test, in either tree;
+- each test made real case progress during its 60 s before the cap.
+
+What they do not show:
+- that either test would have completed;
+- that it was still progressing at the moment of the kill;
+- that the next, unfinished case was not stalled.
+
+A hang inside a case remains possible, including in uop's in-process execution. All timings below are estimates from partial progress, not measurements of a full pass.
 
 ### tree-fold (`test/test-toyvm-tree-fold.js` at 2683a6e3, 1619 lines)
 
@@ -45,11 +56,19 @@ There is no REGRESSION, no FIXED and nothing SKIPPED. The two TIMEOUTs are not c
 | stack | 20:09:19 – 20:10:18 | 23 | `strseg` (23/43), at 20:10:17.8 | 22 | ~2.7 s |
 
 **What this shows:**
-- Setup is negligible: the first case file appears in the test's first second.
-- Both trees advance through the same cases in the same order. The stack tree's lower rate came later in a box under load, and is not evidence about either tree.
-- `leftoverGroup=true` in both trees means `run-dos` grandchildren were alive at the kill, i.e. a case was mid-run; they were reaped.
+- Setup was short: the first case file appears within the test's first second.
+- Cases were starting until shortly before the cap. The last file is ~0.1 s (cand) and ~1 s (stack) before the kill.
+- Both trees went through the same cases in the same order.
 
-**Estimate for a full pass:**
+**What it does not show:**
+- that the case started last would have finished;
+- that the test would have completed.
+
+**Other notes:**
+- The stack tree's lower rate came later in the run, under different box load. It is not evidence about either tree.
+- `leftoverGroup=true` in both trees means `run-dos` grandchildren were still alive at the kill. That is consistent with a case being mid-run; it does not tell a running case apart from a stalled one. The grandchildren were reaped.
+
+**Estimate for a full pass** (an extrapolation from partial progress, not a measurement):
 - cases: 43 × 2.1–2.7 s ≈ 90–115 s;
 - the call-case extras;
 - the gate section: about 7 children at ~2–3 s, plus two 8M in-process runs.
@@ -63,7 +82,7 @@ That is ≈ **120–160 s per tree on this box**.
 **Structure:**
 - 14 case functions, with `dshift` having an extra head (`dshift@147`, `:411`), giving 15 tags.
 - Each tag: one capture, then 28 ablation configurations × 12 budgets, the largest budget being 200,000.
-- This is all in process, so there is no child process to hang.
+- This is all in process. That does not rule out a hang: in-process execution can stall just as a child process can.
 
 **Progress:**
 
@@ -76,11 +95,21 @@ That is ≈ **120–160 s per tree on this box**.
 - Every tag both trees reached agreed in all 336 differential runs. No `assert`/fail text appears in either log.
 - On the 10 tags both reached, the per-configuration µops/iteration lines are identical between the trees. The diff of the two logs is exactly the two extra cand tags.
 
-**Why it ran long:** the remaining tags are the heaviest by construction. The `shifts` naive arm is 1083 µops/iteration against `sprite`'s tens, and `rotcarry`/`memshifts` are the same rotate/shift families over 8/16/32-bit widths and three operand forms. The test is long, not stuck.
+**What the logs can and cannot say:** the log lines have no timestamps.
+- The completed tags prove progress at some point before the cap.
+- They do not show whether the test was progressing at the cap.
+- They do not show whether the next tag (cand `rotcarry`, stack `segfwd`) stalled.
 
-**Estimate for a full pass:** ≈ 120–180 s per tree on this box. This is weaker than the tree-fold figure, because there are no per-tag timestamps and the cost per tag is not uniform.
+**A plausible, unconfirmed reason it ran long:** the unreached tags include the heaviest by construction. The `shifts` naive arm is 1083 µops/iteration against `sprite`'s tens, and `rotcarry`/`memshifts` are the same rotate/shift families over 8/16/32-bit widths and three operand forms. This is a hypothesis for the replay to test, not a finding that the test is long rather than stuck.
+
+**Estimate for a full pass:** ≈ 120–180 s per tree on this box. This is an estimate only, and weaker than the tree-fold figure: there are no per-tag timestamps, and the cost per tag is not uniform.
 
 ## Replay proposal (bounded, NOT run; needs an explicit root grant)
+
+**Queue and scope:**
+- Queued after the current Daggerfall run and the Arena/short Ski proof, in whatever order root grants.
+- It intentionally keeps the original base `2683a6e3` and the pinned stack, so it replays exactly the same comparison.
+- Main's install(false) accounting fix (`69c1371b`) is separate, and is not part of either tree.
 
 **Recommended: the same pinned runner, unchanged, with only these two tests and realistic caps.** No code change, and the comparison stays both-trees, same order, same archive:
 
