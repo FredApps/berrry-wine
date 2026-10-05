@@ -724,3 +724,7 @@ global, exactly as GetMessageTime reads $last_msg_time. The behavior lives
 in $handle_GetMessageA / $handle_PeekMessageA, which clear it whenever a
 message is retrieved (every message source here attaches extra info 0).
 Covered by test/test-message-extra-info.js.
+
+### 2026-10-05: shared unsupported VB DirectDraw/Clipper body
+
+Inventory241 to240: remove handle_IVBDirectDraw7_DirectSlot and handle_IVBDirectDrawClipper_DirectSlot; add handle_vb_unsupported_stdcall. Exact normalized before/after lists show no other changed entry. Both interfaces still return E_NOTIMPL and consume their metadata-derived native typelib stack byte count; no success behavior is added. Existing raw fixed-pop DirectDraw unsupported methods were corrected to typelib argument counts in the preceding implementation. Pin240/d464d3604b0b773447515c35b2e427cd3e4a9b89cea8fd68e4d5b5b080583b8c accompanies this source dedup in the same commit, retaining the gate and its commit-boundary audit. Evidence: scratch/new-games-pipeline-20261004/jigssawme/directdraw34-repair-20261005/shared-unsupported/quiet-current-main-delta.json. First duplicate and stale-inventory build failures are preserved.
