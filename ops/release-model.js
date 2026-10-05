@@ -67,6 +67,28 @@
       text: perf.fps.toFixed(1) + ' ' + labels.rate};
   }
 
+  // Before/after: compare the newest measurement with each earlier one only when
+  // the scene, counter, renderer, host and GPU are identical and both runs
+  // recorded their module hash. Anything else is listed with the fields that differ.
+  const SAME = [['metric', 'metric'], ['counterKind', 'counter'], ['scene', 'scene'], ['renderer', 'renderer'], ['host', 'host'], ['gpu', 'GPU']];
+  function perfComparisons(snapshot, candidate) {
+    const ids = new Set([candidate.id, ...(candidate.appIds || [])]);
+    const measured = (snapshot.runs || []).filter(run => ids.has(run.candidateId) && run.performance && Number.isFinite(run.performance.fps))
+      .map(run => ({runKey: run.key, reviewed: run.verification === 'reviewed', ...run.performance}))
+      .sort((a, b) => String(b.measuredAt || '').localeCompare(String(a.measuredAt || '')));
+    if (measured.length < 2) return {count: measured.length, pairs: [], notComparable: [], text: measured.length ? 'Not comparable: only one measurement recorded' : 'No measurement recorded'};
+    const [after, ...earlier] = measured, pairs = [], notComparable = [];
+    for (const before of earlier) {
+      const reasons = SAME.filter(([key]) => (before[key] || null) !== (after[key] || null)).map(([key, label]) => label + ' differs');
+      if (!before.wasmSha256 || !after.wasmSha256) reasons.push('module hash not recorded');
+      if (reasons.length) { notComparable.push({before, after, reasons}); continue; }
+      const labels = rateLabels(after);
+      pairs.push({before, after, label: labels.rate, sameBuild: before.wasmSha256 === after.wasmSha256,
+        deltaPct: before.fps > 0 ? 100 * (after.fps - before.fps) / before.fps : null});
+    }
+    return {count: measured.length, pairs, notComparable, text: pairs.length ? pairs.length + ' comparable pair' + (pairs.length === 1 ? '' : 's') : 'Not comparable: no earlier measurement matches scene, counter, renderer, host, GPU and recorded build'};
+  }
+
   function gateRows(r) {
     return GATES.map(name => {
       const g = r?.gates?.[name] || {status: 'unknown', summary: '', source: ''};
@@ -113,5 +135,5 @@
       production: snapshot.releaseReadiness?.production || {status: 'unknown'}};
   }
 
-  return {GATES, rateLabels, parseBuild, buildIdentity, servedBuild, buildMatch, measuredRate, gateRows, desktopRow, desktopQueue};
+  return {GATES, rateLabels, parseBuild, buildIdentity, servedBuild, buildMatch, measuredRate, perfComparisons, gateRows, desktopRow, desktopQueue};
 });

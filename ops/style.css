@@ -1282,3 +1282,5 @@ dd {
 .code-pushed { color:var(--cyan); }
 .code-local { color:var(--amber); }
 .code-task { font-size:11px; padding:0 6px; min-height:0; }
+.perf-compare { margin:12px 0; padding:10px 12px; border:1px solid var(--line); overflow-wrap:anywhere; }
+.perf-compare h3 { margin:0 0 6px; font-size:13px; }

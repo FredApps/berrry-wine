@@ -616,6 +616,13 @@ Their reported p95 uses sorted intervals at zero-based `floor(count*0.95)`;
 preserve that convention and each sample rather than averaging/recomputing it.
 See `ops/handoffs/ops-historical-fps-semantics.md` for exact collector evidence.
 
+Candidate details add **Before / after** when more than one measurement is
+recorded: the newest measurement is compared with each earlier one only when
+metric, counter, scene, renderer, host and GPU are identical and both runs
+recorded `wasmSha256`; the delta is shown with the metric label and whether the
+builds differ. Every other earlier measurement is listed as not comparable with
+the fields that differ. One measurement says "only one measurement recorded".
+
 ## Reviewed historical screenshot recovery
 
 `node ops/recover-visuals.js` imports the explicitly reviewed associations in
