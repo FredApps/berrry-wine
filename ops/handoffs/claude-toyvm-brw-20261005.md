@@ -551,3 +551,48 @@ confirm. Candidate fix: under the schedule, an early handback renders no audio a
 alone (render only at atStop, at clockAt = stopAt), with sbForced port cuts as the one exception.
 Also worth fixing separately: why $jlook misses 8:4299 on every iteration (a handback per pixel
 row costs speed).
+
+## Phase 8, 2026-10-05 11:29Z: host clock log (root grant), the last missing date
+
+runs-20261005h/{l1,sepc}.clock (sha256 a69e5595.../b48768be...): per handback d, steps, audioAt,
+lastSbIrq, lastIrq, sb.irqDue, sliceStart, cs:gip, 89155000-89260000, patched copy.
+- The arms' stop dates (the audioAt chain) agree until 89250000. L1 stops at 89250003 (left -3,
+  audioAt -> 89250000). jit-sepc hands back EARLY exactly on 89250000 (left 0, 8:4299). The patch
+  correctly declines that as a stop, but the next slice is not cut back to 89250000, so jit-sepc's
+  next stop is 89250262 (date 89250256) and every later stop date, and the SB IRQ that waits for the
+  first stop past lastSbIrq + irqEvery, moves (89255865 vs 89256120).
+- 89250000 is the GRAIN LATTICE (`stopAt = floor(d/grain)*grain + grain`), not a `due()` date, so
+  the Phase-6 `due() >=` change could not keep it. The floor+grain skips the lattice point the
+  odometer sits on exactly.
+- Patch v2 (dos-loop-irq-fix-v2.patch, dos-loop.js sha256 bd4f1ee9...): adds
+  `stopAt = Math.ceil(d / grain) * grain || grain`. Unrun; validation run requested.
+
+## Phase 8b, 2026-10-05 11:36Z: patch v2 validated (root grant, 22 s, private copy, sha256 bd4f1ee9...)
+
+runs-20261005i/: L1 and jit-sepc to 500918116 with IRQ lists; regression test outputs.
+
+| check | v1 (Phase 6) | v2 |
+|---|---|---|
+| first differing delivery, L1 vs jit-sepc | 88.9M | **115.06M** |
+| deliveries on a different cs:ip by 500M | 996 | 522 |
+| jit-sepc frame at 500M | 2fa3dd95 | 2fa3dd95 (S0 failure persists) |
+| L1 at 500M | frame a066bf27, endHash = S0 | frame a066bf27, endHash 94a0cf32 (changed) |
+| test-toyvm-region-install-clock / region-live | PASS / PASS | PASS / PASS (4 cases) |
+
+New first split: `sb at=115063087 from 8:8c77` (L1) vs `at=115063080 from 8:8c77` (jit-sepc). That is
+the same instruction (the head of region 0x8c77, a ~7-op loop) one iteration apart: the arms
+stopped on the same date at different trips round one loop. This is the separate,
+already-tolerated cost test-toyvm-region-live.js names ("allows the dispatch clock to move by one
+per install ... the lump step charge a region bills per straight line"), and Phase 2's H4 (+1
+dispatch drift; final dispatched 500918120 vs 500918117). Early-handback classification is no
+longer involved at the first split.
+
+State of BRW:
+1. v2 (early handback on a date never counts as reaching it, and that date, including a grain-lattice
+   point, stays the next slice's stop) is a strict improvement. It moved the first divergence from
+   88.9M to 115.06M and passes the region tests. It changes L1 intermediate timing (endHash at 500M),
+   so landing it needs the corpus before/after A/B the schedule doc did for its own baseline changes.
+2. The rest is the per-install dispatch-clock offset. Closing it means making an install, and a
+   region's entry refund (`$steps +1` at region entry), bill exactly what the interpreter would.
+   That is a region-live.js / region-jit.js billing change with its own test (the region-live test
+   currently tolerates the offset by design).
