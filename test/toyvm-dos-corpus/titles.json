@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "about": "Original MS-DOS programs held locally, as ToyVM would have to run them: the DOS payload itself, never the Windows DOSBox.exe a GOG release wraps it in. Payloads stay where they are (gitignored); tools/toyvm-dos-corpus.js reads them in place and writes manifest.json and files/<id>.json. Entry commands come from each release's own DOSBox [autoexec] or batch file, cited per title.",
+  "titles": [
+    {
+      "id": "daggerfall",
+      "title": "The Elder Scrolls II: Daggerfall",
+      "candidateId": "gog-free-elder-scrolls-daggerfall",
+      "dosboxAppIds": [
+        "daggerfall_gog"
+      ],
+      "gameDir": "test/binaries/candidates/gog-free-elder-scrolls-daggerfall/installed",
+      "exclude": [],
+      "entry": {
+        "program": "FALL.EXE",
+        "args": "Z.CFG",
+        "env": {}
+      },
+      "entrySource": "__support/app/dosbox_daggerfall_single.conf [autoexec]: `fall.exe z.cfg` from C:\\ (mount C \"..\")",
+      "otherPrograms": [
+        "SETUP.EXE",
+        "FIXSAVE.EXE",
+        "DAGGER.EXE"
+      ],
+      "devices": {
+        "cdrom": false,
+        "midiMpu401": false
+      },
+      "notes": "docs/re-notes/daggerfall-gog.md"
+    },
+    {
+      "id": "arena",
+      "title": "The Elder Scrolls: Arena",
+      "candidateId": "gog-free-elder-scrolls-arena",
+      "dosboxAppIds": [
+        "arena_gog"
+      ],
+      "gameDir": "test/binaries/candidates/gog-free-elder-scrolls-arena/installed",
+      "exclude": [],
+      "entry": {
+        "program": "ACD.EXE",
+        "args": "-Ssbpdig.adv -IOS220 -IRQS7 -DMAS1 -Mgenmidi.adv -IOM330 -IRQM2 -DMAM1",
+        "env": {
+          "ARENADATA": "C:"
+        }
+      },
+      "entrySource": "__support/app/dosbox_arena_single.conf [autoexec]: `mount d \"..\" -t cdrom`, `SET ARENADATA=C:`, `d:`, `ACD -S… -Mgenmidi.adv -IOM330 …`",
+      "otherPrograms": [
+        "INSTALL.EXE",
+        "ULTRAMID.EXE"
+      ],
+      "devices": {
+        "cdrom": true,
+        "midiMpu401": true
+      },
+      "notes": "docs/re-notes/elder-scrolls-arena-gog.md"
+    },
+    {
+      "id": "ultima4",
+      "title": "Ultima IV: Quest of the Avatar",
+      "candidateId": "gog-free-ultima-iv",
+      "dosboxAppIds": [
+        "ultima4_gog"
+      ],
+      "gameDir": "test/binaries/candidates/gog-free-ultima-iv/installed",
+      "exclude": [],
+      "entry": {
+        "program": "ULTIMA.COM",
+        "args": "",
+        "env": {}
+      },
+      "entrySource": "__support/app/dosboxULTIMA4_single.conf [autoexec]: `ultima.com` from C:\\ (mount C \"..\")",
+      "otherPrograms": [
+        "TITLE.EXE",
+        "AVATAR.EXE"
+      ],
+      "devices": {
+        "cdrom": false,
+        "midiMpu401": false
+      },
+      "notes": "docs/re-notes/ultima4-gog.md",
+      "toyvmEvidence": [
+        {
+          "run": "scratch/runs/20261005T222004Z-toyvm-ultima4-cli-probe-a2",
+          "at": "2026-10-05T22:20:04Z",
+          "reached": "title-screen",
+          "summary": "CLI probe (run-dos.js, origin/main 9df4dc30): ULTIMA.COM started the title program, EGA 320x200, rendered the correct title screen; still running and polling the keyboard when the 200M-dispatch budget ended. No keys sent. One unhandled DOS call: INT 21h AH=2Ah (get date)."
+        },
+        {
+          "run": "scratch/runs/20261005T223531Z-toyvm-dos-corpus-browser",
+          "at": "2026-10-05T22:35:31Z",
+          "reached": "main-menu",
+          "summary": "Browser /toyvm/ session (headless Chrome, paced 10 MIPS, sound off): the title screen drew, and after Enter the game showed its own main menu (Options: Return to the view / Journey Onward / Initiate New Game), personally viewed -- keyboard input reaches the guest. Character creation and gameplay not attempted."
+        }
+      ]
+    },
+    {
+      "id": "shadow-warrior",
+      "title": "Shadow Warrior Classic Complete",
+      "candidateId": "gog-free-shadow-warrior-classic",
+      "dosboxAppIds": [],
+      "gameDir": "test/binaries/candidates/gog-free-shadow-warrior-classic/installed/app",
+      "exclude": [],
+      "entry": {
+        "program": "Sw.exe",
+        "args": "",
+        "env": {}
+      },
+      "entrySource": "app/dosbox_swarrior_single.conf [autoexec]: `imgmount d \".\\GAME.DAT\" -t iso`, then `sw.exe` from C:\\",
+      "otherPrograms": [
+        "Setmain.exe",
+        "Swhelp.exe",
+        "dragon/TDRAGON.EXE",
+        "wanton.exe"
+      ],
+      "devices": {
+        "cdrom": true,
+        "cdImage": "GAME.DAT",
+        "midiMpu401": false
+      },
+      "notes": "docs/re-notes/shadow-warrior-gog.md"
+    },
+    {
+      "id": "gta1-demo",
+      "title": "Grand Theft Auto (1997 demo)",
+      "dosGameId": "gta1-demo",
+      "dosboxAppIds": [],
+      "gameDir": "test/binaries/dos-games/gta1-demo/GTA24",
+      "exclude": [],
+      "entry": {
+        "program": "GTADOS/K.EXE",
+        "args": "",
+        "env": {}
+      },
+      "entrySource": "GTA24/GTA.BAT: `cd gtados`, `k.exe`, `call dino.bat` (DINO.BAT is empty)",
+      "otherPrograms": [
+        "GTADOS/DEMO24.EXE",
+        "GTADOS/DOS4GW.EXE",
+        "GTADOS/UVCONFIG.EXE"
+      ],
+      "devices": {
+        "cdrom": false,
+        "midiMpu401": false,
+        "vbe2Lfb": true
+      },
+      "vbe2LfbSource": "test/dos-game-corpus/manifest.json requirements (DOS/4GW protected mode, VESA VBE 2.0)",
+      "notes": null
+    }
+  ]
+}

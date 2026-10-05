@@ -1321,3 +1321,20 @@ dd {
 .analytics-key { font-size:12px; padding:4px 8px; color:#07100c; }
 .analytics-times b { color:#deeadf; }.analytics-agent details { border-top:1px solid var(--line); padding-top:12px; overflow-wrap:anywhere; }
 @media(max-width:650px) { .analytics-totals { grid-template-columns:1fr; gap:8px; }.analytics-totals > div { padding:12px; }.analytics-agent { padding:14px; } }
+
+/* DOS / ToyVM corpus (#dos): compact rows, two route cells side by side,
+   stacked on narrow screens. */
+.dos-list { display: grid; gap: 10px; }
+.dos-row { padding: 12px 14px; }
+.dos-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.dos-head h3 { margin: 0; }
+.dos-head code { overflow-wrap: anywhere; }
+.dos-routes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; }
+.dos-route { border: 1px solid var(--line, #2a323a); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.dos-route-name { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; opacity: .8; }
+.dos-route .sub { margin: 0; }
+.dos-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dos-foot button { margin-left: auto; }
+.dos-shots { display: flex; flex-wrap: wrap; gap: 8px; }
+.dos-shots img { max-width: min(320px, 100%); height: auto; image-rendering: pixelated; }
+@media (max-width: 720px) { .dos-routes { grid-template-columns: 1fr; } .dos-foot button { margin-left: 0; } }
