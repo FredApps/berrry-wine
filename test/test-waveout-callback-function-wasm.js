@@ -72,6 +72,12 @@ const extraWat = String.raw`
   e.guest_write32(hdr + 16, WHDR_PREPARED | WHDR_INQUEUE);
   host.wave_out_schedule_done(hwo, hdrWA, hdr, 0);
 
+  // bootRenderHarness has no loaded guest EIP: a page/shadow context must not
+  // admit the callback. Give this synthetic owner its mapped spin-loop resume PC.
+  assert.strictEqual(e.fire_wave_out_callback(hwo, hdr), 0, 'uninitialized/shadow owner rejects callback');
+  const resume = e.test_wo_alloc(16);
+  e.guest_write32(resume, 0x0000FEEB); // jmp $: synthetic interrupted guest loop
+  e.set_eip(resume);
   const espBefore = e.get_esp() >>> 0;
   clockMs = 1000;
   hostCtx.pumpAudioCompletions();   // completes the header, queues WOM_DONE
