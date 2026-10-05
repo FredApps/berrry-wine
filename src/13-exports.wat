@@ -2101,7 +2101,9 @@
         (br $loop)))
     (call $lock_wnd_release)
     ;; Multimedia timers (timeSetEvent): id at +0, period at +4, last tick at +16.
-    (local.set $i (i32.const 0))
+    ;; Not a wake source for this thread once the winmm timer thread owns them.
+    (local.set $i (if (result i32) (call $mm_timer_thread_owned)
+      (then (global.get $MM_TIMER_MAX)) (else (i32.const 0))))
     (block $mm_break
       (loop $mm_loop
         (br_if $mm_break (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
@@ -3104,6 +3106,18 @@
   (func (export "is_mm_timer_callback_active") (result i32)
     (global.get $mm_timer_in_cb))
 
+  ;; Milliseconds until the next multimedia timer is due (0 = due now, -1 =
+  ;; none, or the winmm timer thread serves them so the host need not).
+  (func (export "mm_timer_ms_until_due") (result i32)
+    (if (call $mm_timer_thread_owned) (then (return (i32.const -1))))
+    (call $mm_timer_ms_until_due))
+  ;; 1 = run timeSetEvent callbacks on a winmm timer guest thread, started by
+  ;; the first timeSetEvent. Process-wide; set before the guest runs.
+  (func (export "set_mm_timer_thread_mode") (param $mode i32)
+    (i32.store (global.get $MM_TIMER_THREAD) (local.get $mode)))
+  (func (export "get_mm_timer_thread") (result i32)
+    (i32.atomic.load offset=4 (global.get $MM_TIMER_THREAD)))
+
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
     ;; Most yielded APIs cannot be interrupted. A plain object wait is the one
@@ -3117,6 +3131,8 @@
     ;; interrupted code may already have entered a deeper call by this poll.
     (if (global.get $mm_timer_in_cb)
       (then (return (i32.const 0))))
+    ;; The winmm timer thread runs the callbacks itself.
+    (if (call $mm_timer_thread_owned) (then (return (i32.const 0))))
     (local.set $slot (call $mm_timer_due_slot))
     (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
     (local.set $id (i32.load (local.get $slot)))

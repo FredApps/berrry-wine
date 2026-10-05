@@ -1390,6 +1390,10 @@
         (call $line_dda_advance)
         (return)))
 
+    ;; winmm timer thread: start of the thread, or a callback returned.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA003B))
+      (then (call $mm_timer_thread_step) (return)))
+
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then
