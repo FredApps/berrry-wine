@@ -476,6 +476,12 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
     (local $wa i32)
     (if (local.get $node)
       (then
+        (local.set $wa (load.field HookNode magic (call $g2w (local.get $node))))
+        (if (i32.or (i32.eq (local.get $wa) (i32.const 0x31484D47))
+                    (i32.eq (local.get $wa) (i32.const 0x30484D47)))
+          (then (return (call $getmessage_hook_next (local.get $node)))))))
+    (if (local.get $node)
+      (then
         (local.set $node
           (load.field.memarg HookNode next (call $g2w (local.get $node))))))
     (block $done (loop $scan
@@ -629,6 +635,11 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
   ;; 380: UnhookWindowsHookEx(hhk) → BOOL
   (func $handle_UnhookWindowsHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $removed i32)
+    (if (call $getmessage_hook_remove (local.get $arg0))
+      (then
+        (i32.store (global.get $reg_base) (i32.const 1))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $removed
       (call $hook_remove_handle_from (i32.const 2) (local.get $arg0)))
     (if (i32.eqz (local.get $removed))
@@ -654,6 +665,11 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
   ;; SetWindowsHookExA — install one of USER's process-local hook classes.
   (func $handle_SetWindowsHookExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowsHookExA(idHook, lpfn, hMod, dwThreadId)
+    (if (i32.eq (local.get $arg0) (i32.const 3))
+      (then
+        (i32.store (global.get $reg_base) (call $getmessage_hook_install (local.get $arg1) (local.get $arg3)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
     (i32.store offset=0 (global.get $reg_base) (call $install_supported_hook (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
@@ -2087,3 +2103,231 @@ SetColorAdjustment — validate and copy complete per-DC state.
     ;; Set EIP to return address
     (global.set $eip (local.get $ret_addr))
   )
+
+  ;; Shared class-3 state: 16 owners, each head/depth/retired/generation.
+  ;; The guest HHOOK layout retains HookNode's first four fields. owner is
+  ;; private trailing metadata, not a public ABI.
+  (layout GetMessageHookNode
+    (field magic i32) (field proc i32) (field next i32)
+    (field retired_next i32) (field owner i32))
+
+  (func $getmessage_hook_state (param $tid i32) (result i32)
+    (if (i32.or (i32.lt_u (local.get $tid) (i32.const 1))
+                (i32.gt_u (local.get $tid) (i32.const 16)))
+      (then (return (i32.const 0))))
+    (i32.add (region.addr $GETMESSAGE_HOOKS 0)
+      (i32.mul (i32.sub (local.get $tid) (i32.const 1)) (i32.const 16))))
+
+  ;; Caller holds USER lock. Detach only when no owner callback can retain a
+  ;; node. Actual heap frees happen after unlocking, never USER->heap lock order.
+  (func $getmessage_hook_detach_retired (param $state i32) (result i32)
+    (local $node i32)
+    (if (i32.load offset=4 (local.get $state)) (then (return (i32.const 0))))
+    (local.set $node (i32.load offset=8 (local.get $state)))
+    (i32.store offset=8 (local.get $state) (i32.const 0))
+    (local.get $node))
+
+  (func $getmessage_hook_free_list (param $node i32)
+    (local $next i32)
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $next (load.field.memarg HookNode retired_next (call $g2w (local.get $node))))
+      (call $heap_free (local.get $node))
+      (local.set $node (local.get $next)) (br $scan))))
+
+  (func $getmessage_hook_install (param $proc i32) (param $tid i32) (result i32)
+    (local $state i32) (local $node i32) (local $wa i32) (local $generation i32)
+    (local.set $state (call $getmessage_hook_state (local.get $tid)))
+    ;; Global/injected hooks are not emulated by silently choosing this thread.
+    (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $proc)))
+      (then (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    (local.set $generation (i32.load offset=12 (local.get $state)))
+    ;; A cooperative main instance has no init_thread call. Its first real
+    ;; registration may publish the initial owner, but a retired generation
+    ;; cannot reopen itself merely because a stale instance keeps executing.
+    (if (i32.and (i32.eqz (local.get $generation))
+                  (i32.eq (local.get $tid) (global.get $current_thread_id)))
+      (then
+        (local.set $generation (i32.const 1))
+        (i32.store offset=12 (local.get $state) (local.get $generation))))
+    (call $lock_wnd_release)
+    (if (i32.eqz (i32.and (local.get $generation) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $tid) (global.get $current_thread_id))
+      (then
+        (if (global.get $getmessage_owner_generation)
+          (then
+            (if (i32.ne (global.get $getmessage_owner_generation) (local.get $generation))
+              (then (return (i32.const 0)))))
+          (else (global.set $getmessage_owner_generation (local.get $generation))))))
+    (local.set $node (call $heap_alloc (size-of GetMessageHookNode)))
+    (if (i32.eqz (local.get $node)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $node)))
+    (store.field GetMessageHookNode magic (local.get $wa) (i32.const 0x31484D47)) ;; GMH1
+    (store.field.memarg GetMessageHookNode proc (local.get $wa) (local.get $proc))
+    (store.field.memarg GetMessageHookNode retired_next (local.get $wa) (i32.const 0))
+    (store.field.memarg GetMessageHookNode owner (local.get $wa) (local.get $tid))
+    (call $lock_wnd_acquire)
+    (if (i32.ne (i32.load offset=12 (local.get $state)) (local.get $generation))
+      (then
+        (call $lock_wnd_release)
+        (call $heap_free (local.get $node))
+        (return (i32.const 0))))
+    (store.field.memarg GetMessageHookNode next (local.get $wa) (i32.load (local.get $state)))
+    (i32.store (local.get $state) (local.get $node))
+    (call $lock_wnd_release)
+    (local.get $node))
+
+  ;; Search known live chains, rather than dereferencing an arbitrary HHOOK.
+  (func $getmessage_hook_remove (param $handle i32) (result i32)
+    (local $tid i32) (local $state i32) (local $node i32) (local $previous i32)
+    (local $next i32) (local $wa i32) (local $free i32) (local $found i32)
+    (local.set $tid (i32.const 1))
+    (call $lock_wnd_acquire)
+    (block $done (loop $owners
+      (br_if $done (i32.gt_u (local.get $tid) (i32.const 16)))
+      (local.set $state (call $getmessage_hook_state (local.get $tid)))
+      (local.set $node (i32.load (local.get $state)))
+      (local.set $previous (i32.const 0))
+      (block $next_owner (loop $nodes
+        (br_if $next_owner (i32.eqz (local.get $node)))
+        (local.set $wa (call $g2w (local.get $node)))
+        (local.set $next (load.field.memarg HookNode next (local.get $wa)))
+        (if (i32.eq (local.get $node) (local.get $handle))
+          (then
+            (if (local.get $previous)
+              (then (store.field.memarg HookNode next (call $g2w (local.get $previous)) (local.get $next)))
+              (else (i32.store (local.get $state) (local.get $next))))
+            (store.field HookNode magic (local.get $wa) (i32.const 0x30484D47)) ;; GMH0 retired
+            (store.field.memarg HookNode retired_next (local.get $wa) (i32.load offset=8 (local.get $state)))
+            (i32.store offset=8 (local.get $state) (local.get $node))
+            (local.set $free (call $getmessage_hook_detach_retired (local.get $state)))
+            (local.set $found (i32.const 1)) (br $done)))
+        (local.set $previous (local.get $node))
+        (local.set $node (local.get $next)) (br $nodes)))
+      (local.set $tid (i32.add (local.get $tid) (i32.const 1))) (br $owners)))
+    (call $lock_wnd_release)
+    (call $getmessage_hook_free_list (local.get $free))
+    (local.get $found))
+
+  (func $getmessage_hook_reset (param $tid i32)
+    (local $state i32) (local $node i32) (local $next i32) (local $wa i32) (local $free i32)
+    (local.set $state (call $getmessage_hook_state (local.get $tid)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (call $lock_wnd_acquire)
+    (local.set $node (i32.load (local.get $state)))
+    (i32.store (local.get $state) (i32.const 0))
+    (i32.store offset=12 (local.get $state)
+      (i32.and (i32.add (i32.load offset=12 (local.get $state)) (i32.const 2)) (i32.const -2)))
+    (block $done (loop $nodes
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $wa (call $g2w (local.get $node)))
+      (local.set $next (load.field.memarg HookNode next (local.get $wa)))
+      (store.field HookNode magic (local.get $wa) (i32.const 0x30484D47))
+      (store.field.memarg HookNode retired_next (local.get $wa) (i32.load offset=8 (local.get $state)))
+      (i32.store offset=8 (local.get $state) (local.get $node))
+      (local.set $node (local.get $next)) (br $nodes)))
+    (local.set $free (call $getmessage_hook_detach_retired (local.get $state)))
+    (call $lock_wnd_release)
+    (call $getmessage_hook_free_list (local.get $free)))
+
+  (func $getmessage_hook_open_owner (param $tid i32)
+    (local $state i32)
+    (local.set $state (call $getmessage_hook_state (local.get $tid)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (call $lock_wnd_acquire)
+    (i32.store offset=12 (local.get $state) (i32.or (i32.load offset=12 (local.get $state)) (i32.const 1)))
+    (if (i32.eq (local.get $tid) (global.get $current_thread_id))
+      (then (global.set $getmessage_owner_generation (i32.load offset=12 (local.get $state)))))
+    (call $lock_wnd_release))
+
+  (func $getmessage_hook_take (result i32)
+    (local $state i32) (local $node i32)
+    (local.set $state (call $getmessage_hook_state (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    ;; First cooperative-main retrieval may precede any same-thread hook
+    ;; registration. Only the initial generation is adoptable this way.
+    (if (i32.and (i32.eqz (global.get $getmessage_owner_generation))
+                  (i32.eq (i32.load offset=12 (local.get $state)) (i32.const 1)))
+      (then (global.set $getmessage_owner_generation (i32.const 1))))
+    (if (i32.eq (i32.load offset=12 (local.get $state)) (global.get $getmessage_owner_generation))
+      (then (local.set $node (i32.load (local.get $state)))))
+    (if (local.get $node)
+      (then (i32.store offset=4 (local.get $state) (i32.add (i32.load offset=4 (local.get $state)) (i32.const 1)))))
+    (call $lock_wnd_release)
+    (local.get $node))
+
+  (func $getmessage_hook_leave (param $tid i32)
+    (local $state i32) (local $free i32)
+    (local.set $state (call $getmessage_hook_state (local.get $tid)))
+    (call $lock_wnd_acquire)
+    (i32.store offset=4 (local.get $state) (i32.sub (i32.load offset=4 (local.get $state)) (i32.const 1)))
+    (local.set $free (call $getmessage_hook_detach_retired (local.get $state)))
+    (call $lock_wnd_release)
+    (call $getmessage_hook_free_list (local.get $free)))
+
+  (func $getmessage_hook_next (param $node i32) (result i32)
+    (local $owner i32) (local $wa i32)
+    (call $lock_wnd_acquire)
+    (local.set $owner (load.field.memarg GetMessageHookNode owner (call $g2w (local.get $node))))
+    (local.set $node (load.field.memarg HookNode next (call $g2w (local.get $node))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $wa (call $g2w (local.get $node)))
+      (if (i32.ne (load.field.memarg GetMessageHookNode owner (local.get $wa)) (local.get $owner))
+        (then (local.set $node (i32.const 0)) (br $done)))
+      (br_if $done (i32.eq (load.field HookNode magic (local.get $wa)) (i32.const 0x31484D47)))
+      (local.set $node (load.field.memarg HookNode next (local.get $wa))) (br $scan)))
+    (call $lock_wnd_release)
+    (local.get $node))
+
+  (func $getmessage_hook_begin (param $ret i32) (param $msg i32) (param $remove i32) (param $result i32)
+    (local $node i32)
+    (local.set $node (call $getmessage_hook_take))
+    (if (i32.eqz (local.get $node)) (then (return)))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $current_thread_id))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $result))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $hook_active_node))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0x314B4D47))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $msg))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $remove))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $font_enum_ret_thunk))
+
+    (global.set $hook_active_node (local.get $node))
+    (global.set $eip (call $hook_node_proc (local.get $node)))
+    (global.set $steps (i32.const 0)))
+
+  (func $getmessage_hook_continue
+    (local $sp i32) (local $tid i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $tid (call $gl32 (i32.add (local.get $sp) (i32.const 16))))
+    (global.set $eip (call $gl32 (i32.add (local.get $sp) (i32.const 4))))
+    (global.set $hook_active_node (call $gl32 (i32.add (local.get $sp) (i32.const 8))))
+    (i32.store (global.get $reg_base) (call $gl32 (i32.add (local.get $sp) (i32.const 12))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 20)))
+    (call $getmessage_hook_leave (local.get $tid)))
+
+  (func $keyboard_hook_finish
+    (local $sp i32) (local $ret i32) (local $msg i32) (local $remove i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ret (call $gl32 (i32.add (local.get $sp) (i32.const 4))))
+    (local.set $msg (call $gl32 (i32.add (local.get $sp) (i32.const 12))))
+    (local.set $remove (call $gl32 (i32.add (local.get $sp) (i32.const 16))))
+    (call $hook_dispatch_leave (call $gl32 (i32.add (local.get $sp) (i32.const 8))))
+    (global.set $eip (local.get $ret))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 20)))
+    (i32.store (global.get $reg_base) (i32.const 1))
+    (call $getmessage_hook_begin (local.get $ret) (local.get $msg) (local.get $remove) (i32.const 1)))

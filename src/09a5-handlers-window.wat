@@ -1664,7 +1664,11 @@
   ;; (nCode, wParam, lParam). CACA0011's KHK1 context restores the USER API's
   ;; caller and its BOOL result after the callback pops those three arguments.
   (func $keyboard_hook_begin
-      (param $ret i32) (param $ncode i32) (param $vkey i32) (param $lparam i32)
+      (param $ret i32) (param $ncode i32) (param $vkey i32) (param $lparam i32) (param $msg_ptr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.ne (local.get $ncode) (i32.const 3)))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $msg_ptr))
     ;; Context below the callback frame: magic, saved USER caller EIP, and
     ;; the outer active hook node for re-entrant input dispatch.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -1713,7 +1717,7 @@
     (call $keyboard_hook_begin
       (local.get $ret) (local.get $ncode)
       (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 8)))
-      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 12))))
+      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 12))) (local.get $msg_ptr))
     (i32.const 1))
 
   ;; 73: GetMessageA
@@ -1862,13 +1866,17 @@
   ;; wait, and it consumed its stack frame) replaces the thread's extra info
   ;; with that message's, and every source here attaches 0.
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sp i32)
+    (local $sp i32) (local $ret i32)
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ret (call $gl32 (local.get $sp)))
     (call $handle_GetMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (if (i32.and (i32.eqz (global.get $yield_flag))
                  (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
-      (then (global.set $msg_extra_info (i32.const 0)))))
+      (then (global.set $msg_extra_info (i32.const 0))))
+    (if (i32.and (i32.eqz (global.get $code16))
+          (i32.and (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $sp) (i32.const 20))) (i32.ge_s (i32.load (global.get $reg_base)) (i32.const 0))))
+      (then (call $getmessage_hook_begin (local.get $ret) (local.get $arg0) (i32.const 1) (i32.load (global.get $reg_base))))))
 
   (func $handle_GetMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
@@ -2031,7 +2039,7 @@
         (call $keyboard_hook_begin
           (local.get $ret) (i32.const 0)
           (i32.shr_u (local.get $packed) (i32.const 16))
-          (global.get $pending_input_lparam))
+          (global.get $pending_input_lparam) (local.get $msg_ptr))
         (return)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)))
@@ -2186,15 +2194,19 @@
   ;; A PeekMessage that returned a message (removed or not, as in USER)
   ;; replaces the thread's extra info with that message's: always 0 here.
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sp i32)
+    (local $sp i32) (local $ret i32)
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ret (call $gl32 (local.get $sp)))
     (call $handle_PeekMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (if (i32.and
           (i32.and (i32.eqz (global.get $yield_flag))
                    (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
           (i32.ne (i32.load (global.get $reg_base)) (i32.const 0)))
-      (then (global.set $msg_extra_info (i32.const 0)))))
+      (then (global.set $msg_extra_info (i32.const 0))))
+    (if (i32.and (i32.eqz (global.get $code16))
+          (i32.and (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $sp) (i32.const 24))) (i32.ne (i32.load (global.get $reg_base)) (i32.const 0))))
+      (then (call $getmessage_hook_begin (local.get $ret) (local.get $arg0) (i32.and (local.get $arg4) (i32.const 1)) (i32.load (global.get $reg_base))))))
 
   (func $handle_PeekMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
@@ -2420,7 +2432,7 @@
                   (select (i32.const 0) (i32.const 3)
                     (i32.ne (i32.and (local.get $arg4) (i32.const 1)) (i32.const 0)))
                   (i32.shr_u (local.get $packed) (i32.const 16))
-                  (global.get $pending_input_lparam))
+                  (global.get $pending_input_lparam) (local.get $arg0))
                 (return)))
             (i32.store offset=0 (global.get $reg_base) (i32.const 1))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))

@@ -4200,3 +4200,7 @@
   (global $wave_callback_saved_wait_stack_bytes (mut i32) (i32.const 0))
   (global $wave_callback_saved_yield_reason (mut i32) (i32.const 0))
   (global $wave_callback_saved_yield_flag (mut i32) (i32.const 0))
+
+  (global $getmessage_owner_generation (mut i32) (i32.const 0))
+  (global $GETMESSAGE_HOOKS i32 (region.addr $GETMESSAGE_HOOKS 0))
+  (global $GETMESSAGE_HOOKS_SIZE i32 (region.size $GETMESSAGE_HOOKS))
