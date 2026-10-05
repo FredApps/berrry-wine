@@ -311,6 +311,12 @@
       (if (global.get $page_chunk_deferred)
         (then (call $page_chunk_reclaim_deferred)))
       (br $main)))
+    (if (i32.and (global.get $wave_callback_saved)
+          (i32.or (i32.eqz (global.get $eip))
+            (i32.eq (global.get $yield_reason) (i32.const 2))))
+      (then
+        (global.set $wave_callback_saved (i32.const 0))
+        (global.set $mm_timer_in_cb (i32.const 0))))
     ;; What this call actually got through. $block_budget can end up negative --
     ;; a fold retires k blocks in one go and subtracts all k -- so this can read
     ;; slightly above the budget it was given; that is honest, not a wrap.
@@ -3171,16 +3177,30 @@
   ;; this export. Reuse the multimedia-timer continuation because it already
   ;; saves/restores the interrupted x86 caller state and rejects nested async
   ;; callbacks. waveOutProc(hwo, WOM_DONE, instance, waveHdr, 0) is stdcall.
-  (func (export "fire_wave_out_callback")
-      (param $handle i32) (param $wave_hdr i32) (result i32)
-    (local $cb i32) (local $instance i32)
-    (if (global.get $yield_reason) (then (return (i32.const 0))))
-    (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
-    (if (i32.ne (i32.load (region.addr $WAVE_OUT_SHARED 12)) (i32.const 3))
+  ;; Owner-authenticated host delivery supplies the immutable registration.
+  ;; It must never resolve a queued old completion through WAVE_OUT_SHARED.
+  (func $fire_wave_out_callback_bound (export "fire_wave_out_callback_bound")
+      (param $handle i32) (param $wave_hdr i32)
+      (param $cb i32) (param $instance i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $cb))
+          (i32.or (i32.eqz (global.get $eip))
+            (i32.eqz (i32.load offset=16 (global.get $reg_base)))))
       (then (return (i32.const 0))))
-    (local.set $cb (i32.load (region.addr $WAVE_OUT_SHARED 4)))
-    (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
-    (local.set $instance (i32.load (region.addr $WAVE_OUT_SHARED 8)))
+    (if (i32.and (i32.ne (global.get $yield_reason) (i32.const 0))
+          (i32.ne (global.get $yield_reason) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (if (i32.or (global.get $mm_timer_in_cb) (global.get $wave_callback_saved))
+      (then (return (i32.const 0))))
+    (global.set $wave_callback_saved_wait_handle (global.get $wait_handle))
+    (global.set $wave_callback_saved_wait_handles_ptr (global.get $wait_handles_ptr))
+    (global.set $wave_callback_saved_wait_all (global.get $wait_all))
+    (global.set $wave_callback_saved_wait_timeout (global.get $wait_timeout))
+    (global.set $wave_callback_saved_wait_stack_bytes (global.get $wait_stack_bytes))
+    (global.set $wave_callback_saved_yield_reason (global.get $yield_reason))
+    (global.set $wave_callback_saved_yield_flag (global.get $yield_flag))
+    (global.set $wave_callback_saved (i32.const 1))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
     (global.set $mm_timer_in_cb (i32.const 1))
     (call $save_caller_regs)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -3197,6 +3217,27 @@
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $mm_timer_ret_thunk))
     (global.set $eip (local.get $cb))
     (i32.const 1))
+
+  ;; Existing cooperative entry retains its public signature.
+  (func (export "fire_wave_out_callback")
+      (param $handle i32) (param $wave_hdr i32) (result i32)
+    (if (i32.ne (i32.load (region.addr $WAVE_OUT_SHARED 12)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (call $fire_wave_out_callback_bound (local.get $handle) (local.get $wave_hdr)
+      (i32.load (region.addr $WAVE_OUT_SHARED 4))
+      (i32.load (region.addr $WAVE_OUT_SHARED 8))))
+
+  (func $wave_callback_restore_wait
+    (if (i32.eqz (global.get $wave_callback_saved)) (then (return)))
+    (global.set $wait_handle (global.get $wave_callback_saved_wait_handle))
+    (global.set $wait_handles_ptr (global.get $wave_callback_saved_wait_handles_ptr))
+    (global.set $wait_all (global.get $wave_callback_saved_wait_all))
+    (global.set $wait_timeout (global.get $wave_callback_saved_wait_timeout))
+    (global.set $wait_stack_bytes (global.get $wave_callback_saved_wait_stack_bytes))
+    (global.set $yield_reason (global.get $wave_callback_saved_yield_reason))
+    (global.set $yield_flag (global.get $wave_callback_saved_yield_flag))
+    (global.set $wave_callback_saved (i32.const 0))
+    (if (global.get $yield_reason) (then (global.set $steps (i32.const 0)))))
 
   ;; A host-side writer that fills guest memory directly (ReadFile into the
   ;; guest's buffer, a mapped view, a decompressed resource) bypasses every
