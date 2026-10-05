@@ -1641,10 +1641,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_BltColorFill",
     "nargs": 4,
     "convention": "stdcall",
-    "stub": {
-      "pop": 20,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltColorFill"
   },
   {
     "name": "IVBImageSurface7_BltFast",

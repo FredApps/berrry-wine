@@ -13476,3 +13476,38 @@
    (i32.store (global.get $reg_base) (i32.const 0x88760082))
    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
   (else (call $handle_IDirectDrawSurface_SetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))))
+
+;; Original DX7VB7354329b: raw packed color -> DDBLTFX.dwFillColor at80,
+;; zero RECT -> NULL, native Blt(COLORFILL|WAIT,NULL source), native result
+;; -> statusOut, COM S_OK. Color is not an OLE_COLOR/RGB conversion request.
+(func $vbdd_color_fill (param $obj i32) (param $rect i32) (param $color i32) (param $out i32) (result i32)
+ (local $entry i32) (local $tmp i32) (local $fx i32) (local $hr i32) (local $esp i32) (local $eax i32) (local $bpp i32)
+ (local.set $entry (call $vbdd_surface_entry (local.get $obj)))
+ (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80070057))))
+ (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4))) (then (return (i32.const 0x80004003))))
+ (if (i32.and (i32.ne (local.get $rect) (i32.const 0)) (i32.eqz (call $vbdd_guest_span_mapped (local.get $rect) (i32.const 16)))) (then (return (i32.const 0x80004003))))
+ (local.set $hr (i32.const 0x80004001))
+ (block $done
+  (local.set $bpp (load.field DxObject bpp (local.get $entry)))
+  ;; Existing native fill has byte/word/dword paths, but its 24bpp path is not
+  ;; a three-byte fill. Do not falsely support that format through this ABI.
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  (local.set $tmp (call $heap_alloc (i32.const 148)))
+  (if (i32.eqz (local.get $tmp)) (then (local.set $hr (i32.const 0x8007000E)) (br $done)))
+  (local.set $hr (call $vbdd_blt_rect (local.get $rect) (i32.add (local.get $tmp) (i32.const 32)) (local.get $entry)))
+  (br_if $done (local.get $hr))
+  (local.set $fx (i32.add (local.get $tmp) (i32.const 48)))
+  (call $zero_memory (call $g2w (local.get $fx)) (i32.const 100))
+  (call $gs32 (local.get $fx) (i32.const 100))
+  (call $gs32 (i32.add (local.get $fx) (i32.const 80)) (local.get $color))
+  (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (local.get $fx))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_Blt (local.get $obj) (i32.add (local.get $tmp) (i32.const 32)) (i32.const 0) (i32.const 0) (i32.const 0x01000400) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
+ (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
+ (call $gs32 (local.get $out) (local.get $hr)) (i32.const 0))
+(func $handle_VBImage_BltColorFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_color_fill (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))

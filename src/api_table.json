@@ -33549,9 +33549,9 @@
     "id": 3963,
     "name": "IVBImageSurface7_BltColorFill",
     "nargs": 4,
-    "stub": { "pop": 20, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 1926458746
+    "hash": 1926458746,
+    "handler": "VBImage_BltColorFill"
   },
   {
     "id": 3964,
