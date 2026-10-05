@@ -13744,3 +13744,28 @@
   (local.set $hr (i32.const 0)))
  (i32.store (global.get $reg_base) (local.get $hr))
  (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $esp) (i32.const 12))))
+
+;; Native IVBDirectX7 slot49: GetWindowRect(HWND, RECT*), HRESULT.
+;; dx7vb7352d5ef forwards USER32 BOOL, mapping false to E_FAIL. Use the
+;; existing Win32 geometry path into owned scratch, then sparse-safe writes.
+(func $handle_IVBDirectX7_GetWindowRect
+ (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (local $sp i32) (local $scratch i32) (local $hr i32)
+ (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+ (block $done
+  (if (i32.eqz (call $vbdd_guest_span_mapped (local.get $arg2) (i32.const 16)))
+   (then (local.set $hr (i32.const 0x80004003)) (br $done)))
+  (local.set $scratch (call $heap_alloc (i32.const 16)))
+  (if (i32.eqz (local.get $scratch))
+   (then (local.set $hr (i32.const 0x8007000e)) (br $done)))
+  (call $handle_GetWindowRect (local.get $arg1) (local.get $scratch) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+  (if (i32.eqz (i32.load (global.get $reg_base)))
+   (then (local.set $hr (i32.const 0x80004005)))
+   (else
+    (call $gs32 (local.get $arg2) (call $gl32 (local.get $scratch)))
+    (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (call $gl32 (i32.add (local.get $scratch) (i32.const 4))))
+    (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (call $gl32 (i32.add (local.get $scratch) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $arg2) (i32.const 12)) (call $gl32 (i32.add (local.get $scratch) (i32.const 12))))))
+  (call $heap_free (local.get $scratch)))
+ (i32.store (global.get $reg_base) (local.get $hr))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 16))))

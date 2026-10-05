@@ -34452,9 +34452,9 @@
     "id": 4076,
     "name": "IVBDirectX7_GetWindowRect",
     "nargs": 3,
-    "stub": { "pop": 16, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 238158849
+    "hash": 238158849,
+    "handler": "IVBDirectX7_GetWindowRect"
   },
   {
     "id": 4077,

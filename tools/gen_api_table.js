@@ -2806,10 +2806,7 @@ const vbDirectX7Methods = [
     "name": "IVBDirectX7_GetWindowRect",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    }
+    "handler": "IVBDirectX7_GetWindowRect"
   },
   {
     "name": "IVBDirectX7_CreateEvent",
