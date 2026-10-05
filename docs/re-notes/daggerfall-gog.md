@@ -180,3 +180,34 @@ pins. Existing runtime94d18605/module2e2fd8d1 and registration overlay were reta
 Further ordinary continuation should use the successful finite allocation route
 and capture bounded browser exit/stderr plus host resource receipts, after the
 shared disk condition is addressed; no identical cause-blind rerun is justified.
+
+## Opening parchment reached (2026-10-05, attempt6)
+
+The finite ordinary route completed6 attribute and18 skill allocations with
+an exact visible decrement after every click. The next reviewed screens were
+Average reflexes and final character review. Final OK reached the candlelit
+cinematic and subsequently the Imperial Palace sequence. A1000ms ordinary Space
+hold on the visible actor/torch scene was followed by the opening parchment
+beginning “You wake and look around the room”. The600-second session deadline
+then expired before dismissal or movement. This is **not dungeon gameplay**.
+
+Immutable evidence: `scratch/runs/20261005-daggerfall-opening-parchment`,
+`hashes.json` with510 verified artifacts;121 reader-visible images, zero gameplay
+images. Key images are `post-creator.png`, `arrival-wait.png` and
+`load-after-space.png`. Inputs, per-point counter observations, source/served
+identities and cleanup are retained. The existing94d18605/module2e2fd8d1 runtime
+and registration overlay were unchanged.
+
+The earlier browser-target failure did not reproduce. Cleanup20:22:49.855Z was
+intentional at the original deadline, with browser/server closed, no errors,
+no unsettled streams and Chrome exit0. Bounded filesystem samples ranged from
+597,671,936 to801,214,464 available bytes; disconnect/exit followed cleanup.
+This disproves a repeat on this run, but does not establish the cause of the
+previous failure or prove that additional disk space fixed it.
+
+The remaining boundary is normal parchment dismissal followed by visible
+first-person forward/reverse/idle response. A source-only finite movie route
+now matches only retained positive candlelit/Palace/actor regions before at
+most two held Space inputs. It does not authorize keys from black/fade frames,
+repeat the same movie input, dismiss parchment automatically, or extend the
+original session. Personal review remains required for the newly reached scene.
