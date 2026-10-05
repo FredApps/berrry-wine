@@ -43,9 +43,14 @@ below 300 MB.
 ## Phases
 
 **Not schedulable yet.** The scheduled A/B is `CAND=v3j`: v2 + the v3 delta + the jmp_syn
-budget-test fix (cause 2 of BRW, confirmed by the synthetic regression). That jmp_syn patch has
-NOT been written; it waits on the user's choice between fix J (jmp_syn drops its budget test
-everywhere) and the region-only variant R. `all` refuses any other CAND (exit 8), and `prep`
+budget-test fix (cause 2 of BRW, confirmed by the synthetic regression). A reviewable fix-J
+candidate now exists, unapplied and unrun: `../jmp-syn-j/jmp-syn-j.patch`, sha256
+`7f8a7275d3b8a234e2fc8f1f23930e74426cddc30316fbfaecbb11ab65412239`, with `--jmp-syn-budget-test`
+restoring HEAD exactly. Before this corpus run: (1) the short J A/B in that README (synthetic
+spec on HEAD / HEAD+J / HEAD+J+flag, plus region-live and install-clock with and without the
+flag) must pass; (2) the patch must be re-based onto v2+v3, since both touch toyvm and it was cut
+against HEAD; (3) J versus the region-only variant R is still a user decision, and nothing here
+promotes either. `all` refuses any other CAND (exit 8), and `prep`
 refuses `v3j` without `JMPSYN=<patch>` and a matching `JMPSYN_SHA` (exit 8). It also refuses a
 candidate whose dos-loop.js or emit.js came out unpatched.
 
