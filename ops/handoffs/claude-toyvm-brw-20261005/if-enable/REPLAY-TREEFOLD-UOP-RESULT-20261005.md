@@ -18,7 +18,7 @@
   - `uop`: all 15 tags, each with `28 pass configurations x 12 budgets agree`, and `5040 differential runs agree` in each tree.
 - **Child processes:** `leftoverGroup` is `false` for all four, so no test left a child process behind.
 
-**This resolves the two incomplete entries from the 20:05:54Z run** (main `e6b09f57` + `2eb59bc6`). Both were the 60 s cap: each test needs ~65–99 s on this box, inside the earlier 120–180 s estimates.
+**This resolves the two incomplete entries from the 20:05:54Z run** (main `e6b09f57` + `2eb59bc6`). With the larger per-test cap, these runs completed in ~65–99 s, exceeding the old 60 s cap but below the earlier 120–180 s estimates. This establishes completion for this replay, not an exact runtime guarantee for future runs.
 
 **Combined with that run:** all 15 default tests PASS in both the candidate and the stack tree, with no REGRESSION and no FIXED. This is correctness evidence only. It is not a benchmark, and it does not promote the candidate.
 
