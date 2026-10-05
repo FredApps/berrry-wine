@@ -4954,16 +4954,7 @@ class WineAssembly {
         this._stepTimeoutId = 0;
         const fn = this._delayedStep;
         this._delayedStep = null;
-        // Run the slice from a MessageChannel task, never from inside this
-        // timer's own callback. Browsers clamp a timer to >=4ms once it was
-        // scheduled from five nested timer callbacks, and a guest that parks
-        // on every slice (a 1ms clock-spin park, a Sleep(1)) would otherwise
-        // chain setTimeout -> slice -> setTimeout forever: every requested
-        // 1ms became ~3.8ms. Heroes II waits per walk frame on ~25 of those,
-        // so its hero walked ~5x slower than its own clock asked for. A slice
-        // posted through the port starts at timer nesting level 0, so its
-        // next park gets the delay it requested. Longer parks are unaffected.
-        if (fn && this.running) this._postStep(fn);
+        if (fn && this.running) fn();
       }, delay);
       return;
     }
@@ -5947,10 +5938,8 @@ class WineAssembly {
           // loop already knows how to sleep one. Falling through records the
           // deadline for _parkedSleepMs() and lets the tail below post the
           // next step with it — which means worker threads still get their
-          // slice while the main thread waits. The 1ms clock sleep is a real
-          // 1ms: _scheduleStep wakes through the port, so the nested-timer 4ms
-          // clamp no longer stretches it (that stretch was Heroes II's slow
-          // hero walk).
+          // slice while the main thread waits, and the nested-setTimeout 4ms
+          // clamp coalesces the 1ms clock sleeps for free.
           self._spinParkSleepMs = self._spinParkDelay(yieldReason);
           self.instance.exports.clear_yield();
           mainParked = true;

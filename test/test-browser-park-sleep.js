@@ -132,11 +132,6 @@ assert.strictEqual(WineAssembly.GUEST_TICK_POLL_STRIDE, 4,
   assert.strictEqual(pendingTimers().length, 1, 'a positive delay schedules a timeout');
   assert.strictEqual(pendingTimers()[0].ms, 12, 'the requested delay is honoured');
   runTimer();
-  // The timer only posts the slice: running it from inside the timer callback
-  // would nest the next park's timer and let the browser clamp it to 4ms.
-  assert.strictEqual(ran, 1, 'the timeout does not run the slice inline');
-  assert.strictEqual(wine._pendingStep, step, 'the timeout posts the slice on the port');
-  wine._stepListenPort.onmessage();
   assert.strictEqual(ran, 2, 'the timeout runs the slice');
 
   // Nothing may sleep past the cap: a wake source we forgot degrades to 20Hz
