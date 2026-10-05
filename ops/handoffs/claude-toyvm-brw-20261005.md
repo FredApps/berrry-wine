@@ -437,3 +437,37 @@ dispatched when !atStop). Runs: base-l1.{irq,slog}, fix-l1.{irq,slog}.
   move.
 - Fix part (3) applied in the working tree: under the schedule `sbDueNow` is strict (`>`). NOT RUN.
 - Worker box: `boat`/`box` CLI present but not signed in (401 "run boat login"). Not provisioned.
+
+# Phase 6, 2026-10-05 10:43-10:47Z: validation in the root-queued ToyVM slot (~90 s CPU)
+
+Fix = the 4-part working-tree hunk in tools/toyvm/dos-loop.js `step` (saved as
+dos-loop-irq-fix.patch). Runs in runs-20261005d/.
+
+| check | result |
+|---|---|
+| L1 to 81M vs pre-fix baseline | 2 of 1474 deliveries differ (SB at 80854061 -> 80854318, 80954061 -> 80954513); endHash differs at 81M |
+| L1 to 500M vs S0 baseline | identical: frame a066bf27, endHash bb14e750 |
+| jit-sepc to 500M | still frame 2fa3dd95 (the S0 failure); 996 of 9871 deliveries on different cs:ip, 4212 differing incl. `at` |
+| invariant on jit-sepc 500M | 2 IRQs at left >= 0 handbacks (likely machine cuts, unchecked) |
+| test-toyvm-region-install-clock | PASS |
+| test-toyvm-region-live | PASS (3 cases) |
+
+- **The worker's Phase-5 sbDueNow explanation is incomplete**: with the strict sbDueNow included,
+  the 80854061 shift remains. The real cause of L1's change is upstream: baseline L1 ITSELF hands
+  back early exactly on a date (slice log line 57814: `32513981 0 8:c270`, three early handbacks
+  in a row at 8:c270 with left 25/13/0) and treated it as reached. The fix runs on to a real stop
+  (`32513985 -3`). So the L1 change is the fix applying to L1's own on-date early handbacks, as
+  intended, and it washes out by 500M.
+- **The fix is correct for its class but is not the BRW fix.** jit-sepc still diverges on 996
+  delivery addresses, so a second mechanism moves deliveries. Candidates: the generic residual
+  overshoot (region bills ops in chunks, so its budget stop lands on another instruction than the
+  interpreter's per-op `$next` charge, docs/toyvm-irq-schedule.md BLIQ section), or
+  more early-on-date cases the classification still admits (`cut`).
+- **Not committed**, deliberately: it changes L1's intermediate timing (a baseline change), so it
+  needs the corpus before/after run the schedule doc used for its own baseline changes before it can
+  land. The reproducer test is still a draft that does not reproduce.
+
+Next (runtime needed): first differing jit-sepc vs L1 delivery at 500M with slice logs on both arms,
+classified as on-date-early / overshoot / cut; a reproducer from the 8:c270 early-handback shape
+(three short early handbacks, kind unknown: read `exitwhy` with --slice-log plus exitKinds);
+corpus A/B before landing.
