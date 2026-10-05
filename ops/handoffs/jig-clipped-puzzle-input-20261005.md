@@ -10,4 +10,4 @@ Published run `/home/user/wine-assembly/scratch/runs/20261005-jigssawme-clipped-
 - piece-drag.png: b8495835a744ce33cb1cedc3f96c18ce94fed3ed4cd6e6ca50b0c5bfecd14116
 - piece-idle.png: b8495835a744ce33cb1cedc3f96c18ce94fed3ed4cd6e6ca50b0c5bfecd14116
 
-Full immutable hash manifest: validation.json in published run. Raw failed URL probes retained; declared20 fixture paths present. Root visual acceptance remains separate.
+Full immutable hash manifest: validation.json in published run. Raw failed URL probes retained; declared20 fixture paths present. Root independently reviewed the before/after images and verified all37 published artifact hashes on2026-10-05. Narrow ordinary piece movement is accepted; full-board rendering, snapping/solving and FPS remain unqualified. Telegram478/479 delivered both screenshots.
