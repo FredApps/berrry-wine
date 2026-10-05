@@ -2635,12 +2635,15 @@
   ],
   "config": {
     "path": "test/configs/arena-browser-wine-assembly.conf",
-    "sha256": "decd58ec64cc46b9e1553287d5dc13974201330d70b61d4f7f3deabc3144aa14"
+    "sha256": "7af55396fc1310661854cb4f389fccca69669035cff851c4f5726ea620af7ca5",
+    "previousSha256": "decd58ec64cc46b9e1553287d5dc13974201330d70b61d4f7f3deabc3144aa14",
+    "previousManifestSha256": "70e27e449957049b82df357ca57988481cec7e629a003ec5e6c64a3a175ffc87"
   },
   "provenance": "Original local GOG package from archive.org/gog_collection; proprietary local-only assets; source recipes only. Original support config supplies save-overlay/CD-ROM/ARENADATA/ACD args; setup script creates cloud_saves. No packaged save templates.",
   "limitations": [
     "dynamic fixed50000 nested DOSBox",
     "sound disabled",
     "No gameplay or persistence runtime claim"
-  ]
+  ],
+  "directorySetup": "Original GOG installer creates long host directory cloud_saves. Browser app.mounts provisions empty VFS directory before guest launch; DOS mkdir cannot preserve this long component."
 }
