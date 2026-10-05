@@ -526,7 +526,7 @@
 
   ;; ---- Memory: imported from host, 8192 pages = 512MB initial ----
   ;; Audio output — waveOut bridge to Web Audio API
-  (import "host" "wave_out_open" (func $host_wave_out_open (param i32 i32 i32 i32) (result i32)))
+  (import "host" "wave_out_open" (func $host_wave_out_open (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; wave_out_open(sampleRate, channels, bitsPerSample, callbackType) → handle
   (import "host" "wave_out_write" (func $host_wave_out_write (param i32 i32 i32) (result i32)))
   ;; wave_out_write(handle, pcmDataWA, byteLength) → 0=ok
@@ -4191,3 +4191,13 @@
   ;; How many releases the diagnostic actually swallowed. Without it, "armed
   ;; and had no effect" and "never matched a call site" are the same reading.
   (global $virtual_leak_hits (mut i32) (i32.const 0))
+
+  ;; waveOut borrows the actual owning interpreter, preserving caller TLS.
+  (global $wave_callback_saved (mut i32) (i32.const 0))
+  (global $wave_callback_saved_wait_handle (mut i32) (i32.const 0))
+  (global $wave_callback_saved_wait_handles_ptr (mut i32) (i32.const 0))
+  (global $wave_callback_saved_wait_all (mut i32) (i32.const 0))
+  (global $wave_callback_saved_wait_timeout (mut i32) (i32.const 0))
+  (global $wave_callback_saved_wait_stack_bytes (mut i32) (i32.const 0))
+  (global $wave_callback_saved_yield_reason (mut i32) (i32.const 0))
+  (global $wave_callback_saved_yield_flag (mut i32) (i32.const 0))

@@ -1177,6 +1177,72 @@ class WineAssembly {
     }
   }
 
+  async _offerWaveCallback(item) {
+    const registration=item.registration, owner=registration && registration.owner;
+    if(!this.running || !owner || (registration.retired && !owner.link?._waveOffer)) return {status:'retired'};
+    const tm=this.threadManager;
+    if(owner.kind==='worker') {
+      const backend=owner.backend;
+      if(this.guestWorker!==backend) return {status:'retired'};
+      const live=owner.slot===0 ? backend.link : backend.threadLinks.get(owner.slot);
+      if(!owner.link) owner.link=live || null;
+      if(!owner.link) return {status:'busy'};
+      if(live!==owner.link || !live.worker) return {status:'retired'};
+      const stream=live.waveRegistrations.get(registration.handle);
+      if(!stream && !live._waveOffer) return owner.stream ? {status:'retired'} : {status:'busy'};
+      if(!owner.stream) {
+        if(stream.callback!==registration.callback || stream.instance!==registration.instance) return {status:'retired'};
+        owner.stream=stream;
+      }
+      if(stream!==owner.stream && !live._waveOffer) return {status:'retired'};
+      if(owner.slot===0 && (!this._workerLastSlice || tm?.isMainThreadSuspended?.())) return {status:'busy'};
+      const thread=owner.slot===0 ? null : [...(tm?.threads?.values() || [])].find(t=>t.link===live);
+      if(owner.slot!==0 && !thread) return {status:'busy'};
+      if(thread && thread.state!=='active') return {status:'retired'};
+      if(thread && thread.suspendCount>0) return {status:'busy'};
+      if(thread && (thread.inFlight || thread.freeRunPending || thread.parkedWaitDone)) return {status:'busy'};
+      const state=thread || (tm ? (tm._mainWaitState || (tm._mainWaitState={})) : {});
+      const saved={waitStartedAt:state.waitStartedAt||0,waitPolls:state.waitPolls||0,lastPollAt:state.lastPollAt||0};
+      const result=await live.offerWaveCallback(owner.stream,item.waveHdrGA,1000,registration.retired);
+      if(result.status==='accepted') {
+        if(!this.running || !live.worker || (thread && thread.state!=='active')) return {status:'retired'};
+        // Only the accepted callback changes run eligibility; original WAT wait
+        // stays saved until its real return continuation, never completed here.
+        if(thread) {thread.waveWaitSaved=saved;thread.parkedWait=null;thread.parkedWaitDone=null;}
+        else {this._waveMainWaitSaved=saved;this._workerMainParkedWait=null;}
+        state.waitStartedAt=state.waitPolls=state.lastPollAt=0;
+        this._wakeStep();
+      }
+      return result;
+    }
+    const ex=owner.exports;
+    const thread=owner.tid ? [...(tm?.threads?.values() || [])].find(t=>t.tid===owner.tid && t.instance?.exports===ex) : null;
+    if(owner.tid && (!thread || thread.state!=='active')) return {status:'retired'};
+    if(!owner.tid && this.instance?.exports!==ex) return {status:'retired'};
+    if(!owner.tid && tm?.isMainThreadSuspended?.()) return {status:'busy'};
+    if(thread?.suspendCount>0) return {status:'busy'};
+    if(!ex.get_eip() || ex.get_yield_reason()===2) return {status:'retired'};
+    const saved=thread ? {waitStartedAt:thread.waitStartedAt||0,waitPolls:thread.waitPolls||0}
+      : {waitStartedAt:tm?._mainWaitStartedAt||0,waitPolls:tm?._mainWaitPolls||0};
+    if(!ex.fire_wave_out_callback_bound(registration.handle,item.waveHdrGA,registration.callback,registration.instance)) return {status:'busy'};
+    if(thread) {thread.waveWaitSaved=saved;thread.waitStartedAt=thread.waitPolls=0;}
+    else if(tm) {this._waveMainWaitSaved=saved;tm._mainWaitStartedAt=tm._mainWaitPolls=0;}
+    return {status:'accepted'};
+  }
+
+  async _pumpWaveCallbacksAtBoundary() {
+    if(!this.running) return;
+    if(!this.guestWorker && this._waveMainWaitSaved && !this.instance.exports.is_mm_timer_callback_active()) {
+      if(this.threadManager) {
+        this.threadManager._mainWaitStartedAt=this._waveMainWaitSaved.waitStartedAt;
+        this.threadManager._mainWaitPolls=this._waveMainWaitSaved.waitPolls;
+      }
+      this._waveMainWaitSaved=null;
+    }
+    this.hostCtx?.pumpAudioCompletions?.();
+    await this.hostCtx?.pumpWaveCallbacks?.();
+  }
+
   _pumpMultimediaTimer() {
     const ex = this.instance && this.instance.exports;
     if (!this.asyncMultimediaTimer || !ex || !ex.fire_mm_timer) return 0;
@@ -1522,6 +1588,16 @@ class WineAssembly {
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
       sharedMixer,
+      get waveCallbackOwner() {
+        const backend=self.guestWorker;
+        if(backend) {
+          const slot=backend.audioRpcSlot;
+          return Number.isInteger(slot) ? {kind:'worker',backend,slot,link:null} : null;
+        }
+        return this.exports ? {kind:'cooperative',exports:this.exports,tid:opts.threadId|0} : null;
+      },
+      offerWaveCallback:item=>self._offerWaveCallback(item),
+      wakeWaveCallback:()=>self._wakeStep(),
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
       // How far the global deadline clock trails real time (0 when off).
       deadlineLagMs: () => {
@@ -4034,6 +4110,8 @@ class WineAssembly {
     this._cancelPresentFrame();
     this.running = false;
     if (this._gameWait) this._gameWait.reset();
+    this.hostCtx?.retireWaveCallbacks?.();
+    this._waveMainWaitSaved=null;
     // A pending parked-sleep timeout and the visibilitychange listener both
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
     // Same leak the DX rAF chain had.
@@ -4482,6 +4560,8 @@ class WineAssembly {
           if (!self.running) return;
         }
         self._beginGuestTickBatch();
+        await self._pumpWaveCallbacksAtBoundary();
+        if(!self.running) return;
         if (self.guestWorker.broker) {
           // The guest's message-wait resume runs inside the worker and needs to
           // know whether the renderer has input queued — that queue is here, so
@@ -4544,6 +4624,7 @@ class WineAssembly {
           Rpc.endStepEpoch(self.memory);
         };
         const runMain = async () => {
+          if(self.guestWorker.link._waveOffer) return {...self._workerLastSlice,blocks:0,ms:0,waveOfferPending:true};
           const wait = self._d3dMainWait;
           if (wait) {
             if (!wait.done) return Object.assign({}, self._d3dParkedSlice, {blocks:0,ms:0});
@@ -4589,6 +4670,10 @@ class WineAssembly {
             sliceSync = Object.assign({}, sliceSync || {}, { mmTimer: 1 });
           }
           const slice = await self.guestWorker.slice(steps, sliceSync);
+          if(self._waveMainWaitSaved && !slice.waveCallbackActive) {
+            if(self.threadManager) Object.assign(self.threadManager._mainWaitState || (self.threadManager._mainWaitState={}),self._waveMainWaitSaved);
+            self._waveMainWaitSaved=null;
+          }
           self._workerLastSlice = slice;
           // The worker reports a Sleep it yielded for; nothing else will make
           // the guest wait it out. Ignored, Sleep(1001) lasted one slice
@@ -4749,7 +4834,12 @@ class WineAssembly {
         // (help_load) is named in thread-manager.js's map but is never set by
         // any WAT or JS path, so there is nothing to port for it. The fallback
         // below stays as a guard for anything added later.
-        if (r.yield === 1) {
+        if (r.waveOfferPending) {
+          // The cached result describes the interrupted frame, not the current
+          // owning EIP/ESP. Never complete a wait or handle another old yield
+          // until the exact offer's accepted/not-admitted reply is known.
+          self._workerIdleMs=Math.max(self._workerIdleMs || 0,2);
+        } else if (r.yield === 1) {
           // A parked WaitForSingleObject/WaitForMultipleObjects. This used to
           // just clear the yield and let the guest re-poll, which is wrong in a
           // way that only shows up once a wait can actually be satisfied: $run
@@ -5790,6 +5880,8 @@ class WineAssembly {
         // slice. The guest-Worker path keeps its separate 1k floor above.
         const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
+        await self._pumpWaveCallbacksAtBoundary();
+        if(!self.running) return;
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
         let renderWaiting = false;

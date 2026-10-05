@@ -658,7 +658,7 @@
     (if (i32.eqz (i32.load offset=0x60 (local.get $rec)))
       (then (i32.store offset=0x60 (local.get $rec) (call $host_wave_out_open
         (i32.load offset=4 (local.get $wfx)) (i32.load16_u offset=2 (local.get $wfx))
-        (i32.load16_u offset=14 (local.get $wfx)) (i32.const 0)))))
+        (i32.load16_u offset=14 (local.get $wfx)) (i32.const 0) (i32.const 0) (i32.const 0)))))
     ;; The audio chunk that holds the start frame's time.
     (local.set $byte (i32.wrap_i64 (i64.div_u
       (i64.mul (i64.mul (i64.extend_i32_u (i32.load offset=0x50 (local.get $rec)))
