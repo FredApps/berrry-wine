@@ -149,6 +149,9 @@ committed bundles. `programs-199.txt` is the list. It contains two `BLIQ.EXE` (1
 ```
 $ node --check corpus-ab.js && node --check unpack-corpus.js && node --check schedule-model.js   -> SYNTAX_OK
 $ bash -n corpus-plan.sh                                                                         -> OK
+$ node --check corpus-plan.js   (JavaScript port, replaces corpus-plan.sh)                       -> OK
+$ node corpus-plan.js           (no W)        -> "set W to an empty work dir", exit 2
+$ W=<tmp> node corpus-plan.js bogus           -> usage line, exit 2
 $ node --check patched/dos-loop.v3.js && node --check patched/run-dos.v3.js                      -> V3_SYNTAX_OK
 $ patch --dry-run -p1 -d tree-v2 < v3-delta-on-v2.patch
 checking file tools/toyvm/dos-loop.js

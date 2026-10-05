@@ -1,6 +1,7 @@
 # Corpus before/after plan: landing the toyvm IRQ-schedule patch
 
-Nothing in this plan has been run. Every command is in `corpus-plan.sh` in this directory, which
+Nothing in this plan has been run. Every command is in `corpus-plan.js` in this directory (a
+JavaScript port of the reviewer's original `corpus-plan.sh`, same phases, gates and files), which
 passes `bash -n`. The driver `corpus-ab.js` passes `node --check`, and its compare, moved and nudge
 modes were self-tested on synthetic rows.
 
@@ -14,7 +15,7 @@ modes were self-tested on synthetic rows.
 | tree hashes after patching | base `dos-loop.js` `ebe0eb30…de8e21`; cand v2 `bd4f1ee9…e016`; cand v3 `eeb9e2cd…085c1`, and its `run-dos.js` `82ae85cd…6dea` |
 | corpus | the 199 programs of `docs/dos-corpus/live/programs-index.json` (146 directories, 684 files, 70.4 MiB), unpacked by `unpack-corpus.js` from the committed site bundles. Content sha256 `3f9b2023…fc475`. The resulting list is `programs-199.txt`, rebased to `$W/demos`. BRW.EXE in it is byte-identical to the longrun-bg fixture (`65b61f6c…ddfeb4`). |
 | node | v24.18.1 (main host) |
-| scripts | `corpus-plan.sh` `aa6d35e6…`, `corpus-ab.js` `362d4c5e…`, `unpack-corpus.js` `56283121…` |
+| scripts | `corpus-plan.js` `14f1d111…`, `corpus-ab.js` `362d4c5e…`, `unpack-corpus.js` `56283121…` |
 
 **Coordinator decision 1: measure `CAND=v3` (v2 plus the delta) or `CAND=v2`.**
 I recommend v3. Every item in the delta moves timing, so measuring v2 and then landing the fixes
@@ -41,7 +42,7 @@ below 300 MB.
 
 ## Phases
 
-Run as `W=<dir> CAND=v3 JOBS=3 bash corpus-plan.sh all`, or phase by phase. Each line below says
+Run as `W=<dir> CAND=v3 JOBS=3 node corpus-plan.js all`, or phase by phase. Each line below says
 what the phase gates.
 
 **P0 `prep`** (about 3 min)
