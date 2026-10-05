@@ -918,3 +918,49 @@ Local evidence: `scratch/new-game-morrowind-20261005/attempt2`, its
 streams; driver exit 1 retains the harness's negative-probe errors. No FPS, audio
 quality, or gameplay qualification is claimed. The subsequent helper is prepared
 only; it has not been run.
+
+### 2026-10-05 follow-up: relative motion reaches the title, button result unresolved
+
+Attempt6 kept the original1024×768 browser connection and tested module2638.
+After a first ordinary16,16 move seeded the per-memory DirectInput point, a
+second ordinary+16,0 move completed. The title snapshots differ in exactly417
+pixels, bounded by `[320,242,352,263]`; root independently obtained the same
+result. This supports a narrow cursor/hover response, not gameplay or an absolute
+browser-to-game scaling factor. The game-owned pointer/hover pixels overlap New
+and the title logo, so exact target identification remains uncertain.
+
+Read-only getters on the actual owning Worker reported cursor425728,
+display count0, and focusHWND65537. Browser state showed CSS cursor`default`,
+focused CANVAS, matching keyboard owner, visible Morrowind640×480 at0,0 and an
+invisible ActiveMovie window. Exclusive transforms were null. A missing pointer
+in a browser screenshot alone was therefore an overly strict harness gate;
+these observations do not prove missing guest input.
+
+One ordinary button hold258ms at the unchanged browser point32,16 followed the
+relative movement. The title remained after a3second settle. No Name prompt or
+gameplay was reached. A later Enter command arrived after the absolute300second
+session deadline and was not delivered. Browser/server closed16:51:12.833UTC,
+errors empty, Chrome exit0; driver exit2 denotes the deadline.
+
+The frozen source provides two distinct button paths. In
+`lib/renderer-input.js:1532`, down updates the host button mask and queues a
+DirectInput edge before normal WM routing. Up clears that mask and queues its
+edge. `src/09a8-handlers-directx.wat:9447` GetDeviceState samples
+`host_get_mouse_buttons`; `lib/host-window.js:1131` returns the current renderer
+mask. Buffered GetDeviceData consumes the separate edge ring. A short hold can
+only be observed by GetDeviceState if the guest polls during it. Neither the
+saved screenshots nor host input receipt establish that polling happened, or
+that New's exact hit region contained the interpreted pointer. Do not diagnose
+WM coordinate mapping from this alone.
+
+The next useful evidence is a bounded passive observation of actual owning
+GetDeviceState/GetDeviceData mouse polls and ordinary button down/up, preserving
+original receivers/results and recording callback timing and selected device.
+A separately reviewed ordinary longer hold can then test missed polling if
+needed; no guest button injection, cursor setter, or guessed scaling belongs in
+that experiment. No identical seed-only launch is proposed.
+
+Local immutable evidence: `scratch/new-game-morrowind-20261005/attempt6`, including
+`cursor-diff.json`, read-only state snapshots, `pointer-receipts.json`, and
+`cleanup.json`. Earlier attempt3 secondary-connection viewport change and
+attempt5 human-review phase timeout remain harness failures, not game failures.
