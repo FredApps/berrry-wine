@@ -1,6 +1,6 @@
 # Ground truth at the BRW split (root grant 13:47:11Z, 6 s, private HEAD+combined+v4)
 
-Arm: L1 with smcFlush (the whole decode cache is flushed on any self-modify, so stale decoded code cannot run). State window 330588080-330588260.
+Arm: L1 with smcFlush (the whole decode cache is flushed on a detected self-modification). State window 330588080-330588260. This is a stronger comparison arm, not an independent interpreter or a general guarantee against missed write detection. Its agreement with jit-sepc supports the stale cached-code diagnosis in this window; the proposed volatile-compile mechanism still needs the confirming observation below.
 
 ```
 smcFlush L1  330588127 8:c179 ax=1100 si=f687 | 330588165 8:c35a si=f2b6 | 330588204 8:c179 si=f907
