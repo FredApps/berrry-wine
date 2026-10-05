@@ -663,6 +663,18 @@ logical-frame sample remains distinct from release performance qualification.
 To review another game, add a record following the existing records and retain
 exact evidence paths and package-specific limitations.
 
+**Ready for desktop** (`#release`) lists one row per game whose verified
+production membership is `no`: the reviewed gameplay screenshot, the gameplay
+run's recorded build (`rev · dirty · wasm`, each "not recorded" when absent),
+the recorded rate with its own metric label and review state (or "Rate unknown"),
+the input gate, sound ("not recorded": no gate or run field holds audio
+evidence yet), every unmet gate with its status and summary, recorded blockers,
+and why a recorded review is not current (`staleReasons` from
+`release-readiness.js`). Rows sort ready first, then reviewed gameplay, then
+fewest blockers and unmet gates. Logic lives in `release-model.js`, shared by the
+page and `release-model.test.js`. Games with unknown membership are counted, not
+listed.
+
 ### Launch from EXE corpus
 
 Use **Launchable now** above the corpus list to show entries with an available
