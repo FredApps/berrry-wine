@@ -541,3 +541,18 @@ test('selected window presentations retain explicit scope and reject invalid qua
     const prior=target[key];target[key]=value;await save();assert.equal((await reader.snapshot()).candidates[0].performance,null,key);target[key]=prior;
   }
 });
+
+test('corpus search matches identity fields and splits games from apps', async () => {
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const source=app.match(/const nonGameCategories=[\s\S]*?(?=\nfunction corpusFps\()/)[0];
+  const {matchesCorpusSearch,corpusKind}=require('node:vm').runInNewContext(source+'\n({matchesCorpusSearch,corpusKind})',{corpusQuery:'',corpusType:'all'});
+  const myth={id:'myth-demo',name:'Myth: The Fallen Lords',category:{id:'strategy',label:'Strategy / tactics'},executables:['MYTH.EXE'],notes:'mentions notepad'};
+  const pad={id:'notepad',name:'Notepad',category:{id:'tools',label:'Applications / tools'},releaseReadiness:{scope:'non-game'}};
+  const scoped={id:'x',name:'X',category:{id:'unclassified'},releaseReadiness:{scope:'game'}};
+  assert.equal(corpusKind(myth),'games');assert.equal(corpusKind(pad),'apps');assert.equal(corpusKind(scoped),'games');
+  assert.ok(matchesCorpusSearch(myth,'fallen MYTH','all'));
+  assert.ok(matchesCorpusSearch(myth,'myth.exe','games'));
+  assert.ok(!matchesCorpusSearch(myth,'notepad','all'),'notes are not searched');
+  assert.ok(!matchesCorpusSearch(myth,'','apps'));
+  assert.ok(matchesCorpusSearch(pad,'','apps'));
+});

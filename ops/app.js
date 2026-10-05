@@ -50,6 +50,8 @@ let corpusGroup='all';
 let corpusCategory='all';
 let corpusRelease='all';
 let corpusLaunch='all';
+let corpusQuery='';
+let corpusType='all';
 let queueBriefingOpen=false;
 const taskState = status => taskStates.find(s => s[0] === status) || taskStates.at(-1);
 const sortedTasks = tasks => [...tasks].sort((a,b) => taskStates.indexOf(taskState(a.status)) - taskStates.indexOf(taskState(b.status)) || a.line - b.line);
@@ -296,6 +298,21 @@ function perfComparisonHtml(c) {
   const side=(name,m)=>`${name} ${m.fps.toFixed(1)} · wasm ${wasm(m.wasmSha256)} · ${escape(when(m.measuredAt))}${m.reviewed?'':' · unreviewed'}`;
   return `<section class="perf-compare"><h3>Before / after</h3><p class="sub">${escape(cmp.text)}. Only identical scene, counter, renderer, host and GPU with recorded module hashes are compared.</p>${cmp.pairs.map(p=>`<p><strong>${p.deltaPct===null?'change unknown (before was 0)':(p.deltaPct>=0?'+':'')+p.deltaPct.toFixed(1)+'%'}</strong> ${escape(p.label)} · ${p.sameBuild?'same build (repeat)':'different builds'}<br><span class="sub">${side('Before',p.before)}</span><br><span class="sub">${side('After',p.after)}</span></p>`).join('')}${cmp.notComparable.length?`<details><summary>${cmp.notComparable.length} not comparable</summary><ul>${cmp.notComparable.map(n=>`<li>${side('Earlier',n.before)}: ${escape(n.reasons.join(', '))}</li>`).join('')}</ul></details>`:''}</section>`;
 }
+// Corpus search covers identity fields only (names, ids, executables, source,
+// category), unlike the header search, which matches any text in the record.
+const nonGameCategories=['tools','graphics-demos','unclassified','collections'];
+function corpusKind(c) {
+  const scope=c.releaseReadiness?.scope;
+  if(scope==='game' || scope==='non-game')return scope==='game'?'games':'apps';
+  return c.category && !nonGameCategories.includes(c.category.id)?'games':'apps';
+}
+function matchesCorpusSearch(c,text=corpusQuery,type=corpusType) {
+  if(type!=='all' && corpusKind(c)!==type)return false;
+  const words=text.toLowerCase().split(/\s+/).filter(Boolean);
+  if(!words.length)return true;
+  const hay=[c.name,c.id,c.version,c.sourceGroup,c.category?.label,c.kind,...(c.appIds||[]),...(c.executables||[])].filter(Boolean).join(' ').toLowerCase();
+  return words.every(w=>hay.includes(w));
+}
 function corpusFps(c,details=false) {
   const gameCategory = c.category && !['tools','graphics-demos','unclassified','collections'].includes(c.category.id);
   if(!c.performance && !gameCategory && !/game/i.test(c.kind) && !['Shareware / demos','Retail / archived games','Freeware / community'].includes(c.assessment?.origin))return '';
@@ -351,10 +368,11 @@ function corpusView() {
   const workRank = c => ({active:0,review:1,blocked:2,ready:3})[candidateWork(c)?.status] ?? 4;
   const resultRank = c => ({failed:0,'harness-error':0,timeout:0,running:1,unknown:2,passed:3})[c.latestRun?.outcome] ?? 4;
   const categories = [...new Map(state.candidates.map(c => [c.category?.id || 'unclassified', c.category || {id:'unclassified',label:'Unclassified'}])).values()].sort((a,b) => Number(a.id==='unclassified')-Number(b.id==='unclassified') || a.label.localeCompare(b.label));
-  const candidates = state.candidates.filter(c => matches(c) && matchesRelease(c) && (corpusLaunch==='all' || launchableCandidate(c)) && (corpusCategory==='all' || (c.category?.id || 'unclassified')===corpusCategory) && (corpusGroup==='all' || c.sourceGroup===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
+  const candidates = state.candidates.filter(c => matches(c) && matchesCorpusSearch(c) && matchesRelease(c) && (corpusLaunch==='all' || launchableCandidate(c)) && (corpusCategory==='all' || (c.category?.id || 'unclassified')===corpusCategory) && (corpusGroup==='all' || c.sourceGroup===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
     .sort((a,b) => (corpusRelease==='all'?0:(a.releaseReadiness?.rank??999)-(b.releaseReadiness?.rank??999)) || workRank(a)-workRank(b) || resultRank(a)-resultRank(b) || (a.name || a.id).localeCompare(b.name || b.id));
   return title('EXE corpus', 'Browse by category, release readiness and recorded evidence.') + corpusLaunchBar() + corpusReleaseBar() +
     `<div class="coverage-bar"><strong>${state.candidates.filter(c=>candidateCapture(c).shot).length} / ${state.candidates.length} with linked screenshots</strong><span>Historical images do not establish current compatibility.</span><button data-corpus-filter="with-shot">With screenshots</button><button data-corpus-filter="no-shot">Missing screenshots</button></div>`+
+    `<div class="toolbar corpus-search-bar"><input id="corpus-query" type="search" placeholder="Search games and apps by name, id or exe…" aria-label="Search the EXE corpus" value="${escape(corpusQuery)}" autocomplete="off"><select id="corpus-type" aria-label="Entry type">${[['all','Games and apps'],['games','Games only'],['apps','Apps and tools only']].map(([id,label])=>`<option value="${id}" ${corpusType===id?'selected':''}>${label} (${id==='all'?state.candidates.length:state.candidates.filter(c=>corpusKind(c)===id).length})</option>`).join('')}</select>${corpusQuery||corpusType!=='all'?'<button data-corpus-search-clear="1">Clear search</button>':''}</div>`+
     `<div class="toolbar"><select id="corpus-launch" aria-label="Launch availability"><option value="all" ${corpusLaunch==='all'?'selected':''}>All launch states</option><option value="available" ${corpusLaunch==='available'?'selected':''}>Launchable now</option></select><select id="corpus-release" aria-label="Release readiness">${[['all','All release states'],['unreleased','Unreleased games'],['gameplay-reviewed','Unreleased · gameplay reviewed'],...releaseStates.map(([id,label])=>[id,label])].map(([id,label])=>`<option value="${id}" ${corpusRelease===id?'selected':''}>${escape(label)}</option>`).join('')}</select><select id="corpus-category" aria-label="Category"><option value="all">All categories</option>${categories.map(g=>`<option value="${escape(g.id)}" ${corpusCategory===g.id?'selected':''}>${escape(g.label)} (${state.candidates.filter(c=>(c.category?.id || 'unclassified')===g.id).length})</option>`).join('')}</select><select id="corpus-group" aria-label="Source group"><option value="all">All source groups</option>${[...new Set(state.candidates.map(c=>c.sourceGroup).filter(Boolean))].sort().map(g=>`<option ${corpusGroup===g?'selected':''} value="${escape(g)}">${escape(g)}</option>`).join('')}</select><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['with-shot', 'With screenshots'], ['no-run', 'No recorded run'], ['no-shot', 'Missing screenshots'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><p class="sub">Includes manifest and registered apps. Unclassified entries need category review. Source group does not imply redistribution permission.</p>${categories.map(category => {
       const members = candidates.filter(c => (c.category?.id || 'unclassified') === category.id);
       if (!members.length) return '';
@@ -448,6 +466,13 @@ document.addEventListener('change',event=>{if(event.target.id==='corpus-group'){
 document.addEventListener('change',event=>{if(event.target.id==='corpus-launch'){corpusLaunch=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-release'){corpusRelease=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-category'){corpusCategory=event.target.value;render();}});
+document.addEventListener('change',event=>{if(event.target.id==='corpus-type'){corpusType=event.target.value;render();}});
+document.addEventListener('input',event=>{
+  if(event.target.id!=='corpus-query')return;
+  const caret=event.target.selectionStart;corpusQuery=event.target.value;render();
+  const field=document.getElementById('corpus-query');if(field){field.focus();field.setSelectionRange(caret,caret);}
+});
+document.addEventListener('click',event=>{if(event.target.closest?.('[data-corpus-search-clear]')){corpusQuery='';corpusType='all';render();}});
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
   if(el.dataset.launchFilter){corpusLaunch=el.dataset.launchFilter;render();}

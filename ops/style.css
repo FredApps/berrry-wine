@@ -636,6 +636,18 @@ p {
 .toolbar .sub {
   margin-left:auto;
 }
+.corpus-search-bar { margin-bottom:0; }
+.corpus-search-bar input {
+  flex:1 1 260px;
+  min-width:0;
+  border:1px solid var(--line);
+  padding:8px 10px;
+  border-radius:0;
+  background:var(--paper);
+  color:var(--ink, inherit);
+  font:inherit;
+  font-size:14px;
+}
 .corpus-grid {
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
