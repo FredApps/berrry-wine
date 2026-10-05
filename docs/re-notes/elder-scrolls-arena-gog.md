@@ -65,3 +65,14 @@ about 133,000 black pixels.
 node test/test-arena-dosbox.js
 ```
 
+## 2026-10-05 local browser registration and ordinary-route preparation
+
+Local-only app `arena_gog` uses the original installed Windows DOSBox and520 regular original files (122,745,861bytes); no payload copy or guest execution was used to prepare the route. Four stale migrated host symlinks are excluded, with exact targets recorded in `lib/arena-gog-source.json`. The original installer and every regular payload file are pinned there. `tools/prepare-arena-gog-assets.js` validates those bytes before writing an ignored521-record manifest; unknown existing generated state is a conflict, never overwritten.
+
+The earlier screenshot-only acceptance does not establish player control. The separate `test/configs/arena-browser-wine-assembly.conf` preserves the documented dynamic50000/surface/sound-disabled configuration and exact ACD arguments. It also restores GOG's original cloud_saves overlay from `__support/app/dosbox_arena_single.conf`. The GOG installation script creates that directory. In a fresh VFS the browser config performs ordinary `if not exist C:\cloud_saves mkdir C:\cloud_saves` after mounting backing C: and BEFORE mounting its overlay. There are no original save templates to seed. D: remains the base payload mounted as CD-ROM, ARENADATA is C:, and ACD launches from D:. The historical snapshot config is unchanged.
+
+Only `c:\cloud_saves\*` persists, with no reset token. Original files, existing host saves and arbitrary conflicting metadata are never replaced. Focused recipe tests exercise original-byte mapping, mkdir/overlay/CD-ROM/ARENADATA/launch order, idempotence, conflicts, no manufactured saves and local-only registration. Existing browser persistence attaches after asset loading; the Ultima focused actual-VFS restore test covers that mechanism separately. Runtime save/reload remains untested for Arena.
+
+Ordinary route source: bundled Manual.pdf offers Generate (ten questions) or Select (18-class list); use visible Select, choose a normal class, name/homeland/stats/portrait through actual prompts. The manual describes holding left mouse on an arrow-shaped region of the viewport to move in that direction. After actual dungeon/HUD readiness, capture a short ordinary forward movement, reverse and idle against visible fixed geometry; do not qualify intro/creator/rich pixels. No hidden state, forced stats or assumed old coordinates.
+
+Prepared600sec command and exact pins: scratch/new-games-pipeline-20261005/arena/READY.md. Source94d18605/module2e2fd8d1 is reused read-only, with only explicit local registration overlay. No browser or gameplay result yet; no audio/FPS claim.
