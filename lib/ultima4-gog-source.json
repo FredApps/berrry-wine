@@ -1406,7 +1406,20 @@
   ],
   "config": {
     "path": "test/configs/ultima4-wine-assembly.conf",
-    "sha256": "2a04f130e8c8c4de3484044eaaa63cc65120347ea0b1a074d785c3372cd32cf3",
-    "limitations": "Existing documented fixed3000 dynamic-core/surface/sound-disabled configuration retained; no sound/FPS claim"
+    "sha256": "683594b760aeb142585566f0cac9bd3ba7aa1a455addf85370ab8954dfa02b9d",
+    "limitations": "Existing documented fixed3000 dynamic-core/surface/sound-disabled configuration retained; no sound/FPS claim",
+    "previousSha256": "2a04f130e8c8c4de3484044eaaa63cc65120347ea0b1a074d785c3372cd32cf3",
+    "previousBytes": 429,
+    "previousManifestSha256": "fa84c94fcacb742c1be32e3fd591f5a22db221376b2687c8c24d69f2fe52c650"
+  },
+  "saveOverlay": {
+    "directory": "cloud_saves",
+    "templates": [
+      "__support/save/DNGMAP.SAV",
+      "__support/save/MONSTERS.SAV",
+      "__support/save/OUTMONST.SAV",
+      "__support/save/PARTY.SAV"
+    ],
+    "provenance": "Original __support/app/dosboxULTIMA4_single.conf overlay and original __support/save templates; no generated saves"
   }
 }
