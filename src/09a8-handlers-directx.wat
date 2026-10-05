@@ -13540,3 +13540,48 @@
   (return))
  (i32.store (global.get $reg_base) (local.get $hr))
  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+;; DX7VB735432ff: NULL source/RECT is COM E_INVALIDARG; zero-valued RECT
+;; means full source. Native drawing result is statusOut, COM is S_OK.
+;; Unlike the shared native helper's safety clipping, this front door rejects
+;; OOB with DDERR_INVALIDRECT: BltFast is documented not to clip.
+(func $vbdd_blt_fast (param $dst i32) (param $x i32) (param $y i32) (param $src i32) (param $rect i32) (param $flags i32) (param $out i32) (result i32)
+ (local $de i32) (local $se i32) (local $tmp i32) (local $hr i32) (local $esp i32) (local $eax i32) (local $bpp i32) (local $rw i32) (local $rh i32)
+ (local.set $de (call $vbdd_surface_entry (local.get $dst))) (local.set $se (call $vbdd_surface_entry (local.get $src)))
+ (if (i32.or (i32.or (i32.eqz (local.get $de)) (i32.eqz (local.get $se))) (i32.eqz (local.get $rect))) (then (return (i32.const 0x80070057))))
+ (if (i32.or (i32.eqz (call $vbdd_guest_span_mapped (local.get $rect) (i32.const 16))) (i32.eqz (call $vbdd_guest_span_mapped (local.get $out) (i32.const 4)))) (then (return (i32.const 0x80004003))))
+ (local.set $hr (i32.const 0x80004001))
+ (block $done
+  (br_if $done (i32.and (local.get $flags) (i32.const -34))) ;; copy/WAIT/source-key only
+  (local.set $bpp (load.field DxObject bpp (local.get $de)))
+  (br_if $done (i32.eqz (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+  (br_if $done (i32.ne (local.get $bpp) (load.field DxObject bpp (local.get $se))))
+  (br_if $done (i32.ne (call $dx_surf_fmt_get (local.get $de)) (call $dx_surf_fmt_get (local.get $se))))
+  (br_if $done (i32.eq (local.get $dst) (local.get $src)))
+  (br_if $done (call $dx_surface_clipper_get (local.get $de)))
+  (local.set $hr (i32.const 0x887600D7)) ;; DDERR_NOCOLORKEY
+  (br_if $done (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))
+   (i32.eqz (i32.and (load.field DxObject flags (local.get $se)) (i32.const 0x100)))))
+  (local.set $tmp (call $heap_alloc (i32.const 48)))
+  (local.set $hr (i32.const 0x8007000E)) (br_if $done (i32.eqz (local.get $tmp)))
+  (local.set $hr (i32.const 0x88760096)) ;; DDERR_INVALIDRECT
+  (br_if $done (call $vbdd_blt_rect (local.get $rect) (i32.add (local.get $tmp) (i32.const 32)) (local.get $se)))
+  (br_if $done (i32.ge_u (local.get $x) (load.field DxObject width (local.get $de))))
+  (br_if $done (i32.ge_u (local.get $y) (load.field DxObject height (local.get $de))))
+  (local.set $rw (i32.sub (call $gl32 (i32.add (local.get $tmp) (i32.const 40))) (call $gl32 (i32.add (local.get $tmp) (i32.const 32)))))
+  (local.set $rh (i32.sub (call $gl32 (i32.add (local.get $tmp) (i32.const 44))) (call $gl32 (i32.add (local.get $tmp) (i32.const 36)))))
+  (br_if $done (i32.gt_u (local.get $rw) (i32.sub (load.field DxObject width (local.get $de)) (local.get $x))))
+  (br_if $done (i32.gt_u (local.get $rh) (i32.sub (load.field DxObject height (local.get $de)) (local.get $y))))
+  (call $gs32 (i32.add (local.get $tmp) (i32.const 24)) (local.get $flags))
+  (local.set $esp (i32.load offset=16 (global.get $reg_base))) (local.set $eax (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $tmp))
+  (call $handle_IDirectDrawSurface_BltFast (local.get $dst) (local.get $x) (local.get $y) (local.get $src) (i32.add (local.get $tmp) (i32.const 32)) (i32.const 0))
+  (local.set $hr (i32.load (global.get $reg_base)))
+  (i32.store offset=16 (global.get $reg_base) (local.get $esp)) (i32.store (global.get $reg_base) (local.get $eax)))
+ (if (local.get $tmp) (then (call $heap_free (local.get $tmp))))
+ (call $gs32 (local.get $out) (local.get $hr)) (i32.const 0))
+(func $handle_VBImage_BltFast (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+ (i32.store (global.get $reg_base) (call $vbdd_blt_fast (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+  (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+  (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
+ (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))

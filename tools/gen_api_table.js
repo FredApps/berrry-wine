@@ -1647,10 +1647,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_BltFast",
     "nargs": 7,
     "convention": "stdcall",
-    "stub": {
-      "pop": 32,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltFast"
   },
   {
     "name": "IVBImageSurface7_BltFx",

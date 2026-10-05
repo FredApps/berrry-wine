@@ -33557,9 +33557,9 @@
     "id": 3964,
     "name": "IVBImageSurface7_BltFast",
     "nargs": 7,
-    "stub": { "pop": 32, "ret": 2147500033 },
     "convention": "stdcall",
-    "hash": 2728014834
+    "hash": 2728014834,
+    "handler": "VBImage_BltFast"
   },
   {
     "id": 3965,
