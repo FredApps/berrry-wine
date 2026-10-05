@@ -60,6 +60,7 @@ function watI32(value) {
 // Emit the names beside the generated dispatcher so an append/reorder repair
 // updates every consumer through the existing `gen_dispatch.js --check` gate.
 const namedApiIds = [
+  ['IVBDirectX7_QueryInterface', 'API_ID_IVBDirectX7_BASE'],
   ['IDirectMusic_EnumPort', 'API_ID_IDirectMusic_EnumPort'],
   ['GetTickCount', 'API_ID_GetTickCount'],
   ['timeGetTime', 'API_ID_timeGetTime'],
