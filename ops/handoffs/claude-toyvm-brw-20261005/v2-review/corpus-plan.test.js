@@ -267,9 +267,43 @@ check('a stack candidate with a wrong patch hash is refused', () => {
 check('a later phase honours the slot deadline set by an earlier one', () => {
   const W = workdir('deadline');
   for (const t of ['base', 'cand']) write(path.join(W, t, 'test/test-toyvm-a.js'), exitWith(0));
-  fs.writeFileSync(path.join(W, 'out/slot-start.txt'), String(Date.now() - 7100 * 1000) + '\n');
+  fs.writeFileSync(path.join(W, 'out/slot-spent.txt'), '7100\n');   // 100 s of the 7200 s budget left
   const r = plan('tests', W);
   assert.strictEqual(r.code, 7, r.out); assert.match(r.journal, /P1: slot deadline/);
+});
+
+check('spent time accumulates across invocations', () => {
+  const W = workdir('spent');
+  for (const t of ['base', 'cand']) write(path.join(W, t, 'test/test-toyvm-a.js'), exitWith(0));
+  fs.writeFileSync(path.join(W, 'out/slot-spent.txt'), '40\n');
+  const r = plan('tests', W);
+  assert.strictEqual(r.code, 0, r.out);
+  const spent = Number(fs.readFileSync(path.join(W, 'out/slot-spent.txt'), 'utf8'));
+  assert.ok(spent >= 40 && spent < 100, `slot-spent.txt = ${spent}`);
+});
+
+// --- checkpointed stages -------------------------------------------------------
+function stageTree(W) {
+  programs(W);
+  for (const t of ['base', 'cand']) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) {
+    write(path.join(W, t, 'tools/toyvm', fn + '.js'), `// ${t} ${fn}\n`);
+  }
+  const sha = (fl) => require('crypto').createHash('sha256').update(fs.readFileSync(fl)).digest('hex');
+  const trees = [];
+  for (const t of ['base', 'cand']) for (const fn of ['dos-loop', 'run-dos', 'emit', 'compile']) trees.push(`${t}/${fn} ${sha(path.join(W, t, 'tools/toyvm', fn + '.js'))}`);
+  return { cand: 'v3j', patches: [], smoke: 0, programs: PROGS, trees, spentS: 10, at: 'fixture' };
+}
+check('stage2 refuses to run without a stage1 checkpoint', () => {
+  const W = workdir('stage2-nocp'); stageTree(W);
+  const r = plan('stage2', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /stage2 needs a passed stage1/);
+});
+check('stage2 refuses when a tree file changed after stage1', () => {
+  const W = workdir('stage2-changed'); const cp = stageTree(W);
+  fs.writeFileSync(path.join(W, 'out/stage1.done.json'), JSON.stringify(cp));
+  write(path.join(W, 'cand/tools/toyvm/dos-loop.js'), '// edited after stage1\n');
+  const r = plan('stage2', W);
+  assert.strictEqual(r.code, 13, r.out); assert.match(r.journal, /tree files changed since stage1/);
 });
 
 // --- candidate completeness -------------------------------------------------
