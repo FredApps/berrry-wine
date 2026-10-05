@@ -49,7 +49,9 @@ const T0 = Date.now();
 const TOTAL_MS = Number(process.env.TOYVM_TEST_TOTAL_S || 170) * 1000;
 const ARMS = {
   l1: [],
-  region: ['--region-jit', '--region-jit-after=500k', '--region-jit-window=500k'],
+  // --why only LOGS each rejected region candidate with its reason
+  // (region-jit.js:690); it changes nothing the region JIT does.
+  region: ['--region-jit', '--region-jit-after=500k', '--region-jit-window=500k', '--why'],
   uop: ['--uop', '--uop-after=500k', '--uop-window=500k'],
   uopOnly: ['--uop-only'],
   fold: ['--tree-fold'],
@@ -109,11 +111,18 @@ function program(body, opts = {}) {
     L('spin'), 0xBA, ...w(3), L('s1'), 0xB9, 0xFF, 0xFF, L('s2'), 0xE2, { rel8: 's2' }, 0x4A, 0x75, { rel8: 's1' }, RET,
     L('stiret'), STI, L('stiret_ret'), RET,
     L('handler'), 0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, IRET, // push ax; mov al,20h; out 20h,al; pop ax; iret
-    // work: 3 x 65535 passes of a 5-op self-loop (add ax,bx; xor si,ax; inc bx;
-    // dec cx; jnz) -- at the region JIT's and tree-fold's minOps (4) and above,
-    // where the 1-op `loop $` spins are not, so those arms have a loop to take.
-    ...(opts.work ? [L('work'), 0xBA, ...w(3), L('w0'), 0xB9, 0xFF, 0xFF,
-      L('w1'), 0x01, 0xD8, 0x31, 0xC6, 0x43, 0x49, 0x75, { rel8: 'w1' }, 0x4A, 0x75, { rel8: 'w0' }, RET] : []),
+    // work: one pass of 22000 iterations of a 9-op self-loop (add ax,bx;
+    // xor si,ax; inc bx; add di,si; sub ax,di; xor bx,si; inc di; dec cx; jnz),
+    // well above the region JIT's and tree-fold's minOps (4), where the 1-op
+    // `loop $` spins are not. About 198k dispatches, close to `spin`'s ~196k.
+    // CORRECTED after the 19:12Z coverage run (preserved: ifen-fixture-cov-
+    // 20261005): the first `work` was 3 x 65535 x 5 ops = ~983k dispatches,
+    // so a round cost ~1.31M and 8 rounds ~10.5M against --dispatches=6m --
+    // only ~5 rounds ran (uop-only `ifen 5`, 50 deliveries), which read as
+    // "5 at X". An invalid fixture assumption, not a candidate defect; the
+    // `exited` gate below now catches any run that does not finish.
+    ...(opts.work ? [L('work'), 0xB9, ...w(22000),
+      L('w1'), 0x01, 0xD8, 0x31, 0xC6, 0x43, 0x01, 0xF7, 0x29, 0xF8, 0x31, 0xF3, 0x47, 0x49, 0x75, { rel8: 'w1' }, RET] : []),
   ]);
 }
 
@@ -185,7 +194,9 @@ const ARM_LINE = {
 };
 function engagement(arm, out) {
   if (arm === 'l1') return { installed: true, executed: true, summary: 'reference', raw: '' };
-  const raw = (out.match(ARM_LINE[arm]) || [''])[0];
+  // The region arm's `--why` reject lines ride along with its report line.
+  const rejects = arm === 'region' ? (out.match(/^ {2}reject [^\n]*$/mg) || []).slice(0, 8).map((s) => s.trim()) : [];
+  const raw = (out.match(ARM_LINE[arm]) || [''])[0] + (rejects.length ? `\n    rejects: ${rejects.join(' | ')}` : '');
   const num = (re) => { const m = raw.match(re); return m ? Number(m[1]) : 0; };
   let installed = 0, executed = null, summary;
   if (arm === 'region') {
@@ -213,7 +224,7 @@ for (const [name, c] of Object.entries(CASES)) {
   const file = path.join(dir, `${name}.com`);
   fs.writeFileSync(file, bytes);
   if (emit) { console.log(`${file}  X=0x${at.X.toString(16)}  ${c.forbid.map((f) => `${f}=0x${at[f].toString(16)}`).join(' ')}`); continue; }
-  const runs = {}, engaged = {};
+  const runs = {}, engaged = {}, exited = {};
   for (const [arm, flags] of Object.entries(ARMS)) {
     // One total bound for the whole test (TOYVM_TEST_TOTAL_S, default 170 s):
     // each run gets only what is left, and none starts once it is spent.
@@ -222,6 +233,10 @@ for (const [name, c] of Object.entries(CASES)) {
     const out = execFileSync('node', [RUN, file, '--dispatches=6m', '--trace-irq', ...flags],
       { encoding: 'utf8', maxBuffer: 1 << 26, timeout: left, killSignal: 'SIGKILL' });
     runs[arm] = deliveries(out);
+    // [0] the program must have FINISHED: all ROUNDS rounds ran, so every
+    // round's precondition (a timer date passing during the IF=0 delay) was
+    // actually exercised. A run cut off by --dispatches makes [1] meaningless.
+    exited[arm] = /^ {2}exited=true\b/m.test(out);
     engaged[arm] = engagement(arm, out);
   }
   // Evaluate EVERY assertion on EVERY arm before deciding, and print each one:
@@ -239,7 +254,8 @@ for (const [name, c] of Object.entries(CASES)) {
       + `${arm === 'l1' ? '' : ` [engagement, limited evidence: ${e.summary}${e.installed ? '' : ' -> parity NOT EVIDENTIAL for this arm'}]`}, `
       + `first return ips: ${d.slice(0, 6).map((x) => '0x' + x.ip.toString(16)).join(' ')}`);
     if (e.raw) console.log(`    raw ${arm}: ${e.raw.trim()}`);
-    if (atX < ROUNDS - 1) problems.push(`[1] ${arm}: ${atX} at X`);
+    if (!exited[arm]) problems.push(`[0] ${arm}: program did not exit (cut off by --dispatches?) - [1] not meaningful`);
+    if (atX < ROUNDS - 1) problems.push(`[1] ${arm}: ${atX} at ${c.expect}`);
     for (const f of inShadow) problems.push(`[2] ${arm}: delivered inside a shadow at ${f}=0x${at[f].toString(16)}`);
     if (!same) problems.push(`[3] ${arm}: (dispatch, ip) sequence differs from l1`);
   }
