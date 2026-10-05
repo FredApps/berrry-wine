@@ -5,7 +5,9 @@
 // procedure as wav-validate/slice-diag.js. No emulator.
 //
 //   node build-tree.js --out=<new dir> --tree=head|stack
-// head  = 2683a6e3 as committed; stack = + v2v3j (54de1b13) + v4 (4b00d26d) + smc (b3371e21)
+//   node build-tree.js --out=<new dir> --tree=cand --candidate=<diff> --candidate-sha=<64 hex>
+// head  = 2683a6e3 as committed; stack = + v2v3j (54de1b13) + v4 (4b00d26d) + smc (b3371e21);
+// cand  = stack + the candidate diff, refused unless its full sha256 equals --candidate-sha.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -24,9 +26,13 @@ const P = {
   v4: [path.join(J, 'v4-delta-on-combined.patch'), '4b00d26def9852864b62b93bbb513e4328500765120c7b0b9cf86ad83210949b'],
   smc: [path.join(J, 'smc-pure-forward-fix.patch'), 'b3371e2185dafad8399bfec7250805b1a9b9960e0791f7c063d17f6ddfd3c612'],
 };
-const TREES = { head: [], stack: ['v2v3j', 'v4', 'smc'] };
+const TREES = { head: [], stack: ['v2v3j', 'v4', 'smc'], cand: ['v2v3j', 'v4', 'smc', 'candidate'] };
 const out = arg('out'), which = arg('tree');
-if (!out || !TREES[which]) { console.error('usage: node build-tree.js --out=<new dir> --tree=head|stack'); process.exit(2); }
+if (!out || !TREES[which]) { console.error('usage: node build-tree.js --out=<new dir> --tree=head|stack|cand [--candidate=<diff> --candidate-sha=<hex>]'); process.exit(2); }
+if (which === 'cand') {
+  if (!arg('candidate') || !/^[0-9a-f]{64}$/.test(arg('candidate-sha') || '')) { console.error('cand needs --candidate=<diff> and --candidate-sha=<64 hex>'); process.exit(2); }
+  P.candidate = [path.resolve(arg('candidate')), arg('candidate-sha')];
+}
 if (fs.existsSync(out) && fs.readdirSync(out).length) { console.error(`refusing: ${out} is not empty`); process.exit(2); }
 fs.mkdirSync(out, { recursive: true });
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
@@ -40,4 +46,5 @@ for (const k of TREES[which]) {
   if (r.status !== 0) { console.error(`patch ${k} failed`); process.exit(2); }
 }
 const f = (n) => sha(path.join(out, 'tools/toyvm', n)).slice(0, 16);
-console.log(JSON.stringify({ tree: which, base: BASE, patches: TREES[which], 'dos-loop': f('dos-loop.js'), emit: f('emit.js'), decode: f('decode.js') }));
+console.log(JSON.stringify({ tree: which, base: BASE, patches: TREES[which], ...(P.candidate ? { candidateSha: P.candidate[1].slice(0, 16) } : {}),
+  'dos-loop': f('dos-loop.js'), emit: f('emit.js'), decode: f('decode.js'), compile: f('compile.js'), 'region-jit': f('region-jit.js') }));

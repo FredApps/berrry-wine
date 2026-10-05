@@ -12,7 +12,10 @@
 //   HARNESS-FAIL  anything else: a build failure, an uncaught exception (e.g. a
 //                 run-dos crash surfacing from execFileSync), the test's own
 //                 total-bound stop (exit 5), a kill
-//   node run-fixture.js --out=<new dir> [--total=300]
+//   node run-fixture.js --out=<new dir> [--total=300] [--plan=stack,head|cand]
+//     [--candidate=<diff> --candidate-sha=<64 hex>]
+// For a CANDIDATE tree, HARNESS-FAIL includes the candidate failing to compile
+// (its WAT assembled for the first time inside run-dos): read the test log.
 
 const fs = require('fs');
 const path = require('path');
@@ -21,7 +24,16 @@ const { spawn } = require('child_process');
 const argv = process.argv.slice(2);
 const arg = (k, d) => { const h = argv.find((a) => a.startsWith(`--${k}=`)); return h === undefined ? d : h.slice(k.length + 3); };
 const OUT = arg('out'), TOTAL_MS = Number(arg('total', 300)) * 1000, t0 = Date.now();
-if (!OUT) { console.error('usage: node run-fixture.js --out=<new dir> [--total=300]'); process.exit(2); }
+// --plan: which trees, in order (default stack,head as before). `cand` is the
+// stack plus a hash-pinned candidate diff (--candidate, --candidate-sha), built
+// by build-tree.js, which refuses a diff whose sha256 differs.
+const PLAN = arg('plan', 'stack,head').split(',').filter(Boolean);
+const CAND = arg('candidate'), CAND_SHA = arg('candidate-sha');
+if (!OUT || PLAN.some((t) => !['stack', 'head', 'cand'].includes(t))
+  || (PLAN.includes('cand') && (!CAND || !/^[0-9a-f]{64}$/.test(CAND_SHA || '')))) {
+  console.error('usage: node run-fixture.js --out=<new dir> [--total=300] [--plan=stack,head|cand] [--candidate=<diff> --candidate-sha=<64 hex>]');
+  process.exit(2);
+}
 if (fs.existsSync(OUT) && fs.readdirSync(OUT).length) { console.error(`refusing: ${OUT} not empty`); process.exit(2); }
 fs.mkdirSync(OUT, { recursive: true });
 const HERE = __dirname;
@@ -68,9 +80,10 @@ function classify(rec) {
 }
 
 (async () => {
-  for (const tree of ['stack', 'head']) {
+  for (const tree of PLAN) {
     const dir = path.join(OUT, `tree-${tree}`); trees.push(dir);
-    const b = await step(`build-${tree}`, [path.join(HERE, 'build-tree.js'), `--out=${dir}`, `--tree=${tree}`], {}, 60000);
+    const b = await step(`build-${tree}`, [path.join(HERE, 'build-tree.js'), `--out=${dir}`, `--tree=${tree}`,
+      ...(tree === 'cand' ? [`--candidate=${CAND}`, `--candidate-sha=${CAND_SHA}`] : [])], {}, 60000);
     if (b.exit !== 0) { b.class = 'HARNESS-FAIL'; write(); continue; }
     b.tree = JSON.parse(fs.readFileSync(path.join(OUT, `build-${tree}.txt`), 'utf8').trim().split('\n').pop());
     const leftS = Math.floor((TOTAL_MS - (Date.now() - t0)) / 1000) - 2;
