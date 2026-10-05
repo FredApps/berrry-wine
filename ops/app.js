@@ -116,7 +116,9 @@ function agentName(a) {
   if(coordinator()?.agentId===a.id)return 'Coordinator';
   if(a.taskTitle)return a.taskTitle;
   const task=/\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+){2,})\b/.exec(a.title || '')?.[1];
-  return task || (a.title && a.title !== a.id ? a.title : 'Untitled session');
+  // Codex child prompts often start with a bracketed role label: use it rather than the whole prompt.
+  const label=/^\[([^\]]{3,60})\]/.exec(a.title || '')?.[1];
+  return task || label || (a.title && a.title !== a.id ? a.title : 'Untitled session');
 }
 function agentLine2(a,signal) {
   if(signal.reason)return signal.reason;
@@ -340,20 +342,24 @@ function desktopRowHtml(row) {
   const rate=row.rate.known?`<strong>${escape(row.rate.text)}</strong> <span class="sub">${row.rate.reviewed?'reviewed run':'unreviewed run'}${row.rate.historical?' · historical':''} · ${escape(row.rate.qualification)}${row.rate.measuredAt?' · '+age(row.rate.measuredAt)+' ago':''}${row.rate.scene?' · '+escape(row.rate.scene):''}</span>`:`<strong>${escape(row.rate.text)}</strong>`;
   const shot=row.screenshot?`<button class="desktop-shot" data-run="${escape(row.screenshot.runKey)}" aria-label="Open reviewed gameplay evidence for ${escape(row.name)}"><img src="${escape(row.screenshot.url)}" alt="Reviewed gameplay: ${escape(row.name)} · ${escape(row.screenshot.name)}" loading="lazy"></button>`:'<div class="desktop-shot desktop-shot-missing">No reviewed gameplay screenshot</div>';
   return `<article class="desktop-row panel" data-desktop-row="${escape(row.id)}">${shot}<div class="desktop-body"><div class="desktop-head"><h3>${escape(row.name)}</h3>${badge(label,color)}<span class="desktop-gates" aria-label="Release gates">${row.gates.map(g=>`<span class="gate gate-${g.met?'met':g.status==='blocked'?'blocked':'unknown'}" title="${escape(g.name+': '+g.status+' — '+g.detail)}">${gateMark(g)} ${escape(g.name)}</span>`).join('')}</span></div>`+
-    `<p class="desktop-line">${rate}</p><p class="desktop-line sub">${escape(row.input.text)} · ${escape(row.sound.text)}${row.gameplayRun?` · Gameplay run ${escape(row.gameplayRun.build.text)} · <span class="build-${row.gameplayRun.servedMatch.status}">${escape(row.gameplayRun.servedMatch.text)}</span>`:''}</p>`+
+    `<p class="desktop-line">${rate}</p><p class="desktop-line sub">${escape(row.input.text)} · ${escape(row.sound.text)} · Deploy not recorded${row.gameplayRun?` · Gameplay run ${escape(row.gameplayRun.build.text)} · <span class="build-${row.gameplayRun.servedMatch.status}">${escape(row.gameplayRun.servedMatch.text)}</span>`:''}</p>`+
     `${row.staleReasons.length?`<p class="desktop-line notice-line">Review not current: ${escape(row.staleReasons.join(' '))}</p>`:''}`+
     `<ul class="desktop-blockers">${row.blockers.map(b=>`<li class="blocker-item"><strong>Blocker:</strong> ${escape(b.summary)}${b.source?` <span class="sub">${escape(b.source)}</span>`:''}</li>`).join('')}${unmet.map(g=>`<li><strong>${escape(g.name)}</strong> ${escape(g.status.replaceAll('-',' '))}: ${escape(g.detail)}${g.source?` <span class="sub">${escape(g.source)}</span>`:''}</li>`).join('')}</ul>`+
     `${row.next?`<p class="desktop-line"><strong>Next:</strong> ${escape(row.next)}</p>`:''}<div class="desktop-actions">${corpusLaunchActions(c,false,true)}<button data-candidate="${escape(row.id)}">Details →</button></div></div></article>`;
 }
 function desktopView() {
   const q=ReleaseModel.desktopQueue(state,desktopSelection),rows=q.rows.filter(r=>matches(state.candidates.find(c=>c.id===r.id)));
-  const choices=[['all','All unreleased'],['gameplay','Reviewed gameplay'],['unblocked','No recorded blockers'],['ready','Ready']];
-  return title('Ready for desktop',`${q.unreleased} unreleased games · ${q.withGameplay} with reviewed gameplay · ${q.ready} ready. Sorted by fewest blockers and unmet gates.`)+
+  const choices=[['all','All unreleased'],['playable','Playable (reviewed gameplay + launchable)'],['gameplay','Reviewed gameplay'],['review-needed','Review needed'],['unblocked','No recorded blockers'],['ready','Ready']];
+  const counts=[['playable',q.playable,'Playable unreleased','reviewed gameplay screenshot and a launch route available now'],['review-needed',q.reviewNeeded,'Review needed','release status review-needed: no blockers, gates still to review'],['ready',q.ready,'Ready','every gate passed in a current release review']];
+  const stale=q.staleReviews.length?`<p class="notice stale-reviews" role="status"><strong>${q.staleReviews.length} recorded release review${q.staleReviews.length===1?' is':'s are'} stale and need${q.staleReviews.length===1?'s':''} refreshing</strong> (${q.staleReviews.map(r=>escape(r.name)).join(', ')}): ${escape([...new Set(q.staleReviews.flatMap(r=>r.reasons))].join(' '))} Until refreshed their gates count as not reviewed.</p>`:'';
+  return title('Ready for desktop',`${q.unreleased} unreleased games. Sorted by fewest blockers and unmet gates.`)+
+    `<div class="release-counts desktop-counts">${counts.map(([id,n,label,hint])=>`<button data-desktop-filter="${id}" aria-pressed="${desktopSelection===id}" title="${escape(hint)}"><strong>${n}</strong> ${escape(label)}</button>`).join('')}</div>`+stale+
     `<div class="toolbar"><select id="desktop-selection" aria-label="Desktop readiness filter">${choices.map(([id,l])=>`<option value="${id}" ${desktopSelection===id?'selected':''}>${l}</option>`).join('')}</select><span class="sub">${rows.length} shown · ${q.production.status==='verified'?'production snapshot checked '+escape(when(q.production.checkedAt)):'production membership unverified'} · ${q.unknownMembership} games with unknown membership are not listed</span></div>`+
-    `<p class="source-note">From recorded release reviews, runs and launch routes only. Rates use their recorded metric label; nothing is inferred from block or present counts. ✓ passed · ✕ blocked · ? not reviewed. This view does not publish or deploy.</p>`+
+    `<p class="source-note">From recorded release reviews, runs and launch routes only. Rates use their recorded metric label; nothing is inferred from block or present counts. Sound and deploy evidence are not recorded for any game and are shown as such; they are not gates here. ✓ passed · ✕ blocked · ? not reviewed. This view does not publish or deploy.</p>`+
     `<div class="desktop-list">${rows.map(desktopRowHtml).join('') || empty('No unreleased games match this filter.')}</div>`;
 }
 document.addEventListener('change',event=>{if(event.target.id==='desktop-selection'){desktopSelection=event.target.value;render();}});
+document.addEventListener('click',event=>{const el=event.target.closest?.('[data-desktop-filter]');if(el&&state){desktopSelection=desktopSelection===el.dataset.desktopFilter?'all':el.dataset.desktopFilter;render();}});
 function currentAgents() {
   const owners=new Set(state.tasks.filter(t=>['active','ready','blocked','review'].includes(t.status)).map(t=>t.owner));
   return state.agents.filter(a=>a.id===coordinator()?.agentId || owners.has(a.id) || a.provider!=='claude' && a.state!=='idle' && Date.now()-Date.parse(a.lastActivityAt)<15*60000).sort((a,b)=>agentSignal(a).rank-agentSignal(b).rank || Number(b.id===coordinator()?.agentId)-Number(a.id===coordinator()?.agentId));

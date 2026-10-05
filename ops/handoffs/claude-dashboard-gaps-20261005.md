@@ -130,6 +130,50 @@ Patch identical (4 files, +48/−2); the only conflict was both sides appending 
 - Live data: every measured game has exactly one recorded measurement (8 runs, 8 candidates), so
   each shows "Not comparable: only one measurement recorded"; no comparison is invented.
 
+## Rebase onto origin/main 640b85a4 (delivery, 2026-10-05 02:4xZ)
+
+Fresh worktree, branch `claude/dashboard-gaps-20261005-r2`. The commits were cherry-picked in
+order and `255aeab6` was dropped, because the subagent summaries are already on main as
+`7db978dd`. The original branch is untouched. There were two conflicts, both end-of-file appends
+to `style.css`: both sides were kept, and main's existing `.subagent-summary` rules were not
+duplicated.
+
+### 7. Release counts, stale-review note, phone QA fixes
+
+- Ready for desktop shows three counts, each a filter: **Playable unreleased** (reviewed gameplay
+  screenshot plus a launch route available now), **Review needed** and **Ready**.
+- A separate notice names the stale recorded release reviews and says why they are stale.
+- Each row says "Deploy not recorded", and a note states that sound and deploy are not gates.
+  No gate and no approval requirement were added.
+- Live counts: 62 playable unreleased, 72 review needed, 0 ready. All 4 recorded reviews are
+  stale: Cave Story, Icy Tower, Moorhuhn 2 and Moorhuhn Winter-Edition, because the runtime
+  source hashes changed.
+- QA fixes:
+  - On a phone, an agent row wrapped to 8+ visual lines. The name is now one clipped line, line 2
+    is clamped to two lines, and the short id is hidden on phone.
+  - Codex children whose prompt starts with a `[Role]` label are now named by that label, not by
+    the whole prompt.
+- Tests: `release-model.test.js` +1 (counts, filter, stale notice, deploy text, no new gate) and
+  `agents-view.test.js` extended (bracket label, phone clamp).
+
+### Browser QA (root grant)
+
+- Setup: one `ops/server.js` from this worktree on 127.0.0.1:8197 and one headless Chrome
+  (puppeteer-core, `/usr/bin/google-chrome`). Two runs, about 15 s each. Live 8098/8099 untouched.
+- Views: Overview, Agents, Ready for desktop, a title detail (abedemo), Blockers and Activity, at
+  1440x900 and 390x844.
+- Before fixes, `scratch/claude-dashboard-gaps-20261005/qa/20261005T024313Z/`:
+  - Desktop: every agent and subagent line rendered as exactly one line; no horizontal overflow
+    in any view.
+  - Phone: agent rows wrapped up to 8 lines.
+  - One console 404, which is `/favicon.ico`. That route was never served, so it is pre-existing
+    and harmless.
+- After fixes, `…/qa/20261005T024414Z/`: desktop unchanged; phone agent rows are bounded (name
+    clipped, line 2 at most two lines); no horizontal overflow; no page errors.
+- Both runs: Release, Blockers, Activity and the detail view showed no overflow at either size.
+  `qa.json` in each folder holds the per-view measurements.
+- After both runs, `pgrep` found no server, Chrome or QA process left.
+
 ## Tests
 
 `node --test ops/<file>.test.js`, one file at a time in the worktree, at the final commit. The
@@ -156,6 +200,13 @@ details and Ready for desktop at desktop width and at 390 px. Check that the two
 at ≥1000 px and wrap at 390 px, and that the ▸ and Terminal controls are ≥44 px on touch.
 
 ## Integration order
+
+**Current (r2, base origin/main 640b85a4):** `fa678484` Ready for desktop → `313a69ae` exact-build
+Play → `c12a662d` agents two-line → `625c25bc` blockers split → `dcd9578c` code state →
+`d9bd42c0` perf compare → the release-counts/QA-fix commit that adds this paragraph. No
+dependency on another branch.
+
+Superseded original order (branch `claude/dashboard-gaps-20261005`, base dd0dd740):
 
 `c78d985f` → `2996f415` → `255aeab6` (cherry-pick -x of 63a248a6, unmodified patch) → `a3eba543`
 (depends on 255aeab6) → `5585d09c` → `246e9b83` → the perf-comparison commit. All are on

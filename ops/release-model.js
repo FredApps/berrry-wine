@@ -107,7 +107,7 @@
     const gameplayRun = r.reviewedGameplay?.runKey ? (snapshot.runs || []).find(run => run.key === r.reviewedGameplay.runKey) : null;
     const shots = r.reviewedGameplay?.screenshots || [];
     const input = gates.find(g => g.name === 'input');
-    return {
+    const row = {
       id: candidate.id, name: candidate.name || candidate.id, status: r.status, prospect: r.prospect,
       screenshot: shots.length ? {...shots[shots.length - 1], runKey: r.reviewedGameplay.runKey} : null,
       gameplayRun: gameplayRun ? {key: gameplayRun.key, startedAt: gameplayRun.startedAt, route: gameplayRun.route || '', build: buildIdentity(gameplayRun.build),
@@ -121,17 +121,26 @@
       next: r.next || '', summary: r.summary || '',
       launchable: (candidate.launch?.routes || []).some(route => route.available === true),
     };
+    // Playable = reviewed gameplay evidence AND a local launch route available now.
+    // A count of recorded evidence, not a release decision or a new gate.
+    row.playable = !!row.screenshot && row.launchable;
+    // Deploy evidence per game is the production snapshot only; nothing else is recorded.
+    row.deploy = {status: 'not-recorded', text: 'Deploy: not in the verified production snapshot; no other deploy record'};
+    return row;
   }
 
   function desktopQueue(snapshot, selection = 'all') {
     const games = (snapshot.candidates || []).filter(c => c.releaseReadiness?.scope === 'game');
     const unreleased = games.filter(c => c.releaseReadiness.productionMembership === 'no');
-    const rows = unreleased.map(c => desktopRow(snapshot, c)).filter(row =>
-      selection === 'all' || selection === 'gameplay' && row.screenshot || selection === 'unblocked' && !row.blockers.length || selection === 'ready' && row.status === 'ready');
+    const all = unreleased.map(c => desktopRow(snapshot, c));
+    const rows = all.filter(row =>
+      selection === 'all' || selection === 'gameplay' && row.screenshot || selection === 'playable' && row.playable || selection === 'review-needed' && row.status === 'review-needed' || selection === 'unblocked' && !row.blockers.length || selection === 'ready' && row.status === 'ready');
     rows.sort((a, b) => Number(b.status === 'ready') - Number(a.status === 'ready') || Number(!!b.screenshot) - Number(!!a.screenshot) ||
       a.blockers.length - b.blockers.length || a.unmet - b.unmet || a.name.localeCompare(b.name));
     return {rows, unreleased: unreleased.length, unknownMembership: games.filter(c => c.releaseReadiness.productionMembership === 'unknown').length,
       ready: unreleased.filter(c => c.releaseReadiness.status === 'ready').length, withGameplay: unreleased.filter(c => c.releaseReadiness.reviewedGameplay).length,
+      playable: all.filter(row => row.playable).length, reviewNeeded: all.filter(row => row.status === 'review-needed').length,
+      staleReviews: all.filter(row => row.reviewStale).map(row => ({id: row.id, name: row.name, reasons: row.staleReasons})),
       production: snapshot.releaseReadiness?.production || {status: 'unknown'}};
   }
 

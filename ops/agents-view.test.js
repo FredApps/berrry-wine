@@ -45,9 +45,12 @@ test('agents render as one full-width column of two-line rows with subagents nes
   assert.match(codex, /Quiet · check session/, 'quiet working session is not shown as progressing');
   assert.match(codex, /No recent session activity/);
   assert.match(codex, /Codex child/);
+  const s2 = snapshot(); s2.agents.find(a => a.id === 'codex:child').title = '[Migration owner / ops-dashboard] The user says figure it out and fix it.';
+  assert.match(vm.runInContext('agentsView()', browserApp(s2)), /data-agent="codex:child" title="[^"]*">Migration owner \/ ops-dashboard<\/button>/);
   assert.match(html, /Other observed sessions \(1\)/, 'only the true history session is in history');
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, 'style.css'), 'utf8');
   assert.match(css, /\.agent-list \{\s*display:grid;\s*grid-template-columns:minmax\(0,1fr\);/);
+  assert.match(css, /\.agent-line2 \{ white-space:normal; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2;/, 'phone clamps line 2 to two lines');
 });
 
 test('overview shows the same rows, a current subagent pulls its parent in, and search matches children', () => {

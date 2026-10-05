@@ -714,6 +714,12 @@ fewest blockers and unmet gates. Logic lives in `release-model.js`, shared by th
 page and `release-model.test.js`. Games with unknown membership are counted, not
 listed.
 
+Above the list: **Playable unreleased** (reviewed gameplay screenshot and a launch
+route available now), **Review needed** (status review-needed) and **Ready**
+counts, each a filter; and, separately, a notice naming the recorded release
+reviews that are stale and why. Sound and deploy evidence are shown as not
+recorded; they are not gates and add no approval requirement.
+
 Launch links carry `&build=<wasm sha256>` of the module the emulator route
 serves (`emulatorBuild` in `/api/state`: `rev · dirty (N tracked files) · wasm`,
 read from the live tree and cached 30 s). If `build/wine-assembly.wasm` changes

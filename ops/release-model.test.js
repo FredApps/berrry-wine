@@ -155,3 +155,24 @@ test('performance before/after compares only identical scene, counter, renderer,
   assert.match(html, /3 not comparable/);
   assert.match(html, /wasm w-old/);
 });
+
+test('release view counts playable, review-needed and ready, and flags stale reviews separately', () => {
+  const review = {id: 'alpha', reviewer: 'root', reviewedAt: '2026-10-03T12:00:00Z', basedOnRunKey: 'scratch/runs/play', sourceValidation: 'missing-or-mismatched', gates: {}};
+  const s = snapshot([review]);
+  const q = ReleaseModel.desktopQueue(s);
+  assert.equal(q.playable, 1, 'alpha: reviewed gameplay + launch route; beta has neither');
+  assert.equal(q.reviewNeeded, 1);
+  assert.equal(q.ready, 0);
+  assert.deepEqual(q.staleReviews.map(r => r.id), ['alpha']);
+  assert.deepEqual(ReleaseModel.desktopQueue(s, 'playable').rows.map(r => r.id), ['alpha']);
+  assert.equal(q.rows[0].deploy.status, 'not-recorded');
+  const ctx = browserApp(s);
+  const html = vm.runInContext('desktopView()', ctx);
+  assert.match(html, /<strong>1<\/strong> Playable unreleased/);
+  assert.match(html, /<strong>1<\/strong> Review needed/);
+  assert.match(html, /<strong>0<\/strong> Ready/);
+  assert.match(html, /1 recorded release review is stale and needs refreshing<\/strong> \(Alpha &lt;Demo&gt;\)/);
+  assert.match(html, /Deploy not recorded/);
+  assert.match(html, /not gates here/);
+  assert.equal(snapshot().candidates[0].releaseReadiness.gates.sound, undefined, 'no new gate');
+});
