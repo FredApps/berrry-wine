@@ -428,8 +428,10 @@ if (TRACE_GL_RAW) {
 }
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
-// --lazy-ranges[=MS]: mount a registry entry's `httpRange` files the way the
-// page does -- provider-backed, async-only, MS of latency per chunk read -- so
+// --lazy-ranges[=MS]: mount a registry entry's lazy files (`loadMode: 'lazy'`
+// or `'background'`, and legacy `httpRange` not marked `loadMode: 'required'`)
+// the way the page does -- provider-backed, async-only, MS of latency per
+// chunk read -- so
 // a headless run parks on cache misses exactly like a browser on HTTP ranges.
 // Its `preloadRanges` are fetched and pinned before the guest starts, as in
 // host.js; --no-preload-ranges skips them (the control arm that shows why a
@@ -5164,6 +5166,7 @@ async function main() {
     if (ASSET_ENTRY) {
       const assetFiles = getAssetFiles(ASSET_ENTRY);
       const missing = [];
+      let lazyManifestStats = null;
       for (const item of assetFiles) {
         const url = typeof item === 'string' ? item : (item && item.url);
         if (!url) continue;
@@ -5183,7 +5186,41 @@ async function main() {
         const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
-        if (LAZY_RANGES && typeof item === 'object' && item.httpRange) {
+        // Same rule as host.js loadFiles: a sized manifest entry (loadMode
+        // lazy/background) is a range mount in 64KB chunks with no read-ahead;
+        // a legacy httpRange entry is one unless loadMode says required.
+        const sizedLazy = typeof item === 'object' && item &&
+          (item.loadMode === 'lazy' || item.loadMode === 'background');
+        if (LAZY_RANGES && sizedLazy) {
+          const bp = require('../lib/byte-provider');
+          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }),
+            { chunkSize: 65536, readAhead: 0 });
+          for (const p of paths) {
+            let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
+            if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+            ctx.vfs.ensureParentDirs(vfsPath);
+            ctx.vfs.setProviderFile(vfsPath, { provider: cache });
+          }
+          // Thousands of these in one tree: one summary line, not one per file.
+          if (!lazyManifestStats) {
+            lazyManifestStats = { files: 0, bytes: 0, caches: [] };
+            process.on('exit', () => {
+              let fetches = 0, bytes = 0, touched = 0;
+              for (const c of lazyManifestStats.caches) {
+                const st = c.stats;
+                fetches += st.fetches; bytes += st.bytesFetched;
+                if (st.fetches) touched++;
+              }
+              console.log(`[lazy] loadMode files: ${touched} of ${lazyManifestStats.files} touched, ` +
+                `fetched ${fetches} chunks / ${bytes} of ${lazyManifestStats.bytes} bytes`);
+            });
+          }
+          lazyManifestStats.files++;
+          lazyManifestStats.bytes += size;
+          lazyManifestStats.caches.push(cache);
+          continue;
+        }
+        if (LAZY_RANGES && typeof item === 'object' && item.httpRange && item.loadMode !== 'required') {
           const bp = require('../lib/byte-provider');
           const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }));
           let preloaded = 'no preload ranges';
