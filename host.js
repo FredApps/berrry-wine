@@ -5171,6 +5171,17 @@ class WineAssembly {
             wparam: r.sendWparam | 0, lparam: r.sendLparam | 0,
             postKind: r.sendPostKind | 0,
           });
+        } else if (r.yield === 17) {
+          // Main's message call stopped for a send a guest thread parked on
+          // it (guest-thread-host _awaitMainMessagePoint): deliver it now.
+          // While it runs main stays parked; the backend clears the yield.
+          // The worker scheduler's next round delivers the parked sends and
+          // clears 17 (ThreadManager yield-10 branch); with none parked any
+          // more, the message call just runs again.
+          const tm = self.threadManager;
+          if (!(tm && tm.hasDeferredMainSends && tm.hasDeferredMainSends())) {
+            await self.guestWorker.callExport('clear_yield');
+          }
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
