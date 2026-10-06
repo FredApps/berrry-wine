@@ -35135,5 +35135,47 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 4186605625
+  },
+  {
+    "id": 4157,
+    "name": "_mkdir",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 192858669
+  },
+  {
+    "id": 4158,
+    "name": "setvbuf",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 917302912
+  },
+  {
+    "id": 4159,
+    "name": "getc",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2213230300
+  },
+  {
+    "id": 4160,
+    "name": "__p___mb_cur_max",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3092716855
+  },
+  {
+    "id": 4161,
+    "name": "__p__pctype",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3267043826
+  },
+  {
+    "id": 4162,
+    "name": "fgetc",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2489769320
   }
 ]

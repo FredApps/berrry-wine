@@ -6,6 +6,8 @@
   (global $msvcrt_signal_table (mut i32) (i32.const 0))
   (global $msvcrt_tm_ptr (mut i32) (i32.const 0))
   (global $msvcrt_getdrive_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_mb_cur_max_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_pctype_var (mut i32) (i32.const 0))
 
   ;; __mb_cur_max() — cdecl. Win9x ANSI DBCS pages use at most two bytes per
   ;; multibyte character; Western/OEM single-byte pages use one.
@@ -14,6 +16,20 @@
         (i32.const 2)
         (i32.const 1)
         (call $is_dbcs_code_page (global.get $ansi_code_page))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; __p___mb_cur_max() — cdecl. The address of msvcrt's __mb_cur_max int,
+  ;; holding the value above (MB_CUR_MAX reads it through this). 0 when no
+  ;; storage could be allocated.
+  (func $handle___p___mb_cur_max (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $msvcrt_mb_cur_max_ptr))
+      (then (global.set $msvcrt_mb_cur_max_ptr (call $heap_alloc (i32.const 4)))))
+    (if (global.get $msvcrt_mb_cur_max_ptr)
+      (then (call $gs32 (global.get $msvcrt_mb_cur_max_ptr)
+        (select (i32.const 2) (i32.const 1)
+          (call $is_dbcs_code_page (global.get $ansi_code_page))))))
+    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_mb_cur_max_ptr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1527,6 +1543,30 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; setvbuf(FILE*, buf, mode, size) -> 0, or -1 (cdecl). msvcrt refuses a
+  ;; stream it does not know, a mode other than _IOFBF 0 / _IOLBF 0x40 /
+  ;; _IONBF 4, and for a buffered mode a size outside 2..INT_MAX. Every stream
+  ;; here stays the unbuffered FILE $crt_file_init lays out and reaches the
+  ;; VFS on each call, so an accepted request changes only when bytes become
+  ;; visible -- sooner, never later -- and the caller's buf is never retained.
+  (func $handle_setvbuf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32)
+    (local.set $ok (i32.ne (call $crt_stream_lookup (local.get $arg0)) (i32.const 0)))
+    (if (i32.and (local.get $ok)
+          (i32.eqz (i32.or (i32.eqz (local.get $arg2))
+                     (i32.or (i32.eq (local.get $arg2) (i32.const 0x40))
+                             (i32.eq (local.get $arg2) (i32.const 4))))))
+      (then (local.set $ok (i32.const 0))))
+    (if (i32.and (local.get $ok) (i32.ne (local.get $arg2) (i32.const 4)))
+      (then
+        (if (i32.or (i32.lt_u (local.get $arg3) (i32.const 2))
+                    (i32.gt_u (local.get $arg3) (i32.const 0x7FFFFFFF)))
+          (then (local.set $ok (i32.const 0))))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 0) (i32.const -1) (local.get $ok)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
   ;; clearerr(FILE*) -> void (cdecl). Resets _IOERR and _IOEOF.
   (func $handle_clearerr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (call $crt_stream_lookup (local.get $arg0))
@@ -1776,6 +1816,25 @@
         (i32.eq (local.get $written) (i32.const 1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
+
+  ;; getc(FILE*) -> the next byte as an unsigned char, or EOF (-1) at end of
+  ;; file, on error, or for a stream this CRT does not own. The byte lands in
+  ;; the caller's own argument slot ([esp+4]); a cdecl callee owns its
+  ;; parameters, and the FILE* is already in $arg0.
+  (func $handle_getc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $read i32)
+    (local.set $slot (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (local.get $slot) (i32.const 0))
+    (local.set $read (call $crt_file_read (local.get $arg0) (local.get $slot) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (call $gl8 (local.get $slot)) (i32.const -1)
+        (i32.eq (local.get $read) (i32.const 1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; fgetc(FILE*) — msvcrt's getc is this function, not a macro over it.
+  (func $handle_fgetc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_getc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_fwrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $written i32)
@@ -2086,9 +2145,9 @@
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x80)))))
     (local.get $flags))
 
-  ;; _pctype() — cdecl, returns the CRT ctype table. Entry zero is EOF; byte
-  ;; values are indexed at table[ch + 1].
-  (func $handle__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; The CRT ctype table, built once. Entry zero is EOF; byte values are
+  ;; indexed at table[ch + 1]. 0 when no storage could be allocated.
+  (func $msvcrt_pctype_table (result i32)
     (local $i i32)
     (if (i32.eqz (global.get $msvcrt_pctype_ptr))
       (then
@@ -2103,7 +2162,28 @@
             (call $msvcrt_ctype_flags (local.get $i)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $fill)))))
-    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_pctype_ptr))
+    (global.get $msvcrt_pctype_ptr))
+
+  ;; _pctype() — cdecl, returns the CRT ctype table's base (see above).
+  (func $handle__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $msvcrt_pctype_table))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; __p__pctype() — cdecl, the address of msvcrt's _pctype variable. As in
+  ;; msvcrt that variable points one entry past the EOF slot, so isalpha(c)
+  ;; is (*__p__pctype())[c] & _ALPHA for c in -1..255.
+  (func $handle___p__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $table i32)
+    (local.set $table (call $msvcrt_pctype_table))
+    (if (i32.and (i32.ne (local.get $table) (i32.const 0))
+                 (i32.eqz (global.get $msvcrt_pctype_var)))
+      (then (global.set $msvcrt_pctype_var (call $heap_alloc (i32.const 4)))))
+    (if (i32.and (i32.ne (local.get $table) (i32.const 0))
+                 (i32.ne (global.get $msvcrt_pctype_var) (i32.const 0)))
+      (then (call $gs32 (global.get $msvcrt_pctype_var)
+        (i32.add (local.get $table) (i32.const 2)))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (global.get $msvcrt_pctype_var) (i32.const 0) (i32.ne (local.get $table) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
   ;; _setmode(fd, mode) — cdecl. The emulator does not distinguish text and
@@ -2456,6 +2536,27 @@
             (call $g2w (local.get $arg0)) (i32.const 0))
         (then (i32.const 0))
         (else (i32.const -1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; _mkdir(dirname) — cdecl. 0, or -1 with errno EEXIST when the path
+  ;; already exists (file or directory) and ENOENT otherwise, as msvcrt maps
+  ;; CreateDirectory's ERROR_ALREADY_EXISTS / ERROR_PATH_NOT_FOUND.
+  (func $handle__mkdir (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $path_wa i32) (local $ok i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
+    (local.set $ok (call $host_fs_create_directory (local.get $path_wa) (i32.const 0)))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (i32.eqz (global.get $msvcrt_errno_ptr))
+          (then (global.set $msvcrt_errno_ptr (call $heap_alloc (i32.const 4)))))
+        (if (global.get $msvcrt_errno_ptr)
+          (then (call $gs32 (global.get $msvcrt_errno_ptr)
+            (select (i32.const 17) (i32.const 2) ;; EEXIST / ENOENT
+              (i32.ne (call $host_fs_get_file_attributes (local.get $path_wa) (i32.const 0))
+                (i32.const -1))))))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 0) (i32.const -1) (i32.ne (local.get $ok) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
