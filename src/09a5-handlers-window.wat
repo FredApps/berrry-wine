@@ -3673,11 +3673,25 @@
     ;; processing for messages >= WM_USER is zero. Tail-dispatch the existing
     ;; frame directly to the stored proc and let its RET 16 return to the
     ;; native wrapper that called DefDlgProc.
+    ;;
+    ;; Client mouse messages and WM_KEYDOWN/KEYUP/CHAR/DEADCHAR go the same way:
+    ;; DefDlgProc has no default work for them and DispatchMessage ignores
+    ;; their result, and a click is exactly what opens the next modal dialog.
+    ;; Diablo's Storm dialogs do it from WM_LBUTTONDOWN (OK on Select
+    ;; Difficulty runs SNetCreateGame and the next SDlgDialogBox loop), and
+    ;; through the bounded sender that loop was cut after 64 rounds: "Unable to
+    ;; create game". System keys stay below; DefWindowProc acts on those.
     (local.set $proc (call $dialog_proc_get (local.get $arg0)))
     (if (i32.and
           (i32.or
-            (i32.ge_u (local.get $arg1) (i32.const 0x0400))
-            (i32.eq (local.get $arg1) (i32.const 0x0111)))
+            (i32.or
+              (i32.ge_u (local.get $arg1) (i32.const 0x0400))
+              (i32.eq (local.get $arg1) (i32.const 0x0111)))
+            (i32.or
+              (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x0200))
+                       (i32.le_u (local.get $arg1) (i32.const 0x020D)))
+              (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x0100))
+                       (i32.le_u (local.get $arg1) (i32.const 0x0103)))))
           (i32.ne (local.get $proc) (i32.const 0)))
       (then
         (global.set $eip (local.get $proc))
