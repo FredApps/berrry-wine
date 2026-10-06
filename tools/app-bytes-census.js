@@ -10,8 +10,12 @@
 // Per app it sums the exe, every path-form DLL, the inline `files[]` and the
 // entries of its `localFileManifest`, all by stat() of the files on disk, and
 // runs the files through lib/app-files.js normalizeLazyFiles() exactly as
-// test/run.js does (sizes from disk, isWin16 from the exe header, syncAudio
-// from the exe's imports). `eager` is what loads before the first guest
+// test/run.js and the page do: sizes only from the entries themselves (the
+// local manifest's, and lib/apps.js's stamp from app-file-sizes.generated.js),
+// isWin16 from the exe header, syncAudio from the exe's imports. Disk sizes
+// only fill the total/eager columns. --data-root=PATH reads the files under a
+// checkout that has the full gitignored corpus. WA_APP_FILE_SIZES_OFF=1 shows
+// the registry without the generated sizes (the before arm). `eager` is what loads before the first guest
 // instruction: exe + DLLs + every file the policy keeps eager (`preloadRanges`
 // bytes of a lazy file count as eager); `?eager-files` loads `total`. The
 // policy column is the normalizer's own reason (lazy / small app / Win16 /
@@ -65,7 +69,9 @@ try {
   for (const m of gen.matchAll(/\bid:\s*'([^']+)'/g)) partA.add(m[1]);
 } catch (_) { /* no generator, everything is B */ }
 
-const resolve = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
+const dataRootArg = args.find(a => a.startsWith('--data-root='));
+const DATA_ROOT = dataRootArg ? path.resolve(dataRootArg.slice('--data-root='.length)) : ROOT;
+const resolve = p => (path.isAbsolute(p) ? p : path.join(DATA_ROOT, p));
 const sizeOf = file => { try { return fs.statSync(file).size; } catch (_) { return null; } };
 const fmt = n => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)}G`
   : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)}M`
@@ -117,7 +123,6 @@ function census(id, app) {
   const policy = normalizeLazyFiles(app, items.map(x => x.file), {
     isWin16: !!exePath && isNe(exePath),
     syncAudio,
-    sizeOf: url => sizeOf(url),
   });
   for (const r of fixed) rows.push({ ...r, size: sizeOf(r.disk), lazy: false, preloaded: 0 });
   policy.files.forEach((out, i) => {
