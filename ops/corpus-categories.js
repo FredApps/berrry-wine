@@ -28,8 +28,9 @@ for (const [id, label, candidates] of groups) {
 // Exact registry identities, including the Windows Entertainment Pack variants.
 // Unknown identities are intentionally left for review rather than title guesses.
 const registryGroups = [
+  ['shooters', 'Shooters', ['ut348_demo','blood2_demo']],
   ['graphics-demos', 'Graphics demos / screensavers', ['heaven7','cashcow','bakkslide7','ptct','wep16_idlewild','wep16_lifegen']],
-  ['action-adventure', 'Action / adventure', ['hitman_glide_demo','hype_glide_demo']],
+  ['action-adventure', 'Action / adventure', ['hitman_glide_demo','hype_glide_demo','tomb_raider_2_demo','tomb_raider_3_demo','die_by_the_sword_demo']],
   ['sports-simulation', 'Sports / simulation', ['mw3']],
   ['strategy', 'Strategy / tactics', ['mcm']],
   // test/binaries/SOURCES.md identifies Bricks as Klotski, not a brick breaker.
@@ -39,9 +40,9 @@ const registryGroups = [
   ['platform', 'Platform games', ['abedemo','captain_claw_demo']],
   ['adventure', 'Adventure', ['broken_sword_demo','curse_monkey_island_demo']],
   ['role-playing', 'Role-playing', ['darkstone_demo','diablo_demo','morrowind']],
-  ['strategy', 'Strategy / tactics', ['aoe1','aoe2','black_white_2_demo','caesar3_demo','dungeon_keeper_demo','total_annihilation_demo']],
+  ['strategy', 'Strategy / tactics', ['aoe1','aoe2','black_white_2_demo','caesar3_demo','dungeon_keeper_demo','total_annihilation_demo','red_alert_95_demo','dark_colony_demo']],
   ['sports-simulation', 'Sports / simulation', ['rct','simcity2000_demo','simcity2000_net','ski32','wep16_ski','wep16_fujigolf']],
-  ['racing', 'Racing / driving', ['nfs2se_glide_demo']],
+  ['racing', 'Racing / driving', ['nfs2se_glide_demo','daytona_usa_deluxe_demo']],
   ['arcade', 'Arcade / brick breakers', ['atomic_bomberman_june_demo','pinball','pinball_plus95','snake','rodent2000','wep16_rattler','wep16_rodent','wep16_jezzball','wep16_maxwell']],
   ['puzzle-board', 'Puzzle / board games', ['freecell','freecell16','cruel','golf','pegged','taipei','tictac','reversi','winmine_wep','mshearts16','sol','sol16','spider','tetravex','tworld','winmine','winmine16','qblackjack','pyramid','peaks','funtris','cwordzap','wep16_blakjak','wep16_chess','wep16_chips','wep16_cruel','wep16_freecell','wep16_gofigure','wep16_golf','wep16_jigsawed','wep16_klotski','wep16_pegged','wep16_pipe','wep16_stones','wep16_tetravex','wep16_tetris','wep16_tic','wep16_tictacdp','wep16_tp','wep16_tripeaks','wep16_tutstomb','wep16_winmine','wep16_wordzap']],
   ['tools', 'Applications / tools', ['notepad','notepad98','calc','mspaint','mspaint98','mspaint_ep','wordpad','write','regedit','taskman','sndrec32_98','sndrec32_xp','sndvol32','cdplayer','explorer98','cleanmgr','fontview','hypertrm','kodakimg','kodakprv','mirc59','mplay32','mplayer','rsrcmtr','sysmon','telnet','vol98','winipcfg','winamp','winamp_mod','winamp291_inst','winamp295_inst','simcity2000_net_server']],
