@@ -81,11 +81,28 @@ Traps met on the way, worth knowing for the next LithTech title:
 - A memory dump of a value inside a hot loop lands mid-update; `--watch-log`
   tells a stuck value from a busy one.
 
-## State (2026-10-06): a very long load
+## State (2026-10-06): the main menu, drawn black
 
-`lithtech.exe` initializes, presents, and shows its loading screen (the
-Nakatomi emblem, animating, orange then white). The main thread is in
-`0x43aed3`, an RLE-style decompressor writing byte runs into a bounded
-buffer, at ~30k API calls per 100k batches; no errors. After 1.8M batches
-(~7 min wall, `--d3d9-renderer=software`) it was still loading. Next: one
-long run to see whether it reaches the level, then gameplay input.
+What looked like an endless load is the **main menu**. The animated emblem is
+`Interface\menu\sprites\logo.spr` (a string in `cshell.dll`), and the
+"repeating" nakatomi.rez reads are its sprite frames. Keys and clicks change
+nothing visible because nothing else is visible. Pass `--tick-ms-per-batch=2`:
+at the default 200 ms the guest clock runs ~15 guest hours per 275k batches.
+
+- Fixed (this commit): `CreateImageSurface(320x480, R5G6B5)` failed, because
+  the backend colour surfaces took only formats 21/22. The engine then retried
+  its 9 menu-background surfaces every frame
+  (`exe 0x49e202` -> device `+0x6c`). A 16-bit image surface is now a 32-bit
+  backend surface behind the 16-bit lock view, so `CopyRects` into the
+  back buffer (`exe 0x49e478`) is a same-format copy. With the fix the menu
+  draws about 118 `DrawPrimitiveUP` quads a frame.
+- Still black: each frame is pretransformed quads (FVF 0x1c4 = XYZRHW |
+  DIFFUSE | SPECULAR | TEX1, triangle fan) over 64x64 A1R5G5B5 tiles, with
+  ALPHABLEND, SRCALPHA/INVSRCALPHA, point filtering, clamp addressing, and Z
+  off. A `dump-mem` of two tile textures at batch 100004 shows real texels
+  with the alpha bit set (`0x8xxx`), so the textures are fine.
+- Next: dump one draw's vertices (the `DrawPrimitiveUP` stream pointer is on
+  the stack, `0x074ff928`, stride 32) and check the diffuse alpha and RHW. If
+  those are sane, check the software rasterizer's handling of XYZRHW + TEX1
+  with SRCALPHA blending on a 16-bit device, e.g. by drawing one such quad in
+  `test/test-d3d8-16bit-mode.js`.

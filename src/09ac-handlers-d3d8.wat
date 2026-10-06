@@ -23,6 +23,8 @@
     (select (i32.const 2) (i32.const 0) (i32.eqz (local.get $adapter))))
   ;; D3DFMT_R5G6B5, the one 16-bit display/back-buffer format listed.
   (global $D3D8_FMT_R5G6B5 i32 (i32.const 23))
+  (global $D3D8_FMT_X1R5G5B5 i32 (i32.const 24))
+  (global $D3D8_FMT_A1R5G5B5 i32 (i32.const 25))
   (func $d3d8_is_display_format (param $format i32) (result i32)
     (i32.or (i32.eq (local.get $format) (i32.const 22))
             (i32.eq (local.get $format) (global.get $D3D8_FMT_R5G6B5))))
@@ -766,9 +768,33 @@
 
   ;; CreateImageSurface(this, Width, Height, Format, pp): a lockable
   ;; system-memory surface, D3D9's CreateOffscreenPlainSurface in SYSTEMMEM.
+  ;; The backend's colour surfaces are 32-bit, so a 16-bit image surface is an
+  ;; X8R8G8B8 one presented through the same 16-bit view as the back buffer:
+  ;; GetDesc reports the 16-bit format and LockRect converts. CopyRects into
+  ;; the 16-bit device's back buffer is then a 32-bit copy on both sides.
+  ;; LithTech builds its 2D menu screens from R5G6B5 image surfaces.
   (func $handle_IDirect3DDevice8_CreateImageSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3d9_color_create (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (i32.const 2) (i32.const 0) (i32.const 1) (local.get $arg4))
+    (local $e i32) (local $surface i32)
+    (if (call $d3d8_is_view_format (local.get $arg3))
+      (then
+        ;; Claim the view slot first (under a placeholder key no surface
+        ;; pointer can equal), so a full table fails before anything exists.
+        (local.set $e (call $d3d8_view_entry (i32.const 1) (i32.const 1)))
+        (if (i32.eqz (local.get $e)) (then
+          (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+          (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000e)) ;; E_OUTOFMEMORY
+          (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+          (return)))
+        (call $d3d9_color_create (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (i32.const 22) (i32.const 2) (i32.const 0) (i32.const 1) (local.get $arg4))
+        (call $zero_memory (call $g2w (local.get $e)) (i32.const 32))
+        (if (i32.eqz (i32.load offset=0 (global.get $reg_base))) (then
+          (local.set $surface (call $gl32 (local.get $arg4)))
+          (call $gs32 (local.get $e) (local.get $surface))
+          (call $gs32 (i32.add (local.get $e) (i32.const 4)) (local.get $arg3)))))
+      (else
+        (call $d3d9_color_create (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (i32.const 2) (i32.const 0) (i32.const 1) (local.get $arg4))))
     (call $d3d8_surface_out (local.get $arg4))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
@@ -792,14 +818,15 @@
   ;; backend. Its D3D8 view reports R5G6B5 and locks through a 16-bit shadow:
   ;; LockRect converts the locked rectangle 32->16 into the shadow and hands
   ;; that out, UnlockRect converts it back unless the lock was read-only. The
-  ;; table is keyed by the surface's D3D9 identity and filled only where a
-  ;; 16-bit device hands its back buffer out (GetBackBuffer/GetRenderTarget),
-  ;; which also clears an entry when a 32-bit device's surface reuses the key.
+  ;; table is keyed by the surface's D3D9 identity and filled where a 16-bit
+  ;; device hands its back buffer out (GetBackBuffer/GetRenderTarget, which
+  ;; also clears an entry when a 32-bit device's surface reuses the key) and
+  ;; by CreateImageSurface for a 16-bit format (cleared by the final Release).
   ;; Entry (32 bytes): +0 key, +4 format, +8 shadow, +12 locked 32-bit bits,
   ;; +16 32-bit pitch, +20 lock flags (bit 31 = locked), +24 left|top<<16,
   ;; +28 right|bottom<<16.
   (global $d3d8_view_table (mut i32) (i32.const 0))
-  (global $D3D8_VIEW_ENTRIES i32 (i32.const 8))
+  (global $D3D8_VIEW_ENTRIES i32 (i32.const 64))
 
   (func $d3d8_device_is_16bit (param $device i32) (result i32)
     (local $state i32)
@@ -873,12 +900,68 @@
       (i32.or (i32.shl (local.get $r) (i32.const 16))
         (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $b)))))
 
+  ;; X8R8G8B8 <-> X1R5G5B5/A1R5G5B5. The alpha bit maps to 0x00/0xff, and an
+  ;; X1 format keeps its top bit clear on the way down.
+  (func $d3d8_rgb555_from_x8 (param $format i32) (param $p i32) (result i32)
+    (local $v i32)
+    (local.set $v (i32.or (i32.or
+      (i32.and (i32.shr_u (local.get $p) (i32.const 9)) (i32.const 0x7c00))
+      (i32.and (i32.shr_u (local.get $p) (i32.const 6)) (i32.const 0x03e0)))
+      (i32.and (i32.shr_u (local.get $p) (i32.const 3)) (i32.const 0x001f))))
+    (if (i32.and (i32.eq (local.get $format) (global.get $D3D8_FMT_A1R5G5B5))
+          (i32.ne (i32.and (local.get $p) (i32.const 0x80000000)) (i32.const 0)))
+      (then (local.set $v (i32.or (local.get $v) (i32.const 0x8000)))))
+    (local.get $v))
+  (func $d3d8_x8_from_rgb555 (param $format i32) (param $v i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $a i32)
+    (local.set $r (i32.and (i32.shr_u (local.get $v) (i32.const 10)) (i32.const 0x1f)))
+    (local.set $g (i32.and (i32.shr_u (local.get $v) (i32.const 5)) (i32.const 0x1f)))
+    (local.set $b (i32.and (local.get $v) (i32.const 0x1f)))
+    (local.set $r (i32.or (i32.shl (local.get $r) (i32.const 3)) (i32.shr_u (local.get $r) (i32.const 2))))
+    (local.set $g (i32.or (i32.shl (local.get $g) (i32.const 3)) (i32.shr_u (local.get $g) (i32.const 2))))
+    (local.set $b (i32.or (i32.shl (local.get $b) (i32.const 3)) (i32.shr_u (local.get $b) (i32.const 2))))
+    (local.set $a (i32.const 0xff000000))
+    (if (i32.and (i32.eq (local.get $format) (global.get $D3D8_FMT_A1R5G5B5))
+          (i32.eqz (i32.and (local.get $v) (i32.const 0x8000))))
+      (then (local.set $a (i32.const 0))))
+    (i32.or (local.get $a)
+      (i32.or (i32.shl (local.get $r) (i32.const 16))
+        (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $b)))))
+
+  ;; The 16-bit formats a view can present over a 32-bit backend surface.
+  (func $d3d8_is_view_format (param $format i32) (result i32)
+    (i32.or (i32.eq (local.get $format) (global.get $D3D8_FMT_R5G6B5))
+      (i32.or (i32.eq (local.get $format) (global.get $D3D8_FMT_X1R5G5B5))
+              (i32.eq (local.get $format) (global.get $D3D8_FMT_A1R5G5B5)))))
+
+  ;; A viewed surface's size: heap colour surfaces (image surfaces) carry it
+  ;; in their header, the implicit back buffer in its DxObject.
+  (func $d3d8_view_width (param $surface i32) (result i32)
+    (if (result i32) (call $d3d9_is_color_surface (local.get $surface))
+      (then (call $gl32 (i32.add (local.get $surface) (i32.const 20))))
+      (else (load.field DxObject width (call $dx_from_this (local.get $surface))))))
+  (func $d3d8_view_height (param $surface i32) (result i32)
+    (if (result i32) (call $d3d9_is_color_surface (local.get $surface))
+      (then (call $gl32 (i32.add (local.get $surface) (i32.const 24))))
+      (else (load.field DxObject height (call $dx_from_this (local.get $surface))))))
+
+  ;; Drop $surface's view, if any, and its shadow.
+  (func $d3d8_view_forget (param $surface i32)
+    (local $e i32)
+    (local.set $e (call $d3d8_view_entry (local.get $surface) (i32.const 0)))
+    (if (i32.eqz (local.get $e)) (then (return)))
+    (if (call $gl32 (i32.add (local.get $e) (i32.const 8)))
+      (then (call $heap_free (call $gl32 (i32.add (local.get $e) (i32.const 8))))))
+    (call $zero_memory (call $g2w (local.get $e)) (i32.const 32)))
+
   ;; Copy the locked rectangle between the 32-bit lock and the 16-bit shadow:
   ;; $up = 0 converts 32->16 (lock), 1 converts 16->32 (unlock).
   (func $d3d8_view_convert (param $e i32) (param $width i32) (param $up i32)
+    (local $format i32)
     (local $bits i32) (local $pitch i32) (local $shadow i32)
     (local $l i32) (local $t i32) (local $w i32) (local $h i32) (local $x i32) (local $y i32)
     (local $src i32) (local $dst i32)
+    (local.set $format (call $gl32 (i32.add (local.get $e) (i32.const 4))))
     (local.set $shadow (call $gl32 (i32.add (local.get $e) (i32.const 8))))
     (local.set $bits (call $gl32 (i32.add (local.get $e) (i32.const 12))))
     (local.set $pitch (call $gl32 (i32.add (local.get $e) (i32.const 16))))
@@ -897,11 +980,17 @@
         (br_if $cols_done (i32.ge_s (local.get $x) (local.get $w)))
         (if (local.get $up)
           (then (call $gs32 (i32.add (local.get $src) (i32.shl (local.get $x) (i32.const 2)))
-            (call $d3d8_x8_from_rgb565
-              (call $gl16 (i32.add (local.get $dst) (i32.shl (local.get $x) (i32.const 1)))))))
+            (if (result i32) (i32.eq (local.get $format) (global.get $D3D8_FMT_R5G6B5))
+              (then (call $d3d8_x8_from_rgb565
+                (call $gl16 (i32.add (local.get $dst) (i32.shl (local.get $x) (i32.const 1))))))
+              (else (call $d3d8_x8_from_rgb555 (local.get $format)
+                (call $gl16 (i32.add (local.get $dst) (i32.shl (local.get $x) (i32.const 1)))))))))
           (else (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $x) (i32.const 1)))
-            (call $d3d8_rgb565_from_x8
-              (call $gl32 (i32.add (local.get $src) (i32.shl (local.get $x) (i32.const 2))))))))
+            (if (result i32) (i32.eq (local.get $format) (global.get $D3D8_FMT_R5G6B5))
+              (then (call $d3d8_rgb565_from_x8
+                (call $gl32 (i32.add (local.get $src) (i32.shl (local.get $x) (i32.const 2))))))
+              (else (call $d3d8_rgb555_from_x8 (local.get $format)
+                (call $gl32 (i32.add (local.get $src) (i32.shl (local.get $x) (i32.const 2))))))))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
@@ -913,9 +1002,8 @@
         (param $rect i32) (param $flags i32)
     (local $entry i32) (local $width i32) (local $height i32)
     (local $l i32) (local $t i32) (local $r i32) (local $b i32)
-    (local.set $entry (call $dx_from_this (local.get $surface)))
-    (local.set $width (load.field DxObject width (local.get $entry)))
-    (local.set $height (load.field DxObject height (local.get $entry)))
+    (local.set $width (call $d3d8_view_width (local.get $surface)))
+    (local.set $height (call $d3d8_view_height (local.get $surface)))
     (local.set $r (local.get $width))
     (local.set $b (local.get $height))
     (if (local.get $rect) (then
@@ -954,7 +1042,7 @@
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x80000000))) (then (return)))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10))) ;; D3DLOCK_READONLY
       (then (call $d3d8_view_convert (local.get $e)
-        (load.field DxObject width (call $dx_from_this (local.get $surface))) (i32.const 1))))
+        (call $d3d8_view_width (local.get $surface)) (i32.const 1))))
     (call $gs32 (i32.add (local.get $e) (i32.const 20)) (i32.const 0)))
 
   (func $d3d8_surface_vtbl (result i32)
@@ -1020,8 +1108,16 @@
     (call $handle_IDirect3DSurface9_AddRef (call $d3d8_surface_in (local.get $arg0))
       (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
   (func $handle_IDirect3DSurface8_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirect3DSurface9_Release (call $d3d8_surface_in (local.get $arg0))
-      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (local $surface i32)
+    (local.set $surface (call $d3d8_surface_in (local.get $arg0)))
+    (call $handle_IDirect3DSurface9_Release (local.get $surface)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (global.get $d3d_render_token) (then (return)))
+    ;; A freed image surface's address is reused by later allocations, so its
+    ;; view must not outlive it. (A back buffer's view is re-made by every
+    ;; GetBackBuffer, so forgetting one costs nothing.)
+    (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
+      (then (call $d3d8_view_forget (local.get $surface)))))
   (func $handle_IDirect3DSurface8_GetDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirect3DSurface9_GetDevice (call $d3d8_surface_in (local.get $arg0))
       (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

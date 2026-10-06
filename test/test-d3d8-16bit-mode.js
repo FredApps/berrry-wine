@@ -4,7 +4,8 @@
 // back buffer gets a 16-bit view: GetDesc says R5G6B5, LockRect hands out a
 // 16-bit shadow converted from the 32-bit pixels, UnlockRect writes it back.
 // LithTech (Die Hard: Nakatomi Plaza demo) needs the mode, Reset into it, and
-// CopyRects between its 16-bit managed textures.
+// CopyRects between its 16-bit managed textures, and 16-bit image surfaces
+// (32-bit in the backend behind the same view) copied into the back buffer.
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const { Bridge } = require('../lib/d3d9-host');
@@ -61,6 +62,12 @@ const call = (name, args) => `
       (i32.load offset=0 (global.get $reg_base)))
     (func (export "surface_level") (param $t i32) (param $out i32) (result i32)
       ${call('IDirect3DTexture8_GetSurfaceLevel', '(local.get $t) (i32.const 0) (local.get $out) (i32.const 0) (i32.const 0) (i32.const 0)')})
+    (func (export "create_image") (param $d i32) (param $w i32) (param $h i32) (param $fmt i32) (param $out i32) (result i32)
+      ${call('IDirect3DDevice8_CreateImageSurface', '(local.get $d) (local.get $w) (local.get $h) (local.get $fmt) (local.get $out) (i32.const 0)')})
+    (func (export "surf_release") (param $s i32) (result i32)
+      ${call('IDirect3DSurface8_Release', '(local.get $s) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)')})
+    (func (export "has_view") (param $s i32) (result i32)
+      (i32.ne (call $d3d8_view_entry (local.get $s) (i32.const 0)) (i32.const 0)))
     (func (export "copy_rects") (param $d i32) (param $src i32) (param $rects i32) (param $n i32) (param $dst i32) (param $points i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const ${ESP}))
       ${set(24, '(local.get $points)')}
@@ -175,6 +182,53 @@ const call = (name, args) => `
   assert.strictEqual(e.copy_rects(dev, src, 0, 0, dst, 0) >>> 0, OK, 'whole-surface CopyRects');
   write(rects, [6, 0, 9, 1]);
   assert.strictEqual(e.copy_rects(dev, src, rects, 1, dst, 0) >>> 0, INVALIDCALL, 'a rect past the edge');
+
+  // A 16-bit image surface (LithTech's 2D menu screens): 32-bit in the
+  // backend behind the same view, so CopyRects into the 16-bit back buffer
+  // is a same-format copy and the pixels arrive widened.
+  assert.strictEqual(e.create_image(dev, 8, 8, 23, out) >>> 0, OK, 'R5G6B5 image surface');
+  const image = read(out);
+  assert(image, 'and a surface handed out');
+  assert.strictEqual(e.surf_desc(image, out) >>> 0, OK);
+  assert.strictEqual(read(out), 23, 'the image surface reports R5G6B5');
+  assert.strictEqual(read(out + 16), 8 * 8 * 2, 'and a 16-bit byte size');
+  assert.strictEqual(e.surf_lock(image, locked, 0, 0) >>> 0, OK);
+  assert.strictEqual(read(locked), 16, 'image surface pitch is two bytes a pixel');
+  bits = read(locked + 4);
+  const art = pattern.map(v => v ^ 0x5a5a);
+  art.forEach((v, i) => write16(bits + i * 2, v));
+  assert.strictEqual(e.surf_unlock(image) >>> 0, OK);
+  assert.strictEqual(e.surf_lock(image, locked, 0, 0x10) >>> 0, OK);
+  bits = read(locked + 4);
+  assert.deepStrictEqual(Array.from({ length: 64 }, (_, i) => read16(bits + i * 2)), art,
+    'the image keeps its 16-bit pixels across locks');
+  assert.strictEqual(e.surf_unlock(image) >>> 0, OK);
+  assert.strictEqual(e.copy_rects(dev, image, 0, 0, back, 0) >>> 0, OK, 'CopyRects image -> back buffer');
+  // The copy is the backend's (the host owns the back buffer's pixels), so
+  // read it back the way the guest would: a read-only lock of the view.
+  assert.strictEqual(e.surf_lock(back, locked, 0, 0x10) >>> 0, OK);
+  bits = read(locked + 4);
+  assert.deepStrictEqual(Array.from({ length: 64 }, (_, i) => read16(bits + i * 2)), art,
+    'the back buffer holds the image');
+  assert.strictEqual(e.surf_unlock(back) >>> 0, OK);
+  assert.strictEqual(e.surf_release(image) >>> 0, 0, 'final Release');
+  assert.strictEqual(e.has_view(image), 0, 'the released image surface leaves no view behind');
+
+  // A1R5G5B5: the alpha bit survives the 32-bit round trip both ways.
+  assert.strictEqual(e.create_image(dev, 4, 1, 25, out) >>> 0, OK, 'A1R5G5B5 image surface');
+  const alphaImage = read(out);
+  assert.strictEqual(e.surf_lock(alphaImage, locked, 0, 0) >>> 0, OK);
+  assert.strictEqual(read(locked), 8);
+  bits = read(locked + 4);
+  const texels = [0xfc00, 0x001f, 0x83e0, 0x7fff];
+  texels.forEach((v, i) => write16(bits + i * 2, v));
+  assert.strictEqual(e.surf_unlock(alphaImage) >>> 0, OK);
+  assert.strictEqual(e.surf_lock(alphaImage, locked, 0, 0x10) >>> 0, OK);
+  bits = read(locked + 4);
+  assert.deepStrictEqual(texels.map((_, i) => read16(bits + i * 2)), texels, 'A1R5G5B5 round trip');
+  assert.strictEqual(e.surf_unlock(alphaImage) >>> 0, OK);
+  assert.strictEqual(e.surf_release(alphaImage) >>> 0, 0);
+  assert.strictEqual(e.create_image(dev, 4, 4, 0x31545844, out) >>> 0, INVALIDCALL, 'DXT1 is still no image format');
 
   console.log('PASS test-d3d8-16bit-mode');
 })().catch(err => { console.error(err); process.exit(1); });
