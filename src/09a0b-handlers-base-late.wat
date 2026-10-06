@@ -1266,10 +1266,20 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
-  ;; 503: HeapWalk — STUB: unimplemented
+  ;; 503: HeapWalk(hHeap, lpEntry) and GetProcessHeaps(NumberOfHeaps,
+  ;; ProcessHeaps) are NT-only: the Windows 95/98 KERNEL32 exports both, and
+  ;; both fail with ERROR_CALL_NOT_IMPLEMENTED. Software probes for exactly that.
+  ;; SmartHeap's SHW32.DLL DllMain calls GetProcessHeaps, then HeapWalk on the
+  ;; process heap, and takes its Win9x path when GetLastError() is 120.
   (func $handle_HeapWalk (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; Same two stdcall arguments, same Win9x answer (0, ERROR_CALL_NOT_IMPLEMENTED).
+  (func $handle_GetProcessHeaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_HeapWalk (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; HeapSetInformation(hHeap, HeapInformationClass, HeapInformation, HeapInformationLength)
   ;; Win9x-era heaps have no LFH mode to apply. Accept recognized heap handles so

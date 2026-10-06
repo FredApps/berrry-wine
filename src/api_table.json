@@ -34707,5 +34707,13 @@
     "convention": "stdcall",
     "hash": 2069023294,
     "handler": "StringFromCLSID"
+  },
+  {
+    "id": 4101,
+    "name": "GetProcessHeaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2746033651,
+    "ret": "DWORD"
   }
 ]

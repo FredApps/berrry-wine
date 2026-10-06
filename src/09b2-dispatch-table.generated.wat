@@ -3599,7 +3599,7 @@
       (then
         (call $dispatch_api_table_page_15 (i32.sub (local.get $api_id) (i32.const 3840)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 4101))
+    (if (i32.lt_u (local.get $api_id) (i32.const 4102))
       (then
         (call $dispatch_api_table_page_16 (i32.sub (local.get $api_id) (i32.const 4096)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -20119,14 +20119,15 @@
   )
 
   (func $dispatch_api_table_page_16 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 4096..4100
+    ;; api ids 4096..4101
     (block $fallback
+    (block $api_5
     (block $api_4
     (block $api_3
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $fallback (local.get $api_id))
     ) ;; 4096: grDrawPolygonVertexList
       (call $handle_grDrawPolygonVertexList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -20141,6 +20142,9 @@
       (return)
     ) ;; 4100: StringFromIID
       (call $handle_StringFromCLSID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4101: GetProcessHeaps
+      (call $handle_GetProcessHeaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 4096)))

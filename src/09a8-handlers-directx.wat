@@ -3467,15 +3467,18 @@
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x1006))
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (call $dx_display_h_get))
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (call $dx_display_w_get))
+    ;; Pitch and pixel format follow the mode's depth. This used to report a
+    ;; 16bpp 5-6-5 mode with a width*2 pitch whatever SetDisplayMode chose;
+    ;; Disciples sizes its 640x480x8 back buffer from these fields.
     (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.and (i32.add (i32.mul (call $dx_display_w_get) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))
-    ;; Pixel format
-    (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 32))
-    (i32.store (i32.add (local.get $wa) (i32.const 76)) (i32.const 0x40))
-    (i32.store (i32.add (local.get $wa) (i32.const 84)) (call $dx_display_bpp_get))
-    (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
-    (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
-    (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))
+      (i32.and
+        (i32.add
+          (i32.mul (call $dx_display_w_get)
+            (i32.shr_u (i32.add (call $dx_display_bpp_get) (i32.const 7)) (i32.const 3)))
+          (i32.const 3))
+        (i32.const 0xFFFFFFFC)))
+    (call $dx_fill_pixel_format (i32.add (local.get $wa) (i32.const 72))
+      (call $dx_display_bpp_get))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 

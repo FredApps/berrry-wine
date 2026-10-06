@@ -728,3 +728,15 @@ Covered by test/test-message-extra-info.js.
 ### 2026-10-05: shared unsupported VB DirectDraw/Clipper body
 
 Inventory241 to240: remove handle_IVBDirectDraw7_DirectSlot and handle_IVBDirectDrawClipper_DirectSlot; add handle_vb_unsupported_stdcall. Exact normalized before/after lists show no other changed entry. Both interfaces still return E_NOTIMPL and consume their metadata-derived native typelib stack byte count; no success behavior is added. Existing raw fixed-pop DirectDraw unsupported methods were corrected to typelib argument counts in the preceding implementation. Pin240/d464d3604b0b773447515c35b2e427cd3e4a9b89cea8fd68e4d5b5b080583b8c accompanies this source dedup in the same commit, retaining the gate and its commit-boundary audit. Evidence: scratch/new-games-pipeline-20261004/jigssawme/directdraw34-repair-20261005/shared-unsupported/quiet-current-main-delta.json. First duplicate and stale-inventory build failures are preserved.
+
+### 2026-10-06: HeapWalk answers the Win9x ERROR_CALL_NOT_IMPLEMENTED
+
+240 -> 241: handle_HeapWalk replaces its crash_unimplemented body with the
+Windows 95/98 result (FALSE, GetLastError 120). HeapWalk and GetProcessHeaps
+are NT-only; the Win9x KERNEL32 exports both as failing entry points, and
+software tests for exactly that code: MicroQuill SmartHeap's SHW32.DLL DllMain
+(Disciples: Sacred Lands demo) calls GetProcessHeaps then HeapWalk on the
+process heap and selects its Win9x path when GetLastError() is 120. The new
+GetProcessHeaps (api id 4100) delegates to the same body, so it is not counted.
+Same precedent as OpenSCManagerA. Covered by test/test-heapwalk-win9x.js.
+Pin241/abd31896744c7b3ecd3f88552ee0bc23760f7ab9f0f43d922a645f2fddb6bcc2.
