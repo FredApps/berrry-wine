@@ -283,6 +283,8 @@ const gpuApis = new Map([
   ['glMultMatrixf', 1],
   // glClearDepth(GLclampd): two physical stack dwords.
   ['glClearDepth', 2],
+  // glColor3ub(r, g, b): Anachronox's ref_gl HUD and font colours.
+  ['glColor3ub', 3],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

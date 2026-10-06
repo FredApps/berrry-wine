@@ -135,6 +135,18 @@ const GAMES = [
     vfsRoot: 'c:\\darkdemo\\',
   },
   {
+    // Anachronox demo (Ion Storm/Eidos 2001). An InstallShield 6 setup, whose
+    // engine (ikernel.exe) is an out-of-process COM server the emulator does
+    // not run, so the cabinets were unpacked with tools/is-cab.js (every file
+    // MD5-checked) into C:\AnoxDemo, the setup's default, leaving out the
+    // installer's own support DLLs. The engine opens ANOXDATA relative to the
+    // working directory.
+    id: 'anachronox_demo',
+    root: 'Anachronox-Demo-SW-OpenGL-installed/anoxdemo',
+    exe: 'anox.exe',
+    vfsRoot: 'c:\\anoxdemo\\',
+  },
+  {
     // Braveheart demo (Red Lemon/Eidos 1999). Its InstallShield 5 Disk1,
     // installed headlessly like Drakan's, wrote this tree to
     // C:\Program Files\Red Lemon Studios\Braveheart Covermount Demo. Three

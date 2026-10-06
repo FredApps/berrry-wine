@@ -586,6 +586,14 @@ const stats = {
         }
         return 0;
       }
+      if (opcode === 111) { // glColor3ub(r, g, b)
+        const color = this._state().color;
+        for (let i = 0; i < 3; i++) {
+          color[i] = (u32At(memoryView, stackWa, i) & 0xFF) / 255;
+        }
+        color[3] = 1;
+        return 0;
+      }
       if (opcode === 58) {
         const pointer = u32At(memoryView, stackWa, 0);
         const wa = this.guestToWasm(pointer) >>> 0;

@@ -347,6 +347,12 @@
       (global.set $gl_color_g (f32.div (f32.convert_i32_u (i32.load8_u offset=1 (local.get $p))) (f32.const 255)))
       (global.set $gl_color_b (f32.div (f32.convert_i32_u (i32.load8_u offset=2 (local.get $p))) (f32.const 255)))
       (global.set $gl_color_a (f32.const 1)) (return (i32.const 1))))
+    ;; 111 glColor3ub(r, g, b): GLubyte arguments widened to stack words.
+    (if (i32.eq (local.get $op) (i32.const 111)) (then
+      (global.set $gl_color_r (f32.div (f32.convert_i32_u (i32.and (i32.load offset=4 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_g (f32.div (f32.convert_i32_u (i32.and (i32.load offset=8 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_b (f32.div (f32.convert_i32_u (i32.and (i32.load offset=12 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_a (f32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $op) (i32.const 28)) (then
       (global.set $gl_tex_s (f32.load offset=4 (local.get $stack))) (global.set $gl_tex_t (f32.load offset=8 (local.get $stack))) (return (i32.const 1))))
     (if (i32.eq (local.get $op) (i32.const 95)) (then

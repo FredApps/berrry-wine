@@ -273,6 +273,9 @@ async function main() {
     gl.call(23, [f32(0.2), f32(0.4), f32(0.6)]); point(4);
     gl.call(58, [DATA + 32]); point(5);
     gl.call(56, [0, 127, 255, 64]); point(6);
+    // glColor3ub: only the low byte of each widened word counts, and alpha
+    // returns to 1 after glColor4ub left it at 64/255.
+    gl.call(111, [0x1FF, 0x40, 0x80]); point(6.5);
     gl.call(95, [DATA]);
     gl.call(107, [0x84C1, f32(0.375), f32(0.625)]);
     gl.call(64, [DATA]);

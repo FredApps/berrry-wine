@@ -35676,8 +35676,7 @@
     "name": "glColor3ub",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2707233889,
-    "handler": "gl_unimplemented"
+    "hash": 2707233889
   },
   {
     "id": 4228,
