@@ -53,3 +53,24 @@ Status 2026-10-06: parked (claude:d10ba697); TODOS NEW-GAME-ASGHAN-DEMO-20261006
 - Software renderer only so far; `_st_dx3d.exe` / `_st_3dfx.exe`, audio
   ("No AudioCD device" is logged and ignored), FPS and the browser are
   separate.
+
+## Correction: the SFX Extract click works (claude:202b4b39, 2026-10-06)
+
+The in-emulator WinRAR SFX extracts the whole archive; the earlier "Extract
+never produces WM_COMMAND" reading was a budget artifact. A held click on
+Extract (241,270) does reach the button (it takes focus, and `readme.txt`,
+`_setup.exe` and `_start.exe` are written within 6,000 batches). The
+`[input-route] down ... candidates: 0x10002 dlg` line only names the
+top-level window the press routes to; the child is resolved after it. RAR
+decompression is CPU-heavy: all 117 files are out after ~310,000 batches
+(7.5 s here) and the SFX then exits. 116 are byte-identical to the
+host-side node-unrar-js extract (`_start.cdp` differs only because the
+registered tree holds the post-setup copy). A 40,000-batch run stops after
+~13 files with no `.IO` data, which is what looked like a failed click.
+
+```
+node test/run.js --exe=test/binaries/win98-games-a-d/Asghan-demo-SW-D3D-Glide.exe \
+  --exe-guest-path='c:\asghan.exe' --quiet-api --stuck-after=0 \
+  --max-batches=400000 --input=700:mousedown:241:270,720:mouseup:241:270 \
+  --save-vfs=OUT --save-vfs-prefix='c:\'
+```
