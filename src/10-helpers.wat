@@ -5764,6 +5764,25 @@
       (br $step)))
     (local.get $focus))
 
+  ;; The WM_COMMAND a dialog keystroke produces (IDCANCEL on Esc, the default
+  ;; or focused button on Enter/Space). For the dialog that owns the running
+  ;; modal pump it is posted: the pump (CACA0004) then enters the DLGPROC on
+  ;; its own continuation stack, where it may run for as long as it likes, as
+  ;; IsDialogMessage does inside the real modal loop. A synchronous send from
+  ;; here is a nested $run that $wnd_send_message gives up on after 64
+  ;; rounds; the Alien vs Predator demo's RAR self-extractor unpacks its whole
+  ;; archive inside the OK handler and was cut off a third of the way in.
+  ;; Other dialogs (modeless, or not yet pumping) keep the synchronous send.
+  (func $dialog_key_command (param $dlg i32) (param $id i32) (param $ctl i32)
+    (if (i32.and (i32.eq (local.get $dlg) (global.get $dlg_pump_hwnd))
+                 (i32.eqz (global.get $code16)))
+      (then
+        (if (call $post_queue_push (local.get $dlg) (i32.const 0x0111)
+              (local.get $id) (local.get $ctl))
+          (then (return)))))
+    (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
+      (local.get $id) (local.get $ctl))))
+
   (func $dialog_handle_key (param $dlg i32) (param $vk i32) (param $shift i32) (result i32)
     (local $focus i32) (local $target i32) (local $id i32) (local $style i32)
     (if (i32.eqz (local.get $dlg)) (then (return (i32.const 0))))
@@ -5771,7 +5790,7 @@
     ;; Esc: IDCANCEL
     (if (i32.eq (local.get $vk) (i32.const 27))
       (then
-        (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111) (i32.const 2) (i32.const 0)))
+        (call $dialog_key_command (local.get $dlg) (i32.const 2) (i32.const 0))
         (return (i32.const 1))))
     ;; Tab / Shift+Tab: next/previous visible tabstop.
     (if (i32.eq (local.get $vk) (i32.const 9))
@@ -5792,8 +5811,7 @@
         (if (local.get $target)
           (then
             (local.set $id (call $ctrl_table_get_id (local.get $target)))
-            (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
-              (local.get $id) (local.get $target)))
+            (call $dialog_key_command (local.get $dlg) (local.get $id) (local.get $target))
             (return (i32.const 1))))))
     ;; Space: click focused button.
     (if (i32.eq (local.get $vk) (i32.const 32))
@@ -5803,8 +5821,7 @@
               (i32.eq (call $ctrl_table_get_class (local.get $focus)) (i32.const 1)))
           (then
             (local.set $id (call $ctrl_table_get_id (local.get $focus)))
-            (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
-              (local.get $id) (local.get $focus)))
+            (call $dialog_key_command (local.get $dlg) (local.get $id) (local.get $focus))
             (return (i32.const 1))))))
     (i32.const 0))
 
