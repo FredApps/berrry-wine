@@ -621,3 +621,17 @@ setting `deusExRenderer` in lib/apps.js to `OpenGlDrv.OpenGLRenderDevice`
   that window. Next: --watch the object's first dword
   (`--watch=0x7e2f17d0 --watch-log`, addresses deterministic) to name
   the free that recycled it, and compare HeapFree/HeapReAlloc semantics.
+
+Correction and narrowing (same day, watchpoints): the object's vtable is
+NOT overwritten -- `--watch=0x7e2f17d0 --watch-log` shows only its
+construction (batches 45598-45599). engine+0x1030cb70 is a lazy loader's
+Load: `this` = 0x7e2f17d0 (a two-slot vtable whose slot 0 is this very
+function), `[this+4]` = the FArchive (0x7e9b46a4, vtable in Core), `[this+8]`
+= the saved file position. It calls Tell (`+0x28`), Seek (`+0x34`),
+serializes the array at `this+0xc` (engine 0x10303904), then Seeks back.
+So the jump into zeros happens while OpenGlDrv's texture upload lazily reads
+texture data out of a package: the suspect is the serialized data (a count
+or size from the file) smashing the stack, i.e. a file-read difference, not
+a GL call. SoftDrv may never touch that texture. Next: `--trace-fs` on the
+package reads in batches 211000-211300 and a stack-guard watch on the
+caller's frame (EBP 0x179ff694).
