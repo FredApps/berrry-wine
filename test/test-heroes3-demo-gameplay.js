@@ -35,14 +35,19 @@ const input = [
   '2500:mousedown:400:300', '2502:mouseup:400:300',
   `3050:png:${menu}`,
   '3500:mousedown:650:80', '3502:mouseup:650:80',
-  `4000:png:${objective}`,
+  // The map load is measured in batches, and batches are block budgets, so
+  // where it ends drifts with every change to how blocks are formed: the
+  // objective was up by batch 4000 on 2026-08-26, still loading at 4000 on
+  // 2026-09-25, and up between 4000 and 4050 on 2026-10-06. The dialog stays
+  // until clicked, so photograph it with a wide margin instead of at the edge.
+  `4600:png:${objective}`,
   // The objective's live check button. Once it is gone, leave the pointer at
   // the left map edge long enough for H3's normal adventure-map pan loop.
-  '4050:mousedown:400:414', '4052:mouseup:400:414',
-  `4100:png:${playable}`,
-  '4160:mousemove:5:300',
-  `4300:png:${panned}`,
-  '4310:mousemove:400:300',
+  '4650:mousedown:400:414', '4652:mouseup:400:414',
+  `4700:png:${playable}`,
+  '4760:mousemove:5:300',
+  `4900:png:${panned}`,
+  '4910:mousemove:400:300',
 ].join(',');
 
 const run = spawnSync(process.execPath, [

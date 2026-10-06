@@ -324,3 +324,17 @@ Time, measured on the idle bench box (x86_64 V8, 2026-09-28): turning on
 (86.6 s vs 90.5 s; repeats agree to 0.03%), and the frames are identical.
 The main-thread gameplay slice does not change, as expected, since the saving
 is all on T1.
+
+## The gameplay test's 2026-10 failure was the capture clock, not the game
+
+`test/test-heroes3-demo-gameplay.js` began failing ("batch 4000 still resembles
+the sky main menu") with nothing wrong in the game: on main the objective dialog
+comes up between batch 4000 and 4050, and the test photographed it at 4000. The
+map load is counted in batches, which are block budgets, so its end moves with
+every change to block formation -- up by 4000 on 2026-08-26 (0610459e), still on
+the loading screen at 4000 on 2026-09-25 (2b1e1bb0), map without dialog at 4000
+on 2026-09-29 and on main. `--no-uop` does not move it. A plain bisect cannot
+name one commit: 2026-09-02..09-21 stall in the 3DO intro on this route instead
+(4001 batches in under a second). The test now photographs the dialog at 4600,
+which it holds until clicked, and runs dismissal and the pan after that
+(claude:65967384, `scratch/runs/20261006T0930Z-heroes3_demo-w4-testfail`).
