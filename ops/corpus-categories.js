@@ -30,7 +30,7 @@ for (const [id, label, candidates] of groups) {
 const registryGroups = [
   ['shooters', 'Shooters', ['ut348_demo','blood2_demo','avp_alien_demo','avp_marine_demo','descent3_demo']],
   ['graphics-demos', 'Graphics demos / screensavers', ['heaven7','cashcow','bakkslide7','ptct','wep16_idlewild','wep16_lifegen']],
-  ['action-adventure', 'Action / adventure', ['hitman_glide_demo','hype_glide_demo','tomb_raider_2_demo','tomb_raider_3_demo','die_by_the_sword_demo']],
+  ['action-adventure', 'Action / adventure', ['hitman_glide_demo','hype_glide_demo','tomb_raider_2_demo','tomb_raider_3_demo','die_by_the_sword_demo','drakan_demo']],
   ['sports-simulation', 'Sports / simulation', ['mw3','freespace_demo']],
   ['strategy', 'Strategy / tactics', ['mcm','myth_tfl']],
   // test/binaries/SOURCES.md identifies Bricks as Klotski, not a brick breaker.

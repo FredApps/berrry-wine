@@ -135,6 +135,17 @@ const GAMES = [
     vfsRoot: 'c:\\darkdemo\\',
   },
   {
+    // Drakan: Order of the Flame demo. Its InstallShield 5 Disk1, installed
+    // headlessly (SETUP.EXE --capture-launch, then the captured _ins5176._mp
+    // with --save-vfs-prefix='c:\program files'), wrote this tree to
+    // C:\Program Files\Psygnosis\Drakan Demo; the engine finds its data
+    // relative to drakan.exe, so the tree keeps that guest path.
+    id: 'drakan_demo',
+    root: 'DrakanOrderOfTheFlameDemoD3D-installed/drakan demo',
+    exe: 'drakan.exe',
+    vfsRoot: 'c:\\program files\\psygnosis\\drakan demo\\',
+  },
+  {
     // The demo's InstallShield 5 setup, run in the emulator (SETUP.EXE with
     // --capture-launch, then its _ins5176._mp), wrote this tree to
     // C:\Games\Descent3Demo. Its opengl32.dll is Microsoft's NT software GL
