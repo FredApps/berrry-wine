@@ -5234,10 +5234,20 @@ async function main() {
       exeBytes,
       seeds: [...((ASSET_ENTRY && ASSET_ENTRY.dlls) || []), ...DLL_SEED],
       detectRequiredDlls,
-      onMissing: (name, spec) => console.warn(`[dll] ${name} is loaded as a real PE ` +
-        `but is not on disk (${spec}); its imports fall to WAT stubs and an ordinal ` +
-        `import from it crashes as "<ord>". test/binaries/dlls is gitignored: copy it ` +
-        `into a fresh worktree.`),
+      onMissing: (name, spec, { seed } = {}) => {
+        // One the app declares (`dlls`, --dll-seed) is not optional: running
+        // on without it only moves the failure into a built-in stub.
+        // A setup failure, so a nonzero exit (no guest thread exists yet).
+        if (seed) {
+          console.error(`run.js: declared DLL not found: ${spec} (test/binaries is ` +
+            `gitignored: link it into a fresh worktree)`);
+          process.exit(1);
+        }
+        console.warn(`[dll] ${name} is loaded as a real PE ` +
+          `but is not on disk (${spec}); its imports fall to WAT stubs and an ordinal ` +
+          `import from it crashes as "<ord>". test/binaries/dlls is gitignored: copy it ` +
+          `into a fresh worktree.`);
+      },
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
         // discoveries arrive as bare DLL names.

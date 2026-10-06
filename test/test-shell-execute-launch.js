@@ -308,19 +308,30 @@ function makeShell(opts = {}) {
   // test/binaries/dlls) is named, not dropped: Deus Ex's page run looked like
   // a regression for an hour because msvcrt.dll 404'd silently and the crash
   // surfaced later in a built-in wcschr stub.
+  // One the app declares itself (a `dlls` seed) is flagged, and fails the
+  // launch in both hosts; one found by the import walk stays optional.
   const missing = [];
   const got = await resolveDllGraph({
     exeBytes: new Uint8Array(1),
+    seeds: ['binaries/app/core.dll'],
     detectRequiredDlls: () => ['msvcrt.dll'],
     isLoadable: () => true,
     loadSpec: async () => null,
-    onMissing: (name, spec) => missing.push([name, spec]),
+    onMissing: (name, spec, info) => missing.push([name, spec, info.seed]),
   });
   assert.deepStrictEqual(got, [], 'nothing loads');
-  assert.deepStrictEqual(missing, [['msvcrt.dll', 'msvcrt.dll']], 'the missing DLL is reported');
-  assert.match(shellSource, /resolveDllGraph\(\{[\s\S]*?onMissing: \(name, spec\) => \{[\s\S]*?log\.textContent \+=/,
-    'the browser launch writes a missing DLL into the page log');
-  console.log('ok: a DLL the host cannot serve is named in the launch log');
+  assert.deepStrictEqual(missing, [
+    ['core.dll', 'binaries/app/core.dll', true],
+    ['msvcrt.dll', 'msvcrt.dll', false],
+  ], 'each missing DLL is reported, the declared one as a seed');
+  assert.match(shellSource, /resolveDllGraph\(\{[\s\S]*?onMissing: \(name, spec, \{ seed \} = \{\}\) => \{[\s\S]*?log\.textContent \+=[\s\S]*?missingDeclaredDlls\.push/,
+    'the browser launch logs a missing DLL and collects the declared ones');
+  assert.match(shellSource, /if \(missingDeclaredDlls\.length\) \{[\s\S]*?failLaunch\(error\);/,
+    'a missing declared DLL fails the browser launch');
+  const runSource = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
+  assert.match(runSource, /onMissing: \(name, spec, \{ seed \} = \{\}\) => \{[\s\S]*?if \(seed\) \{\s*console\.error\(`run\.js: declared DLL not found[\s\S]*?process\.exit\(1\)/,
+    'and the CLI run');
+  console.log('ok: a DLL the host cannot serve is named; a declared one fails the launch');
 })().catch(e => { console.error(e); process.exit(1); });
 
 {
