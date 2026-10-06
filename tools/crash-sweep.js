@@ -51,6 +51,7 @@
 //   --seconds=N      run.js --max-seconds (default 20); the external kill is N+90
 //   --modes=a,b      coop and/or threads (default coop: run.js's own default)
 //   --stuck-after=N  pass run.js --stuck-after (0: never end a run as stuck)
+//   --min-free-mb=N  wait before each run until /proc/meminfo MemAvailable >= N MB
 //   --feed=URL       fetch each app's files from tools/app-files-feed.js serve first
 //                    (a boat fork has no test/binaries)
 //   --jobs=N         runs at once (default 1). Each run holds a 512 MB guest;
@@ -97,6 +98,24 @@ const STUCK_AFTER = opt('stuck-after', null);
 // files from tools/app-files-feed.js serve (reverse-forwarded into the fork)
 // just before that app's first run, so the sweep needs no 30 GB copy.
 const FEED = opt('feed', null);
+// On a shared box, hold the next run while the machine is short of memory
+// (MemAvailable below N MB): a 512 MB guest started into that gets the box,
+// or this sweep, killed. Linux only; elsewhere the check never holds.
+const MIN_FREE_MB = parseInt(opt('min-free-mb', '0'), 10) || 0;
+function memAvailableMb() {
+  try {
+    const m = /MemAvailable:\s+(\d+) kB/.exec(fs.readFileSync('/proc/meminfo', 'utf8'));
+    return m ? (+m[1] / 1024) | 0 : Infinity;
+  } catch (_) { return Infinity; }
+}
+async function waitForMemory() {
+  if (!MIN_FREE_MB) return;
+  let said = false;
+  while (memAvailableMb() < MIN_FREE_MB) {
+    if (!said) { console.log(`[sweep] holding: MemAvailable ${memAvailableMb()} MB < ${MIN_FREE_MB} MB`); said = true; }
+    await new Promise(r => setTimeout(r, 30000));
+  }
+}
 const fed = new Set();
 function feedApp(id) {
   if (!FEED || fed.has(id)) return;
@@ -141,8 +160,10 @@ function classify(log, status, timedOut) {
   }
   // A registry entry whose files are not on this box is an environment gap,
   // not a crash, and run.js reports it with exit status 0.
+  // Only when the run never started: an app without requiredFiles that lacks
+  // an optional file prints the same line and then runs normally (notepad).
   const missing = /file\(s\) not found|exe not found|code: 'ENOENT'/.exec(log);
-  if (missing) return { sig: 'missing-files' };
+  if (missing && !/\d+ batches in /.test(log)) return { sig: 'missing-files' };
   const dep = /require devDependency (\S+)/.exec(log);
   if (dep) return { sig: `missing-dep:${dep[1]}` };
   if (timedOut) return { sig: 'timeout' };
@@ -350,6 +371,7 @@ if (!flag('no-build')) execFileSync('bash', [path.join(ROOT, 'tools', 'build.sh'
   const worker = async () => {
     while (next < work.length) {
       const { id, mode } = work[next++];
+      await waitForMemory();
       feedApp(id);
       const r = await runOne(id, mode);
       fs.appendFileSync(JSONL, JSON.stringify(r) + '\n');
