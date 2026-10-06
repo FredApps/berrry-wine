@@ -92,9 +92,21 @@ changes block granularity, and without it the same inputs were seen to land in
 the attract demo, so keep it until the route is re-timed without it.
 Evidence: `scratch/runs/20261006T1650Z-cmr2_demo-gameplay-w6`.
 
+## Car lighting (fixed 9d35dc49)
+
+The car is FVF `0x2d2` (XYZ|NORMAL|DIFFUSE|SPECULAR|TEX2) drawn with LIGHTING=TRUE,
+DIFFUSEMATERIALSOURCE=MATERIAL and a zero diffuse dword. The light setup at `0x4b68b0`
+switches on a pass number: case 2 (the car) sets AMBIENT from `[0x6d4fe4]`
+(`0xff698299` on Australia 5) and enables light 0, the sun; cases 0/1 use
+`[0x6d5878]` (never written, so 0) and point lights 1/2, which `[0x51d024]` (a
+per-stage table value read at `0x46492e`, headlights) switches off in daylight.
+Device7 SetLight/LightEnable/SetMaterial were stored but never applied, so the
+car kept its zero diffuse dword. Evidence:
+`scratch/runs/20261006T1715Z-cmr2_demo-car-lighting-w6`.
+
 ## Open
 
-- The player car body renders solid black in the stage (it is fully textured
-  on the Set Up page), and so do the AI cars in the demos.
+- Not checked: night stages (headlight point lights) and the browser.
+
 - The inflate page `0x4c3000` is rewritten while it runs: 6927 page
   invalidations, 4435 of which retired a block (a cost, not a correctness issue).
