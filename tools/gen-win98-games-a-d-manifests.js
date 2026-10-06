@@ -215,6 +215,16 @@ const GAMES = [
     vfsRoot: 'c:\\program files\\eidos interactive\\daikatana demo\\',
   },
   {
+    // Silmarils' 1998 demo. The WinRAR SFX was unpacked with node-unrar-js
+    // (7-Zip lacks the RAR codec), then the demo's own _setup.exe installed and
+    // configured it in the emulator into C:\ASGHAN.DEM; the tree is that
+    // install (the SFX payload plus _start.stp, _start.cdp and app.exe).
+    id: 'asghan_demo',
+    root: 'Asghan-demo-installed',
+    exe: '_start.exe',
+    vfsRoot: 'c:\\asghan.dem\\',
+  },
+  {
     // Reflections' 1999 demo. Its InstallShield 5 setup (16-bit SETUP.EXE ->
     // _ins5176._mp), run in the emulator, wrote this tree to
     // C:\Program Files\GT Interactive\Driver Demo.
