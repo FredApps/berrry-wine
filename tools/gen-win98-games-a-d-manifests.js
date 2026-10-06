@@ -171,6 +171,16 @@ const GAMES = [
       'DSETUP.DLL', 'DSETUP16.DLL', 'DSETUP32.DLL', 'layout.bin', 'os.dat', 'lang.dat',
       'DATA.TAG', 'LOGFILE.TXT', 'dx_error.log', 'ConsoleLog.txt', 'Marine Instructions'],
   },
+  {
+    // InstallShield 3 media (data.z). installed\ is what its own SETUP.EXE
+    // wrote when run in the emulator: the 16-bit bootstrap captured with
+    // --capture-launch, then its _ins0432._mp engine run with --vfs-tree and
+    // --save-vfs, Next pressed through every page (c:\program files\interplay\
+    // carmageddon ii demo). The game opens C:\DATA\... from its directory.
+    id: 'carmageddon2_demo',
+    root: 'Carmageddon2Demo-D3D-Glide/installed',
+    exe: 'carma2_d3d.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
