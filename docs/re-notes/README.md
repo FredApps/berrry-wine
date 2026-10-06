@@ -99,6 +99,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Croc 2 (demo, parked) | [croc2-demo.md](croc2-demo.md) |
 | Descent: FreeSpace (demo) | [freespace-demo.md](freespace-demo.md) |
 | Dark Earth (demo) | [dark-earth-demo.md](dark-earth-demo.md) |
+| Asghan (demo, parked) | [asghan-demo.md](asghan-demo.md) |
 | Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
 | Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
