@@ -483,21 +483,89 @@
       (br $scan)))
     (local.get $i))
 
-  ;; CreateProcessA's redirected-std-handles half. $si is the guest
-  ;; STARTUPINFOA, $launch the guest command (application name or command
-  ;; line), $dir the guest current directory or 0, $pi the guest
-  ;; PROCESS_INFORMATION or 0. Returns 1 when a child was started (the
-  ;; caller then returns TRUE), 0 when this call is not one this path takes
-  ;; or the host cannot start a child (the caller falls back).
-  (func $pipe_create_process (param $si i32) (param $launch i32) (param $dir i32) (param $pi i32)
-                             (result i32)
+  ;; The one string the host launches from: the command line, except that a
+  ;; separate lpApplicationName names the executable and the command line's
+  ;; argv[0] is then only a label. msiinst.exe runs CreateProcessA(
+  ;; "MsiExec.exe", "C:\...\msiinst.exe /i instmsi.msi ...") and means
+  ;; msiexec with those arguments, so the result is `"app" <args>`. A guest
+  ;; heap string; the caller frees it.
+  (func $pipe_launch_line (param $app i32) (param $cmd i32) (result i32)
+    (local $p i32) (local $c i32) (local $out i32) (local $n i32) (local $alen i32) (local $rlen i32)
+    (if (i32.eqz (local.get $app)) (then
+      (local.set $n (call $guest_strlen (local.get $cmd)))
+      (local.set $out (call $heap_alloc (i32.add (local.get $n) (i32.const 1))))
+      (if (i32.eqz (local.get $out)) (then (return (i32.const 0))))
+      (call $guest_memmove (local.get $out) (local.get $cmd) (i32.add (local.get $n) (i32.const 1)))
+      (return (local.get $out))))
+    ;; Skip argv[0]: leading blanks, then a quoted run or a run of non-blanks.
+    (if (local.get $cmd) (then
+      (local.set $p (local.get $cmd))
+      (block $lead (loop $sp
+        (local.set $c (call $gl8 (local.get $p)))
+        (br_if $lead (i32.and (i32.ne (local.get $c) (i32.const 32)) (i32.ne (local.get $c) (i32.const 9))))
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (br $sp)))
+      (if (i32.eq (call $gl8 (local.get $p)) (i32.const 34))
+        (then
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (block $q (loop $scan
+            (local.set $c (call $gl8 (local.get $p)))
+            (br_if $q (i32.eqz (local.get $c)))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br_if $q (i32.eq (local.get $c) (i32.const 34)))
+            (br $scan))))
+        (else
+          (block $w (loop $scan
+            (local.set $c (call $gl8 (local.get $p)))
+            (br_if $w (i32.or (i32.eqz (local.get $c))
+              (i32.or (i32.eq (local.get $c) (i32.const 32)) (i32.eq (local.get $c) (i32.const 9)))))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $scan)))))
+      (local.set $rlen (call $guest_strlen (local.get $p)))))
+    (local.set $alen (call $guest_strlen (local.get $app)))
+    ;; '"' app '"' rest NUL
+    (local.set $out (call $heap_alloc (i32.add (i32.add (local.get $alen) (local.get $rlen)) (i32.const 3))))
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0))))
+    (call $gs8 (local.get $out) (i32.const 34))
+    (call $guest_memmove (i32.add (local.get $out) (i32.const 1)) (local.get $app) (local.get $alen))
+    (call $gs8 (i32.add (local.get $out) (i32.add (local.get $alen) (i32.const 1))) (i32.const 34))
+    (if (local.get $rlen)
+      (then (call $guest_memmove (i32.add (local.get $out) (i32.add (local.get $alen) (i32.const 2)))
+        (local.get $p) (local.get $rlen))))
+    (call $gs8 (i32.add (local.get $out) (i32.add (i32.add (local.get $alen) (local.get $rlen)) (i32.const 2)))
+      (i32.const 0))
+    (local.get $out))
+
+  ;; CreateProcessA through a host child process. $si is the guest
+  ;; STARTUPINFOA or 0, $app/$cmd the guest lpApplicationName and
+  ;; lpCommandLine (either may be 0), $inherit bInheritHandles, $dir the guest
+  ;; current directory or 0, $pi the guest PROCESS_INFORMATION or 0. With
+  ;; redirected std handles (bInheritHandles + STARTF_USESTDHANDLES naming
+  ;; inheritable pipe ends) the child gets them; otherwise it is an ordinary
+  ;; child, which the host starts only when it runs children for every
+  ;; CreateProcess. Returns 1 when a child was started (the caller then
+  ;; returns TRUE), 0 when the host cannot or will not start one (the caller
+  ;; falls back to its old path).
+  (func $pipe_create_process (param $si i32) (param $app i32) (param $cmd i32) (param $inherit i32)
+                             (param $dir i32) (param $pi i32) (result i32)
+    (local $launch i32) (local $r i32)
+    (local.set $launch (call $pipe_launch_line (local.get $app) (local.get $cmd)))
+    (if (i32.eqz (local.get $launch)) (then (return (i32.const 0))))
+    (local.set $r (call $pipe_spawn_child (local.get $si) (local.get $launch) (local.get $inherit)
+      (local.get $dir) (local.get $pi)))
+    (call $heap_free (local.get $launch))
+    (local.get $r))
+
+  (func $pipe_spawn_child (param $si i32) (param $launch i32) (param $inherit i32) (param $dir i32) (param $pi i32)
+                          (result i32)
     (local $spec i32) (local $spec_wa i32) (local $i i32) (local $h i32) (local $count i32)
     (local $child_ip i32) (local $pid i32) (local $e i32) (local $base_port i32) (local $own i32)
-    (if (i32.eqz (local.get $si)) (then (return (i32.const 0))))
+    (local $redirect i32)
     ;; STARTUPINFOA.dwFlags (+44) & STARTF_USESTDHANDLES; hStdInput +56,
     ;; hStdOutput +60, hStdError +64.
-    (if (i32.eqz (i32.and (call $gl32 (i32.add (local.get $si) (i32.const 44))) (i32.const 0x100)))
-      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $si) (i32.const 0)) (i32.ne (local.get $inherit) (i32.const 0)))
+      (then (local.set $redirect (i32.ne (i32.and (call $gl32 (i32.add (local.get $si) (i32.const 44)))
+        (i32.const 0x100)) (i32.const 0)))))
     (local.set $spec (call $heap_alloc (i32.const 48)))
     (if (i32.eqz (local.get $spec)) (then (return (i32.const 0))))
     (local.set $spec_wa (call $g2w (local.get $spec)))
@@ -510,6 +578,7 @@
     (local.set $base_port (i32.add (i32.const 52000)
       (i32.mul (i32.and (global.get $pipe_spawned) (i32.const 0x7F)) (i32.const 8))))
     (block $done (loop $each
+      (br_if $done (i32.eqz (local.get $redirect)))
       (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
       (local.set $h (call $gl32 (i32.add (local.get $si)
         (i32.add (i32.const 56) (i32.shl (local.get $i) (i32.const 2))))))
@@ -526,8 +595,7 @@
           (local.set $count (i32.add (local.get $count) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $each)))
-    (if (i32.eqz (local.get $count))
-      (then (call $heap_free (local.get $spec)) (return (i32.const 0))))
+    ;; No inheritable pipe end among them: an ordinary child (count 0).
     (local.set $pid (call $host_process_spawn
       (call $g2w (local.get $launch))
       (if (result i32) (local.get $dir) (then (call $g2w (local.get $dir))) (else (i32.const 0)))
@@ -539,6 +607,7 @@
     ;; order (input, output, error), the same walk as above.
     (local.set $i (i32.const 0))
     (block $moved (loop $move
+      (br_if $moved (i32.eqz (local.get $count)))
       (br_if $moved (i32.ge_u (local.get $i) (i32.const 3)))
       (local.set $h (call $gl32 (i32.add (local.get $si)
         (i32.add (i32.const 56) (i32.shl (local.get $i) (i32.const 2))))))

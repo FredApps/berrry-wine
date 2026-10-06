@@ -1177,6 +1177,46 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
+  ;; GetLongPathNameA/W(lpszShortPath, lpszLongPath, cchBuffer): Win98
+  ;; KERNEL32. The VFS keeps no 8.3 aliases (GetShortPathName hands back the
+  ;; path it was given), so the long form of a path that exists is that path.
+  ;; Windows Installer 2.0 binds this by name and has no fallback of its own:
+  ;; without it msi.dll logs "Could not create LFN path for package" and
+  ;; msiexec fails every install with 1619. Returns the length copied, or the
+  ;; size needed including the terminator when the buffer is too small (and
+  ;; writes nothing), or 0 with ERROR_FILE_NOT_FOUND for a missing path.
+  (func $long_path_name (param $src i32) (param $dst i32) (param $size i32) (param $wide i32)
+                        (result i32)
+    (local $len i32) (local $unit i32)
+    (if (i32.eqz (local.get $src))
+      (then (global.set $last_error (i32.const 87)) (return (i32.const 0))))
+    (if (i32.eq (call $host_fs_get_file_attributes (call $g2w (local.get $src)) (local.get $wide))
+                (i32.const -1))
+      (then (global.set $last_error (i32.const 2)) (return (i32.const 0))))
+    (local.set $unit (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $end (loop $count
+      (br_if $end (i32.eqz (if (result i32) (local.get $wide)
+        (then (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $len) (i32.const 1)))))
+        (else (call $gl8 (i32.add (local.get $src) (local.get $len)))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $count)))
+    (if (i32.or (i32.eqz (local.get $dst)) (i32.le_u (local.get $size) (local.get $len)))
+      (then (return (i32.add (local.get $len) (i32.const 1)))))
+    (if (i32.ne (local.get $dst) (local.get $src))
+      (then (call $guest_memmove (local.get $dst) (local.get $src)
+        (i32.mul (i32.add (local.get $len) (i32.const 1)) (local.get $unit)))))
+    (local.get $len))
+
+  (func $handle_GetLongPathNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $long_path_name (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  (func $handle_GetLongPathNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $long_path_name (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)

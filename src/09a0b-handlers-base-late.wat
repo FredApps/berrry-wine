@@ -822,20 +822,20 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
         (return)))
-    ;; Redirected standard handles (bInheritHandles + STARTF_USESTDHANDLES
-    ;; naming inheritable pipe ends) need a real child: 09d7-pipes.wat starts
-    ;; one when the host can, and otherwise this falls through unchanged.
-    (if (i32.ne (local.get $arg4) (i32.const 0))
+    ;; A real child process when the host can start one: always for
+    ;; redirected standard handles (bInheritHandles + STARTF_USESTDHANDLES
+    ;; naming inheritable pipe ends), and for every launch on a host that runs
+    ;; children for CreateProcess (09d7-pipes.wat). Otherwise this falls
+    ;; through unchanged.
+    (if (call $pipe_create_process
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))
+          (local.get $arg0) (local.get $arg1) (local.get $arg4) (local.get $launch_dir)
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 40))))
       (then
-        (if (call $pipe_create_process
-              (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))
-              (local.get $launch_file) (local.get $launch_dir)
-              (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 40))))
-          (then
-            (global.set $last_error (i32.const 0))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
-            (return)))))
+        (global.set $last_error (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
+        (return)))
     (local.set $launch_result (call $host_shell_execute
       (i32.const 0) (i32.const 0)
       (call $g2w (local.get $launch_file))

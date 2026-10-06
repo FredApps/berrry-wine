@@ -23,6 +23,7 @@ Windows' blocking, EOF and broken-pipe rules, and no protocol simulation.
 | WinBoard 1.e4 → GNUChess 1…c5, cooperative and `--threads` | done | `test/test-winboard-gnuchess-pipes.js`; runs `20261006T0820Z-winboard-move2`, `20261006T0825Z-winboard-move-threads` |
 | Browser host `process_spawn`: hidden second in-page instance on a private LoopbackSegment | done — WinBoard 1.e4, GNUChess 1…e6 in Chrome | 83f0a302; run `20261006T0840Z-winboard-browser2` |
 | Phase 3: waitable hProcess (0x00E40000\|pid), exit code, TerminateProcess(child) | done (CLI + browser) | fe279617, `test/test-child-process-object.js` |
+| Any CreateProcess as a real child (`run.js --spawn-processes`, app `spawnProcesses: true`): exe found on the guest's own C:\, child runs on a snapshot of C:\ + registry, both merged back before the parent's wait returns; lpApplicationName + command line folded by `$pipe_launch_line`; worker threads spawn too | done (CLI only; the browser still chain-launches ordinary CreateProcess) | `test/test-spawn-processes.js`; Windows Installer 2.0 instmsi → msiinst → msiexec, run `20261006T1340Z-instmsi-msiexec`, docs/re-notes/windows-installer-2.0.md |
 | SetFilePointer / FlushFileBuffers on a pipe handle | not implemented; GNUChess has not needed them on this route | — |
 
 The `--threads` run shows one rendering defect unrelated to pipes: after

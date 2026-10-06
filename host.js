@@ -2017,6 +2017,10 @@ class WineAssembly {
     // fire-and-forget, and frames sent before the child runs wait in its
     // wire's inbox. 0 = "cannot", and the guest falls back to its old path.
     h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
+      // An ordinary CreateProcess (no redirected std handles) keeps the
+      // visible chain launch through shell_execute here; only the CLI runs
+      // those as merged-back children so far (test/run.js --spawn-processes).
+      if (!count) return 0;
       const shell = window.wineShell;
       const Vlan = window.VlanWire;
       if (!shell || !shell.launchVfsExe || !Vlan || !Vlan.LoopbackSegment) return 0;

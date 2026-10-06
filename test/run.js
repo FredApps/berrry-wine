@@ -20,7 +20,19 @@ const {
 } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
-const { saveVfsToHost } = require('../lib/vfs-export');
+const { saveVfsToHost, mergeVfsTreeBack } = require('../lib/vfs-export');
+
+// A --spawn-processes child has ended: its C:\ and registry replace what it
+// was started with (see spawnVfsChild).
+function mergeChildState(vfs, storage, before, outDir, regOut) {
+  const { written, deleted } = mergeVfsTreeBack(vfs, before, outDir);
+  let keys = 0;
+  if (fs.existsSync(regOut)) {
+    storage.clearStore();
+    keys = storage.importStore(JSON.parse(fs.readFileSync(regOut, 'utf8')));
+  }
+  console.log(`[spawn] child state merged: ${written} file(s) written, ${deleted} deleted, ${keys} registry/INI key(s)`);
+}
 const {
   decodeMfcCString,
   g2w: translateGuest,
@@ -530,6 +542,18 @@ const PIPE_STD = getArg('pipe-std', null);
 // child started by process_spawn, space separated -- the only way to trace
 // the child's side. Keep them bounded: the child's output is relayed here.
 const PIPE_CHILD_ARGS = (getArg('pipe-child-args', '') || '').split(' ').filter(Boolean);
+// --spawn-processes (or `spawnProcesses: true` on the app in lib/apps.js):
+// every guest CreateProcess of an executable in the VFS starts a real child
+// emulator, not only one with redirected std handles. The child gets a
+// snapshot of this machine's C:\ and registry, and what it leaves behind is
+// merged back before the parent's wait on it returns -- so an installer that
+// runs msiexec.exe and waits for it sees what msiexec installed. Off by
+// default: without it a CreateProcess still reports success with no child,
+// which installer extraction tests rely on.
+const SPAWN_PROCESSES_FLAG = hasFlag('spawn-processes');
+// --spawned-child: this process is such a child (set by the parent, not by
+// hand): report the guest's exit code to the parent over IPC.
+const SPAWNED_CHILD = hasFlag('spawned-child');
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
@@ -3729,6 +3753,14 @@ async function main() {
     // WaitForSingleObject need the guest's own exit code, not this
     // process's.
     if (PIPE_STD && process.send) process.send({ t: 'child-exit', code: code >>> 0 });
+    // A --spawn-processes child has no wire to keep: once its exit code is
+    // on its way, drop the IPC channel, which otherwise keeps this process
+    // alive after its shutdown work and the parent waiting on it forever.
+    else if (SPAWNED_CHILD && process.send) {
+      process.send({ t: 'child-exit', code: code >>> 0 }, () => {
+        try { process.disconnect(); } catch (_) {}
+      });
+    }
   };
 
   // --- Override shell_about to log; the WAT side ($handle_ShellAboutA →
@@ -3806,9 +3838,109 @@ async function main() {
   };
   h.process_ctl = processCtl;
   ctx.processCtl = processCtl;
+  const nextChildPid = () => (0x4000 + (pipeChildren.length + 1) * 4) & 0xFFFF;
+  ctx.hasLiveChildren = () => {
+    for (const rec of pipeChildByPid.values()) if (rec.exitCode === 259) return true;
+    return false;
+  };
+  const relayChild = (child, tag) => {
+    for (const stream of [child.stdout, child.stderr]) {
+      let pending = '';
+      stream.on('data', chunk => {
+        pending += chunk;
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) console.log(`${tag} ${line}`);
+      });
+    }
+  };
+  // An ordinary CreateProcess (no redirected std handles) under
+  // --spawn-processes: the executable is looked up in this guest's own C:\
+  // -- an installer's child is usually a file it has just extracted, never
+  // something beside the host EXE -- and the child runs on a snapshot of
+  // that C:\ and of the registry. When the child process ends, the files and
+  // registry it left are merged back here, and only then does its exit code
+  // stop reading STILL_ACTIVE, so a parent's WaitForSingleObject +
+  // GetExitCodeProcess sees the child's work done.
+  const spawnVfsChild = (cmd, dirArg) => {
+    const vfs = ctx.vfs;
+    if (!vfs || !(SPAWN_PROCESSES_FLAG || (APP_ENTRY && APP_ENTRY.spawnProcesses))) return 0;
+    const parsed = parseShellLaunchCommand(cmd, '', 'open');
+    const name = parsed.file.trim();
+    if (!name) return 0;
+    const cwd = dirArg || (vfs.getCurrentDirectory ? vfs.getCurrentDirectory() : 'c:\\');
+    const exeDir = EXE_GUEST_PATH ? path.win32.dirname(EXE_GUEST_PATH) : 'c:\\';
+    const names = /\.[a-z0-9]+$/i.test(path.win32.basename(name)) ? [name] : [name + '.exe', name];
+    // lpApplicationName resolves against the current directory only, and a
+    // bare command line searches the application directory, the current
+    // directory, SYSTEM and WINDOWS; the WAT side has folded the two into one
+    // string, so try the current directory first and then the search path.
+    const dirs = /^[a-z]:|^\\/i.test(name) ? [''] : name.includes('\\') ? [cwd]
+      : [cwd, exeDir, 'c:\\windows\\system', 'c:\\windows'];
+    let guestExe = null;
+    for (const d of dirs) {
+      for (const n of names) {
+        const norm = vfs._resolvePath(d ? path.win32.join(d, n) : n);
+        if (vfs.files.has(norm)) { guestExe = norm; break; }
+      }
+      if (guestExe) break;
+    }
+    if (!guestExe) {
+      console.log(`[spawn] CreateProcess "${cmd}": ${name} is not in the VFS`);
+      return 0;
+    }
+    const os = require('os');
+    const storage = require('../lib/storage');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-child-'));
+    const inDir = path.join(tmp, 'in');
+    const outDir = path.join(tmp, 'out');
+    const regIn = path.join(tmp, 'reg-in.json');
+    const regOut = path.join(tmp, 'reg-out.json');
+    const written = saveVfsToHost(vfs, inDir);
+    const before = new Map(written.map(row => [String(row.guestPath).toLowerCase(), row.outputPath]));
+    const exeRow = written.find(row => String(row.guestPath).toLowerCase() === guestExe);
+    if (!exeRow) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      console.log(`[spawn] CreateProcess "${cmd}": ${guestExe} could not be exported`);
+      return 0;
+    }
+    fs.writeFileSync(regIn, JSON.stringify(storage.exportStore()));
+    const args = [
+      `--exe=${exeRow.outputPath}`, `--vfs-tree=${inDir}`, `--exe-guest-path=${guestExe}`,
+      `--cwd=${cwd}`, `--args=${parsed.params.trim()}`,
+      '--no-build', `--wasm=${WASM_PATH}`, '--quiet-api', '--quiet-blocks',
+      '--stuck-after=0', '--max-batches=1000000000', `--max-seconds=${MAX_SECONDS || 600}`,
+      '--spawned-child', '--spawn-processes',
+      `--save-vfs=${outDir}`, `--reg-import=${regIn}`, `--reg-export=${regOut}`,
+      ...PIPE_CHILD_ARGS,
+    ];
+    const { fork } = require('child_process');
+    const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const pid = nextChildPid();
+    relayChild(child, `[child ${pid.toString(16)} ${path.win32.basename(guestExe)}]`);
+    pipeChildren.push(child);
+    const rec = { child, exitCode: 259 };
+    pipeChildByPid.set(pid, rec);
+    let guestCode = null;
+    child.on('message', msg => { if (msg && msg.t === 'child-exit') guestCode = msg.code >>> 0; });
+    child.on('exit', code => {
+      try {
+        mergeChildState(vfs, storage, before, outDir, regOut);
+      } catch (e) {
+        console.log(`[spawn] merging ${path.win32.basename(guestExe)}'s files back failed: ${e.message}`);
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+      if (rec.exitCode === 259) rec.exitCode = (guestCode != null ? guestCode : (code == null ? 1 : code)) >>> 0;
+    });
+    if (pipeChildren.length === 1) process.on('exit', () => { for (const c of pipeChildren) c.kill(); });
+    console.log(`[spawn] CreateProcess "${cmd}" -> ${guestExe} (pid ${pid.toString(16)}, cwd ${cwd})`);
+    return pid;
+  };
   h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
     const cmd = cmdWa ? readStr(cmdWa) : '';
-    if (!cmd || !EXE_PATH) return 0;
+    if (!cmd) return 0;
+    if (!count) return spawnVfsChild(cmd, dirWa ? readStr(dirWa) : '');
+    if (!EXE_PATH) return 0;
     const { ParentHub } = require('../lib/vlan-wire');
     if (ctx.vlanWire && !(ctx.vlanWire instanceof ParentHub)) {
       console.log(`[pipe] CreateProcess "${cmd}": this process is itself on a room wire; nested children are not supported`);
@@ -4661,6 +4793,11 @@ async function main() {
     wh.check_input_lparam = h.check_input_lparam;
     wh.check_input_wparam = h.check_input_wparam;
     wh.check_input_hwnd = h.check_input_hwnd;
+    // Child processes belong to the process, not to the thread that started
+    // them: Windows Installer runs its custom-action EXEs (msiexec /D, /Y)
+    // from its engine thread, and waits on them from there.
+    wh.process_spawn = (...a) => h.process_spawn(...a);
+    wh.process_ctl = (...a) => h.process_ctl(...a);
     for (const name of profileHostNames) wrapProfileHost(wh, name);
     // Worker API tracing. The decode and the "the return belongs to the call
     // just logged" latch are shared; what stays here is the CLI's own policy —
@@ -10265,6 +10402,12 @@ async function main() {
     // The wire belongs to the process, not to a worker, so this turn is owed
     // whenever one is attached -- not only while threads happen to be alive.
     if (ctx.vlanWire && (batch & 63) === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    // The same for a --spawn-processes child: its end (and the merge of what
+    // it left behind) arrives as a child-process event, so a parent parked in
+    // WaitForSingleObject on it would otherwise spin until its own run ended.
+    else if ((batch & 63) === 0 && ctx.hasLiveChildren && ctx.hasLiveChildren()) {
       await new Promise(resolve => setImmediate(resolve));
     }
     if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {

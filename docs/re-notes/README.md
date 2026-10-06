@@ -118,3 +118,4 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Snood 2.2W | [snood.md](snood.md) |
 | Worms 2 October demo | [worms2-demo.md](worms2-demo.md) |
 | Warcraft III: Reign of Chaos demo | [warcraft3-demo.md](warcraft3-demo.md) |
+| Windows Installer 2.0 for Win9x (instmsi.exe) | [windows-installer-2.0.md](windows-installer-2.0.md) |

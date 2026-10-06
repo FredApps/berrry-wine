@@ -35506,5 +35506,19 @@
     "convention": "stdcall",
     "hash": 300648885,
     "handler": "IDirectPlayLobby3_WaitForConnectionSettings"
+  },
+  {
+    "id": 4205,
+    "name": "GetLongPathNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2694077008
+  },
+  {
+    "id": 4206,
+    "name": "GetLongPathNameW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2526300818
   }
 ]
