@@ -345,6 +345,20 @@ async function main() {
     // Stack, not just the message: a bare "Cannot read properties of null"
     // names neither the file nor the caller, which is most of what you need.
     page.on('pageerror', e => problems.push((e && e.stack) || String(e)));
+    // A later step failing with "Attempted to use detached Frame" says only
+    // that the page went away. A renderer crash (OOM on a loaded box) and a
+    // reload or navigation of the main frame look identical there, so name
+    // whichever happened, with the time, the moment it happens.
+    const probeStart = Date.now();
+    const stamp = () => `+${((Date.now() - probeStart) / 1000).toFixed(1)}s`;
+    page.on('error', e => console.log(`PAGE CRASHED ${stamp()}: ${(e && e.message) || e}`));
+    page.on('close', () => console.log(`PAGE CLOSED ${stamp()}`));
+    let mainLoads = 0;
+    page.on('framenavigated', frame => {
+      if (frame === page.mainFrame() && ++mainLoads > 1) {
+        console.log(`PAGE NAVIGATED ${stamp()}: main frame is now ${frame.url()}`);
+      }
+    });
     const consoleLines = [];
     // Chrome's own console line for a failed fetch is "Failed to load resource:
     // the server responded with a status of 404 (Not Found)" and names NOTHING
