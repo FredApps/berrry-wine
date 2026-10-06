@@ -178,6 +178,26 @@ async function software() {
     assert.deepStrictEqual(rowColors(7), [RED], `${label}: row 7 belongs to the upper quad (${rowColors(7)})`);
     assert.deepStrictEqual(rowColors(8), [BLUE], `${label}: the shared row 8 belongs to the lower quad, not the upper one (${rowColors(8).map(c => c.toString(16))})`);
   }
+
+  // The same rule across x: a span owns its left column, not its right one.
+  // Two quads meet at x=8; the RIGHT one is drawn first, so a left quad that
+  // paints column 8 cannot hide it. The left quad is split along the
+  // diagonal that gives one triangle a top apex ON the shared edge, (8,0):
+  // that row's span has zero width and must draw nothing.
+  const quadX = (x0, x1) => [[[x0, 0], [x1, 0], [x0, W]], [[x1, 0], [x1, W], [x0, W]]];
+  const colColors = x => { const s = new Set(); for (let y = 0; y < W; y++) s.add(mem.getUint16(rtDib + (y * W + x) * 2, true)); return [...s]; };
+  for (const textured of [true, false]) {
+    wat.test_wrap_set_rs(device, 1, textured ? wat.guest_read32(out + 8) >>> 0 : 0);
+    for (let i = 0; i < W * W; i++) mem.setUint16(rtDib + i * 2, 0, true);
+    fillTex(BLUE);
+    for (const tri of quadX(8, W)) drawTri(tri, 0xff0000ff);   // right: blue
+    fillTex(RED);
+    for (const tri of quadX(0, 8)) drawTri(tri, 0xffff0000);   // left: red
+    const label = textured ? 'textured' : 'flat';
+    const hex = cs => cs.map(c => c.toString(16));
+    assert.deepStrictEqual(colColors(7), [RED], `${label}: column 7 belongs to the left quad (${hex(colColors(7))})`);
+    assert.deepStrictEqual(colColors(8), [BLUE], `${label}: the shared column 8 belongs to the right quad, not the left one (${hex(colColors(8))})`);
+  }
 }
 
 // The GPU executor with a recording device: the vertices it hands over.

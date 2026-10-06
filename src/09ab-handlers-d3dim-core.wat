@@ -5396,23 +5396,28 @@
       (if (i32.gt_s (local.get $xl) (local.get $xr)) (then
         (local.set $xl (local.get $xb))
         (local.set $xr (local.get $xa))))
+      ;; Left-inclusive, right-exclusive [xl, xr), as the textured span is:
+      ;; the inclusive width painted a shared vertical edge into both
+      ;; neighbours, so whichever was drawn second stole that column. A row
+      ;; whose edges meet (xl == xr) covers no pixel and draws nothing.
+      (if (i32.gt_s (local.get $xr) (local.get $xl)) (then
       (if (local.get $zbuf_guest)
         (then (call $viewport_fill_rect_z (local.get $rt_entry) (local.get $zbuf_guest)
           (local.get $xl) (local.get $y)
-          (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+          (i32.sub (local.get $xr) (local.get $xl))
           (i32.const 1) (local.get $zval) (local.get $color)
           (local.get $zfunc) (local.get $zwrite)))
         (else
           (if (local.get $blend)
             (then (call $viewport_fill_rect_alpha (local.get $rt_entry)
               (local.get $xl) (local.get $y)
-              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+              (i32.sub (local.get $xr) (local.get $xl))
               (i32.const 1) (local.get $color)
               (i32.shr_u (local.get $color) (i32.const 24))))
             (else (call $viewport_fill_rect (local.get $rt_entry)
               (local.get $xl) (local.get $y)
-              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
-              (i32.const 1) (local.get $color))))))
+              (i32.sub (local.get $xr) (local.get $xl))
+              (i32.const 1) (local.get $color))))))))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
 
@@ -5559,6 +5564,13 @@
               (local.set $qa (local.get $q1))
               (local.set $za (local.get $z1))
               (local.set $ca (local.get $c1))))))
+      ;; Left-inclusive, right-exclusive: the span covers [min(xa,xb), max).
+      ;; $viewport_draw_textured_span keeps one pixel for a zero-width span
+      ;; (GL lines and points rely on that), but a triangle row whose edges
+      ;; meet covers no pixel centre: drawing it put the apex of a triangle
+      ;; whose right edge is a shared vertical edge into its neighbour's
+      ;; first column.
+      (if (i32.ne (local.get $xa) (local.get $xb)) (then
       (call $viewport_draw_textured_span
         (local.get $rt_entry) (local.get $tex_entry)
         (local.get $blend) (local.get $src_blend) (local.get $dst_blend)
@@ -5568,7 +5580,7 @@
         (local.get $y)
         (local.get $xa) (local.get $ua) (local.get $va) (local.get $qa) (local.get $ca) (local.get $za)
         (local.get $xb) (local.get $ub) (local.get $vb) (local.get $qb) (local.get $cb) (local.get $zb)
-        (local.get $zbuf_guest) (local.get $zfunc) (local.get $zwrite))
+        (local.get $zbuf_guest) (local.get $zfunc) (local.get $zwrite))))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
 
