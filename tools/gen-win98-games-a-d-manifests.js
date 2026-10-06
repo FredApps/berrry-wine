@@ -205,6 +205,16 @@ const GAMES = [
     exe: '1602.exe',
   },
   {
+    // Ion Storm/Eidos 2000 demo. Its InstallShield 5 Disk1 (inside a WinZip
+    // SFX), installed headlessly like Drakan's, wrote this tree to
+    // C:\Program Files\Eidos Interactive\Daikatana Demo; the engine opens
+    // ./data and ./dlls relative to the working directory.
+    id: 'daikatana_demo',
+    root: 'Daikatana demo-SW/installed',
+    exe: 'daikatana.exe',
+    vfsRoot: 'c:\\program files\\eidos interactive\\daikatana demo\\',
+  },
+  {
     // Reflections' 1999 demo. Its InstallShield 5 setup (16-bit SETUP.EXE ->
     // _ins5176._mp), run in the emulator, wrote this tree to
     // C:\Program Files\GT Interactive\Driver Demo.
