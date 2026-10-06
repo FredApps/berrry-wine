@@ -107,6 +107,13 @@ const GAMES = [
     exe: 'ATLANTIS.EXE',
     exclude: ['HNM', 'DSETUP'],
   },
+  {
+    // unzip -q smacdemo.exe, then keep only its programs\ directory: the
+    // runnable game the InstallShield cabs beside it would install.
+    id: 'alpha_centauri_demo',
+    root: 'Alpha Centauri demo-SW/programs',
+    exe: 'terran.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {

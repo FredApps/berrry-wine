@@ -40,7 +40,7 @@ const registryGroups = [
   ['platform', 'Platform games', ['abedemo','captain_claw_demo']],
   ['adventure', 'Adventure', ['broken_sword_demo','curse_monkey_island_demo','atlantis_demo']],
   ['role-playing', 'Role-playing', ['darkstone_demo','diablo_demo','morrowind']],
-  ['strategy', 'Strategy / tactics', ['aoe1','aoe2','black_white_2_demo','caesar3_demo','dungeon_keeper_demo','total_annihilation_demo','red_alert_95_demo','dark_colony_demo','disciples_demo','commandos_demo','age_of_wonders_demo']],
+  ['strategy', 'Strategy / tactics', ['aoe1','aoe2','black_white_2_demo','caesar3_demo','dungeon_keeper_demo','total_annihilation_demo','red_alert_95_demo','dark_colony_demo','disciples_demo','commandos_demo','age_of_wonders_demo','alpha_centauri_demo']],
   ['sports-simulation', 'Sports / simulation', ['rct','simcity2000_demo','simcity2000_net','ski32','wep16_ski','wep16_fujigolf']],
   ['racing', 'Racing / driving', ['nfs2se_glide_demo','daytona_usa_deluxe_demo']],
   ['arcade', 'Arcade / brick breakers', ['atomic_bomberman_june_demo','pinball','pinball_plus95','snake','rodent2000','wep16_rattler','wep16_rodent','wep16_jezzball','wep16_maxwell']],
