@@ -10,6 +10,8 @@
 //   timeout           the run outlived --seconds + grace (a batch never returned)
 //   exit:<code>       the guest called ExitProcess before the deadline
 //   stuck             run.js's idle detector ended the run (waiting on input)
+//   missing-files     the registry names files this checkout does not have
+//   missing-dep:<pkg> run.js needs an uninstalled devDependency for this app
 //   ok                still running at the deadline
 //
 // The summary ranks signatures by how many apps share them, which is the work
@@ -53,9 +55,15 @@ if (!JSONL) {
   process.exit(2);
 }
 
+// The last line for an id wins, so a --rerun supersedes earlier results.
 function readResults() {
   if (!fs.existsSync(JSONL)) return [];
-  return fs.readFileSync(JSONL, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  const byId = new Map();
+  for (const l of fs.readFileSync(JSONL, 'utf8').split('\n').filter(Boolean)) {
+    const r = JSON.parse(l);
+    byId.set(r.id, r);
+  }
+  return [...byId.values()];
 }
 
 // Pull the signature out of a run's combined output. Order matters: an
@@ -76,6 +84,12 @@ function classify(log, status, timedOut) {
       eip: eip ? eip[1].trim().slice(0, 80) : null,
     };
   }
+  // A registry entry whose files are not on this box is an environment gap,
+  // not a crash, and run.js reports it with exit status 0.
+  const missing = /file\(s\) not found|exe not found|code: 'ENOENT'/.exec(log);
+  if (missing) return { sig: 'missing-files' };
+  const dep = /require devDependency (\S+)/.exec(log);
+  if (dep) return { sig: `missing-dep:${dep[1]}` };
   if (timedOut) return { sig: 'timeout' };
   const stuck = /STUCK at EIP=(0x[0-9a-f]+) after (\d+) batches/.exec(log);
   if (stuck) return { sig: 'stuck', eip: stuck[1] };
