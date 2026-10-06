@@ -2858,8 +2858,11 @@
   (global $qsort_thunk     (mut i32) (i32.const 0))
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE_CAPACITY i32 (i32.const 32))
-  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 32 DLLs = 1024 bytes
+  ;; 64: Daikatana loads ~30 Miles providers (*.flt, *.m3d, mp3dec.asi) before
+  ;; its own dlls\physics.dll, and at 32 that load failed and its levels never
+  ;; finished loading.
+  (global $DLL_TABLE_CAPACITY i32 (i32.const 64))
+  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 64 DLLs = 2048 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 32 = 256B.
   (global $DLL_RSRC_TABLE i32 (region.addr $DLL_RSRC_TABLE 0))
   ;; Full path used to load each module, as a guest string pointer. Keeping it
