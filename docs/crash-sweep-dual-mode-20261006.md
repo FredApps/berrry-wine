@@ -103,3 +103,31 @@ gitignored, not in the snapshot) and run.js cannot mount app files from a
 URL, so a full sweep on a boat needs a feed: a static server here, reverse
 forwarded into the fork, and a tool that fetches each app's registry files
 before its run.
+
+## Follow-up (THREADS-DIVERGENCES-3): none of the three is a product bug
+
+Checked in the page with Threads on (`tools/web-input-probe.js --threads`,
+which serves COOP/COEP, so the guest main thread runs in a Worker):
+
+- `diablo_shareware`: the Storm main menu with all its art
+  (`scratch/runs/20261006T1400Z-threads-divergences/diablo-page-threads.png`).
+- `hype_glide_demo`: the full Hype main menu (`hype-page-threads.png`).
+- `red_alert_95_demo`: not a divergence at all -- three more CLI `--threads`
+  runs ended on the same 131,045-byte frame as coop.
+
+Diablo and hype fail only under **`run.js --threads`**, and the reason is the
+harness, not the emulator: run.js keeps the guest main thread in-process,
+while the browser's Threads mode runs it in a Worker. A wait the main thread
+makes inside a synchronous SendMessage (Storm's MPQ reader inside
+WM_INITDIALOG) can block in a Worker with `Atomics.wait` while the page
+services the other threads' RPCs; in-process it cannot block, because the
+threads it waits on need that same thread for their host imports, so it
+answers "pending" and the dialog procedure is abandoned. Hype's loader thread
+calls `exit()` (MSVCRT doexit, seen through 073ea677's EIP-0 registers) on the
+CLI only; its root cause was not pinned, but the page runs it correctly.
+
+So `--modes=coop,threads` on the CLI compares the cooperative scheduler with
+**the CLI's** worker backend, which is not quite the browser's. A divergence
+it finds is worth one page check (`web-input-probe --threads`) before it is
+treated as a game bug. Making `run.js --threads` run the guest main thread in
+a Worker would close that gap.
