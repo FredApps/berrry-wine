@@ -124,6 +124,17 @@ const GAMES = [
     vfsRoot: 'c:\\games\\freespacedemo\\',
   },
   {
+    // The demo's InstallShield 3 setup, run in the emulator from the CD image
+    // (--iso, --iso-exe=DKEDEMO\SETUP.EXE, --tick-ms-per-batch=5, then its
+    // captured _ins0432._mp with the image still on D:), wrote this tree to
+    // C:\DARKDEMO. The game reads its data from the CD at run time; the
+    // registry entry mounts the CD from dark-earth.cue beside the image.
+    id: 'dark_earth_demo',
+    root: 'Dark_Earth_demo-NeedMountedCD-SW/installed',
+    exe: 'dkedemo.exe',
+    vfsRoot: 'c:\\darkdemo\\',
+  },
+  {
     // Activision's 1997 demo. Its InstallShield 3 setup ships the game tree
     // uncompressed in DATA\, which runs as is.
     id: 'dark_reign_demo',
