@@ -20,6 +20,7 @@ const expected = {
   darkstone_demo: ['darkstonedemo.exe', 13],
   red_alert_95_demo: ['RA95.EXE', 8],
   die_by_the_sword_demo: ['dbts_demo.exe', 28],
+  dark_colony_demo: ['dc.exe', 971],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {

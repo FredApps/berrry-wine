@@ -49,6 +49,13 @@ const GAMES = [
     root: 'Die by the sword demo-SW+Glide',
     exe: 'dbts_demo.exe',
   },
+  {
+    // The magazine demo runs unpacked; its ANIMATE/, AVI/, INTRO/ and
+    // per-map directories must keep their structure.
+    id: 'dark_colony_demo',
+    root: 'DarkColony-MagDemo-SW',
+    exe: 'dc.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
