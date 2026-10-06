@@ -25,6 +25,8 @@
   ;;   6 PLAYER_DEL   a = dpId
   ;;   7 DATA         a = from dpId, b = to dpId (0 = everyone), payload bytes
   ;;   8 LEAVE        the sender's session is gone
+  ;;   9 PLAYER_DATA  a = dpId, b = 1 when part of the join snapshot,
+  ;;                  payload the player's shared (non-DPSET_LOCAL) data
   ;;
   ;; guidInstance is {host_ip, 'DPNS', counter, 0}, so a joiner can read the
   ;; host's address straight out of the session it was handed.
@@ -414,6 +416,58 @@
       (then (return)))
     (call $dpn_send_peers (i32.const 6) (local.get $id) (i32.const 0) (i32.const 0)))
 
+  ;; PLAYER_DATA: an entity's shared data, to one address or (dst 0) every
+  ;; peer. Data past one frame's payload is not sent; DirectPlay's own limit
+  ;; is the same order (AoE's lobby record is 740 bytes).
+  (func $dpn_send_player_data (param $entry i32) (param $dst i32) (param $snapshot i32)
+    (local $data i32) (local $size i32)
+    (local.set $data (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+    (local.set $size (call $gl32 (i32.add (local.get $entry) (i32.const 28))))
+    (if (i32.or (i32.eqz (local.get $size)) (i32.gt_u (local.get $size) (global.get $DPL_MAX_PAYLOAD)))
+      (then (return)))
+    (call $guest_memmove (call $dpn_payload) (local.get $data) (local.get $size))
+    (if (local.get $dst)
+      (then (call $dpn_send (i32.const 9) (local.get $dst)
+        (call $gl32 (local.get $entry)) (local.get $snapshot) (local.get $size)))
+      (else (call $dpn_send_peers (i32.const 9)
+        (call $gl32 (local.get $entry)) (local.get $snapshot) (local.get $size)))))
+
+  ;; SetPlayerData without DPSET_LOCAL on a player of this machine.
+  (func $dpn_player_data_changed (param $owner i32) (param $id i32)
+    (local $entry i32)
+    (if (i32.or (i32.eqz (global.get $dpn_state))
+          (i32.ne (local.get $owner) (global.get $dpn_owner)))
+      (then (return)))
+    (local.set $entry (call $dp_find_entity (local.get $id) (i32.const 1)))
+    (if (i32.and (i32.ne (local.get $entry) (i32.const 0))
+          (i32.eqz (call $dpn_is_remote (local.get $entry))))
+      (then (call $dpn_send_player_data (local.get $entry) (i32.const 0) (i32.const 0)))))
+
+  ;; A remote player's shared data arrived: GetPlayerData reads it from now on,
+  ;; and unless it came with the join snapshot (which, as on Win98, is learned
+  ;; by reading, not announced) the local players get
+  ;; DPMSG_SETPLAYERORGROUPDATA {dwType 0x102, dwPlayerType, dpId, lpData,
+  ;; dwDataSize} from DPID_SYSMSG, the data inline after it.
+  (func $dpn_receive_player_data (param $id i32) (param $snapshot i32) (param $data i32) (param $size i32)
+    (local $entry i32) (local $msg i32) (local $wa i32)
+    (local.set $entry (call $dp_find_entity (local.get $id) (i32.const 1)))
+    (if (i32.or (i32.eqz (local.get $entry)) (i32.eqz (call $dpn_is_remote (local.get $entry))))
+      (then (return)))
+    (if (call $dp_replace_data (local.get $entry) (local.get $data) (local.get $size) (i32.const 0))
+      (then (return)))
+    (if (local.get $snapshot) (then (return)))
+    (local.set $msg (call $dpn_alloc_zero (i32.add (i32.const 20) (local.get $size))))
+    (if (i32.eqz (local.get $msg)) (then (return)))
+    (local.set $wa (call $g2w (local.get $msg)))
+    (i32.store (local.get $wa) (i32.const 0x102))        ;; DPSYS_SETPLAYERORGROUPDATA
+    (i32.store offset=4 (local.get $wa) (i32.const 1))   ;; DPPLAYERTYPE_PLAYER
+    (i32.store offset=8 (local.get $wa) (local.get $id))
+    (i32.store offset=16 (local.get $wa) (local.get $size))
+    (if (local.get $size)
+      (then (call $guest_memmove (i32.add (local.get $msg) (i32.const 20)) (local.get $data) (local.get $size))))
+    (call $dpn_deliver_local (i32.const 0) (i32.const 0) (local.get $msg) (i32.add (i32.const 20) (local.get $size)))
+    (call $heap_free (local.get $msg)))
+
   ;; Send from a local player to a player elsewhere, or to everyone (to = 0).
   ;; Returns 1 when the send was fully handled here (remote recipient).
   (func $dpn_send_data (param $owner i32) (param $from i32) (param $to i32)
@@ -559,7 +613,9 @@
                   (i32.ne (call $gl32 (i32.add (local.get $entry) (i32.const 20))) (i32.const 0))
                   (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
                 (i32.ne (call $gl32 (i32.add (local.get $entry) (i32.const 52))) (local.get $src)))
-            (then (call $dpn_announce (local.get $entry) (local.get $src) (i32.const 1))))
+            (then
+              (call $dpn_announce (local.get $entry) (local.get $src) (i32.const 1))
+              (call $dpn_send_player_data (local.get $entry) (local.get $src) (i32.const 1))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $scan)))
         (return)))
@@ -596,6 +652,12 @@
 
     (if (i32.eq (local.get $type) (i32.const 6))
       (then (call $dpn_drop_remote (local.get $a) (local.get $src)) (return)))
+
+    (if (i32.eq (local.get $type) (i32.const 9))
+      (then
+        (call $dpn_receive_player_data (local.get $a) (local.get $b)
+          (local.get $payload) (local.get $len))
+        (return)))
 
     (if (i32.eq (local.get $type) (i32.const 7))
       (then

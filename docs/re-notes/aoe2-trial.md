@@ -84,6 +84,26 @@ also holds Left through gameplay and checks the central fog band: the broken
 frame contained 1,800 colored pixels in repeated islands; the fixed CLI and web
 captures contain none.
 
+## LAN multiplayer over the virtual LAN (works 2026-10-06, 904b5e50)
+
+`test/test-aoe2-vlan-gameplay.js` (heavy, run on a boat): seat 10.0.0.1 hosts
+as "Host", seat 10.0.0.2 finds "Host's Game" and joins as "Guest", and both
+lobbies list both names. Evidence `scratch/runs/20261006T1450Z-aoe2-w4-vlan`.
+
+- **Route.** EULA Accept (161,433), Multiplayer (248,185), name field
+  (335,240) + OK (259,284), Local (LAN) TCP/IP Connection (430,102); host
+  Create (480,365); guest selects the list row (480,195) then Join (480,318).
+- **IDirectPlay4W only.** `EnumSessions(DPENUMSESSIONS_ASYNC|AVAILABLE)` polled
+  from the UI loop, `Open`, `CreatePlayer`, `GetCaps`/`GetPlayerCaps` into a
+  **40-byte** stack local (a fill of 64 bytes smashed the return address),
+  `GetSessionDesc(NULL, &size)` as a size probe (an unwritten size became a
+  SmartHeap out-of-memory), `GetPlayerName` on the remote player, then its own
+  lobby protocol over `Send`/`GetMessageCount`/`Receive`.
+- **1252 bytes in W fields.** `lpszSessionName` and the player DPNAME point at
+  ANSI buffers passed as UTF-16. Real DirectPlay copies W strings opaquely, so
+  they round-trip; a provider that narrows to 1252 and widens back shows "?".
+  The dpl/1 session record and PLAYER_ADD now carry the W units verbatim.
+
 ## Manifest and acceptance route
 
 `lib/apps.js` now mounts 95 required files (68.8 MiB): the EULA DLL/document,

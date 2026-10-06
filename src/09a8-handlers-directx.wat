@@ -10453,6 +10453,14 @@
       (then (return (i32.const 0x8877001E)))) ;; DPERR_BUFFERTOOSMALL; retain message
     (call $guest_memmove (local.get $data)
       (call $gl32 (i32.add (local.get $entry) (i32.const 16))) (local.get $size))
+    ;; DPMSG_SETPLAYERORGROUPDATA carries its data right after the 20-byte
+    ;; header, and lpData points there in the buffer the app received.
+    (if (i32.and
+          (i32.and (i32.eqz (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+            (i32.ge_u (local.get $size) (i32.const 20)))
+          (i32.eq (call $gl32 (local.get $data)) (i32.const 0x102)))
+      (then (call $gs32 (i32.add (local.get $data) (i32.const 12))
+        (i32.add (local.get $data) (i32.const 20)))))
     (call $gs32 (local.get $from_ptr) (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
     (call $gs32 (local.get $to_ptr) (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 8)))
@@ -11521,9 +11529,14 @@
         (call $dp_replace_name (local.get $arg1) (i32.const 0) (local.get $arg2))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
   (func $handle_IDirectPlay3_SetPlayerData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $dp_set_data
+    (local $hr i32)
+    (local.set $hr (call $dp_set_data
         (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)
         (local.get $arg4)))
+    ;; Shared (not DPSET_LOCAL) data reaches every other machine in the session.
+    (if (i32.and (i32.eqz (local.get $hr)) (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+      (then (call $dpn_player_data_changed (local.get $arg0) (local.get $arg1))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
   (func $handle_IDirectPlay3_SetPlayerName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (select (i32.const 0) (i32.const 0x80070057)

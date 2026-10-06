@@ -1669,6 +1669,7 @@ async function main() {
   // fixed-duration benchmark is asking for.
   let batchesRun = 0;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
+  let netWaitSince = 0;   // wall-clock ms of the first of them
   let apiCount = 0;
   // Set with h.log below. When on, the main instance counts its own Win32
   // calls ($api_calls) and h.log sees only non-API log lines, so the total
@@ -10189,9 +10190,14 @@ async function main() {
       // parks the same way for as long as it stays open.
       if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked()) &&
           !(instance.exports.menu_track_parked && instance.exports.menu_track_parked())) {
-        netWaits++;
+        if (netWaits++ === 0) netWaitSince = Date.now();
       }
-      if (netWaits > VLAN_MAX_WAITS) {
+      // On the wall clock a guest's own timed wait (a synchronous DirectPlay
+      // EnumSessions holds for up to 5 s) does end, and a fast box makes
+      // 20000 attempts well inside it; so there the cap also needs 30 s with
+      // no progress. On the batch clock no guest deadline passes while it
+      // waits, and the count alone is what ends a stalled wire.
+      if (netWaits > VLAN_MAX_WAITS && (!REAL_TICKS || Date.now() - netWaitSince > 30000)) {
         console.log(`[net] no progress after ${VLAN_MAX_WAITS} blocking waits; stopping`);
         stopped = true;
         break;
