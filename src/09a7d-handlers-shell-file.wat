@@ -515,7 +515,9 @@
   ;; The VFS may complete cached reads during submission; completion routines
   ;; are nevertheless queued until an alertable wait. Lazy residency uses the
   ;; existing IO_WAIT retry before submission completes (not a JS guest call).
-  ;; Queue nodes: next,error,byteCount,OVERLAPPED,callback. hEvent is untouched.
+  ;; Queue nodes: next,arg0,arg1,arg2,callback,argc. A ReadFileEx completion
+  ;; passes (error, byteCount, OVERLAPPED); a QueueUserAPC routine its one
+  ;; dwData. hEvent is untouched.
   (func $handle_ReadFileEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $node i32) (local $wa i32) (local $error i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -524,9 +526,10 @@
       (br_if $done (i32.eqz (local.get $arg3)))
       (br_if $done (i32.eqz (local.get $arg4)))
       (br_if $done (i32.and (i32.ne (local.get $arg2) (i32.const 0)) (i32.eqz (local.get $arg1))))
-      (local.set $node (call $heap_alloc (i32.const 20)))
+      (local.set $node (call $heap_alloc (i32.const 24)))
       (if (i32.eqz (local.get $node)) (then (global.set $last_error (i32.const 8)) (br $done)))
       (local.set $wa (call $g2w (local.get $node)))
+      (i32.store offset=20 (local.get $wa) (i32.const 3))
       (local.set $error (call $host_fs_read_file_at (local.get $arg0) (local.get $arg1) (local.get $arg2)
         (i32.add (local.get $node) (i32.const 8))
         (call $gl32 (i32.add (local.get $arg3) (i32.const 8)))
@@ -541,12 +544,43 @@
       (i32.store offset=16 (local.get $wa) (local.get $arg4))
       (call $gs32 (local.get $arg3) (select (i32.const 0xc0000011) (i32.const 0) (local.get $error)))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (i32.load offset=8 (local.get $wa)))
-      (if (global.get $io_apc_tail) (then
-        (call $gs32 (global.get $io_apc_tail) (local.get $node)))
-      (else (global.set $io_apc_head (local.get $node))))
-      (global.set $io_apc_tail (local.get $node))
+      (call $io_apc_enqueue (local.get $node))
       (global.set $last_error (i32.const 0)) (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+
+  (func $io_apc_enqueue (param $node i32)
+    (call $gs32 (local.get $node) (i32.const 0))
+    (if (global.get $io_apc_tail) (then
+      (call $gs32 (global.get $io_apc_tail) (local.get $node)))
+    (else (global.set $io_apc_head (local.get $node))))
+    (global.set $io_apc_tail (local.get $node)))
+
+  ;; QueueUserAPC(pfnAPC, hThread, dwData) -> nonzero on success. The routine
+  ;; runs the next time the target thread enters an alertable wait (SleepEx,
+  ;; WaitForSingleObjectEx, WaitForMultipleObjectsEx), on that thread, through
+  ;; the same queue and CACA0032 continuation as ReadFileEx completions; the
+  ;; wait then returns WAIT_IO_COMPLETION. This queue lives in the calling
+  ;; instance, so only the calling thread (GetCurrentThread's pseudo-handle)
+  ;; can be targeted; another thread's handle would need a cross-instance
+  ;; queue and fails fast rather than running the routine on the wrong thread.
+  (func $handle_QueueUserAPC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $node i32) (local $wa i32)
+    (if (i32.ne (local.get $arg1) (i32.const -2))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (global.set $last_error (i32.const 87))
+    (block $done
+      (br_if $done (i32.eqz (local.get $arg0)))
+      (local.set $node (call $heap_alloc (i32.const 24)))
+      (if (i32.eqz (local.get $node)) (then (global.set $last_error (i32.const 8)) (br $done)))
+      (local.set $wa (call $g2w (local.get $node)))
+      (i32.store offset=4 (local.get $wa) (local.get $arg2))
+      (i32.store offset=16 (local.get $wa) (local.get $arg0))
+      (i32.store offset=20 (local.get $wa) (i32.const 1))
+      (call $io_apc_enqueue (local.get $node))
+      (global.set $last_error (i32.const 0))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   (func $io_apc_push (param $value i32)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -583,8 +617,9 @@
     (global.set $io_apc_head (i32.load (local.get $wa)))
     (if (i32.eqz (global.get $io_apc_head)) (then (global.set $io_apc_tail (i32.const 0))))
     (local.set $callback (i32.load offset=16 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=12 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=8 (local.get $wa)))
+    (if (i32.ge_u (i32.load offset=20 (local.get $wa)) (i32.const 3)) (then
+      (call $io_apc_push (i32.load offset=12 (local.get $wa)))
+      (call $io_apc_push (i32.load offset=8 (local.get $wa)))))
     (call $io_apc_push (i32.load offset=4 (local.get $wa)))
     (call $io_apc_push (global.get $io_apc_thunk))
     (call $heap_free (local.get $node))
