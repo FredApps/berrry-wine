@@ -4073,7 +4073,36 @@ class WineAssembly {
       await gw.loadLibrary(null, fileName, link);
       return;
     }
-    const res = await gw.loadLibrary(dllBytes, fileName, link);
+    // Static imports first, as the cooperative pumps do (process-boot.js
+    // loadLibraryDependencies): Blood II's Client.exe LoadLibrary's ima.dll,
+    // which imports IMUSIC25.DLL and MSYNTH25.DLL. Mapping only ima.dll bound
+    // those imports to WAT stubs and the Worker trapped on
+    // _AllocAAEngine2@8. Bytes are resolved here; the worker maps each
+    // dependency it does not already hold, then the DLL, then runs the
+    // DllMains in that order.
+    const deps = [];
+    if (ProcessBoot && ProcessBoot.loadLibraryDependencies) {
+      const loaded = new Set((this.moduleMap || []).map(m => String(m.name).toLowerCase()));
+      const walk = ProcessBoot.loadLibraryDependencies(dllBytes, fileName, loaded);
+      for (let step = walk.next(); ; ) {
+        if (step.done) { deps.push(...step.value); break; }
+        let found = null;
+        try { found = (await this._resolveDllBytes(ProcessBoot.besideModule(dllName, step.value))).dllBytes; } catch (_) {}
+        step = walk.next(found);
+      }
+      for (const dep of deps) {
+        if (!dep.bytes) console.warn(`[LoadLibrary] ${fileName} imports ${dep.fileName}, not found: its imports fall to WAT stubs`);
+      }
+    }
+    const res = await gw.loadLibrary(dllBytes, fileName, link,
+      deps.filter(dep => dep.bytes).map(dep => ({ fileName: dep.fileName, bytes: dep.bytes })));
+    for (const dep of (res && res.deps) || []) {
+      if (!dep.loadAddr) continue;
+      console.log(`[LoadLibrary] ${dep.fileName} loaded at 0x${(dep.loadAddr >>> 0).toString(16)} (worker, imported by ${fileName})`);
+      this.registerModule(dep.fileName, dep.loadAddr);
+      const depBytes = deps.find(d => d.fileName === dep.fileName);
+      if (depBytes && depBytes.bytes) this._registerDllBitmapResources(dep.fileName, depBytes.bytes, dep.loadAddr);
+    }
     if (res && res.loadAddr) {
       console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
       this.registerModule(fileName, res.loadAddr);
