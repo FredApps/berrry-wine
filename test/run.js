@@ -1316,7 +1316,7 @@ if (WORKER_THREADS && FORCE_COOPERATIVE_THREADS) {
   console.error('error: --threads and --no-threads are mutually exclusive');
   process.exit(2);
 }
-const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
+const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE, min 1000 -- the browser's main:worker parity)
 const CS_STEAL_AFTER = parseInt(getArg('cs-steal-after', '0'), 10) || 0; // --cs-steal-after=N: fruitless EnterCriticalSection rounds before taking the section by force (0 = WAT default; huge = never, to tell "waiting forever" from "took it")
 const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
 const ESP_AUDIT = hasFlag('esp-audit'); // --esp-audit: with --threads, check every handler's stdcall epilogue (4*(nargs+1)) on the thread that actually ran it
@@ -4945,7 +4945,18 @@ async function main() {
   // mode quietly wrong for a whole phase with every test still green.
   let guestThreadHost = null;
   // Computed here, not at parse time: the debug flags above rewrite BATCH_SIZE.
-  const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE * THREAD_SLICES, 20000);
+  //
+  // A worker slice is the same size as a main slice, floored at 1000 like
+  // host.js's own step count, because that is the shape the browser runs:
+  // host.js hands its main step count straight to runWorkerSlices. This used
+  // to be max(BATCH_SIZE * THREAD_SLICES, 20000), which let every worker
+  // retire ~27x the blocks main did per batch. That is a race no real machine
+  // runs and the page never does: hype_glide_demo's loader thread (MSVCRT
+  // thread 0xb98b10) reached its sprite-row table at 0x757200 while main was
+  // still filling the 64K colour table beside it at 0x466b4f, followed a NULL
+  // row, and _XcptFilter turned the fault into ExitProcess -- the only crash
+  // in the 271-app dual-mode sweep (docs/crash-sweep-dual-mode-20261006.md).
+  const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE, 1000);
   if (WORKER_THREADS) {
     // Real parallelism: LOCK-prefixed instructions must be atomic across the
     // worker_threads (07-decoder.wat $try_emit_locked, handler 499).

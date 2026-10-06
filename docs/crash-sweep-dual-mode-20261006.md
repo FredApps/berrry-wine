@@ -172,3 +172,22 @@ the CLI's in-process main thread). The other six have not had that page check
 yet and are the follow-up list, not bugs on their own. The two "no capture vs
 content" rows go the other way: under coop the CLI found no surface to write
 at exit.
+
+## Fixed (HYPE-THREADS-CLI-TRAP): the CLI starved its own main thread
+
+The one crash divergence above was the harness after all, but not where the
+follow-up section guessed. `run.js --threads` gave every worker slice
+`max(--batch-size × --thread-slices, 20000)` blocks against the main thread's
+`--batch-size`, so a worker retired about 27 times the work main did per batch.
+The page never runs that shape: `host.js` hands its main step count straight
+to `runWorkerSlices`. Hype's loader thread then reached its sprite-row table
+(`0x757200`) while main was still filling the 64K colour table beside it
+(`0x466b4f`), followed a NULL row, and MSVCRT's `_XcptFilter` turned the fault
+into `ExitProcess`. `--threads-serial` still failed, so it was never a parallel
+race; `--thread-batch-size=1000` passed.
+
+Workers now get `max(--batch-size, 1000)`, the browser's rule. A threads-mode
+re-run of the 44 apps above (`scratch/runs/20261006T1715Z-threads-slice-parity/`):
+40 unchanged, Hype reaches its main menu, `dungeons_of_dredmor_release` and
+`ut2004_demo` now match their coop picture, `liquid_war` goes blank to content,
+and nothing gained a crash, an exit or lost audio.
