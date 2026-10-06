@@ -4901,6 +4901,15 @@ class WineAssembly {
             self._d3dMainWait = null; self._d3dParkedSlice = null;
             await self.guestWorker.callExport('clear_yield');
           }
+          // A main thread parked on a lazy ReadFile (yield 12): its fill runs in
+          // the background (see the yield-12 branch below) and only this slice
+          // waits for it -- the step, the wave pump and the other threads go on.
+          const ioWait = self._workerMainIoWait;
+          if (ioWait) {
+            if (!ioWait.done) return Object.assign({}, ioWait.slice, { blocks: 0, ms: 0 });
+            self._workerMainIoWait = null;
+            await self.guestWorker.callExport('clear_yield');
+          }
           // A main-thread Sleep(n) holds the guest's main thread until its
           // deadline on the guest clock, exactly as checkMainYield does in
           // cooperative mode. Its threads keep their turns meanwhile.
@@ -5182,15 +5191,22 @@ class WineAssembly {
           // zip/iso, dropped File, remote URL over Range). The brokered fs
           // import already ran here on the main thread, carrying guest thread
           // ID 1. Clearing the yield retries that same worker's call.
+          //
+          // The fill runs in the background and only the guest main thread
+          // waits for it: runMain returns an empty slice until it lands, then
+          // clears the yield. Awaiting it here held the whole host step --
+          // the wave pump and every other thread's turn -- for the fetch.
           const pvfs = self._helpCtx && self._helpCtx.vfs;
           const pending = pvfs && pvfs.getPendingRead(1);
-          if (pending) {
-            try { await self._fillParkedRead(pvfs, pending); }
-            catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
+          if (!self._workerMainIoWait) {
+            const ioWait = { done: false, slice: r };
+            self._workerMainIoWait = ioWait;
             // fillPendingRead owns identity-guarded cleanup; a peer may have
-            // published a different request while this await was suspended.
+            // published a different request while this fill was in flight.
+            ioWait.promise = (pending ? self._fillParkedRead(pvfs, pending) : Promise.resolve())
+              .catch(e => self.logToUI(`[io] ${pending && pending.path}: ${e && e.message}`))
+              .then(() => { ioWait.done = true; self._wakeStep(); });
           }
-          await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 13) {
           // vblank_wait: the live instance is in the guest-main Worker, not
           // self.instance. The display tick and yield clear travel on the

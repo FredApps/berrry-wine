@@ -1036,7 +1036,7 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
   const blocks = [
     ['browser worker', path.join(__dirname, '..', 'host.js'),
       'const pvfs = self._helpCtx && self._helpCtx.vfs;',
-      "await self.guestWorker.callExport('clear_yield');"],
+      '} else if (r.yield === 13) {'],
     ['CLI', path.join(__dirname, 'run.js'),
       'const pending = ctx.vfs && ctx.vfs.getPendingRead(1);',
       'instance.exports.clear_yield();'],
@@ -1075,7 +1075,10 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
     const start = source.indexOf(startMarker);
     const end = source.indexOf(endMarker, start);
     assert(start >= 0 && end > start, `${name}: io-wait block must remain discoverable`);
-    const service = new AsyncFunction('self', 'ctx', 'TRACE_YIELD', source.slice(start, end));
+    // The worker branch no longer awaits the fill inline: it starts it in the
+    // background as self._workerMainIoWait, which the test then awaits.
+    const service = new AsyncFunction('self', 'ctx', 'TRACE_YIELD', 'r',
+      source.slice(start, end) + '\n;if (self._workerMainIoWait) await self._workerMainIoWait.promise;');
     const vfs = new VirtualFS();
     let complete;
     vfs.setProviderFile(GUEST, { provider: {
@@ -1090,7 +1093,7 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
     // _fillParkedRead (host.js) ends in the same vfs.fillPendingRead; for a
     // provider that is not loadFiles game data it is exactly that call.
     const running = service({ _helpCtx: { vfs }, logToUI: message => { throw Error(message); },
-      _fillParkedRead: (v, p) => v.fillPendingRead(p) }, { vfs }, false);
+      _fillParkedRead: (v, p) => v.fillPendingRead(p), _wakeStep: () => {} }, { vfs }, false, { yield: 12 });
     vfs.pendingRead = pb;
     complete();
     await running;
