@@ -5237,7 +5237,9 @@ async function main() {
       const policy = require('../lib/app-files').normalizeLazyFiles(ASSET_ENTRY, getAssetFiles(ASSET_ENTRY), {
         isWin16: !!(instance.exports.is_win16 && instance.exports.is_win16()),
         syncAudio: require('../lib/app-files').importsSyncAudio(fs.readFileSync(EXE_PATH)),
-        sizeOf: url => { try { return fs.statSync(appAsset(url)).size; } catch (_) { return null; } },
+        // Only the sizes the page has too (an entry's own `size`): a stat()
+        // size here made the CLI decide differently from the browser and
+        // hid AoE II's black screen (EULA.RTF unsized -> streamed in the page).
       });
       const assetFiles = policy.files;
       const ps = policy.summary;

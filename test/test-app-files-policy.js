@@ -62,8 +62,13 @@ assert.strictEqual(normalizeLazyFiles({}, wav, { syncAudio: false }).files[0].ht
 
 // A string entry becomes {url, httpRange}; sizeOf supplies a size the entry
 // lacks (it decides small-file and small-app eagerness).
-const unknown = normalizeLazyFiles({}, ['game/big.pak'], { sizeOf: () => null });
-assert.deepStrictEqual(unknown.files, [{ url: 'game/big.pak', httpRange: true }]);
+// Unknown size stays eager: a small file a synchronous consumer reads must
+// not stream (AoE II's unsized EULA.RTF went black in the page that way).
+const unknown = normalizeLazyFiles({}, ['game/big.pak', 'game/EULA.RTF', { url: 'game/x.pak', size: 20 * MB }]);
+assert.strictEqual(unknown.files[0], 'game/big.pak', 'an unsized file stays eager');
+assert.strictEqual(unknown.files[1], 'game/EULA.RTF');
+assert.strictEqual(unknown.files[2].httpRange, true, 'a sized large file still streams');
+assert.strictEqual(normalizeLazyFiles({}, ['game/big.pak'], { sizeOf: () => null }).files[0], 'game/big.pak');
 const sized = normalizeLazyFiles({}, ['game/big.pak'], { sizeOf: () => 20 * MB });
 assert.deepStrictEqual(sized.files, [{ url: 'game/big.pak', httpRange: true }]);
 const tiny = normalizeLazyFiles({}, ['game/big.pak', { url: 'game/x.pak', size: 20 * MB }], { sizeOf: () => 1000 });
