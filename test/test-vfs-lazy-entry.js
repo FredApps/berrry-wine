@@ -335,6 +335,7 @@ test('one ReadFile wider than the chunk cache completes whole across parks', asy
   });
   const GUEST_BASE = 0x400000; // maps to WASM 0x12000
   const NREAD = GUEST_BASE + SIZE + 64;
+  const wa = ga => RegionMap.g2w(ga, 0x400000);
   const handle = vfs.createFile(GUEST, 0x80000000, 3);
   let result, parks = 0;
   for (;;) {
@@ -343,13 +344,13 @@ test('one ReadFile wider than the chunk cache completes whole across parks', asy
     parks++;
     assert(parks < 200, 'the read never completed');
     // The count reported while parked must be zero, never a partial count.
-    assert.strictEqual(new DataView(memory.buffer).getUint32(0x12000 + SIZE + 64, true), 0);
+    assert.strictEqual(new DataView(memory.buffer).getUint32(wa(NREAD), true), 0);
     await vfs.fillPendingRead(vfs.getIoState(1).pendingRead);
   }
   assert.strictEqual(result, 0, `the read failed with ${result}`);
-  assert.strictEqual(new DataView(memory.buffer).getUint32(0x12000 + SIZE + 64, true), SIZE,
+  assert.strictEqual(new DataView(memory.buffer).getUint32(wa(NREAD), true), SIZE,
     'one full read is reported');
-  assert(Buffer.from(memory.buffer, 0x12000, SIZE).equals(Buffer.from(BYTES)),
+  assert(Buffer.from(memory.buffer, wa(GUEST_BASE), SIZE).equals(Buffer.from(BYTES)),
     'the bytes match the file');
   assert.strictEqual(vfs.getOpenFile(handle).pos, SIZE, 'the position ends at EOF');
   // Each park fills one piece of half the cache (2 chunks): ~9 parks for 1 MB.
