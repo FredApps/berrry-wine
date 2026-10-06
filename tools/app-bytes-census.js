@@ -2,30 +2,23 @@
 'use strict';
 
 // How many bytes does each registered app make the browser download before the
-// guest starts, and how many would a lazy-by-default rule leave behind?
+// guest starts, under the shipped lazy-file default?
 //
 //   node tools/app-bytes-census.js [--min=1m] [--top=N] [--apps=a,b] [--part=A|B]
-//       [--small=256k] [--app-eager=16m] [--files=N] [--json]
+//       [--files=N] [--json]
 //
 // Per app it sums the exe, every path-form DLL, the inline `files[]` and the
 // entries of its `localFileManifest`, all by stat() of the files on disk, and
-// splits the total into what loads before the first guest instruction (eager)
-// and what is already lazy (`loadMode: 'lazy'|'background'`, or the older
-// `httpRange: true`, both mounted by host.js as an HTTP range provider;
-// `preloadRanges` bytes are counted as eager). `default` is a
-// preview of the proposed lazy default (LAZY-LOAD-ALL-GAMES, 2026-10-06): a
-// data file is lazy unless it is small (< --small), PE-like (dll drv ocx asi
-// m3d flt acm ax vxd), config text (ini cfg inf), read by a synchronous
-// consumer (wav mid rmi bmp ico cur ani ttf fon fnt hlp cnt tlb avi), matched
-// by persistFiles, or
-// explicitly eager (`loadMode: 'required'`, `eager: true`, `httpRange: false`); an app whose whole total is
-// under --app-eager, whose exe is a Win16 NE image, or that says
-// `lazyFiles: false`, stays fully eager (the rules agreed on the board for
-// lib/app-files.js; this is a preview, that module is the authority). The
-// preview says nothing about whether the app still RUNS lazily -- reads made
-// inside a nested synchronous message, by _lread, by the DLL loader or by an
-// audio/GDI asset reader cannot park (lib/filesystem.js); find those with
-// `test/run.js --lazy-ranges=5` and tools/io-range-census.js.
+// runs the files through lib/app-files.js normalizeLazyFiles() exactly as
+// test/run.js does (sizes from disk, isWin16 from the exe header, syncAudio
+// from the exe's imports). `eager` is what loads before the first guest
+// instruction: exe + DLLs + every file the policy keeps eager (`preloadRanges`
+// bytes of a lazy file count as eager); `?eager-files` loads `total`. The
+// policy column is the normalizer's own reason (lazy / small app / Win16 /
+// app.lazyFiles false). Being lazy says nothing about whether the app still
+// RUNS lazily -- reads inside a nested synchronous message, by _lread, the DLL
+// loader or an audio/GDI asset reader cannot park (lib/filesystem.js); check a
+// route with `test/run.js --lazy-ranges=5` and tools/io-range-census.js.
 //
 // `part` is A when tools/gen-win98-games-a-d-manifests.js builds the app's
 // manifest and B otherwise (the hand-written entries). --files=N lists each
@@ -50,17 +43,11 @@ const parseBytes = text => {
 };
 
 const MIN = parseBytes(getArg('min', '1m'));
-const SMALL = parseBytes(getArg('small', '256k'));
-const APP_EAGER = parseBytes(getArg('app-eager', '16m'));
 const TOP = Number(getArg('top', '0')) || Infinity;
 const FILES = Number(getArg('files', '0')) || 0;
 const ONLY = getArg('apps', '') ? new Set(getArg('apps', '').split(',')) : null;
 const PART = getArg('part', '').toUpperCase();
-const PE_EXT = /\.(dll|drv|ocx|asi|m3d|flt|acm|ax|vxd|exe)$/i;
-const CONFIG_EXT = /\.(ini|cfg|inf)$/i;
-// Read by consumers that run to completion in one turn (lib/filesystem.js:
-// audio, GDI/resource and help loaders), so a cold range there cannot park.
-const SYNC_EXT = /\.(wav|mid|rmi|bmp|ico|cur|ani|ttf|fon|fnt|hlp|cnt|tlb|avi)$/i;
+const { normalizeLazyFiles, importsSyncAudio } = require(path.join(ROOT, 'lib', 'app-files.js'));
 const isNe = file => {
   try {
     const fd = fs.openSync(file, 'r'); const b = Buffer.alloc(0x40);
@@ -84,12 +71,6 @@ const fmt = n => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)}G`
   : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)}M`
     : n >= 1024 ? `${(n / 1024).toFixed(0)}K` : `${n}B`);
 
-function globToRegExp(glob) {
-  const body = String(glob).toLowerCase().replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '[^\\\\]*').replace(/\?/g, '.');
-  return new RegExp(`^${body}$`);
-}
-
 function manifestFiles(app) {
   if (!app.localFileManifest) return [];
   const file = resolve(app.localFileManifest);
@@ -99,51 +80,56 @@ function manifestFiles(app) {
   return (json.files || []).map(f => ({ ...f, disk: path.join(dir, decodeURIComponent(f.url)) }));
 }
 
+const isLazy = obj => !!obj && typeof obj === 'object' &&
+  (obj.loadMode === 'lazy' || obj.loadMode === 'background' ||
+   (obj.httpRange === true && obj.loadMode !== 'required'));
+const preloadedOf = obj => {
+  let n = 0;
+  if (obj && obj.preloadRanges && Array.isArray(obj.preloadRanges.ranges)) {
+    for (const r of obj.preloadRanges.ranges) n += Number(r.length || r[1] || 0);
+  }
+  return n;
+};
+
 function census(id, app) {
   const rows = [];
-  const add = (kind, item, disk) => {
-    const size = sizeOf(disk);
-    const obj = item && typeof item === 'object' ? item : {};
-    const vfs = String(obj.vfsPath || path.basename(disk)).toLowerCase();
-    let preloaded = 0;
-    if (obj.preloadRanges && Array.isArray(obj.preloadRanges.ranges)) {
-      for (const r of obj.preloadRanges.ranges) preloaded += Number(r.length || r[1] || 0);
-    }
-    // host.js loadFiles: loadMode lazy/background mounts a sized range
-    // provider; legacy httpRange does too unless loadMode says required.
-    const lazy = obj.loadMode === 'lazy' || obj.loadMode === 'background' ||
-      (!!obj.httpRange && obj.loadMode !== 'required');
-    rows.push({ kind, disk, vfs, size, lazy, preloaded,
-      eagerFlag: obj.eager === true || obj.httpRange === false || obj.loadMode === 'required' });
-  };
-  if (app.exe) add('exe', null, resolve(app.exe));
-  for (const spec of app.dlls || []) if (String(spec).includes('/')) add('dll', null, resolve(spec));
+  const fixed = [];
+  for (const [kind, p] of [['exe', app.exe], ...(app.dlls || []).map(d => ['dll', d])]) {
+    if (p && String(p).includes('/')) fixed.push({ kind, disk: resolve(p), vfs: path.basename(p).toLowerCase() });
+  }
+  // The normalizer's input: every companion file, url replaced by its disk path.
+  const items = [];
   for (const item of app.files || []) {
     const url = typeof item === 'string' ? item : item && item.url;
-    if (url && !/^https?:/i.test(url)) add('file', item, resolve(url));
+    if (url && !/^https?:/i.test(url)) {
+      items.push({ kind: 'file', file: typeof item === 'string' ? { url: resolve(url) } : { ...item, url: resolve(url) } });
+    }
   }
   const listed = manifestFiles(app);
   if (listed === null) return { id, error: `unreadable manifest ${app.localFileManifest}` };
-  for (const item of listed) add('manifest', item, item.disk);
-
-  const persist = (app.persistFiles || []).map(globToRegExp);
-  const total = rows.reduce((s, r) => s + (r.size || 0), 0);
-  // A Win16 app reads through _lread, which cannot park: all of it stays eager.
-  const win16 = !!app.exe && isNe(resolve(app.exe));
-  const fullyEager = app.lazyFiles === false || total < APP_EAGER || win16;
-  let eagerNow = 0, eagerDefault = 0;
-  for (const r of rows) {
-    const size = r.size || 0;
-    eagerNow += r.lazy ? Math.min(size, r.preloaded) : size;
-    const keep = fullyEager || r.kind === 'exe' || r.kind === 'dll' || r.eagerFlag ||
-      size < SMALL || PE_EXT.test(r.disk) || CONFIG_EXT.test(r.disk) || SYNC_EXT.test(r.disk) ||
-      persist.some(re => re.test(r.vfs));
-    r.defaultLazy = !keep;
-    eagerDefault += keep ? size : Math.min(size, r.preloaded);
+  for (const item of listed) {
+    const { disk, ...rest } = item;
+    items.push({ kind: 'manifest', file: { ...rest, url: disk } });
   }
+  const exePath = app.exe ? resolve(app.exe) : null;
+  let syncAudio = true;
+  try { if (exePath) syncAudio = importsSyncAudio(fs.readFileSync(exePath)); } catch (_) {}
+  const policy = normalizeLazyFiles(app, items.map(x => x.file), {
+    isWin16: !!exePath && isNe(exePath),
+    syncAudio,
+    sizeOf: url => sizeOf(url),
+  });
+  for (const r of fixed) rows.push({ ...r, size: sizeOf(r.disk), lazy: false, preloaded: 0 });
+  policy.files.forEach((out, i) => {
+    const disk = typeof out === 'string' ? out : out.url;
+    rows.push({ kind: items[i].kind, disk, vfs: String(out.vfsPath || path.basename(disk)).toLowerCase(),
+      size: sizeOf(disk), lazy: isLazy(out), preloaded: preloadedOf(out) });
+  });
+  const total = rows.reduce((sum, r) => sum + (r.size || 0), 0);
+  const eager = rows.reduce((sum, r) => sum + (r.lazy ? Math.min(r.size || 0, r.preloaded) : (r.size || 0)), 0);
   const missing = rows.filter(r => r.size === null).length;
-  return { id, part: partA.has(id) ? 'A' : 'B', files: rows.length, missing, total,
-    eagerNow, eagerDefault, fullyEager, win16, rows };
+  return { id, part: partA.has(id) ? 'A' : 'B', files: rows.length, missing, total, eager,
+    policy: policy.summary.policy, rows };
 }
 
 const results = [];
@@ -155,29 +141,28 @@ for (const id of Object.keys(APPS).sort()) {
   if (r.total < MIN) continue;
   results.push(r);
 }
-results.sort((a, b) => b.eagerNow - a.eagerNow || b.total - a.total);
+results.sort((a, b) => b.eager - a.eager || b.total - a.total);
 const shown = results.slice(0, TOP);
 
 if (flag('json')) {
   console.log(JSON.stringify(shown.map(({ rows, ...r }) => ({
     ...r, largestEager: rows.filter(x => !x.lazy).sort((a, b) => (b.size || 0) - (a.size || 0))
-      .slice(0, FILES || 10).map(x => ({ vfs: x.vfs, size: x.size, defaultLazy: x.defaultLazy })),
+      .slice(0, FILES || 10).map(x => ({ vfs: x.vfs, kind: x.kind, size: x.size })),
   })), null, 2));
   process.exit(0);
 }
 
-console.log(`small=${fmt(SMALL)} app-eager=${fmt(APP_EAGER)}  (eager = bytes loaded before the guest starts)`);
-console.log('part  app                                files   total     eager now  eager default');
-let sumNow = 0, sumDefault = 0;
+console.log('eager = bytes loaded before the guest starts under the shipped default (lib/app-files.js); total = ?eager-files');
+console.log('part  app                                files   total      eager  policy');
+let sumTotal = 0, sumEager = 0;
 for (const r of shown) {
-  sumNow += r.eagerNow; sumDefault += r.eagerDefault;
+  sumTotal += r.total; sumEager += r.eager;
   console.log(`${r.part.padEnd(5)} ${r.id.padEnd(34)} ${String(r.files).padStart(5)}  ${fmt(r.total).padStart(8)}  ` +
-    `${fmt(r.eagerNow).padStart(9)}  ${fmt(r.eagerDefault).padStart(9)}` +
-    `${r.win16 ? '  (Win16: fully eager)' : r.fullyEager ? '  (fully eager)' : ''}${r.missing ? `  [${r.missing} missing on disk]` : ''}`);
+    `${fmt(r.eager).padStart(9)}  ${r.policy}${r.missing ? `  [${r.missing} missing on disk]` : ''}`);
   if (FILES) {
     for (const x of r.rows.filter(x => !x.lazy).sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, FILES)) {
-      console.log(`        ${fmt(x.size || 0).padStart(8)}  ${x.defaultLazy ? 'lazy ' : 'eager'}  ${x.kind.padEnd(8)} ${x.vfs}`);
+      console.log(`        ${fmt(x.size || 0).padStart(8)}  eager  ${x.kind.padEnd(8)} ${x.vfs}`);
     }
   }
 }
-console.log(`${shown.length} app(s): eager now ${fmt(sumNow)}, under the default ${fmt(sumDefault)}`);
+console.log(`${shown.length} app(s): ${fmt(sumTotal)} in total, ${fmt(sumEager)} eager under the default`);
