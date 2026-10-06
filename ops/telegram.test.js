@@ -188,6 +188,10 @@ test('Claude orchestrator: busy pane still accepts chat into an empty prompt, ne
   const text='[Telegram] status?';
   assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ '+text),text),'Enter');
   assert.equal(claudeChatSubmitKey(busy,text),null);
+  const long='[Telegram] '+'wep16_chips: CHIP01.MID '.repeat(20);
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ [Pasted text #3 +2 lines]'),long),'Enter');
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ [Pasted text #3]'),text),null);
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ note [Pasted text #3]'),long),null);
 });
 test('Claude transcript replies: final text after a Telegram prompt is direct, tool chatter is not',()=>{
   const replies=require('./telegram-replies'),state={};

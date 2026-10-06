@@ -36,7 +36,11 @@ function claudeChatReady(screen){
 function claudeChatSubmitKey(screen,message){
   if(parseApproval(screen))return null;
   const draft=claudeDraft(screen);
-  return draft!==null && draft.replace(/\s/g,'')===message.replace(/\s/g,'')?'Enter':null;
+  if(draft===null)return null;
+  // Claude Code collapses long typed input into a placeholder, so a long message
+  // never appears verbatim; the placeholder alone in the box is that message.
+  if(message.length>=200 && /^\s*\[Pasted text #\d+[^\]]*\]\s*$/.test(draft))return 'Enter';
+  return draft.replace(/\s/g,'')===message.replace(/\s/g,'')?'Enter':null;
 }
 // `capture-pane -e` text to plain text. Claude Code prints a suggested next prompt in
 // dim text after an empty `❯`; read as a draft it blocks every Telegram delivery, so dim
