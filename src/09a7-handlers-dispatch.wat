@@ -448,14 +448,21 @@
 
   ;; 741: QueryPerformanceCounter(lpPerformanceCount) — tie to wall clock.
   ;; Frequency is 1MHz (see below), so one tick = 1µs. host_get_ticks() is ms,
-  ;; multiply by 1000. Also advance by $perf_counter_lo so consecutive calls
-  ;; within the same ms still differ (some apps busy-wait on QPC). The global
-  ;; increment advances a stationary clock until that legacy i32 wraps;
-  ;; clock-source rollover and cross-thread consistency remain separate issues.
+  ;; multiply by 1000. Consecutive calls within one ms must still differ (some
+  ;; apps busy-wait on QPC), so a reading never repeats the last one.
+  ;;
+  ;; "The last one" is process-wide, in $QPC_SHARED: the count is
+  ;; max(ticks*1000, last+1), published by CAS. It used to add a per-instance
+  ;; call counter instead, which made every guest thread its own clock -- a
+  ;; thread that polls QPC a million times runs a second ahead of one that
+  ;; does not -- so a reading taken on another thread could go BACKWARDS.
+  ;; Descent: FreeSpace treats a backwards QPC as a reset of its time base;
+  ;; its frame limiter then computed "now - last frame" as minus 2550 seconds
+  ;; and called Sleep for 2.5 million ms, which froze the mission in flight.
   ;;
   ;; A QPC frame limiter is a clock spin like any timeGetTime one, so it goes
   ;; through the same detector keyed on the MILLISECOND the count is built
-  ;; from. The returned count itself can never repeat ($perf_counter_lo moves
+  ;; from. The returned count itself can never repeat ($qpc_next moves
   ;; every call), but the clock under it does, and that is what the guest is
   ;; waiting on. Parked before the counter bump and the store, so the re-run
   ;; on wake is the whole call again.
@@ -466,16 +473,28 @@
       (then
         (if (call $clock_spin_arm (global.get $tick_count)) (then (return)))))
     (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $val
-      (i64.add (i64.mul (i64.extend_i32_u (global.get $tick_count)) (i64.const 1000))
-               (i64.extend_i32_u (global.get $perf_counter_lo))))
+    (local.set $val (call $qpc_next
+      (i64.mul (i64.extend_i32_u (global.get $tick_count)) (i64.const 1000))))
     ;; LARGE_INTEGER is one 64-bit count: neither multiplication nor the
     ;; sub-millisecond adjustment may discard the carry into its high DWORD.
     (i64.store (local.get $wa) (local.get $val))
-    (global.set $perf_counter_lo (i32.add (global.get $perf_counter_lo) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )
+
+  ;; The next process-wide QPC count for a clock reading of $now µs: $now if
+  ;; that is past every count handed out so far, else one past the last.
+  (func $qpc_next (param $now i64) (result i64)
+    (local $last i64) (local $next i64)
+    (block $done (loop $retry
+      (local.set $last (i64.atomic.load (global.get $QPC_SHARED)))
+      (local.set $next
+        (select (local.get $now) (i64.add (local.get $last) (i64.const 1))
+          (i64.gt_u (local.get $now) (local.get $last))))
+      (br_if $done (i64.eq (local.get $last)
+        (i64.atomic.rmw.cmpxchg (global.get $QPC_SHARED) (local.get $last) (local.get $next))))
+      (br $retry)))
+    (local.get $next))
 
   ;; 742: QueryPerformanceFrequency(lpFrequency) — 1MHz
   (func $handle_QueryPerformanceFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

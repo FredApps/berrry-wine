@@ -228,6 +228,8 @@ const highFixedAliases = new Map(Object.entries({
   OP_INDEX: { owner: 'OP_INDEX_REGION' },
   // The winmm timer thread record lives in TIMER_SHARED's tail.
   MM_TIMER_THREAD: { owner: 'TIMER_SHARED' },
+  // The process-wide QPC count lives at SHARED_COUNTERS+16.
+  QPC_SHARED: { owner: 'SHARED_COUNTERS' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

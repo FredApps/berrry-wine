@@ -1215,7 +1215,8 @@
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide state; +0 class atom,
-  ;;                                     +4 decoded-code cache generation)
+  ;;                                     +4 decoded-code cache generation,
+  ;;                                     +16 last QPC count, i64)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
   ;; main. They move here on the merge into the threads branch, which grew
@@ -2421,6 +2422,9 @@
   ;; it: the comments are documentation, that test is the authority.
   (global $SHARED_COUNTERS i32 (region.addr $SHARED_COUNTERS 0))
   (global $SHARED_COUNTERS_SIZE i32 (region.size $SHARED_COUNTERS))
+  ;; +16: the last QueryPerformanceCounter count handed to any guest thread
+  ;; (i64, see $qpc_next).
+  (global $QPC_SHARED i32 (region.addr $SHARED_COUNTERS 0x00000010))
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; 256 bytes of scratch that belong to the TEST HARNESS, not to the emulator.
   ;; No WAT reads any of it. The layout is fixed by offset so tests in separate
@@ -2863,7 +2867,6 @@
   (global $TLS_NEXT_INDEX_SHARED i32 (region.addr $TLS_NEXT_INDEX_SHARED 0))
   (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (region.size $TLS_NEXT_INDEX_SHARED))
   ;; Performance counter (monotonic, incremented per query)
-  (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd
   ;; stores them here and pushfd ORs them back, so a bit the interpreter has no
   ;; opinion about still round-trips. Starts at the usual user-mode value:
