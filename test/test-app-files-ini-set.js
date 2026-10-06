@@ -40,8 +40,9 @@ const apps = require('../lib/apps');
 const deus = (apps.APPS || apps.apps || apps).deus_ex_demo;
 assert(deus, 'deus_ex_demo is registered');
 const iniEntry = deus.files.find(f => typeof f === 'object' && f.iniSet);
-assert(iniEntry && /deusex\.ini$/.test(iniEntry.url), 'DeusEx.ini carries the renderer edit');
-assert.strictEqual(iniEntry.iniSet['Engine.Engine'].GameRenderDevice, 'D3DDrv.D3DRenderDevice');
+assert(iniEntry && /deusex\.ini$/.test(iniEntry.url), 'DeusEx.ini carries the renderer and fullscreen edits');
+assert.strictEqual(iniEntry.iniSet['Engine.Engine'].GameRenderDevice, 'SoftDrv.SoftwareRenderDevice');
+assert.strictEqual(iniEntry.iniSet['WinDrv.WindowsClient'].StartupFullscreen, 'True');
 assert(deus.dlls.some(d => /d3ddrv\.dll$/.test(d)), 'D3DDrv.dll is mounted');
 
 console.log('PASS applyIniSet: in-place, case-insensitive key edits; appended keys and sections; bytes preserved');
