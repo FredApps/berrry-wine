@@ -3287,9 +3287,18 @@
   ;; store handler, so nothing retires the decoded blocks it just overwrote.
   ;; Storm keeps its generated code and its file buffers in the same heap
   ;; region, so that is a real collision, not a theoretical one.
+  ;; The host calls this AFTER it wrote guest bytes (a ReadFile served for a
+  ;; guest Worker). Translating here must not materialize a lazily synced
+  ;; D3DIM surface: the page's shadow instance has no executor (it trapped
+  ;; in $d3dim_lazy_materialize -- Drakan, Threads on), and a readback now
+  ;; would overwrite the bytes just written anyway.
   (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (local $bypass i32)
+    (local.set $bypass (global.get $d3dim_lazy_bypass))
+    (global.set $d3dim_lazy_bypass (i32.const 1))
     (call $page_watch_write_guest (local.get $ga) (local.get $len))
-    (call $invalidate_code_range (local.get $ga) (local.get $len)))
+    (call $invalidate_code_range (local.get $ga) (local.get $len))
+    (global.set $d3dim_lazy_bypass (local.get $bypass)))
 
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)
