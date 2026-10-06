@@ -3675,7 +3675,10 @@ class WineAssembly {
                     ? new window.byteProvider.HttpRangeProvider(url, item.size, { ...rangeOptions, acceptWhole: true })
                     : await WineAssembly._openRangeProvider(url, rangeOptions);
                 checkCancelled();
-                const cache = window.byteProvider.cached(provider, sizedRange ? {chunkSize:65536, readAhead:0} : undefined);
+                // One cache shape for every streamed file: 1MB chunks, and
+                // read-ahead/prefetch only while reads are sequential
+                // (lib/byte-provider.js ChunkCache), bounded per file.
+                const cache = window.byteProvider.cached(provider);
                 if (item.loadMode === 'background') {
                   if (!this._backgroundAssetJobs) this._backgroundAssetJobs = [];
                   if (this._backgroundAssetJobs.length < 8) this._backgroundAssetJobs.push({url, cache});

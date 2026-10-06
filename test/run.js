@@ -464,6 +464,13 @@ const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFi
 // file needs them). Without the flag those files are plain eager mounts.
 const LAZY_RANGES = hasFlag('lazy-ranges') || argHas('lazy-ranges');
 const LAZY_RANGES_MS = Math.max(0, Number(getArg('lazy-ranges', '0')) || 0);
+// --lazy-cache=legacy: the streamed-file cache shape before 1MB chunks and
+// sequential prefetch (256KB x 64 chunks, read-ahead on every miss, no
+// background prefetch) -- the control arm for measuring them. Default: the
+// page's shape (lib/byte-provider.js defaults).
+const LAZY_CACHE_OPTS = getArg('lazy-cache', '') === 'legacy'
+  ? { chunkSize: 256 * 1024, maxChunks: 64, readAhead: 1, prefetch: 0, sequentialReadAhead: false }
+  : undefined;
 const NO_PRELOAD_RANGES = hasFlag('no-preload-ranges');
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
@@ -5248,6 +5255,33 @@ async function main() {
         `${ps.lazyFiles} on demand (${ps.lazyBytes} bytes)${LAZY_RANGES ? '' : ' -- mounted eager without --lazy-ranges'}`);
       const missing = [];
       let lazyManifestStats = null;
+      // Every streamed file, both branches below: one exit line with the
+      // numbers the chunk-size/prefetch work is judged on -- parks (guest
+      // reads that missed and waited), parks per second of wall clock,
+      // bytes fetched, background prefetches and over-fetch (fetched bytes
+      // no read touched).
+      const lazyAll = { files: 0, bytes: 0, caches: [], t0: Date.now() };
+      const noteLazy = (cache, size) => {
+        if (!lazyAll.files) {
+          process.on('exit', () => {
+            let fetches = 0, bytes = 0, parks = 0, prefetches = 0, over = 0, touched = 0;
+            for (const c of lazyAll.caches) {
+              const st = c.stats;
+              fetches += st.fetches; bytes += st.bytesFetched; parks += st.misses;
+              prefetches += st.prefetches || 0; over += c.overFetchBytes || 0;
+              if (st.fetches) touched++;
+            }
+            const secs = Math.max(0.001, (Date.now() - lazyAll.t0) / 1000);
+            console.log(`[lazy] all streamed files: ${touched} of ${lazyAll.files} touched, ` +
+              `fetched ${fetches} chunks / ${bytes} of ${lazyAll.bytes} bytes, ` +
+              `parks ${parks} (${(parks / secs).toFixed(1)}/s over ${secs.toFixed(1)}s), ` +
+              `prefetches ${prefetches}, over-fetch ${over} bytes`);
+          });
+        }
+        lazyAll.files++;
+        lazyAll.bytes += size;
+        lazyAll.caches.push(cache);
+      };
       for (const item of assetFiles) {
         const url = typeof item === 'string' ? item : (item && item.url);
         if (!url) continue;
@@ -5268,14 +5302,15 @@ async function main() {
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
         // Same rule as host.js loadFiles: a sized manifest entry (loadMode
-        // lazy/background) is a range mount in 64KB chunks with no read-ahead;
-        // a legacy httpRange entry is one unless loadMode says required.
+        // lazy/background) is a range mount with the default cache shape (1MB
+        // chunks, read-ahead/prefetch only while sequential); a legacy
+        // httpRange entry is one unless loadMode says required.
         const sizedLazy = typeof item === 'object' && item &&
           (item.loadMode === 'lazy' || item.loadMode === 'background');
         if (LAZY_RANGES && sizedLazy) {
           const bp = require('../lib/byte-provider');
           const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }),
-            { chunkSize: 65536, readAhead: 0 });
+            LAZY_CACHE_OPTS);
           for (const p of paths) {
             let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
             if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
@@ -5299,11 +5334,13 @@ async function main() {
           lazyManifestStats.files++;
           lazyManifestStats.bytes += size;
           lazyManifestStats.caches.push(cache);
+          noteLazy(cache, size);
           continue;
         }
         if (LAZY_RANGES && typeof item === 'object' && item.httpRange && item.loadMode !== 'required') {
           const bp = require('../lib/byte-provider');
-          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }));
+          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }),
+            LAZY_CACHE_OPTS);
           let preloaded = 'no preload ranges';
           if (item.preloadRanges && !NO_PRELOAD_RANGES) {
             const r = await cache.preload(bp.preloadRangesFor(item.preloadRanges, cache.size));
@@ -5317,12 +5354,18 @@ async function main() {
             ctx.vfs.ensureParentDirs(vfsPath);
             ctx.vfs.setProviderFile(vfsPath, { provider: cache });
           }
-          console.log(`[lazy] ${url}: ${size} bytes provider-backed, ${LAZY_RANGES_MS}ms/chunk, ${preloaded}`);
-          process.on('exit', () => {
-            const st = cache.stats;
-            console.log(`[lazy] ${url}: fetched ${st.fetches} chunks / ${st.bytesFetched} bytes ` +
-              `(pinned ${st.pinnedChunks} / ${st.pinnedBytes}), hits ${st.hits}, misses ${st.misses}`);
-          });
+          noteLazy(cache, size);
+          // Per-file lines only where they say something a total cannot (a
+          // preload range list), or under --verbose: the default policy
+          // streams thousands of files.
+          if (item.preloadRanges || VERBOSE) {
+            console.log(`[lazy] ${url}: ${size} bytes provider-backed, ${LAZY_RANGES_MS}ms/chunk, ${preloaded}`);
+            process.on('exit', () => {
+              const st = cache.stats;
+              console.log(`[lazy] ${url}: fetched ${st.fetches} chunks / ${st.bytesFetched} bytes ` +
+                `(pinned ${st.pinnedChunks} / ${st.pinnedBytes}), hits ${st.hits}, misses ${st.misses}`);
+            });
+          }
           continue;
         }
         const decodedImage = (typeof item === 'object' && item.decodeImage)

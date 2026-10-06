@@ -249,8 +249,9 @@ test('a mid-file park rewinds nothing and resumes at the same offset', async () 
   r = vfs.readFile(h, buf, 64);
   assert(r.ok && r.bytesRead === 64, 'the retried read should hit the cache');
   assert(Buffer.compare(Buffer.from(buf), Buffer.from(BYTES.subarray(0, 64))) === 0);
-  // Now seek far away, into a chunk nothing has fetched, and park again.
-  const far = 900000;
+  // Now seek far away, into a chunk nothing has fetched, and park again (the
+  // second chunk: the first read was not sequential, so nothing read ahead).
+  const far = bp.DEFAULT_CHUNK_SIZE + 1000;
   vfs.setFilePointer(h, far, 0);
   r = vfs.readFile(h, buf, 64);
   assert(r.pending, 'a fresh chunk should park again');

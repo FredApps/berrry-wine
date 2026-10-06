@@ -88,7 +88,7 @@ function makeWine() {
   }], { required: true, transfer: { onTransfer: e => events.push(e) } });
   const cache = mounted.get('c:\\spawn.mpq');
   assert.ok(cache, 'mounted provider-backed');
-  // 256KB chunks over a 70-byte file: one chunk, which is the whole file here.
+  // 1MB chunks over a 70-byte file: one chunk, which is the whole file here.
   assert.strictEqual(cache.stats.pinnedChunks, 1);
   assert.ok(cache.tryRead(66, 4), 'pinned range is a synchronous hit');
   const done = events.filter(e => e.kind === 'done');
@@ -97,17 +97,18 @@ function makeWine() {
   assert.deepStrictEqual(calls, ['HEAD spawn.mpq', 'GET spawn.mpq bytes=0-69']);
 
   // With realistic chunking only the chunks the ranges touch are fetched.
-  const big = new Uint8Array(3 * 262144 + 5).map((_, i) => i & 0xff);
+  const CHUNK = require('../lib/byte-provider').DEFAULT_CHUNK_SIZE;
+  const big = new Uint8Array(3 * CHUNK + 5).map((_, i) => i & 0xff);
   routes = new Map([['huge.mpq', big]]);
   calls.length = 0;
   ({ wine, mounted } = makeWine());
   await wine.loadFiles([{
     url: 'huge.mpq', vfsPath: 'c:\\huge.mpq', httpRange: true,
-    preloadRanges: [[10, 20], [3 * 262144, 3 * 262144 + 5]],
+    preloadRanges: [[10, 20], [3 * CHUNK, 3 * CHUNK + 5]],
   }], { required: true });
-  assert.deepStrictEqual(calls, ['HEAD huge.mpq', 'GET huge.mpq bytes=0-262143',
-    'GET huge.mpq bytes=786432-786436']);
-  assert.strictEqual(mounted.get('c:\\huge.mpq').tryRead(262144 + 1, 1), null,
+  assert.deepStrictEqual(calls, ['HEAD huge.mpq', `GET huge.mpq bytes=0-${CHUNK - 1}`,
+    `GET huge.mpq bytes=${3 * CHUNK}-${3 * CHUNK + 4}`]);
+  assert.strictEqual(mounted.get('c:\\huge.mpq').tryRead(CHUNK + 1, 1), null,
     'an unlisted chunk is still lazy');
 
   // A list measured on other bytes is not trusted: the whole file loads.
