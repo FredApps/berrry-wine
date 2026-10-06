@@ -3,7 +3,13 @@
 
 // Which apps in the registry reach a 3D API, and which one?
 // `node tools/gfx-app-census.js [--apps=a,b] [--desktop] [--family=gl,d3d9]
-// [--list] [--json]`
+// [--iid=1|2|3|7] [--list] [--json]`
+//
+// `--iid=N` keeps the apps whose modules carry IID_IDirect3D<N>, and --list
+// prints which ones each carries (`d3dim(iid:3/7)`). A Device7 can only be
+// created from IDirect3D7, so --iid=7 is the whole set a Device7-only code
+// path can reach: 13 of the 60 d3dim apps on 2026-10-06, when it scoped the
+// check of the Device7 lighting change (9d35dc49).
 //
 // WHY THIS EXISTS. "Get every OpenGL/Direct3D app working" is not a
 // measurable goal until the set is named, and the set was being guessed at
@@ -69,7 +75,10 @@ const FAMILIES = [
       [0x6AAE1EC1, 0x11D0662A, 0xAA009D88, 0x6AB7BB00],
       [0xBB223240, 0x11D0E72B, 0xAA00B4A9, 0x3E99C000],
       [0xF5049E77, 0x11D24861, 0xA00007A4, 0xA82906C9],
-    ] },
+    ],
+    // Which IDirect3D interface each GUID is. A Device7 can only come from
+    // IDirect3D7, so --iid=7 is the set a Device7-only code path can reach.
+    guidLabels: ['1', '2', '3', '7'] },
   { key: 'd3d8', dlls: ['d3d8.dll'], names: ['Direct3DCreate8'] },
   { key: 'd3d9', dlls: ['d3d9.dll'], names: ['Direct3DCreate9'] },
   { key: 'gl', dlls: ['opengl32.dll'],
@@ -152,12 +161,16 @@ function scanApp(id, app) {
     for (const family of FAMILIES) {
       const viaDll = family.dlls.some(d => hasDll(buffer, lower, d));
       const viaName = family.names.some(n => hasName(buffer, n));
-      const viaGuid = (family.guids || []).some(g => hasGuid(buffer, g));
+      const guidHits = (family.guids || []).map(g => hasGuid(buffer, g));
+      const viaGuid = guidHits.some(Boolean);
       if (!viaDll && !viaName && !viaGuid) continue;
       const how = hits.get(family.key) || new Set();
       if (viaDll) how.add('dll');
       if (viaName) how.add('name');
       if (viaGuid) how.add('iid');
+      guidHits.forEach((hit, i) => {
+        if (hit) (how.iids = how.iids || new Set()).add(family.guidLabels[i]);
+      });
       hits.set(family.key, how);
       const where = family.key === 'gl' || hits.size ? path.basename(abs) : null;
       if (where) (how.files = how.files || new Set()).add(where);
@@ -172,6 +185,7 @@ function main(argv) {
   const only = flag('apps')?.split(',');
   const wantFamilies = flag('family')?.split(',');
   const desktopOnly = flags.includes('--desktop');
+  const wantIid = flag('iid');
   const list = flags.includes('--list');
   const json = flags.includes('--json');
 
@@ -184,6 +198,7 @@ function main(argv) {
     const row = scanApp(id, APPS[id]);
     if (!row.hits.size) continue;
     if (wantFamilies && !wantFamilies.some(f => row.hits.has(f))) continue;
+    if (wantIid && ![...row.hits.values()].some(how => how.iids && how.iids.has(wantIid))) continue;
     rows.push(row);
   }
 
@@ -191,6 +206,8 @@ function main(argv) {
     console.log(JSON.stringify(rows.map(r => ({
       id: r.id, scanned: r.scanned, missing: r.missing,
       families: Object.fromEntries([...r.hits].map(([k, v]) => [k, [...v].sort()])),
+      iids: Object.fromEntries([...r.hits].filter(([, v]) => v.iids)
+        .map(([k, v]) => [k, [...v.iids].sort()])),
     })), null, 2));
     return 0;
   }
@@ -207,7 +224,8 @@ function main(argv) {
   if (list) {
     console.log('');
     for (const row of rows.sort((a, b) => a.id.localeCompare(b.id))) {
-      const families = [...row.hits].map(([k, v]) => `${k}(${[...v].sort().join('+')})`);
+      const families = [...row.hits].map(([k, v]) => `${k}(${[...v].sort().join('+')}`
+        + `${v.iids ? ':' + [...v.iids].sort().join('/') : ''})`);
       console.log(`  ${row.id.padEnd(28)} ${families.join(' ')}`
         + (row.missing ? `  [${row.missing} file(s) missing]` : ''));
     }
