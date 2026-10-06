@@ -1859,6 +1859,9 @@
       (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
       (local.get $count)
       (call $d3dim_texcoord_index (local.get $this))))
+    (local.set $vtxType (call $d3dim_d7_light_vertices (local.get $this) (local.get $fvf)
+      (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
+      (local.get $packed) (local.get $count) (local.get $vtxType)))
     (if (local.get $packed) (then
       (call $d3dim_draw_primitive
         (local.get $this) (local.get $primType) (local.get $vtxType)
@@ -1935,6 +1938,9 @@
       (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
       (local.get $count)
       (call $d3dim_texcoord_index (local.get $this))))
+    (local.set $vtxType (call $d3dim_d7_light_vertices (local.get $this) (local.get $fvf)
+      (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
+      (local.get $packed) (local.get $count) (local.get $vtxType)))
     (if (local.get $packed) (then
       (call $d3dim_draw_indexed_primitive
         (local.get $this) (local.get $primType) (local.get $vtxType)
@@ -2222,6 +2228,248 @@
         (then (local.set $val (i32.const 1))))))
     (call $gs32 (local.get $out) (local.get $val))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+
+  ;; ── D3D7 fixed-function vertex lighting ───────────────────────
+  ;; Device7 keeps its own D3DLIGHT7 table, enable mask and D3DMATERIAL7 (the
+  ;; legacy path above only knows IDirect3DLight objects and material
+  ;; handles), so an FVF with a normal drawn with D3DRENDERSTATE_LIGHTING set
+  ;; was packed as a pre-lit vertex and kept whatever its diffuse dword held.
+  ;; Colin McRae Rally 2.0 draws its car as XYZ|NORMAL|DIFFUSE|SPECULAR|TEX2
+  ;; with DIFFUSEMATERIALSOURCE=MATERIAL and a zero diffuse dword: solid black.
+  ;;
+  ;; This lights the packed vertices in place and leaves them as D3DLVERTEX
+  ;; (colour @16), returning the vertex type the draw should use. It applies
+  ;; only when the app set LIGHTING=TRUE (the slot reads 0 until set, so an app
+  ;; leaning on D3D7's TRUE default keeps the old pre-lit behaviour) and has
+  ;; used Device7's SetLight or SetMaterial; Device3 and execute-buffer
+  ;; devices never touch either and stay on the legacy path.
+  ;;
+  ;; colour = emissive + mat.ambient * (RS_AMBIENT + sum(atten*spot*L.ambient))
+  ;;        + mat.diffuse * sum(atten*spot*max(0, N.L)*L.diffuse), clamped;
+  ;; alpha = the diffuse source's alpha. Specular is not computed: the packed
+  ;; specular dword (fog factor in its alpha) is left as the vertex gave it.
+  (func $d3dim_d7_rs (param $sw i32) (param $rs i32) (result i32)
+    (i32.load (i32.add (local.get $sw) (i32.add (i32.const 256) (i32.shl (local.get $rs) (i32.const 2))))))
+
+  ;; Channel $shift (16 r, 8 g, 0 b, 24 a) of a D3DCOLOR, as 0..1.
+  (func $d3dim_d7_ch (param $c i32) (param $shift i32) (result f32)
+    (f32.div (f32.convert_i32_u (i32.and (i32.shr_u (local.get $c) (local.get $shift)) (i32.const 0xFF)))
+             (f32.const 255.0)))
+
+  ;; Material colour $which (0 diffuse, 1 ambient, 3 emissive) as a D3DCOLOR,
+  ;; or the vertex colour its *MATERIALSOURCE render state selects.
+  (func $d3dim_d7_mat_color (param $sw i32) (param $which i32) (param $src_rs i32)
+      (param $vdiff i32) (param $vspec i32) (param $has_diff i32) (param $has_spec i32) (result i32)
+    (local $sel i32) (local $m i32)
+    (if (call $d3dim_d7_rs (local.get $sw) (i32.const 141)) (then   ;; COLORVERTEX
+      (local.set $sel (call $d3dim_d7_rs (local.get $sw) (local.get $src_rs)))
+      (if (i32.and (i32.eq (local.get $sel) (i32.const 1)) (local.get $has_diff))
+        (then (return (local.get $vdiff))))
+      (if (i32.and (i32.eq (local.get $sel) (i32.const 2)) (local.get $has_spec))
+        (then (return (local.get $vspec))))))
+    (local.set $m (i32.add (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_MAT))
+                           (i32.shl (local.get $which) (i32.const 4))))
+    (call $d3dim_d7_pack4 (f32.load (local.get $m)) (f32.load offset=4 (local.get $m))
+      (f32.load offset=8 (local.get $m)) (f32.load offset=12 (local.get $m))))
+
+  (func $d3dim_d7_unit (param $v f32) (result i32)
+    (i32.trunc_sat_f32_u (f32.add (f32.mul
+      (f32.min (f32.max (local.get $v) (f32.const 0.0)) (f32.const 1.0)) (f32.const 255.0)) (f32.const 0.5))))
+
+  (func $d3dim_d7_pack4 (param $r f32) (param $g f32) (param $b f32) (param $a f32) (result i32)
+    (i32.or (i32.or (i32.shl (call $d3dim_d7_unit (local.get $a)) (i32.const 24))
+                    (i32.shl (call $d3dim_d7_unit (local.get $r)) (i32.const 16)))
+            (i32.or (i32.shl (call $d3dim_d7_unit (local.get $g)) (i32.const 8))
+                    (call $d3dim_d7_unit (local.get $b)))))
+
+  (func $d3dim_d7_light_vertices
+      (param $this i32) (param $fvf i32) (param $src_g i32) (param $packed_g i32)
+      (param $count i32) (param $vtxType i32) (result i32)
+    (local $state i32) (local $sw i32) (local $table i32) (local $tw i32) (local $mask i32)
+    (local $stride i32) (local $i i32) (local $v i32) (local $dst i32) (local $k i32) (local $lw i32)
+    (local $has_diff i32) (local $has_spec i32) (local $vdiff i32) (local $vspec i32) (local $off i32)
+    (local $cd i32) (local $ca i32) (local $ce i32) (local $amb i32) (local $ltype i32)
+    (local $x f32) (local $y f32) (local $z f32) (local $nx f32) (local $ny f32) (local $nz f32)
+    (local $px f32) (local $py f32) (local $pz f32) (local $qx f32) (local $qy f32) (local $qz f32)
+    (local $lx f32) (local $ly f32) (local $lz f32) (local $d f32) (local $len f32)
+    (local $att f32) (local $spot f32) (local $ndl f32) (local $rho f32) (local $ct f32) (local $cp f32)
+    (local $ar f32) (local $ag f32) (local $ab f32) (local $dr f32) (local $dg f32) (local $db f32)
+    (if (i32.or (i32.eqz (local.get $packed_g)) (i32.eqz (local.get $count)))
+      (then (return (local.get $vtxType))))
+    ;; Lit vertices need untransformed positions and a normal.
+    (if (i32.ne (i32.and (local.get $fvf) (i32.const 0x0016)) (i32.const 0x0012))
+      (then (return (local.get $vtxType))))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return (local.get $vtxType))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (if (i32.ne (call $d3dim_d7_rs (local.get $sw) (i32.const 137)) (i32.const 1))  ;; LIGHTING
+      (then (return (local.get $vtxType))))
+    (local.set $table (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHTS))))
+    (if (i32.and (i32.eqz (local.get $table))
+          (i32.eqz (v128.any_true
+            (v128.or (v128.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_MAT)))
+              (v128.or (v128.load offset=16 (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_MAT)))
+                       (v128.load offset=48 (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_MAT))))))))
+      (then (return (local.get $vtxType))))
+    (if (local.get $table) (then (local.set $tw (call $g2w (local.get $table)))))
+    (local.set $mask (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))))
+    (local.set $amb (call $d3dim_d7_rs (local.get $sw) (i32.const 139)))         ;; AMBIENT
+    (local.set $stride (call $d3dim_fvf_stride (local.get $fvf)))
+    (local.set $has_diff (i32.ne (i32.and (local.get $fvf) (i32.const 0x40)) (i32.const 0)))
+    (local.set $has_spec (i32.ne (i32.and (local.get $fvf) (i32.const 0x80)) (i32.const 0)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $v (i32.add (local.get $src_g) (i32.mul (local.get $i) (local.get $stride))))
+      (local.set $x (f32.reinterpret_i32 (call $gl32 (local.get $v))))
+      (local.set $y (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 4)))))
+      (local.set $z (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 8)))))
+      (local.set $qx (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 12)))))
+      (local.set $qy (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 16)))))
+      (local.set $qz (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 20)))))
+      (local.set $off (i32.const 24))
+      (if (local.get $has_diff) (then
+        (local.set $vdiff (call $gl32 (i32.add (local.get $v) (local.get $off))))
+        (local.set $off (i32.add (local.get $off) (i32.const 4)))))
+      (if (local.get $has_spec) (then
+        (local.set $vspec (call $gl32 (i32.add (local.get $v) (local.get $off))))))
+      ;; World space: row vectors, m[i][j] at (i*4+j)*4, translation in row 3.
+      (local.set $px (f32.add (f32.add (f32.add
+        (f32.mul (local.get $x) (f32.load offset=0 (local.get $sw)))
+        (f32.mul (local.get $y) (f32.load offset=16 (local.get $sw))))
+        (f32.mul (local.get $z) (f32.load offset=32 (local.get $sw)))) (f32.load offset=48 (local.get $sw))))
+      (local.set $py (f32.add (f32.add (f32.add
+        (f32.mul (local.get $x) (f32.load offset=4 (local.get $sw)))
+        (f32.mul (local.get $y) (f32.load offset=20 (local.get $sw))))
+        (f32.mul (local.get $z) (f32.load offset=36 (local.get $sw)))) (f32.load offset=52 (local.get $sw))))
+      (local.set $pz (f32.add (f32.add (f32.add
+        (f32.mul (local.get $x) (f32.load offset=8 (local.get $sw)))
+        (f32.mul (local.get $y) (f32.load offset=24 (local.get $sw))))
+        (f32.mul (local.get $z) (f32.load offset=40 (local.get $sw)))) (f32.load offset=56 (local.get $sw))))
+      (local.set $nx (f32.add (f32.add
+        (f32.mul (local.get $qx) (f32.load offset=0 (local.get $sw)))
+        (f32.mul (local.get $qy) (f32.load offset=16 (local.get $sw))))
+        (f32.mul (local.get $qz) (f32.load offset=32 (local.get $sw)))))
+      (local.set $ny (f32.add (f32.add
+        (f32.mul (local.get $qx) (f32.load offset=4 (local.get $sw)))
+        (f32.mul (local.get $qy) (f32.load offset=20 (local.get $sw))))
+        (f32.mul (local.get $qz) (f32.load offset=36 (local.get $sw)))))
+      (local.set $nz (f32.add (f32.add
+        (f32.mul (local.get $qx) (f32.load offset=8 (local.get $sw)))
+        (f32.mul (local.get $qy) (f32.load offset=24 (local.get $sw))))
+        (f32.mul (local.get $qz) (f32.load offset=40 (local.get $sw)))))
+      (if (call $d3dim_d7_rs (local.get $sw) (i32.const 143)) (then   ;; NORMALIZENORMALS
+        (local.set $len (f32.sqrt (f32.add (f32.add (f32.mul (local.get $nx) (local.get $nx))
+          (f32.mul (local.get $ny) (local.get $ny))) (f32.mul (local.get $nz) (local.get $nz)))))
+        (if (f32.gt (local.get $len) (f32.const 0.0)) (then
+          (local.set $nx (f32.div (local.get $nx) (local.get $len)))
+          (local.set $ny (f32.div (local.get $ny) (local.get $len)))
+          (local.set $nz (f32.div (local.get $nz) (local.get $len)))))))
+      (local.set $ar (call $d3dim_d7_ch (local.get $amb) (i32.const 16)))
+      (local.set $ag (call $d3dim_d7_ch (local.get $amb) (i32.const 8)))
+      (local.set $ab (call $d3dim_d7_ch (local.get $amb) (i32.const 0)))
+      (local.set $dr (f32.const 0.0)) (local.set $dg (f32.const 0.0)) (local.set $db (f32.const 0.0))
+      (local.set $k (i32.const 0))
+      (if (local.get $tw) (then
+        (block $ldone (loop $llp
+          (br_if $ldone (i32.ge_u (local.get $k) (i32.const 8)))
+          (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $k))) (then
+            (local.set $lw (i32.add (local.get $tw) (i32.mul (local.get $k) (i32.const 104))))
+            (local.set $ltype (i32.load (local.get $lw)))
+            (local.set $att (f32.const 1.0))
+            (local.set $spot (f32.const 1.0))
+            (if (i32.eq (local.get $ltype) (i32.const 3))
+              (then  ;; directional: light travels along dvDirection
+                (local.set $lx (f32.neg (f32.load offset=64 (local.get $lw))))
+                (local.set $ly (f32.neg (f32.load offset=68 (local.get $lw))))
+                (local.set $lz (f32.neg (f32.load offset=72 (local.get $lw))))
+                (local.set $d (f32.sqrt (f32.add (f32.add (f32.mul (local.get $lx) (local.get $lx))
+                  (f32.mul (local.get $ly) (local.get $ly))) (f32.mul (local.get $lz) (local.get $lz)))))
+                (if (f32.gt (local.get $d) (f32.const 0.0)) (then
+                  (local.set $lx (f32.div (local.get $lx) (local.get $d)))
+                  (local.set $ly (f32.div (local.get $ly) (local.get $d)))
+                  (local.set $lz (f32.div (local.get $lz) (local.get $d))))))
+              (else  ;; point (1) or spot (2)
+                (local.set $lx (f32.sub (f32.load offset=52 (local.get $lw)) (local.get $px)))
+                (local.set $ly (f32.sub (f32.load offset=56 (local.get $lw)) (local.get $py)))
+                (local.set $lz (f32.sub (f32.load offset=60 (local.get $lw)) (local.get $pz)))
+                (local.set $d (f32.sqrt (f32.add (f32.add (f32.mul (local.get $lx) (local.get $lx))
+                  (f32.mul (local.get $ly) (local.get $ly))) (f32.mul (local.get $lz) (local.get $lz)))))
+                (if (f32.gt (local.get $d) (f32.load offset=76 (local.get $lw)))  ;; dvRange
+                  (then (local.set $att (f32.const 0.0)))
+                  (else
+                    (if (f32.gt (local.get $d) (f32.const 0.0)) (then
+                      (local.set $lx (f32.div (local.get $lx) (local.get $d)))
+                      (local.set $ly (f32.div (local.get $ly) (local.get $d)))
+                      (local.set $lz (f32.div (local.get $lz) (local.get $d)))))
+                    (local.set $len (f32.add (f32.add (f32.load offset=84 (local.get $lw))
+                      (f32.mul (f32.load offset=88 (local.get $lw)) (local.get $d)))
+                      (f32.mul (f32.load offset=92 (local.get $lw)) (f32.mul (local.get $d) (local.get $d)))))
+                    (if (f32.gt (local.get $len) (f32.const 0.0))
+                      (then (local.set $att (f32.div (f32.const 1.0) (local.get $len)))))))
+                (if (i32.and (i32.eq (local.get $ltype) (i32.const 2)) (f32.gt (local.get $att) (f32.const 0.0))) (then
+                  ;; rho = cos(angle between the spot axis and the light-to-vertex ray)
+                  (local.set $qx (f32.load offset=64 (local.get $lw)))
+                  (local.set $qy (f32.load offset=68 (local.get $lw)))
+                  (local.set $qz (f32.load offset=72 (local.get $lw)))
+                  (local.set $len (f32.sqrt (f32.add (f32.add (f32.mul (local.get $qx) (local.get $qx))
+                    (f32.mul (local.get $qy) (local.get $qy))) (f32.mul (local.get $qz) (local.get $qz)))))
+                  (if (f32.gt (local.get $len) (f32.const 0.0)) (then
+                    (local.set $rho (f32.neg (f32.div (f32.add (f32.add
+                      (f32.mul (local.get $lx) (local.get $qx)) (f32.mul (local.get $ly) (local.get $qy)))
+                      (f32.mul (local.get $lz) (local.get $qz))) (local.get $len))))
+                    (local.set $ct (f32.demote_f64 (call $host_math_cos
+                      (f64.promote_f32 (f32.mul (f32.load offset=96 (local.get $lw)) (f32.const 0.5))))))
+                    (local.set $cp (f32.demote_f64 (call $host_math_cos
+                      (f64.promote_f32 (f32.mul (f32.load offset=100 (local.get $lw)) (f32.const 0.5))))))
+                    (if (f32.le (local.get $rho) (local.get $cp))
+                      (then (local.set $spot (f32.const 0.0)))
+                      (else (if (f32.lt (local.get $rho) (local.get $ct)) (then
+                        (local.set $spot (f32.div (f32.sub (local.get $rho) (local.get $cp))
+                                                  (f32.sub (local.get $ct) (local.get $cp))))
+                        (if (f32.ne (f32.load offset=80 (local.get $lw)) (f32.const 1.0)) (then
+                          (local.set $spot (f32.demote_f64 (call $host_math_pow
+                            (f64.promote_f32 (local.get $spot))
+                            (f64.promote_f32 (f32.load offset=80 (local.get $lw))))))))))))))))))
+            (local.set $att (f32.mul (local.get $att) (local.get $spot)))
+            (local.set $ar (f32.add (local.get $ar) (f32.mul (local.get $att) (f32.load offset=36 (local.get $lw)))))
+            (local.set $ag (f32.add (local.get $ag) (f32.mul (local.get $att) (f32.load offset=40 (local.get $lw)))))
+            (local.set $ab (f32.add (local.get $ab) (f32.mul (local.get $att) (f32.load offset=44 (local.get $lw)))))
+            (local.set $ndl (f32.add (f32.add (f32.mul (local.get $nx) (local.get $lx))
+              (f32.mul (local.get $ny) (local.get $ly))) (f32.mul (local.get $nz) (local.get $lz))))
+            (if (f32.gt (local.get $ndl) (f32.const 0.0)) (then
+              (local.set $ndl (f32.mul (local.get $ndl) (local.get $att)))
+              (local.set $dr (f32.add (local.get $dr) (f32.mul (local.get $ndl) (f32.load offset=4 (local.get $lw)))))
+              (local.set $dg (f32.add (local.get $dg) (f32.mul (local.get $ndl) (f32.load offset=8 (local.get $lw)))))
+              (local.set $db (f32.add (local.get $db) (f32.mul (local.get $ndl) (f32.load offset=12 (local.get $lw)))))))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br $llp)))))
+      (local.set $cd (call $d3dim_d7_mat_color (local.get $sw) (i32.const 0) (i32.const 145)
+        (local.get $vdiff) (local.get $vspec) (local.get $has_diff) (local.get $has_spec)))
+      (local.set $ca (call $d3dim_d7_mat_color (local.get $sw) (i32.const 1) (i32.const 147)
+        (local.get $vdiff) (local.get $vspec) (local.get $has_diff) (local.get $has_spec)))
+      (local.set $ce (call $d3dim_d7_mat_color (local.get $sw) (i32.const 3) (i32.const 148)
+        (local.get $vdiff) (local.get $vspec) (local.get $has_diff) (local.get $has_spec)))
+      (local.set $dst (call $g2w (i32.add (local.get $packed_g) (i32.shl (local.get $i) (i32.const 5)))))
+      (if (i32.eq (local.get $vtxType) (i32.const 1)) (then
+        ;; D3DVERTEX had the normal at +12..+23; D3DLVERTEX has reserved,colour,specular there.
+        (i32.store offset=12 (local.get $dst) (i32.const 0))
+        (i32.store offset=20 (local.get $dst) (i32.const 0))))
+      (i32.store offset=16 (local.get $dst)
+        (call $d3dim_d7_pack4
+          (f32.add (f32.add (call $d3dim_d7_ch (local.get $ce) (i32.const 16))
+            (f32.mul (call $d3dim_d7_ch (local.get $ca) (i32.const 16)) (local.get $ar)))
+            (f32.mul (call $d3dim_d7_ch (local.get $cd) (i32.const 16)) (local.get $dr)))
+          (f32.add (f32.add (call $d3dim_d7_ch (local.get $ce) (i32.const 8))
+            (f32.mul (call $d3dim_d7_ch (local.get $ca) (i32.const 8)) (local.get $ag)))
+            (f32.mul (call $d3dim_d7_ch (local.get $cd) (i32.const 8)) (local.get $dg)))
+          (f32.add (f32.add (call $d3dim_d7_ch (local.get $ce) (i32.const 0))
+            (f32.mul (call $d3dim_d7_ch (local.get $ca) (i32.const 0)) (local.get $ab)))
+            (f32.mul (call $d3dim_d7_ch (local.get $cd) (i32.const 0)) (local.get $db)))
+          (call $d3dim_d7_ch (local.get $cd) (i32.const 24))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.const 2))
 
   (func $d3dim_device7_set_clip_plane (param $this i32) (param $idx i32) (param $plane i32)
     (local $state i32)

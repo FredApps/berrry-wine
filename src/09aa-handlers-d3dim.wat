@@ -1171,6 +1171,8 @@
     (local.set $packed (call $d3dim_pack_fvf_vertices
       (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
       (call $d3dim_texcoord_index (local.get $arg0))))
+    (local.set $vtxType (call $d3dim_d7_light_vertices (local.get $arg0) (local.get $arg2)
+      (local.get $arg3) (local.get $packed) (local.get $dwVertexCount) (local.get $vtxType)))
     (if (local.get $packed) (then
       (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
         (local.get $packed) (local.get $dwVertexCount))
@@ -1190,6 +1192,8 @@
     (local.set $packed (call $d3dim_pack_fvf_vertices
       (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
       (call $d3dim_texcoord_index (local.get $arg0))))
+    (local.set $vtxType (call $d3dim_d7_light_vertices (local.get $arg0) (local.get $arg2)
+      (local.get $arg3) (local.get $packed) (local.get $dwVertexCount) (local.get $vtxType)))
     (if (local.get $packed) (then
       (call $d3dim_draw_indexed_primitive
         (local.get $arg0) (local.get $arg1) (local.get $vtxType)
