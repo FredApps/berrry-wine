@@ -300,8 +300,60 @@ call('_grSstWinClose@0');
 assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 1, 2]), 1, 'single-buffered open accepted');
 assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(20), 1, 'backend is told there is one color buffer');
 call('_grSstWinClose@0');
-assert.throws(() => call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 3, 0]), WebAssembly.RuntimeError,
+// Triple buffering has no surface: FXFALSE with nothing opened, as a board
+// short of frame-buffer memory answers. Deus Ex's GlideDrv then retries with 2.
+const beforeTriple = submissions.length;
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 3, 0]), 0,
   'triple buffering is refused, not silently double-buffered');
+assert(!submissions.slice(beforeTriple).some(s => s.op === 1), 'a refused open reaches no backend');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1, 'the double-buffered retry opens');
+// gu.c presets: guColorCombineFunction -> grColorCombine state (+0..+16),
+// guAlphaSource -> grAlphaCombine state (+20..+36).
+const glideState = (from, n) => Array.from({length: n}, (_, i) =>
+  view.getUint32(regions.BASE.GLIDE_STATE + 256 + from + i * 4, true));
+for (const [fnc, expected] of [
+  [0, [0, 0, 1, 2, 0]], [1, [1, 0, 1, 2, 0]], [2, [1, 0, 0, 2, 0]], [4, [3, 8, 1, 1, 0]],
+  [5, [3, 1, 1, 1, 0]], [6, [3, 1, 0, 1, 0]], [8, [5, 1, 0, 1, 0]], [9, [3, 3, 1, 1, 0]],
+  [10, [4, 3, 0, 1, 0]], [11, [4, 8, 0, 1, 0]], [12, [6, 8, 0, 1, 0]], [13, [7, 4, 1, 0, 0]],
+  [14, [4, 3, 0, 1, 0]], [15, [5, 1, 0, 1, 0]], [16, [0, 0, 1, 2, 1]],
+]) {
+  call('_guColorCombineFunction@4', [fnc]);
+  assert.deepStrictEqual(glideState(0, 5), expected, 'guColorCombineFunction ' + fnc);
+}
+assert.throws(() => call('_guColorCombineFunction@4', [3]), WebAssembly.RuntimeError,
+  'ITRGB_DELTA0 needs flat iterated colour, which is not modelled');
+for (const [mode, expected] of [
+  [0, [1, 0, 1, 2, 0]], [1, [1, 0, 0, 2, 0]], [2, [3, 8, 1, 1, 0]], [3, [3, 1, 0, 1, 0]],
+]) {
+  call('_guAlphaSource@4', [mode]);
+  assert.deepStrictEqual(glideState(20, 5), expected, 'guAlphaSource ' + mode);
+}
+call('_guTexCombineFunction@8', [0, 6]);
+assert.deepStrictEqual(glideState(184, 6), [7, 12, 7, 12, 0, 0],
+  'guTexCombineFunction is grTexCombineFunction (digutex.c)');
+// grTexDownloadMipMapLevel[Partial]: one level of a 256..1 8-bit 1x1-aspect
+// mipmap at 0x1000; level 2 (64x64) sits after the 256x256 and 128x128 levels.
+const levelData = 0x416000;
+for (let i = 0; i < 4096; ++i) a.guest_write8(levelData + i, i & 0xff);
+const beforeLevels = submissions.length;
+call('_grTexDownloadMipMapLevel@32', [0, 0x1000, 2, 0, 3, 0, 3, levelData]);
+call('_grTexDownloadMipMapLevelPartial@40', [0, 0x1000, 2, 0, 3, 0, 3, levelData, 3, 5]);
+call('_grTexDownloadMipMapLevel@32', [0, 0x1000, 1, 0, 3, 0, 1, levelData]); // odd level, even mask: skipped
+call('_grBufferSwap@4', [1]);
+const levelBatch = submissions.slice(beforeLevels).find(s => s.op === 0).bytes;
+const uploads = [];
+for (let at = 0; at < levelBatch.length; at += 8 + ((levelBatch.readUInt32LE(at + 4) + 3) & ~3)) {
+  if (levelBatch.readUInt32LE(at) !== 6) continue;
+  const r = at + 8;
+  uploads.push({
+    head: Array.from({length: 7}, (_, i) => levelBatch.readUInt32LE(r + i * 4)),
+    first: levelBatch[r + 28], last: levelBatch[r + 28 + levelBatch.readUInt32LE(r + 24) - 1],
+  });
+}
+assert.deepStrictEqual(uploads, [
+  {head: [0x1000 + 65536 + 16384, 2, 2, 3, 0, 3, 4096], first: 0, last: 4095 & 0xff},
+  {head: [0x1000 + 65536 + 16384 + 3 * 64, 8, 8, 3, 0, 3, 192], first: 0, last: 191},
+], 'whole level at its packed offset; rows 3..5 at their row offset; a level outside the mask is skipped');
 call('_grGlideShutdown@0');
 call('_grGlideInit@0');
 assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1);

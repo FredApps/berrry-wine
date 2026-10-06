@@ -35256,5 +35256,97 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1342375048
+  },
+  {
+    "id": 4173,
+    "name": "guTexCombineFunction",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1613751871,
+    "handler": "grTexCombineFunction"
+  },
+  {
+    "id": 4174,
+    "name": "_guTexCombineFunction@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2686407032,
+    "handler": "grTexCombineFunction"
+  },
+  {
+    "id": 4175,
+    "name": "grDrawPlanarPolygonVertexList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4057487734,
+    "handler": "grDrawPolygonVertexList"
+  },
+  {
+    "id": 4176,
+    "name": "_grDrawPlanarPolygonVertexList@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 901186867,
+    "handler": "grDrawPolygonVertexList"
+  },
+  {
+    "id": 4177,
+    "name": "guColorCombineFunction",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 504871953
+  },
+  {
+    "id": 4178,
+    "name": "_guColorCombineFunction@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3737785026,
+    "handler": "guColorCombineFunction"
+  },
+  {
+    "id": 4179,
+    "name": "guAlphaSource",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1430497082
+  },
+  {
+    "id": 4180,
+    "name": "_guAlphaSource@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3305388475,
+    "handler": "guAlphaSource"
+  },
+  {
+    "id": 4181,
+    "name": "grTexDownloadMipMapLevel",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3990653977
+  },
+  {
+    "id": 4182,
+    "name": "_grTexDownloadMipMapLevel@32",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 336516747,
+    "handler": "grTexDownloadMipMapLevel"
+  },
+  {
+    "id": 4183,
+    "name": "grTexDownloadMipMapLevelPartial",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 2002360966
+  },
+  {
+    "id": 4184,
+    "name": "_grTexDownloadMipMapLevelPartial@40",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 1143815817,
+    "handler": "grTexDownloadMipMapLevelPartial"
   }
 ]
