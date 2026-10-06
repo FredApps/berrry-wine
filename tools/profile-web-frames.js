@@ -225,16 +225,56 @@ const PROFILE_PREFIX = 'wine-assembly-frames-';
 // to the box, not removing one, and the runs are serial so the survivors pile
 // up. A SIGKILL cannot be trapped at all, so a handler alone cannot close this;
 // the only complete fix is for the next launch to clean up after the last one.
+// Only an ORPHANED browser is stale. Several agents share this box and run
+// this tool at the same time, and killing every Chrome whose command line
+// carries the prefix killed their live runs mid-sample (2026-10-06 11:11:
+// two arms died with "frame got detached"). Each run therefore writes its own
+// pid into its profile directory (OWNER_FILE), and a browser is reaped only
+// when the harness that owns its profile is gone. A profile with no owner
+// file comes from an older copy of this tool, possibly still running in
+// another worktree: it is reaped only once it is clearly abandoned
+// (LEGACY_STALE_MS since its profile was last touched).
+const OWNER_FILE = 'wine-assembly-owner.pid';
+const LEGACY_STALE_MS = 30 * 60 * 1000;
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
 function killStaleBrowsers() {
   const { execFileSync } = require('child_process');
   let out = '';
   try {
-    out = execFileSync('pgrep', ['-f', PROFILE_PREFIX], { encoding: 'utf8' });
-  } catch (_) { return 0; }               // pgrep exits 1 when nothing matches
-  const pids = out.split('\n').map(s => s.trim()).filter(Boolean)
-    .map(Number).filter(p => p > 0 && p !== process.pid);
+    out = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  } catch (_) { return 0; }
+  const pids = [];
+  const verdicts = new Map();   // profile dir -> stale?
+  for (const line of out.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(.*)$/);
+    if (!m || !m[2].includes(PROFILE_PREFIX)) continue;
+    const pid = Number(m[1]);
+    if (!(pid > 0) || pid === process.pid) continue;
+    const dirMatch = m[2].match(/--user-data-dir=(\S*?wine-assembly-frames-[^\s/]+)/);
+    if (!dirMatch) continue;           // not one of our browsers' processes
+    const dir = dirMatch[1];
+    if (!verdicts.has(dir)) {
+      let stale;
+      try {
+        const owner = Number(fs.readFileSync(path.join(dir, OWNER_FILE), 'utf8').trim());
+        stale = !(owner > 0 && pidAlive(owner));
+      } catch (_) {
+        let age = Infinity;
+        try { age = Date.now() - fs.statSync(dir).mtimeMs; } catch (_) {}
+        stale = age > LEGACY_STALE_MS;
+      }
+      verdicts.set(dir, stale);
+    }
+    if (verdicts.get(dir)) pids.push(pid);
+  }
   for (const p of pids) { try { process.kill(p, 'SIGKILL'); } catch (_) {} }
-  if (pids.length) console.log(`killed ${pids.length} stale harness browser process(es)`);
+  if (pids.length) console.log(`killed ${pids.length} orphaned harness browser process(es)`);
+  const live = [...verdicts.values()].filter(v => !v).length;
+  if (live) console.log(`left ${live} other live harness browser(s) alone`);
   return pids.length;
 }
 
@@ -301,6 +341,9 @@ async function main() {
   const base = ORIGIN || `http://127.0.0.1:${port}`;
   killStaleBrowsers();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), PROFILE_PREFIX));
+  // Marks this profile's browser as belonging to a live harness (see
+  // killStaleBrowsers): another run's cleanup leaves it alone while we live.
+  fs.writeFileSync(path.join(profile, OWNER_FILE), String(process.pid));
   const browser = await puppeteer.launch({
     headless: !HEADFUL,
     executablePath: CHROME,
@@ -1168,4 +1211,5 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { killStaleBrowsers, OWNER_FILE, PROFILE_PREFIX };
