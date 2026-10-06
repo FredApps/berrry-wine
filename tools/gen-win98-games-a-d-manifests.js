@@ -89,6 +89,15 @@ const GAMES = [
     root: 'Commandos demo-SWonly/installed',
     exe: 'Comandos.exe',
   },
+  {
+    // The demo's own InstallShield setup, run in the emulator (stage 1 the
+    // PackageForTheWeb wrapper with --capture-launch, stage 2 setup.exe and
+    // _ins5576._mp), wrote this tree under C:\Program Files\Triumph Studios.
+    id: 'age_of_wonders_demo',
+    root: 'Age Of Wonders demo-SW/installed',
+    exe: 'aow.exe',
+    vfsRoot: 'c:\\program files\\triumph studios\\age of wonders beta demo\\',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {

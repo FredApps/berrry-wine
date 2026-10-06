@@ -1008,6 +1008,11 @@ class WineAssembly {
     // no-window interval without weakening normal last-window teardown.
     this.windowlessGraceMs = 750;
     this.verbose = false;
+    // Where the sparse VirtualAlloc arena starts handing out reservations
+    // (top-down). 0 keeps the default top of user space; an app that masks
+    // its heap pointers to 28 bits sets 0x10000000 (lib/apps.js
+    // virtualAllocTop).
+    this.virtualAllocTop = 0;
     // Some WinMM clients intentionally wait for a timeSetEvent callback while
     // they are not pumping messages. This remains opt-in per app: the normal
     // path still delivers the callback through the guest message loop.
@@ -3246,6 +3251,7 @@ class WineAssembly {
       // shared with the CLI harness.
       ({ entry } = ProcessBoot.stageAndLoadPe(
         this.instance.exports, this.memory.buffer, exeBytes));
+      ProcessBoot.applyVirtualAllocTop(this.instance.exports, this.virtualAllocTop);
     }
 
     this._applyExeCompatibilityPatches(exeName, opts.launchPrefs);

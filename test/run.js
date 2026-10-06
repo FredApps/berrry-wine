@@ -6,7 +6,7 @@ const frameIntervals = require('../lib/frame-intervals');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
 const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
-  stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
+  stageAndLoadPe, applyVirtualAllocTop, setExeName, setExeDrive, setExtraCmdline,
   setEnvironmentVariable, handleLoadLibraryYield, serviceLoadLibraryYieldSync,
   handleComDllYield, findVfsDllBytes } = require('../lib/process-boot');
 const {
@@ -657,6 +657,9 @@ const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
 // --spin-work-max=N: a clock read only counts toward a park when at most N
 // blocks retired since the previous read at that site (0 = no work check).
 const SPIN_WORK_MAX = parseInt(getArg('spin-work-max', ''), 10);
+// --virtual-alloc-top=0xADDR: start of the top-down VirtualAlloc arena (an
+// app's virtualAllocTop; see lib/process-boot.js applyVirtualAllocTop).
+const VIRTUAL_ALLOC_TOP_ARG = getArg('virtual-alloc-top', null);
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 // --host-census[=N]: count every host import, print a histogram every N calls
 // straight to stdout. For batches that never return, where buffered logs never
@@ -4804,6 +4807,8 @@ async function main() {
   }
 
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
+  applyVirtualAllocTop(instance.exports, VIRTUAL_ALLOC_TOP_ARG !== null
+    ? Number(VIRTUAL_ALLOC_TOP_ARG) : (APP_ENTRY && APP_ENTRY.virtualAllocTop));
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
   }
