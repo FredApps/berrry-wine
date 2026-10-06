@@ -5371,6 +5371,18 @@ async function main() {
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await decodeMountedImage(hostPath)
           : null;
+        if (typeof item === 'object' && item.iniSet) {
+          // Registry INI edits (lib/app-files.js applyIniSet), as the page does.
+          const edited = require('../lib/app-files').applyIniSet(
+            new Uint8Array(fs.readFileSync(hostPath)), item.iniSet);
+          for (const p of paths) {
+            let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
+            if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+            ctx.vfs.ensureParentDirs(vfsPath);
+            ctx.vfs.files.set(vfsPath, { data: edited.slice(), attrs: 0x20 });
+          }
+          continue;
+        }
         for (const p of paths) {
           const entry = addFile(p, hostPath, size);
           entry.decodedImage = decodedImage;

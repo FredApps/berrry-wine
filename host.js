@@ -3734,7 +3734,13 @@ class WineAssembly {
         }
         const asset = await assetLoads.get(key);
         checkCancelled();
-        const data = asset.data;
+        let data = asset.data;
+        if (typeof item === 'object' && item.iniSet) {
+          // Registry INI edits; test/run.js applies the same helper.
+          const appFiles = typeof window !== 'undefined' ? window.appFiles : null;
+          if (!appFiles || !data) throw new Error('iniSet needs lib/app-files.js and an eager file: ' + url);
+          data = appFiles.applyIniSet(data instanceof Uint8Array ? data : new Uint8Array(data), item.iniSet);
+        }
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await this._decodeMountedImage(data, url)
           : null;
