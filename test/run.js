@@ -100,6 +100,16 @@ async function decodeMountedImage(hostPath) {
 }
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
+// WINE_RUN_EXTRA_ARGS='--lazy-ranges=5 ...': appended to every run.js command
+// line, so an existing gameplay test that spawns run.js becomes, unedited, the
+// same route under an extra flag (the lazy-loading audit runs each one this
+// way). Whitespace-separated; a flag given twice resolves as getArg reads it.
+if (process.env.WINE_RUN_EXTRA_ARGS) {
+  const extra = process.env.WINE_RUN_EXTRA_ARGS.split(/\s+/).filter(Boolean);
+  args.push(...extra);
+  process.argv.push(...extra);
+  console.error(`[run] WINE_RUN_EXTRA_ARGS: ${extra.join(' ')}`);
+}
 const getArg = (name, def) => {
   const prefix = `--${name}=`;
   const arg = args.find(value => value.startsWith(prefix));
