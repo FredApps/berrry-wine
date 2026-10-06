@@ -15,9 +15,13 @@
 // `preloadRanges` bytes are counted as eager). `default` is a
 // preview of the proposed lazy default (LAZY-LOAD-ALL-GAMES, 2026-10-06): a
 // data file is lazy unless it is small (< --small), PE-like (dll drv ocx asi
-// m3d flt acm ax vxd), config text (ini cfg inf), matched by persistFiles, or
+// m3d flt acm ax vxd), config text (ini cfg inf), read by a synchronous
+// consumer (wav mid rmi bmp ico cur ani ttf fon fnt hlp cnt tlb avi), matched
+// by persistFiles, or
 // explicitly eager (`loadMode: 'required'`, `eager: true`, `httpRange: false`); an app whose whole total is
-// under --app-eager, or that says `lazyFiles: false`, stays fully eager. The
+// under --app-eager, whose exe is a Win16 NE image, or that says
+// `lazyFiles: false`, stays fully eager (the rules agreed on the board for
+// lib/app-files.js; this is a preview, that module is the authority). The
 // preview says nothing about whether the app still RUNS lazily -- reads made
 // inside a nested synchronous message, by _lread, by the DLL loader or by an
 // audio/GDI asset reader cannot park (lib/filesystem.js); find those with
@@ -54,6 +58,18 @@ const ONLY = getArg('apps', '') ? new Set(getArg('apps', '').split(',')) : null;
 const PART = getArg('part', '').toUpperCase();
 const PE_EXT = /\.(dll|drv|ocx|asi|m3d|flt|acm|ax|vxd|exe)$/i;
 const CONFIG_EXT = /\.(ini|cfg|inf)$/i;
+// Read by consumers that run to completion in one turn (lib/filesystem.js:
+// audio, GDI/resource and help loaders), so a cold range there cannot park.
+const SYNC_EXT = /\.(wav|mid|rmi|bmp|ico|cur|ani|ttf|fon|fnt|hlp|cnt|tlb|avi)$/i;
+const isNe = file => {
+  try {
+    const fd = fs.openSync(file, 'r'); const b = Buffer.alloc(0x40);
+    fs.readSync(fd, b, 0, 0x40, 0);
+    const lfa = b.readUInt32LE(0x3c); const sig = Buffer.alloc(2);
+    fs.readSync(fd, sig, 0, 2, lfa); fs.closeSync(fd);
+    return b.toString('latin1', 0, 2) === 'MZ' && sig.toString('latin1') === 'NE';
+  } catch (_) { return false; }
+};
 
 // Part A: the ids tools/gen-win98-games-a-d-manifests.js writes manifests for.
 const partA = new Set();
@@ -112,20 +128,22 @@ function census(id, app) {
 
   const persist = (app.persistFiles || []).map(globToRegExp);
   const total = rows.reduce((s, r) => s + (r.size || 0), 0);
-  const fullyEager = app.lazyFiles === false || total < APP_EAGER;
+  // A Win16 app reads through _lread, which cannot park: all of it stays eager.
+  const win16 = !!app.exe && isNe(resolve(app.exe));
+  const fullyEager = app.lazyFiles === false || total < APP_EAGER || win16;
   let eagerNow = 0, eagerDefault = 0;
   for (const r of rows) {
     const size = r.size || 0;
     eagerNow += r.lazy ? Math.min(size, r.preloaded) : size;
     const keep = fullyEager || r.kind === 'exe' || r.kind === 'dll' || r.eagerFlag ||
-      size < SMALL || PE_EXT.test(r.disk) || CONFIG_EXT.test(r.disk) ||
+      size < SMALL || PE_EXT.test(r.disk) || CONFIG_EXT.test(r.disk) || SYNC_EXT.test(r.disk) ||
       persist.some(re => re.test(r.vfs));
     r.defaultLazy = !keep;
     eagerDefault += keep ? size : Math.min(size, r.preloaded);
   }
   const missing = rows.filter(r => r.size === null).length;
   return { id, part: partA.has(id) ? 'A' : 'B', files: rows.length, missing, total,
-    eagerNow, eagerDefault, fullyEager, rows };
+    eagerNow, eagerDefault, fullyEager, win16, rows };
 }
 
 const results = [];
@@ -155,7 +173,7 @@ for (const r of shown) {
   sumNow += r.eagerNow; sumDefault += r.eagerDefault;
   console.log(`${r.part.padEnd(5)} ${r.id.padEnd(34)} ${String(r.files).padStart(5)}  ${fmt(r.total).padStart(8)}  ` +
     `${fmt(r.eagerNow).padStart(9)}  ${fmt(r.eagerDefault).padStart(9)}` +
-    `${r.fullyEager ? '  (fully eager)' : ''}${r.missing ? `  [${r.missing} missing on disk]` : ''}`);
+    `${r.win16 ? '  (Win16: fully eager)' : r.fullyEager ? '  (fully eager)' : ''}${r.missing ? `  [${r.missing} missing on disk]` : ''}`);
   if (FILES) {
     for (const x of r.rows.filter(x => !x.lazy).sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, FILES)) {
       console.log(`        ${fmt(x.size || 0).padStart(8)}  ${x.defaultLazy ? 'lazy ' : 'eager'}  ${x.kind.padEnd(8)} ${x.vfs}`);
