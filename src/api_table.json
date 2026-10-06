@@ -35198,5 +35198,13 @@
     "convention": "stdcall",
     "hash": 4130544480,
     "ret": "DWORD"
+  },
+  {
+    "id": 4166,
+    "name": "ValidateRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1205302862,
+    "ret": "BOOL"
   }
 ]
