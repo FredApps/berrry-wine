@@ -35177,5 +35177,12 @@
     "nargs": 1,
     "convention": "cdecl",
     "hash": 2489769320
+  },
+  {
+    "id": 4163,
+    "name": "_makepath",
+    "nargs": 5,
+    "convention": "cdecl",
+    "hash": 539032803
   }
 ]

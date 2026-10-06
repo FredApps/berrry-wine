@@ -2352,8 +2352,32 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; A WIN32_FIND_DATA FILETIME (100ns since 1601) at guest $p as a time_t:
+  ;; -1 when it predates 1970, as msvcrt reports it, and 0 for a FILETIME of
+  ;; 0, which is how the VFS leaves a time it does not record.
+  (func $crt_filetime_to_time_t (param $p i32) (result i32)
+    (local $ft i64)
+    (local.set $ft (i64.or
+      (i64.extend_i32_u (call $gl32 (local.get $p)))
+      (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $p) (i32.const 4)))) (i64.const 32))))
+    (if (i64.eqz (local.get $ft)) (then (return (i32.const 0))))
+    (if (i64.lt_u (local.get $ft) (i64.const 116444736000000000))
+      (then (return (i32.const -1))))
+    (i32.wrap_i64 (i64.div_u (i64.sub (local.get $ft) (i64.const 116444736000000000))
+      (i64.const 10000000))))
+
+  ;; _stat(path, struct _stat*) -- cdecl. msvcrt's struct _stat is 36 bytes:
+  ;;   +0 st_dev u32  +4 st_ino u16  +6 st_mode u16  +8 st_nlink i16
+  ;;   +10 st_uid i16  +12 st_gid i16  +16 st_rdev u32  +20 st_size i32
+  ;;   +24 st_atime  +28 st_mtime  +32 st_ctime
+  ;; and nothing past +36 is ours: callers keep it at the top of their frame.
+  ;; This used to zero 64 bytes, which ran over Dark Reign's saved EBP and
+  ;; return address (a 36-byte local at [ebp-0x38]) and returned to NULL.
+  ;; Every field goes through $gs16/$gs32, so a buffer straddling two sparse
+  ;; guest pages is written correctly.
   (func $handle__stat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $attrs i32) (local $scratch i32) (local $find i32) (local $path_wa i32)
+    (local $i i32) (local $drive i32) (local $len i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -2367,21 +2391,44 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (return)))
-    (memory.fill (call $g2w (local.get $arg1)) (i32.const 0) (i32.const 64))
-    ;; _stat: st_mode at +6, st_size at +20, times at +24/+28/+32.
+    (block $zeroed (loop $zero
+      (br_if $zeroed (i32.ge_u (local.get $i) (i32.const 36)))
+      (call $gs32 (i32.add (local.get $arg1) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $zero)))
     (call $gs16 (i32.add (local.get $arg1) (i32.const 6))
       (if (result i32) (i32.and (local.get $attrs) (i32.const 0x10))
         (then (i32.const 0x41ff)) ;; _S_IFDIR | broad rwx perms
         (else (i32.const 0x81b6)))) ;; _S_IFREG | 0666
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 1)) ;; st_nlink
     (local.set $scratch (call $heap_alloc (i32.const 320)))
     (if (local.get $scratch)
       (then
+        ;; st_dev = st_rdev = the drive, 0 for A:, from the resolved path.
+        (local.set $len (call $host_fs_get_full_path_name
+          (local.get $path_wa) (i32.const 260) (local.get $scratch) (i32.const 0) (i32.const 0)))
+        (if (i32.and (i32.and (i32.gt_u (local.get $len) (i32.const 1)) (i32.lt_u (local.get $len) (i32.const 260)))
+                     (i32.eq (call $gl8 (i32.add (local.get $scratch) (i32.const 1))) (i32.const 0x3a)))
+          (then
+            (local.set $drive (i32.sub (i32.and (call $gl8 (local.get $scratch)) (i32.const 0xdf)) (i32.const 0x41)))
+            (if (i32.lt_u (local.get $drive) (i32.const 26))
+              (then
+                (call $gs32 (local.get $arg1) (local.get $drive))
+                (call $gs32 (i32.add (local.get $arg1) (i32.const 16)) (local.get $drive))))))
         (local.set $find (call $host_fs_find_first_file
           (local.get $path_wa) (local.get $scratch) (i32.const 0)))
         (if (i32.ne (local.get $find) (i32.const -1))
           (then
+            ;; WIN32_FIND_DATA: ftCreationTime +4, ftLastAccessTime +12,
+            ;; ftLastWriteTime +20, nFileSizeLow +32.
             (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
               (call $gl32 (i32.add (local.get $scratch) (i32.const 32))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 24))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 12))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 28))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 20))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 32))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 4))))
             (drop (call $host_fs_find_close (local.get $find)))))
         (call $heap_free (local.get $scratch))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -2557,6 +2604,59 @@
                 (i32.const -1))))))))
     (i32.store offset=0 (global.get $reg_base)
       (select (i32.const 0) (i32.const -1) (i32.ne (local.get $ok) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; Append the NUL-terminated guest string $src at guest $dst; returns the
+  ;; new end. Byte-wise, so either string may straddle sparse guest pages.
+  (func $crt_append_str (param $dst i32) (param $src i32) (result i32)
+    (local $c i32)
+    (if (i32.eqz (local.get $src)) (then (return (local.get $dst))))
+    (block $done (loop $copy
+      (local.set $c (call $gl8 (local.get $src)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (call $gs8 (local.get $dst) (local.get $c))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (br $copy)))
+    (local.get $dst))
+
+  ;; _makepath(path, drive, dir, fname, ext) -- cdecl, void. As msvcrt: the
+  ;; drive's first character and ':', dir with a '\' added unless it ends in
+  ;; '\' or '/', fname, then ext with a '.' added unless it starts with one.
+  ;; NULL or empty components are skipped; the result is NUL-terminated and,
+  ;; as the API documents, not bounded.
+  (func $handle__makepath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $last i32)
+    (local.set $p (local.get $arg0))
+    (if (local.get $p)
+      (then
+        (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg1)) (i32.const 0)))
+          (then
+            (call $gs8 (local.get $p) (call $gl8 (local.get $arg1)))
+            (call $gs8 (i32.add (local.get $p) (i32.const 1)) (i32.const 0x3a))
+            (local.set $p (i32.add (local.get $p) (i32.const 2)))))
+        (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg2)) (i32.const 0)))
+          (then
+            (local.set $p (call $crt_append_str (local.get $p) (local.get $arg2)))
+            (local.set $last (call $gl8 (i32.sub (local.get $p) (i32.const 1))))
+            (if (i32.and (i32.ne (local.get $last) (i32.const 0x5c))
+                         (i32.ne (local.get $last) (i32.const 0x2f)))
+              (then
+                (call $gs8 (local.get $p) (i32.const 0x5c))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))))))
+        (local.set $p (call $crt_append_str (local.get $p) (local.get $arg3)))
+        (if (i32.and (i32.ne (local.get $arg4) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg4)) (i32.const 0)))
+          (then
+            (if (i32.ne (call $gl8 (local.get $arg4)) (i32.const 0x2e))
+              (then
+                (call $gs8 (local.get $p) (i32.const 0x2e))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+            (local.set $p (call $crt_append_str (local.get $p) (local.get $arg4)))))
+        (call $gs8 (local.get $p) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 

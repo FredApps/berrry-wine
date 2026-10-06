@@ -2,7 +2,8 @@
 
 // msvcrt entry points Dark Reign's demo (DKReign.exe, MSVC 1997) imports
 // before its main menu: _mkdir, setvbuf, getc/fgetc, __p___mb_cur_max and
-// __p__pctype. Each is cdecl and pops only its return address; each is
+// __p__pctype -- and _stat, which used to zero 64 bytes of a 36-byte struct
+// and so overwrote the caller's saved EBP and return address. Each is cdecl and pops only its return address; each is
 // checked against the VFS or the CRT state it describes rather than a
 // constant.
 
@@ -45,6 +46,8 @@ const extraWat = String.raw`
   ${call('__p___mb_cur_max', [])}
   ${call('__p__pctype', [])}
   ${call('_pctype', [])}
+  ${call('_stat', ['path', 'buf'])}
+  ${call('_makepath', ['path', 'drive', 'dir', 'fname', 'ext'])}
 `;
 
 (async () => {
@@ -116,5 +119,44 @@ const extraWat = String.raw`
   assert.notStrictEqual(u16(pctype + 2 * 0x20) & 0x8, 0, "_pctype[' '] is _SPACE");
   assert.strictEqual(e.t___p__pctype() >>> 0, pp, 'one variable');
 
-  console.log('PASS _mkdir errno, getc/fgetc, setvbuf validation, __p___mb_cur_max, __p__pctype');
+  // --- _stat writes exactly msvcrt's 36-byte struct _stat, nothing past it.
+  const STAT = 0x4000;
+  const fillSentinel = () => { for (let i = 0; i < 64; i++) e.guest_write8(STAT + i, 0xaa); };
+  const sentinelIntact = () => { for (let i = 36; i < 64; i++) if (e.guest_read8(STAT + i) !== 0xaa) return false; return true; };
+  fillSentinel();
+  ascii(PATH, 'c:\\reign\\tactics.cfg');
+  assert.strictEqual(e.t__stat(PATH, STAT), 0, '_stat of an existing file');
+  assert(sentinelIntact(), 'bytes 36..63 after the struct are untouched (the caller frame)');
+  assert.strictEqual(u16(STAT + 6), 0x81b6, 'st_mode: _S_IFREG | 0666');
+  assert.strictEqual(u16(STAT + 8), 1, 'st_nlink 1');
+  assert.strictEqual(u32(STAT + 20), 3, 'st_size');
+  assert.strictEqual(u32(STAT), 2, 'st_dev: drive C: is 2');
+  assert.strictEqual(u32(STAT + 16), 2, 'st_rdev matches st_dev');
+  fillSentinel();
+  ascii(PATH, 'c:\\reign');
+  assert.strictEqual(e.t__stat(PATH, STAT), 0, '_stat of a directory');
+  assert(sentinelIntact(), 'a directory stat stays inside the struct too');
+  assert.strictEqual(u16(STAT + 6) & 0xf000, 0x4000, 'st_mode: _S_IFDIR');
+  fillSentinel();
+  ascii(PATH, 'c:\\reign\\missing.cfg');
+  assert.strictEqual(e.t__stat(PATH, STAT), -1, 'a missing path fails');
+  for (let i = 0; i < 64; i++) assert.strictEqual(e.guest_read8(STAT + i), 0xaa, 'and writes nothing');
+
+  // --- _makepath composes as msvcrt does.
+  const OUT = 0x5000, DRV = 0x5200, DIR = 0x5300, FN = 0x5400, EXT = 0x5500;
+  const cstr = p => { let r = ''; for (let c; (c = e.guest_read8(p)); p++) r += String.fromCharCode(c); return r; };
+  const make = (drive, dir, fname, ext) => {
+    for (const [p, v] of [[DRV, drive], [DIR, dir], [FN, fname], [EXT, ext]]) if (v !== null) ascii(p, v);
+    e.guest_write32(OUT, 0x7e7e7e7e);
+    e.t__makepath(OUT, drive === null ? 0 : DRV, dir === null ? 0 : DIR,
+      fname === null ? 0 : FN, ext === null ? 0 : EXT);
+    return cstr(OUT);
+  };
+  assert.strictEqual(make('c', '\\dark\\local', 'gamemsgs', 'txt'), 'c:\\dark\\local\\gamemsgs.txt',
+    'separators added after dir and before ext');
+  assert.strictEqual(make('c:', 'dark\\', 'a', '.cfg'), 'c:dark\\a.cfg', 'only the drive letter is used; existing separators kept');
+  assert.strictEqual(make(null, 'x/', 'b', null), 'x/b', 'a trailing / counts as a separator; NULL parts are skipped');
+  assert.strictEqual(make('', '', 'name', ''), 'name', 'empty parts are skipped');
+
+  console.log('PASS _makepath, _stat writes 36 bytes, _mkdir errno, getc/fgetc, setvbuf validation, __p___mb_cur_max, __p__pctype');
 })().catch(error => { console.error(error); process.exitCode = 1; });
