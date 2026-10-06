@@ -337,6 +337,21 @@ async function main() {
     assert.strictEqual(wat.test_call_WSAGetLastError() | 0, WSAEADDRINUSE);
   });
 
+  check('TCP and UDP bind the same port number independently', () => {
+    // Jazz Jackrabbit 2's server binds UDP 10052 and then TCP 10052; a shared
+    // port space failed the second with WSAEADDRINUSE ("Could not start Server").
+    wat.test_vsock_reset();
+    const u = wat.test_call_socket(AF_INET, SOCK_DGRAM, 0) | 0;
+    const t = wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    assert.strictEqual(wat.test_call_bind(u, sockaddr('0.0.0.0', 10052), 16) | 0, 0);
+    assert.strictEqual(wat.test_call_bind(t, sockaddr('0.0.0.0', 10052), 16) | 0, 0,
+      'a stream socket may take the port a datagram socket holds');
+    const u2 = wat.test_call_socket(AF_INET, SOCK_DGRAM, 0) | 0;
+    assert.strictEqual(wat.test_call_bind(u2, sockaddr('0.0.0.0', 10052), 16) | 0, SOCKET_ERROR,
+      'a second datagram socket on that port still collides');
+    assert.strictEqual(wat.test_call_WSAGetLastError() | 0, WSAEADDRINUSE);
+  });
+
   check('port 0 allocates from the room ephemeral range', () => {
     wat.test_vsock_reset();
     const s = wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
@@ -806,6 +821,26 @@ async function main() {
     assert.strictEqual(wat.test_call_WSAAsyncSelect(srv, hwnd, 0x501, 0x08) | 0, 0);
     assert(posted().some(m => m.msg === 0x501 && m.wParam === srv && m.lParam === 0x08),
       'a queued connection posts FD_ACCEPT');
+    wat.set_post_queue_count(0);
+  });
+
+  check('WSAAsyncSelect registrations live in one process-wide table', () => {
+    // Every guest thread is its own WASM instance over this memory. A
+    // per-instance table lost the listener's registration when Jazz
+    // Jackrabbit 2 accepted on its network thread, and the wire's FD_READ was
+    // checked against the wrong instance's (empty) table. The table is found
+    // through LOCK_TABLE+0x104, which every instance reads.
+    wat.test_vsock_reset();
+    const s = wat.test_call_socket(AF_INET, SOCK_DGRAM, 0) | 0;
+    const hwnd = wat.test_make_window() | 0;
+    assert.strictEqual(wat.test_call_WSAAsyncSelect(s, hwnd, 0x402, 0x03) | 0, 0);
+    const slot = RegionMap.BASE.LOCK_TABLE + 0x104;
+    const view = new DataView(memory.buffer);
+    const table = view.getUint32(slot, true);
+    assert(table, 'the table address is published in shared memory');
+    const rec = wa(table + ((s >>> 0) - 0x53000000) * 12);
+    assert.deepStrictEqual([view.getUint32(rec, true), view.getUint32(rec + 4, true), view.getUint32(rec + 8, true)],
+      [hwnd >>> 0, 0x402, 0x03], 'the socket\'s slot holds {hWnd, wMsg, lEvent}');
     wat.set_post_queue_count(0);
   });
 

@@ -2485,6 +2485,11 @@
   ;; the second bind, so the symptom is a connect that fails rather than a
   ;; crossed wire — still wrong, and invisible. 0 means "not seeded yet".
   (global $VSOCK_NEXT_PORT_SHARED i32 (region.addr $LOCK_TABLE 0x00000100))
+  ;; Guest address of the WSAAsyncSelect registration table (09d-winsock.wat
+  ;; $vsock_async_rec), published once with cmpxchg. Process-wide for the same
+  ;; reason: a registration made on one guest thread's instance has to be seen
+  ;; by whichever instance pumps the wire and posts the event. 0 = not made yet.
+  (global $VSOCK_ASYNC_SHARED i32 (region.addr $LOCK_TABLE 0x00000104))
   ;; The next free thunk index, process-wide. $num_thunks is BOTH the count and
   ;; the next free index, and it is a per-instance global — so two instances that
   ;; both call GetProcAddress hand out the same thunk address, and the guest then

@@ -190,6 +190,7 @@ const highFixedAliases = new Map(Object.entries({
   LOCK_WND: { owner: 'LOCK_TABLE' },
   COM_AUX_NEXT_SHARED: { owner: 'LOCK_TABLE' },
   VSOCK_NEXT_PORT_SHARED: { owner: 'LOCK_TABLE' },
+  VSOCK_ASYNC_SHARED: { owner: 'LOCK_TABLE' },
   THUNK_NEXT_SHARED: { owner: 'LOCK_TABLE' },
   THREAD_APC_QUEUES: { owner: 'LOCK_TABLE' },
   console_text_base: { owner: 'CONSOLE_TEXT' },

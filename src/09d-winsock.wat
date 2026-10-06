@@ -349,7 +349,13 @@
       (local.get $ip) (local.get $port)))
 
   ;; Is any live record already bound to this ip/port pair?
-  (func $vsock_port_taken (param $ip i32) (param $port i32) (result i32)
+  ;; $type is the asking socket's SOCK_STREAM/SOCK_DGRAM: TCP and UDP ports
+  ;; are separate spaces, so a stream socket may bind the port a datagram
+  ;; socket holds (Jazz Jackrabbit 2's server takes UDP and TCP 10052, and
+  ;; WSAEADDRINUSE on the second put up "Could not start Server"). IPX rides
+  ;; the UDP mapping, so it shares the datagram space. -1 asks about both,
+  ;; for the ephemeral allocator.
+  (func $vsock_port_taken (param $ip i32) (param $port i32) (param $type i32) (result i32)
     (local $i i32) (local $rec i32) (local $st i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -361,8 +367,10 @@
                            (i32.le_u (local.get $st) (i32.const 4)))
                   (i32.eq (local.get $st) (i32.const 6)))
         (then
-          (if (i32.eq (load.field VSock local_port (local.get $rec))
-                      (local.get $port))
+          (if (i32.and
+                (i32.eq (load.field VSock local_port (local.get $rec)) (local.get $port))
+                (i32.or (i32.eq (local.get $type) (i32.const -1))
+                        (i32.eq (load.field VSock type (local.get $rec)) (local.get $type))))
             (then
               ;; INADDR_ANY on either side collides with every address.
               (if (i32.or
@@ -397,7 +405,7 @@
       (if (i32.gt_u (local.get $next) (i32.const 65535))
         (then (local.set $next (i32.const 49152))))
       (i32.store (global.get $VSOCK_NEXT_PORT_SHARED) (local.get $next))
-      (if (i32.eqz (call $vsock_port_taken (global.get $vsock_local_ip) (local.get $port)))
+      (if (i32.eqz (call $vsock_port_taken (global.get $vsock_local_ip) (local.get $port) (i32.const -1)))
         (then (return (local.get $port))))
       (local.set $tries (i32.add (local.get $tries) (i32.const 1)))
       (br $scan)))
@@ -1354,7 +1362,8 @@
     (if (i32.eqz (local.get $port))
       (then (local.set $port (call $vsock_alloc_port)))
       (else
-        (if (call $vsock_port_taken (local.get $ip) (local.get $port))
+        (if (call $vsock_port_taken (local.get $ip) (local.get $port)
+              (load.field VSock type (local.get $rec)))
           (then
             (call $vsock_set_error (i32.const 10048))      ;; WSAEADDRINUSE
             (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -2719,13 +2728,20 @@
   ;; VSOCK_TABLE is 128 records of exactly 128 bytes in a 16KB region with no
   ;; room left, and widening the record would mean moving a memory-map
   ;; boundary for three fields.
-  (global $vsock_async (mut i32) (i32.const 0))
+  ;; One table per process, found through $VSOCK_ASYNC_SHARED. Each guest
+  ;; thread is a separate WASM instance, and a per-instance table (the old
+  ;; global) meant a listener registered on one thread and accepted on another
+  ;; lost its registration, and an event the wire raised in one instance was
+  ;; checked against another instance's empty table: Jazz Jackrabbit 2 listens
+  ;; on its main thread, accepts on its network thread, and never heard
+  ;; FD_READ for the client's first packet. Returns a guest address.
   (global $VSOCK_ASYNC_REC i32 (i32.const 12))
 
   (func $vsock_async_rec (param $idx i32) (result i32)
-    (local $i i32) (local $base i32)
+    (local $i i32) (local $base i32) (local $won i32)
     (if (i32.ge_u (local.get $idx) (global.get $VSOCK_MAX)) (then (return (i32.const 0))))
-    (if (i32.eqz (global.get $vsock_async))
+    (local.set $base (i32.atomic.load (global.get $VSOCK_ASYNC_SHARED)))
+    (if (i32.eqz (local.get $base))
       (then
         (local.set $base (call $heap_alloc
           (i32.mul (global.get $VSOCK_MAX) (global.get $VSOCK_ASYNC_REC))))
@@ -2733,23 +2749,45 @@
         (block $zdone (loop $z
           (br_if $zdone (i32.ge_u (local.get $i)
             (i32.mul (global.get $VSOCK_MAX) (global.get $VSOCK_ASYNC_REC))))
-          (i32.store8 (call $g2w (i32.add (local.get $base) (local.get $i))) (i32.const 0))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (call $gs32 (i32.add (local.get $base) (local.get $i)) (i32.const 0))
+          (local.set $i (i32.add (local.get $i) (i32.const 4)))
           (br $z)))
-        (global.set $vsock_async (local.get $base))))
-    (i32.add (global.get $vsock_async)
+        ;; Two instances may race to make it; the first published table wins
+        ;; and the loser's allocation is returned.
+        (local.set $won (i32.atomic.rmw.cmpxchg (global.get $VSOCK_ASYNC_SHARED)
+          (i32.const 0) (local.get $base)))
+        (if (local.get $won)
+          (then (call $heap_free (local.get $base)) (local.set $base (local.get $won))))))
+    (i32.add (local.get $base)
       (i32.mul (local.get $idx) (global.get $VSOCK_ASYNC_REC))))
 
   ;; Report one event to the window that asked for it. lParam packs the event
   ;; and the error the way WSAMAKESELECTREPLY does; wParam is the handle.
   (func $vsock_async_post (param $idx i32) (param $event i32) (param $error i32)
-    (local $rec i32) (local $w i32)
+    (local $rec i32) (local $w i32) (local $tid i32)
     (local.set $rec (call $vsock_async_rec (local.get $idx)))
     (if (i32.eqz (local.get $rec)) (then (return)))
     (local.set $w (call $g2w (local.get $rec)))
     (if (i32.eqz (i32.load (local.get $w))) (then (return)))          ;; no window
     (if (i32.eqz (i32.and (i32.load offset=8 (local.get $w)) (local.get $event)))
       (then (return)))                                               ;; not requested
+    ;; To the window's own thread, as PostMessage delivers. The wire is pumped
+    ;; from whichever thread is running (GetMessage/PeekMessage, or the host
+    ;; between batches), and the current thread's queue is not necessarily the
+    ;; owner's: Jazz Jackrabbit 2 runs its sockets from a network thread that
+    ;; owns the notification window, and FD_READ for the client's first packet
+    ;; went to the main thread's queue, so the server never read it and the
+    ;; client timed out.
+    (local.set $tid (call $wnd_get_thread (i32.load (local.get $w))))
+    (if (i32.and (i32.ne (local.get $tid) (i32.const 0))
+                 (i32.ne (local.get $tid) (global.get $current_thread_id)))
+      (then
+        (drop (call $shared_post_queue_enqueue
+          (i32.load (local.get $w))
+          (i32.load offset=4 (local.get $w))
+          (call $vsock_handle (local.get $idx))
+          (i32.or (i32.shl (local.get $error) (i32.const 16)) (local.get $event))))
+        (return)))
     (drop (call $post_queue_push
       (i32.load (local.get $w))
       (i32.load offset=4 (local.get $w))
