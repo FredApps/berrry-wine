@@ -50,6 +50,7 @@
 // Options:
 //   --seconds=N      run.js --max-seconds (default 20); the external kill is N+90
 //   --modes=a,b      coop and/or threads (default coop: run.js's own default)
+//   --stuck-after=N  pass run.js --stuck-after (0: never end a run as stuck)
 //   --jobs=N         runs at once (default 1). Each run holds a 512 MB guest;
 //                    keep N small, and run long sweeps on a separate box
 //   --rerun          ignore results already in --jsonl
@@ -86,6 +87,10 @@ for (const m of MODES) {
 }
 const JOBS = Math.max(1, parseInt(opt('jobs', '1'), 10) || 1);
 const MODE_ARGS = { coop: '--no-threads', threads: '--threads' };
+// run.js ends a run as STUCK after N batches at one EIP (default 10). A loader
+// whose main thread waits on worker threads sits still that long in 0.2 s,
+// so a mode comparison wants --stuck-after=0: run the full --seconds.
+const STUCK_AFTER = opt('stuck-after', null);
 
 // The last line for an id+mode wins, so a --rerun supersedes earlier results.
 // Lines written before modes existed are cooperative runs.
@@ -201,6 +206,7 @@ function runOne(id, mode) {
   const args = [RUN, `--app=${id}`, MODE_ARGS[mode], '--no-build', '--quiet-api',
     `--max-seconds=${SECONDS}`, '--max-batches=1000000000',
     '--no-close', `--png=${pngFile}`, `--audio-out=${pcmFile}`];
+  if (STUCK_AFTER !== null) args.push(`--stuck-after=${STUCK_AFTER}`);
   // run.js prints a register line per batch, so a healthy 20 s run is ~100 MB:
   // send it to a file and read back only the head and tail, which is where
   // every line classify() looks for lives.
@@ -249,6 +255,9 @@ function compare(results) {
     const issues = [];
     if (FATAL(a.sig) !== FATAL(b.sig) || (FATAL(a.sig) && a.sig !== b.sig)) {
       issues.push({ rank: 0, what: `crash: coop ${a.sig} / threads ${b.sig}` });
+    }
+    if ((a.sig === 'stuck') !== (b.sig === 'stuck')) {
+      issues.push({ rank: 1, what: `progress: coop ${a.sig} ${a.secs}s / threads ${b.sig} ${b.secs}s` });
     }
     if (a.frame !== b.frame && (a.frame === 'content' || b.frame === 'content')) {
       issues.push({ rank: 1, what: `frame: coop ${a.frame} / threads ${b.frame}` });
