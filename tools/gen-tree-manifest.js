@@ -61,11 +61,14 @@ const files = walk()
   .map(relative => {
     const url = relative.split(path.sep).join('/');
     const vfsPath = 'c:\\' + relative.split(path.sep).join('\\');
+    // The byte length lets lib/app-files.js stream a large file without a
+    // HEAD per file (loadMode 'lazy' mounts synchronously at a known size).
+    const size = fs.statSync(path.join(root, relative)).size;
     const parts = relative.split(path.sep);
     if (flatten && parts.length === 2 && parts[0].toLowerCase() === flatten) {
-      return { url, vfsPaths: ['c:\\' + parts[1], vfsPath] };
+      return { url, vfsPaths: ['c:\\' + parts[1], vfsPath], size };
     }
-    return { url, vfsPath };
+    return { url, vfsPath, size };
   });
 const text = JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n';
 const target = path.join(root, MANIFEST);

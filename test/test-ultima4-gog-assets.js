@@ -18,7 +18,7 @@ try {
  fs.writeFileSync(root+'/candidate/installed/'+name,'changed');assert.throws(()=>prepare(root,s),/fixture mismatch/);
  const actual=require('../lib/ultima4-gog-source.json');assert.equal(actual.saveOverlay.templates.length,4);assert(actual.saveOverlay.templates.includes(name));
  const apps=fs.readFileSync(path.join(__dirname,'../lib/apps.js'),'utf8');const entry=apps.slice(apps.indexOf('      ultima4_gog: {')).split('\n      },')[0];assert(entry.includes("persistFiles: ['c:\\\\cloud_saves\\\\*.sav']"));assert(!entry.includes('persistReset'));
- const shell=fs.readFileSync(path.join(__dirname,'../lib/browser-shell.js'),'utf8');assert(shell.indexOf('VfsPersistence.attach',shell.indexOf('await wine.loadFiles(app.files'))>shell.indexOf('await wine.loadFiles(app.files'));
+ const shell=fs.readFileSync(path.join(__dirname,'../lib/browser-shell.js'),'utf8');assert(shell.indexOf('VfsPersistence.attach',shell.indexOf('await wine.loadFiles(files'))>shell.indexOf('await wine.loadFiles(files'));
  const {VirtualFS}=require('../lib/filesystem'), persistence=require('../lib/vfs-persistence');
  const values=new Map(),storage={get length(){return values.size},key:i=>[...values.keys()][i]||null,getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
  const user=new VirtualFS(),opts={appId:'ultima4_gog',patterns:['c:\\cloud_saves\\*.sav'],storage};

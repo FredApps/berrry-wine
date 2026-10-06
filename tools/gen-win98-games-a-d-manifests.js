@@ -206,6 +206,8 @@ function manifestFor(game, directory) {
         || path.normalize(relative).startsWith(entry + path.sep))).map(relative => ({
     url: relative.split(path.sep).join('/'),
     vfsPath: (game.vfsRoot || 'c:\\') + relative.split(path.sep).join('\\'),
+    // Byte length: lets lib/app-files.js stream a large file with no HEAD.
+    size: fs.statSync(path.join(directory, relative)).size,
   }));
   for (const mediaRoot of game.media || []) {
     const mediaDirectory = path.join(directory, '..', mediaRoot);
@@ -214,6 +216,7 @@ function manifestFor(game, directory) {
       files.push({
         url: '../' + mediaPath.split(path.sep).join('/'),
         vfsPath: 'c:\\' + mediaPath.split(path.sep).join('\\'),
+        size: fs.statSync(path.join(mediaDirectory, relative)).size,
       });
     }
   }
@@ -226,6 +229,7 @@ function manifestFor(game, directory) {
       files.push({
         url: source.split(path.sep).join('/'),
         vfsPath: 'c:\\' + relative.split(path.sep).join('\\'),
+        size: fs.statSync(path.join(flatDirectory, relative)).size,
       });
     }
   }

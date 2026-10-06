@@ -5230,7 +5230,19 @@ async function main() {
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
     // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
     if (ASSET_ENTRY) {
-      const assetFiles = getAssetFiles(ASSET_ENTRY);
+      // The page's download policy (lib/app-files.js), decided on the same
+      // files and sizes. Its lazy entries mount provider-backed under
+      // --lazy-ranges -- the audit of what the browser streams -- and stay
+      // ordinary eager mounts otherwise.
+      const policy = require('../lib/app-files').normalizeLazyFiles(ASSET_ENTRY, getAssetFiles(ASSET_ENTRY), {
+        isWin16: !!(instance.exports.is_win16 && instance.exports.is_win16()),
+        syncAudio: require('../lib/app-files').importsSyncAudio(fs.readFileSync(EXE_PATH)),
+        sizeOf: url => { try { return fs.statSync(appAsset(url)).size; } catch (_) { return null; } },
+      });
+      const assetFiles = policy.files;
+      const ps = policy.summary;
+      console.log(`[files] policy ${ps.policy}: ${ps.eagerFiles} eager (${ps.eagerBytes} bytes), ` +
+        `${ps.lazyFiles} on demand (${ps.lazyBytes} bytes)${LAZY_RANGES ? '' : ' -- mounted eager without --lazy-ranges'}`);
       const missing = [];
       let lazyManifestStats = null;
       for (const item of assetFiles) {
