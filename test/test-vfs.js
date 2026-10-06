@@ -616,11 +616,13 @@ test('manifest parent registration makes a non-C drive enumerable', () => {
   assert.strictEqual(vfs.findNextFile(root.handle).name, 'cd2');
 });
 
-test('basename fallback finds file by name on wrong drive', () => {
+test('a file of the same name on another drive is not found', () => {
+  // There was a basename fallback here. It served Colin McRae Rally
+  // c:\demo\english.txt for Q:\Game\language\english.txt.
   const vfs = makeVFS({ 'c:\\demoopen.ddv': 100 });
   const r = vfs.findFirstFile('D:\\abe\\demoopen.ddv');
-  assert(r.handle, 'should find via basename fallback');
-  assert.strictEqual(r.entry.name, 'demoopen.ddv');
+  assert(!r.handle, 'FindFirstFile is exact');
+  assert.strictEqual(r.entry, null);
 });
 
 test('missing C-drive directories cannot borrow an exact filename from a cache', () => {
@@ -673,14 +675,19 @@ test('parent traversal clamps at drive root for sibling asset wildcards', () => 
   assert.deepStrictEqual(names, ['entry.dx', 'training.dx']);
 });
 
-test('relative missing subdir wildcard falls back to current directory', () => {
+test('a wildcard in a missing relative directory finds nothing', () => {
+  // AoE used to depend on the current directory standing in for campaign;
+  // its registry entry now mounts the .cpn files at c:\campaign.
   const vfs = makeVFS({ 'c:\\armies_1.cpn': 1, 'c:\\readme.txt': 2, 'c:\\reigno_1.cpn': 3 });
-  const r = vfs.findFirstFile('campaign\\*.cpn');
-  assert(r.handle, 'should find flat campaign files');
+  assert(!vfs.findFirstFile('campaign\\*.cpn').handle, 'no current-directory retry');
+  const mounted = makeVFS({ 'c:\\campaign\\armies_1.cpn': 1, 'c:\\campaign\\reigno_1.cpn': 3 });
+  mounted.dirs.add('c:\\campaign');
+  const r = mounted.findFirstFile('campaign\\*.cpn');
+  assert(r.handle, 'the mounted layout enumerates');
   const names = [r.entry.name];
   let next;
-  while ((next = vfs.findNextFile(r.handle))) names.push(next.name);
-  assert.deepStrictEqual(names, ['armies_1.cpn', 'reigno_1.cpn']);
+  while ((next = mounted.findNextFile(r.handle))) names.push(next.name);
+  assert.deepStrictEqual(names.filter(n => n.endsWith('.cpn')), ['armies_1.cpn', 'reigno_1.cpn']);
 });
 
 test('broad wildcard in a missing relative directory does not enumerate the root', () => {
@@ -703,10 +710,18 @@ test('case insensitive matching', () => {
 
 // --- createFile basename fallback ---
 
-test('createFile OPEN_EXISTING with wrong drive uses basename fallback', () => {
-  const vfs = makeVFS({ 'c:\\level.lvl': 50 });
-  const h = vfs.createFile('D:\\game\\level.lvl', 0x80000000, 3); // OPEN_EXISTING
-  assert(h && h !== 0xFFFFFFFF, 'should open via basename fallback');
+test('createFile OPEN_EXISTING on another drive is exact, with the Win32 error', () => {
+  const vfs = makeVFS({ 'c:\\level.lvl': 50, 'c:\\game\\other.lvl': 1 });
+  vfs.dirs.add('c:\\game');
+  const wrongDrive = vfs.createFileResult('D:\\game\\level.lvl', 0x80000000, 3);
+  assert.strictEqual(wrongDrive.handle, 0, 'no basename fallback');
+  assert.strictEqual(wrongDrive.error, 3, 'a missing directory is ERROR_PATH_NOT_FOUND');
+  const missingFile = vfs.createFileResult('C:\\game\\level.lvl', 0x80000000, 3);
+  assert.strictEqual(missingFile.handle, 0);
+  assert.strictEqual(missingFile.error, 2, 'a missing file in a real directory is ERROR_FILE_NOT_FOUND');
+  const truncate = vfs.createFileResult('D:\\game\\level.lvl', 0xC0000000, 5);
+  assert.strictEqual(truncate.error, 3, 'TRUNCATE_EXISTING reports the same');
+  assert(vfs.createFile('C:\\level.lvl', 0x80000000, 3), 'the exact path still opens');
 });
 
 test('createFile OPEN_EXISTING without match returns error', () => {
@@ -875,9 +890,10 @@ test('AbeDemo: wildcard scan after loading exe sibling files', () => {
   for (const f of abeFiles) {
     vfs.files.set('c:\\' + f, { data: new Uint8Array(100), attrs: 0x20 });
   }
-  // Game scans D:\abe\demoopen.ddv — should find via basename
+  // The game probes D:..Z:\abe\demoopen.ddv for its CD. With no CD those
+  // miss, as on Windows, and it carries on with the installed copy.
   const r1 = vfs.findFirstFile('D:\\abe\\demoopen.ddv');
-  assert(r1.handle, 'demoopen.ddv via basename fallback');
+  assert(!r1.handle, 'no CD copy is found on D:');
 
   // Game scans .\*.* — should find all files in c:\
   const r2 = vfs.findFirstFile('.\\*.*');
