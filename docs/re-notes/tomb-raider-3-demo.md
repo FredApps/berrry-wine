@@ -66,3 +66,23 @@ TL `sz` in 0.97-0.99, `rhw` 0.2-2.6 and specular 0.
 
 Evidence: `scratch/runs/20261005T222600Z-tomb-raider-3-demo-claude202b4b39-jungle`
 (dirty tree) and `...-jungle-c0081348` (committed build, byte-identical PNGs).
+
+## Parked follow-ups (2026-10-06)
+
+Partly investigated, not fixed:
+
+- **Passport pages untextured.** The open passport is a TRIANGLELIST under
+  `TEXTUREHANDLE` 0x18. TR3 creates 32 video-memory textures up front
+  (`GetHandle` returns handles 0x0-0x1f, DX slots 16-47) and by the passport
+  has made only 14 `IDirect3DTexture2_Load` calls. Slots 16-24 (handles
+  0-8) have content; slots 25-47 (handles 9-0x1f), including handle 0x18's,
+  are all zero (`--dx-surfaces`, batch 18500). Open question: are those Loads
+  failing or skipped in our D3DIM, or does the game fill that page some other
+  way, for example by Lock/Unlock on the video surface?
+- **INDIA loading picture over gameplay.** The loading BMP fades out over the
+  first seconds of the level, and stays longer when input dismisses the
+  Controls overlay early. Not compared with hardware.
+- **Audio.** Needs an MS-ADPCM ACM codec. Without one, `acmDriverEnum` finds
+  only the PCM converter and the game runs silent.
+
+Repro for the passport: `--app=tomb_raider_3_demo --input=8:dlg-cmd:1,40:dlg-cmd:1,18000:keydown:13,18100:keyup:13,18500:png:out.png --dx-surfaces`.
