@@ -2474,6 +2474,157 @@
       (then (call $win16_VerQueryValue) (return (i32.const 1))))
     (i32.const 0))
 
+  ;; ---- LZEXPAND ----
+  ;;
+  ;; The 16-bit LZ library Win 3.x setups decompress their payload with (Sierra's
+  ;; SETUP.EXE for Betrayal in Antara imports it). Every entry is the LZ32 call
+  ;; of the same name with sixteen-bit handles: an LZ handle (0x400 + slot, the
+  ;; same numbers LZ32 hands out) passes through as it is, anything else is a
+  ;; file and goes through the task's file map like _lopen's.
+  (func $win16_module_is_lzexpand (param $id i32) (result i32)
+    (local $slot i32)
+    (if (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+                (i32.ge_u (local.get $id)
+                  (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                           (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dynamic_module_slot
+      (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
+    (i32.and
+      (i32.eq (i32.load8_u (local.get $slot)) (i32.const 8))
+      (i64.eq (i64.load offset=1 (local.get $slot)) (i64.const 0x444E415058455A4C)))) ;; "LZEXPAND"
+
+  (func $win16_lz_is_lz_handle (param $h i32) (result i32)
+    (i32.and (i32.ge_u (local.get $h) (global.get $LZ_MIN_HANDLE))
+             (i32.lt_u (local.get $h)
+               (i32.add (global.get $LZ_MIN_HANDLE) (global.get $LZ_MAX_STATES)))))
+
+  (func $win16_lz_h32 (param $h16 i32) (result i32)
+    (if (result i32) (call $win16_lz_is_lz_handle (local.get $h16))
+      (then (local.get $h16))
+      (else (call $win16_fh32 (local.get $h16)))))
+
+  ;; An LZ32 result as the task sees it: LZ handles and LZERROR_* codes
+  ;; (negative) as sixteen-bit values, a file handle through the map.
+  (func $win16_lz_h16 (param $h32 i32) (result i32)
+    (if (result i32) (i32.or (i32.lt_s (local.get $h32) (i32.const 0))
+                             (call $win16_lz_is_lz_handle (local.get $h32)))
+      (then (i32.and (local.get $h32) (i32.const 0xFFFF)))
+      (else (call $win16_fh16 (local.get $h32)))))
+
+  ;; LZOpenFile(lpFileName, lpReOpenBuf, wStyle) / LZInit(hfSrc).
+  (func $win16_LZOpenFile
+    (local $name i32) (local $ofs i32) (local $style i32)
+    (local.set $style (call $win16_arg16 (i32.const 0)))
+    (local.set $ofs (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $ofs (i32.const 0))))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZOpenFileA (local.get $name) (local.get $ofs) (local.get $style)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $win16_lz_h16 (i32.load offset=0 (global.get $reg_base))))
+    (call $win16_api_return (i32.const 10)))
+
+  (func $win16_LZInit
+    (local $h i32)
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_LZInit (local.get $h) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $win16_lz_h16 (i32.load offset=0 (global.get $reg_base))))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; LZRead(hFile, lpBuffer, cbRead) -> bytes read or LZERROR_*.
+  (func $win16_LZRead
+    (local $h i32) (local $buf i32) (local $n i32)
+    (local.set $n (call $win16_arg16 (i32.const 0)))
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZRead (local.get $h) (local.get $buf) (local.get $n)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; LZSeek(hFile, lOffset, nOrigin) -> the new position, a LONG in DX:AX.
+  (func $win16_LZSeek
+    (local $h i32) (local $off i32) (local $origin i32)
+    (local.set $origin (call $win16_arg16 (i32.const 0)))
+    (local.set $off (call $win16_arg32 (i32.const 1)))
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZSeek (local.get $h) (local.get $off) (local.get $origin)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
+    (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; LZCopy / CopyLZFile(hfSource, hfDest) -> bytes written, a LONG in DX:AX.
+  (func $win16_LZCopy
+    (local $src i32) (local $dst i32)
+    (local.set $dst (call $win16_lz_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $src (call $win16_lz_h32 (call $win16_arg16 (i32.const 1))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_LZCopy (local.get $src) (local.get $dst) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
+    (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_LZClose
+    (local $h16 i32) (local $h i32)
+    (local.set $h16 (call $win16_arg16 (i32.const 0)))
+    (local.set $h (call $win16_lz_h32 (local.get $h16)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_LZClose (local.get $h) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (i32.eqz (call $win16_lz_is_lz_handle (local.get $h16)))
+      (then
+        (call $win16_fh_forget (local.get $h16))
+        (call $win16_h16_forget (local.get $h))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; LZEXPAND ordinals: 1 LZCopy, 2 LZOpenFile, 3 LZInit, 4 LZSeek, 5 LZRead,
+  ;; 6 LZClose, 7 LZStart, 8 CopyLZFile, 9 LZDone, 10 GetExpandedName. LZStart
+  ;; and LZDone bracket a run of CopyLZFile calls in Win 3.x and have nothing
+  ;; to set up here; LZStart answers TRUE. GetExpandedName is not written yet
+  ;; and falls through to the fail-fast tail.
+  (func $win16_lzexpand (param $module i32) (param $ordinal i32) (result i32)
+    (if (i32.eqz (call $win16_module_is_lzexpand (local.get $module)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 1)) (i32.eq (local.get $ordinal) (i32.const 8)))
+      (then (call $win16_LZCopy) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 2))
+      (then (call $win16_LZOpenFile) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 3))
+      (then (call $win16_LZInit) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 4))
+      (then (call $win16_LZSeek) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 5))
+      (then (call $win16_LZRead) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 6))
+      (then (call $win16_LZClose) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 7)) (i32.eq (local.get $ordinal) (i32.const 9)))
+      (then
+        (i32.store offset=0 (global.get $reg_base)
+          (i32.eq (local.get $ordinal) (i32.const 7)))
+        (call $win16_api_return (i32.const 0))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   ;; USER.430 lstrcmp / USER.471 lstrcmpi(lpString1, lpString2) -> <0, 0, >0.
   ;; Case folding is ASCII only, which is what the code pages these apps run
   ;; under amount to for the comparisons they make.
@@ -17018,6 +17169,8 @@
     (if (call $win16_msvideo (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))
     (if (call $win16_ver (local.get $module) (local.get $ordinal))
+      (then (call $win16_trace_ret) (return)))
+    (if (call $win16_lzexpand (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))
 
     ;; Anything not implemented reports itself and stops, on the same reasoning

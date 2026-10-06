@@ -1245,19 +1245,14 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x4007))            ;; DMLERR_LOW_MEMORY
         (call $win16_api_return (i32.const 16))
         (return)))
-    ;; A monitor is a DDE spy: it serves nothing and expects to be told about
-    ;; every transaction in the system through XTYP_MONITOR. None of that is
-    ;; delivered here, and an instance that registered happily and then saw
-    ;; nothing would be the worst of both — a debugging tool silently
-    ;; reporting that nothing is happening. Refusing outright is the honest
-    ;; answer, and DMLERR_DLL_USAGE is the one Windows uses for a class this
-    ;; DLL will not serve.
-    (if (i32.and (call $win16_arg32 (i32.const 2)) (global.get $APPCLASS_MONITOR))
-      (then
-        (call $win16_dde_set_error (i32.const 0x4004))   ;; DMLERR_DLL_USAGE
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0x4004))
-        (call $win16_api_return (i32.const 16))
-        (return)))
+    ;; APPCLASS_MONITOR (bit 0) is accepted, as Windows' DDEML accepts it.
+    ;; Sierra's Win 3.x SETUP passes afCmd = 0xFFFFFFFF -- every flag at once,
+    ;; monitor included -- treats any non-zero answer as fatal, and then goes
+    ;; on to talk to Program Manager as an ordinary client; refusing the class
+    ;; with DMLERR_DLL_USAGE stopped Betrayal in Antara's installer at "System
+    ;; Error: DdeInitialize returned 4004". What a monitor is promised beyond
+    ;; that, an XTYP_MONITOR callback for every transaction in the system, is
+    ;; not delivered here; the afCmd kept at +8 says it was asked for.
     (local.set $slot (call $win16_dde_inst (local.get $i)))
     (i32.store (local.get $slot) (i32.const 1))
     (global.set $win16_dde_users
