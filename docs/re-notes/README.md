@@ -109,6 +109,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Drakan: Order of the Flame (demo) | [drakan-demo.md](drakan-demo.md) |
 | Braveheart (demo) | [braveheart-demo.md](braveheart-demo.md) |
 | Driver (demo) | [driver-demo.md](driver-demo.md) |
+| Colin McRae Rally 2.0 (demo) | [cmr2-demo.md](cmr2-demo.md) |
 | Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
 | Aliens versus Predator (Alien demo) | [avp-alien-demo.md](avp-alien-demo.md) |

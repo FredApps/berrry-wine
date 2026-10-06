@@ -178,6 +178,16 @@ const GAMES = [
   {
     // Max Design's 1998 demo: a RAR self-extractor whose contents are the
     // game tree itself (extracted with node-unrar-js; 7-Zip lacks the codec).
+    id: 'cmr2_demo',
+    // Codemasters' 2000 demo. Its InstallShield 6 setup needs ikernel.exe as an
+    // out-of-process COM server, which the emulator does not run, so the tree
+    // is the cabinet contents (node tools/is-cab.js <dir> --extract=extracted,
+    // every file MD5-checked against its descriptor).
+    root: 'Colin-Mcrae-Rally2-demo-D3D/extracted',
+    exe: 'CMR2Demo.exe',
+    vfsRoot: 'c:\\cmr2demo\\',
+  },
+  {
     id: 'anno1602_demo',
     root: 'Anno1602-demo-SW/extracted',
     exe: '1602.exe',

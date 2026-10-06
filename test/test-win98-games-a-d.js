@@ -31,6 +31,7 @@ const expected = {
   descent3_demo: ['main.exe', 23],
   anno1602_demo: ['1602.exe', 455],
   driver_demo: ['game.exe', 152],
+  cmr2_demo: ['CMR2Demo.exe', 219],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
