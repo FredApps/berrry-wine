@@ -2503,6 +2503,12 @@ async function main() {
     // behaviour is pinned to that; turning it on silently would change what many
     // runs mean. See lib/headless-gl.js.
     createCanvas: HEADLESS_GL || GLIDE_RENDERER === 'software' ? createCanvas : null,
+    // Glide always gets one. Without it grSstWinOpen returned 0 under the
+    // default --glide-renderer=webgl, the games ignore that, and their first
+    // grBufferClear/guGammaCorrectionRGB then trapped on a closed context
+    // (NFS III, Diablo II). The bridge itself drops to software when the
+    // canvas has no WebGL, exactly as a GPU-less browser does.
+    glideCreateCanvas: createCanvas || null,
     processId: 1000,
     apiTable,
     log: VERBOSE ? console.log.bind(console) : null,

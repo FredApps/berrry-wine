@@ -59,5 +59,37 @@ const GlideRenderWorker = require('../lib/glide-render-worker');
       bytes: new Uint8Array(new Uint32Array([0, 64, 48, 0, 0, 3]).buffer) }), /Invalid Glide open packet/,
       'a colour-buffer count other than 1 or 2 is still refused');
   } finally { console.warn = warn; }
+
+  // The CLI host wiring. run.js keeps ctx.createCanvas null unless
+  // --headless-gl or --glide-renderer=software (GL and D3D9 key their
+  // no-3D-hardware path off it), and with only that the default webgl Glide
+  // bridge had no drawable at all: grSstWinOpen returned 0, NFS III and
+  // Diablo II ignored it, and their next grBufferClear/guGammaCorrectionRGB
+  // trapped on the closed context. ctx.glideCreateCanvas is Glide's own.
+  const { createHostImports } = require('../lib/host-imports');
+  const { createCanvas } = require('../lib/canvas-compat');
+  const openThroughHost = extra => {
+    const logged = [], error = console.error;
+    console.error = m => logged.push(String(m));
+    try {
+      const imports = createHostImports(Object.assign({ getMemory: () => memory.buffer,
+        exports: e, renderer: null, onExit() {}, glideBackend: 'webgl', createCanvas: null }, extra));
+      new Uint32Array(memory.buffer, packetAt, 5).set([0, 64, 48, 0, 0]);
+      const opened = imports.host.glide_submit(1, packetAt, 20);
+      if (opened) imports.host.glide_submit(2, 0, 0);
+      return { opened, logged };
+    } finally {
+      console.error = error;
+      new Uint8Array(memory.buffer, packetAt, 20).set(saved);
+    }
+  };
+  assert.strictEqual(openThroughHost({}).opened, 0,
+    'control: with no drawable factory the open fails, the shape that trapped');
+  const viaCli = openThroughHost({ glideCreateCanvas: createCanvas });
+  assert.strictEqual(viaCli.opened, 1, 'glideCreateCanvas lets a webgl bridge open headless');
+  assert(viaCli.logged.some(m => /software backend/.test(m)), 'by falling back to software');
+  const runJs = require('fs').readFileSync(require('path').join(__dirname, 'run.js'), 'utf8');
+  assert(/glideCreateCanvas: createCanvas \|\| null/.test(runJs),
+    'test/run.js hands the Glide bridge its own drawable factory');
   console.log('PASS Glide without WebGL falls back to software on the page and in the render Worker');
 })().catch(error => { console.error(error); process.exitCode = 1; });
