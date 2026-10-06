@@ -39,7 +39,7 @@
     (local $old_yield_reason i32) (local $old_yield_flag i32)
     (local $result i32) (local $edit_state i32) (local $edit_state_w ptr<EditState>)
     (local $edit_len_before i32)
-    (local $sync_rounds i32)
+    (local $sync_rounds i32) (local $sleep_rounds i32) (local $old_sleep_yielded i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
@@ -194,12 +194,31 @@
     ;; than one interpreter slice (property-sheet Cancel walks every tab/page
     ;; before destroying the frame). Continue bounded slices until the return
     ;; thunk sets EIP=0 instead of silently abandoning the guest call midway.
+    ;;
+    ;; A round the procedure ended itself with Sleep is not runaway work, and
+    ;; nothing outside this loop gets a turn between rounds, so the sleep
+    ;; cannot be honoured anyway: count those against their own, larger cap.
+    ;; Unreal Tournament's first-run wizard probes each 3D device from
+    ;; WM_PAINT (sent here by UpdateWindow), polling for the probe's log with
+    ;; Sleep(100) up to 100 times a device; 64 rounds abandoned that paint
+    ;; mid-probe and left "Detecting 3D video devices, please wait..." up for
+    ;; good. A procedure that spins without sleeping is still cut at 64 full
+    ;; slices.
     (local.set $sync_rounds (i32.const 0))
+    (local.set $sleep_rounds (i32.const 0))
+    (local.set $old_sleep_yielded (global.get $sleep_yielded))
+    (global.set $sleep_yielded (i32.const 0))
     (block $sync_done (loop $sync_run
       (call $run (i32.const 1000000))
       (br_if $sync_done (i32.eqz (global.get $eip)))
-      (local.set $sync_rounds (i32.add (local.get $sync_rounds) (i32.const 1)))
-      (if (i32.ge_u (local.get $sync_rounds) (i32.const 64))
+      (if (global.get $sleep_yielded)
+        (then
+          (global.set $sleep_yielded (i32.const 0))
+          (local.set $sleep_rounds (i32.add (local.get $sleep_rounds) (i32.const 1))))
+        (else
+          (local.set $sync_rounds (i32.add (local.get $sync_rounds) (i32.const 1)))))
+      (if (i32.or (i32.ge_u (local.get $sync_rounds) (i32.const 64))
+                  (i32.ge_u (local.get $sleep_rounds) (i32.const 4096)))
         (then
           (call $host_log_i32 (i32.const 0xCADE5000))
           (call $host_log_i32 (global.get $eip))
@@ -210,6 +229,7 @@
           (call $host_log_i32 (local.get $lParam))
           (br $sync_done)))
       (br $sync_run)))
+    (global.set $sleep_yielded (local.get $old_sleep_yielded))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
     (global.set $wnd_send_completed (i32.eqz (global.get $eip)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
