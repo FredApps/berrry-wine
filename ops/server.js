@@ -115,6 +115,11 @@ function createServer(options = {}) {
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],
         '/views.js':['views.js','text/javascript; charset=utf-8'],
+        '/favicon.svg':['favicon.svg','image/svg+xml'],
+        '/fonts/chakra-petch-400.woff2':['fonts/chakra-petch-400.woff2','font/woff2'],
+        '/fonts/chakra-petch-600.woff2':['fonts/chakra-petch-600.woff2','font/woff2'],
+        '/fonts/chakra-petch-700.woff2':['fonts/chakra-petch-700.woff2','font/woff2'],
+        '/fonts/jetbrains-mono.woff2':['fonts/jetbrains-mono.woff2','font/woff2'],
         '/vendor/xterm.js':['node_modules/@xterm/xterm/lib/xterm.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.css':['node_modules/@xterm/xterm/css/xterm.css','text/css; charset=utf-8'],
         };

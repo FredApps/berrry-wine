@@ -51,7 +51,7 @@ function needsYou() {
   const { needsUser } = BlockerModel.blockerSummary(state);
   for (const t of needsUser) {
     const ask = t.needs || t.waitingOn || t.blocker || t.next || 'The owner needs a decision.';
-    items.push({ kind: 'warn', ic: 'alert', title: t.title, body: ask, acts: [`<button class="btn small primary" data-blocker="${escape(t.id)}">Answer</button>`, `<button class="btn small" data-task="${escape(t.id)}">Details</button>`] });
+    items.push({ kind: 'hot', ic: 'alert', title: t.title, body: ask, acts: [`<button class="btn small primary" data-blocker="${escape(t.id)}">Answer</button>`, `<button class="btn small" data-task="${escape(t.id)}">Details</button>`] });
   }
   const review = state.tasks.filter(t => t.status === 'review');
   if (review.length) items.push({ kind: 'info', ic: 'check', title: `${plural(review.length, 'finished result')} to review`, body: review.slice(0, 3).map(t => t.title).join(' · ') + (review.length > 3 ? ' …' : ''), acts: [`<a class="btn small" href="#tasks" data-board-col="review">Open review queue</a>`] });
