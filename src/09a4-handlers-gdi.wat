@@ -1525,6 +1525,40 @@
         (local.get $arg0) (i32.const 8) (local.get $arg1) (i32.const 1)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; ModifyWorldTransform(hdc, lpXform, iMode). Our DCs carry no world
+  ;; transform: their page space is the identity. So MWT_IDENTITY, and a left
+  ;; or right multiply by an identity XFORM, leave the real state exactly
+  ;; right and succeed; any other matrix is a transform this GDI cannot honour
+  ;; and fails loud. Tiberian Sun's DC-reset helper sets GM_ADVANCED and
+  ;; resets to identity before drawing text.
+  (func $handle_ModifyWorldTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32)
+    (if (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+      (then (global.set $last_error (i32.const 6)))  ;; ERROR_INVALID_HANDLE
+      (else
+        (if (i32.eq (local.get $arg2) (i32.const 1))      ;; MWT_IDENTITY
+          (then (local.set $ok (i32.const 1)))
+          (else
+            (if (i32.or (i32.eq (local.get $arg2) (i32.const 2))
+                        (i32.eq (local.get $arg2) (i32.const 3)))
+              (then
+                (if (i32.eqz (local.get $arg1))
+                  (then (global.set $last_error (i32.const 87)))  ;; ERROR_INVALID_PARAMETER
+                  (else
+                    (if (i32.eqz (i32.and
+                          (i32.and (f32.eq (f32.reinterpret_i32 (call $gl32 (local.get $arg1))) (f32.const 1))
+                                   (f32.eq (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))) (f32.const 0)))
+                          (i32.and
+                            (i32.and (f32.eq (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))) (f32.const 0))
+                                     (f32.eq (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))) (f32.const 1)))
+                            (i32.and (f32.eq (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $arg1) (i32.const 16)))) (f32.const 0))
+                                     (f32.eq (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $arg1) (i32.const 20)))) (f32.const 0))))))
+                      (then (call $crash_unimplemented (local.get $name_ptr))))
+                    (local.set $ok (i32.const 1)))))
+              (else (global.set $last_error (i32.const 87))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   (func $handle_GetSystemPaletteUse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (select
       (call $gdi_dc_meta_get (local.get $arg0) (i32.const 12) (i32.const 1))

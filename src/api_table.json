@@ -35225,5 +35225,13 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2465888635
+  },
+  {
+    "id": 4169,
+    "name": "ModifyWorldTransform",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2841028271,
+    "ret": "BOOL"
   }
 ]
