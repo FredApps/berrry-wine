@@ -4946,6 +4946,9 @@ async function main() {
   // Computed here, not at parse time: the debug flags above rewrite BATCH_SIZE.
   const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE * THREAD_SLICES, 20000);
   if (WORKER_THREADS) {
+    // Real parallelism: LOCK-prefixed instructions must be atomic across the
+    // worker_threads (07-decoder.wat $try_emit_locked, handler 499).
+    if (instance.exports.set_lock_atomic_mode) instance.exports.set_lock_atomic_mode(1);
     const { GuestThreadHost } = require('../lib/guest-thread-host');
     const sigs = JSON.parse(fs.readFileSync(
       path.join(ROOT, 'lib', 'host-import-sigs.generated.json'), 'utf8')).sigs;

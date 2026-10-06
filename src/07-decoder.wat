@@ -2441,6 +2441,97 @@
     (global.set $d_pc (local.get $p))
     (i32.const 1))
 
+  ;; A LOCK-prefixed read-modify-write, or XCHG with a memory operand, as
+  ;; handler 499 ($th_lock_rmw, 05-alu.wat): an atomic compare-and-swap. Only
+  ;; called when $LOCK_MODE says guest threads run concurrently. $op is the
+  ;; opcode byte already consumed; returns 1 having consumed the instruction,
+  ;; or 0 having consumed nothing more, which leaves the ordinary decode (and
+  ;; its non-atomic handlers) in charge. Declines: register forms (a LOCK on
+  ;; one is #UD), CMP (never writes), 16-bit tasks and 16-bit addressing, and
+  ;; the opcodes not listed (BTS/BTR/BTC, CMPXCHG8B).
+  (func $try_emit_locked (param $op i32) (param $p66 i32) (result i32)
+    (local $p i32) (local $op2 i32) (local $modrm i32) (local $regf i32)
+    (local $kind i32) (local $sub i32) (local $wcode i32) (local $imm_kind i32)
+    (local $a i32) (local $imm i32)
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (local.set $p (global.get $d_pc))
+    (local.set $imm_kind (i32.const 0)) ;; 0 none, 1 imm8, 2 imm8 sign-extended, 3 imm16/32
+    (local.set $wcode (if (result i32) (local.get $p66) (then (i32.const 1)) (else (i32.const 2))))
+    (if (i32.eq (local.get $op) (i32.const 0x0F))
+      (then
+        (local.set $op2 (call $gl8 (local.get $p)))
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (block $known
+          ;; 0F C0/C1 XADD r/m, r     0F B0/B1 CMPXCHG r/m, r
+          (if (i32.eq (i32.and (local.get $op2) (i32.const 0xFE)) (i32.const 0xC0))
+            (then (local.set $kind (i32.const 3)) (br $known)))
+          (if (i32.eq (i32.and (local.get $op2) (i32.const 0xFE)) (i32.const 0xB0))
+            (then (local.set $kind (i32.const 4)) (br $known)))
+          (return (i32.const 0)))
+        (if (i32.eqz (i32.and (local.get $op2) (i32.const 1))) (then (local.set $wcode (i32.const 0)))))
+      (else
+        (block $known
+          ;; 00-31 (not 38/39): ALU r/m, r. Low bit 0 = byte.
+          (if (i32.and (i32.lt_u (local.get $op) (i32.const 0x38))
+                       (i32.eqz (i32.and (local.get $op) (i32.const 6))))
+            (then
+              (local.set $kind (i32.const 0))
+              (local.set $sub (i32.shr_u (local.get $op) (i32.const 3)))
+              (if (i32.eqz (i32.and (local.get $op) (i32.const 1))) (then (local.set $wcode (i32.const 0))))
+              (br $known)))
+          ;; 80 r/m8,imm8   81 r/m,imm16/32   83 r/m,imm8 sign-extended
+          (if (i32.eq (local.get $op) (i32.const 0x80))
+            (then (local.set $kind (i32.const 1)) (local.set $wcode (i32.const 0))
+                  (local.set $imm_kind (i32.const 1)) (br $known)))
+          (if (i32.eq (local.get $op) (i32.const 0x81))
+            (then (local.set $kind (i32.const 1)) (local.set $imm_kind (i32.const 3)) (br $known)))
+          (if (i32.eq (local.get $op) (i32.const 0x83))
+            (then (local.set $kind (i32.const 1)) (local.set $imm_kind (i32.const 2)) (br $known)))
+          ;; FE/FF /0 INC, /1 DEC     F6/F7 /2 NOT, /3 NEG
+          (if (i32.eq (i32.and (local.get $op) (i32.const 0xFE)) (i32.const 0xFE))
+            (then (local.set $kind (i32.const 2))
+                  (if (i32.eq (local.get $op) (i32.const 0xFE)) (then (local.set $wcode (i32.const 0))))
+                  (br $known)))
+          (if (i32.eq (i32.and (local.get $op) (i32.const 0xFE)) (i32.const 0xF6))
+            (then (local.set $kind (i32.const 2))
+                  (if (i32.eq (local.get $op) (i32.const 0xF6)) (then (local.set $wcode (i32.const 0))))
+                  (br $known)))
+          ;; 86/87 XCHG r/m, r
+          (if (i32.eq (i32.and (local.get $op) (i32.const 0xFE)) (i32.const 0x86))
+            (then (local.set $kind (i32.const 5))
+                  (if (i32.eq (local.get $op) (i32.const 0x86)) (then (local.set $wcode (i32.const 0))))
+                  (br $known)))
+          (return (i32.const 0)))))
+    ;; Peek the ModRM before consuming anything.
+    (local.set $modrm (call $gl8 (local.get $p)))
+    (if (i32.eq (i32.and (local.get $modrm) (i32.const 0xC0)) (i32.const 0xC0)) (then (return (i32.const 0))))
+    (local.set $regf (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then (if (i32.eq (local.get $regf) (i32.const 7)) (then (return (i32.const 0)))) ;; CMP
+            (local.set $sub (local.get $regf))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (if (i32.eq (i32.and (local.get $op) (i32.const 0xFE)) (i32.const 0xFE))
+          (then (if (i32.gt_u (local.get $regf) (i32.const 1)) (then (return (i32.const 0)))) ;; CALL/JMP/PUSH
+                (local.set $sub (local.get $regf)))
+          (else (if (i32.lt_u (local.get $regf) (i32.const 2)) (then (return (i32.const 0)))) ;; TEST
+                (if (i32.gt_u (local.get $regf) (i32.const 3)) (then (return (i32.const 0)))) ;; MUL/DIV
+                (local.set $sub (local.get $regf))))))
+    ;; Committed: consume the second opcode byte, then the ModRM/SIB/disp.
+    (global.set $d_pc (local.get $p))
+    (call $decode_modrm)
+    (if (i32.eq (local.get $imm_kind) (i32.const 1)) (then (local.set $imm (call $d_fetch8))))
+    (if (i32.eq (local.get $imm_kind) (i32.const 2)) (then (local.set $imm (call $sign_ext8 (call $d_fetch8)))))
+    (if (i32.eq (local.get $imm_kind) (i32.const 3))
+      (then (local.set $imm (if (result i32) (local.get $p66) (then (call $d_fetch16)) (else (call $d_fetch32))))))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 499)
+      (i32.or (i32.or (local.get $kind) (i32.shl (local.get $sub) (i32.const 4)))
+              (i32.or (i32.shl (local.get $regf) (i32.const 8)) (i32.shl (local.get $wcode) (i32.const 12)))))
+    (call $te_raw (local.get $a))
+    (if (i32.eq (local.get $kind) (i32.const 1)) (then (call $te_raw (local.get $imm))))
+    (i32.const 1))
+
   ;; Unary (inc/dec/not/neg) [mem32]
   (func $emit_unary_m32 (param $uop i32) (local $a i32)
     (if (call $mr_simple_base)
@@ -2711,6 +2802,7 @@
     (local $prefix_66 i32)     ;; operand-size override
     (local $prefix_67 i32)     ;; address-size override
     (local $prefix_seg i32)    ;; segment override (ignored but consumed)
+    (local $prefix_lock i32)   ;; LOCK (F0); only $try_emit_locked reads it
     (local $imm i32)
     (local $disp i32)
     (local $a i32)
@@ -2908,6 +3000,7 @@
       (local.set $prefix_66 (i32.const 0))
       (local.set $prefix_67 (i32.const 0))
       (local.set $prefix_seg (i32.const 0))
+      (local.set $prefix_lock (i32.const 0))
 
       ;; Consume prefixes
       (block $pfx_done (loop $pfx
@@ -2922,7 +3015,9 @@
         (if (i32.eq (local.get $op) (i32.const 0x3E)) (then (local.set $prefix_seg (i32.const 4)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x64)) (then (local.set $prefix_seg (i32.const 5)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x65)) (then (local.set $prefix_seg (i32.const 6)) (br $pfx)))
-        (if (i32.eq (local.get $op) (i32.const 0xF0)) (then (br $pfx))) ;; LOCK — ignore
+        ;; LOCK: ignored by the cooperative encoding, which never runs two guest
+        ;; threads at once; $try_emit_locked honours it under Worker threads.
+        (if (i32.eq (local.get $op) (i32.const 0xF0)) (then (local.set $prefix_lock (i32.const 1)) (br $pfx)))
         (br $pfx_done)
       ))
 
@@ -2965,6 +3060,17 @@
               (call $host_log_i32 (local.get $op))
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))))
+
+      ;; Guest threads on Workers: a LOCK-prefixed read-modify-write, and XCHG
+      ;; with memory (locked by definition), must be indivisible across them.
+      ;; $LOCK_MODE is 0 under the cooperative scheduler, so this costs that
+      ;; path one load per instruction and changes nothing it emits.
+      (if (i32.load (global.get $LOCK_MODE))
+        (then
+          (if (i32.or (local.get $prefix_lock)
+                      (i32.or (i32.eq (local.get $op) (i32.const 0x86)) (i32.eq (local.get $op) (i32.const 0x87))))
+            (then (if (call $try_emit_locked (local.get $op) (local.get $prefix_66))
+                    (then (br $decode)))))))
 
       ;; MSVC's 64-byte MMX memcpy body starts with unprefixed PREFETCHNTA.
       ;; Recognize it at any instruction boundary in an enclosing decoded block.  The byte-proof matcher owns

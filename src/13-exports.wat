@@ -3132,6 +3132,14 @@
     (i32.store (global.get $MM_TIMER_THREAD) (local.get $mode)))
   (func (export "get_mm_timer_thread") (result i32)
     (i32.atomic.load offset=4 (global.get $MM_TIMER_THREAD)))
+  ;; 1 = guest threads run concurrently (Worker backend): decode LOCK-prefixed
+  ;; RMW and memory XCHG as atomic compare-and-swap (handler 499). 0 keeps the
+  ;; cooperative encoding. Process-wide; set before the guest runs, since a
+  ;; block decoded earlier keeps the encoding it was decoded with.
+  (func (export "set_lock_atomic_mode") (param $mode i32)
+    (i32.atomic.store (global.get $LOCK_MODE) (local.get $mode)))
+  (func (export "get_lock_atomic_mode") (result i32)
+    (i32.atomic.load (global.get $LOCK_MODE)))
 
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)

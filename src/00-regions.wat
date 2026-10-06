@@ -585,7 +585,7 @@
   (region.declare $CS_TABLE (size 0x00000400) (align 0x00000010)
     (stride 0x4 (count $CS_TABLE_ENTRIES))
     (owner "09a-handlers3-sync.wat:$cs_slot"))
-  (region.declare $SHARED_COUNTERS (size 0x00000020) (align 0x00000010)
+  (region.declare $SHARED_COUNTERS (size 0x00000030) (align 0x00000010)
     (owner "01-header.wat:$SHARED_COUNTERS"))
   (region.declare $CLIPBOARD_SEQUENCE (size 0x00000004) (align 0x00000004)
     (owner "01-header.wat:$CLIPBOARD_SEQUENCE"))

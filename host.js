@@ -3269,6 +3269,11 @@ class WineAssembly {
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
+      // Guest threads are about to run at the same time, so a LOCK-prefixed
+      // instruction has to be atomic across Workers (07-decoder.wat
+      // $try_emit_locked). Process-wide, and set before any guest code is
+      // decoded; cleared again below if the Worker never comes up.
+      if (this.instance.exports.set_lock_atomic_mode) this.instance.exports.set_lock_atomic_mode(1);
       const worker = new GuestThreadHost({
         memory: this.memory,
         module: wasmModule,
@@ -3315,6 +3320,7 @@ class WineAssembly {
       this.logToUI('[threads] guest main thread is running in a Worker');
     } catch (err) {
       this.guestWorker = null;
+      if (this.instance.exports.set_lock_atomic_mode) this.instance.exports.set_lock_atomic_mode(0);
       this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
     }
   }

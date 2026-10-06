@@ -1774,6 +1774,158 @@
             (global.set $flag_a (i32.const 0)) (global.set $flag_b (local.get $old)) (global.set $flag_res (local.get $r))))
     (call $gs8 (local.get $addr) (local.get $r)) (dispatch-next))
 
+  ;; --- LOCK-prefixed read-modify-write (handler 499) ---
+  ;; Emitted only when guest threads really run concurrently ($LOCK_MODE, set
+  ;; by the host for Worker threads); the cooperative scheduler interleaves
+  ;; instances at slice boundaries only, so it keeps the ordinary handlers and
+  ;; is byte-for-byte unchanged. On x86 a LOCK RMW is indivisible against
+  ;; every other processor -- other LOCK ops AND plain stores. Here it is a
+  ;; compare-and-swap loop on the aligned guest qword containing the operand:
+  ;; load it, compute through the same ALU/flag helpers the plain handlers use,
+  ;; and publish with i64.atomic.rmw.cmpxchg, retrying if anything (a locked op
+  ;; or a plain store on another Worker) changed the qword meanwhile. A guest
+  ;; qword never crosses a page and $g2w keeps the low 12 bits, so its WASM
+  ;; address is 8-aligned and the atomics cannot trap. An operand that crosses
+  ;; an 8-byte boundary (legal on x86, a split lock) falls back to a process
+  ;; mutex around the plain accessors; such operands only ever meet each other.
+  ;;
+  ;; operand: kind | op<<4 | reg<<8 | wcode<<12 (width = 1<<wcode bytes)
+  ;;   kind 0 ALU [m],reg   1 ALU [m],imm (imm word after the address)
+  ;;        2 unary (op 0 inc, 1 dec, 2 not, 3 neg)   3 XADD [m],reg
+  ;;        4 CMPXCHG [m],reg (accumulator AL/AX/EAX)   5 XCHG [m],reg
+  ;; next word: the address as $read_addr reads it (absolute or $SIB_SENTINEL).
+  (func $lock_get_reg (param $reg i32) (param $wcode i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $wcode))
+      (then (call $get_reg8 (local.get $reg)))
+      (else (if (result i32) (i32.eq (local.get $wcode) (i32.const 1))
+        (then (call $get_reg16 (local.get $reg)))
+        (else (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $reg) (i32.const 2)))))))))
+  (func $lock_set_reg (param $reg i32) (param $wcode i32) (param $v i32)
+    (if (i32.eqz (local.get $wcode))
+      (then (call $set_reg8 (local.get $reg) (local.get $v)) (return)))
+    (if (i32.eq (local.get $wcode) (i32.const 1))
+      (then (call $set_reg16 (local.get $reg) (local.get $v)) (return)))
+    (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $reg) (i32.const 2))) (local.get $v)))
+  ;; The new value for one attempt, with flags set as the plain handler would.
+  ;; Bit 32 of the result says "write"; only CMPXCHG ever declines to.
+  (func $lock_compute (param $kind i32) (param $op i32) (param $old i32) (param $src i32)
+                      (param $wcode i32) (result i64)
+    (local $mask i32) (local $shift i32) (local $r i32) (local $acc i32)
+    (local.set $mask (if (result i32) (i32.eq (local.get $wcode) (i32.const 2))
+      (then (i32.const -1))
+      (else (i32.sub (i32.shl (i32.const 1) (i32.shl (i32.const 8) (local.get $wcode))) (i32.const 1)))))
+    (local.set $shift (i32.sub (i32.shl (i32.const 8) (local.get $wcode)) (i32.const 1)))
+    (if (i32.le_u (local.get $kind) (i32.const 1))
+      (then (return (i64.or (i64.const 0x100000000) (i64.extend_i32_u
+        (call $lock_alu (local.get $op) (local.get $old) (local.get $src) (local.get $mask) (local.get $shift)))))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (return (i64.or (i64.const 0x100000000) (i64.extend_i32_u
+        (call $lock_alu (i32.const 0) (local.get $old) (local.get $src) (local.get $mask) (local.get $shift)))))))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then (return (i64.or (i64.const 0x100000000) (i64.extend_i32_u (local.get $src))))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        ;; CMP accumulator, [m]: flags from acc - old, as CMPXCHG sets them.
+        (local.set $acc (i32.and (call $lock_get_reg (i32.const 0) (local.get $wcode)) (local.get $mask)))
+        (drop (call $lock_alu (i32.const 7) (local.get $acc) (local.get $old) (local.get $mask) (local.get $shift)))
+        (if (i32.eq (local.get $acc) (local.get $old))
+          (then (return (i64.or (i64.const 0x100000000) (i64.extend_i32_u (local.get $src))))))
+        (return (i64.extend_i32_u (local.get $old)))))
+    ;; kind 2: unary
+    (if (i32.eq (local.get $op) (i32.const 0))
+      (then (local.set $r (i32.and (i32.add (local.get $old) (i32.const 1)) (local.get $mask)))
+            (call $set_flags_inc (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $op) (i32.const 1))
+      (then (local.set $r (i32.and (i32.sub (local.get $old) (i32.const 1)) (local.get $mask)))
+            (call $set_flags_dec (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $op) (i32.const 2))
+      (then (local.set $r (i32.and (i32.xor (local.get $old) (i32.const -1)) (local.get $mask)))))
+    (if (i32.eq (local.get $op) (i32.const 3))
+      (then (local.set $r (i32.and (i32.sub (i32.const 0) (local.get $old)) (local.get $mask)))
+            (call $set_flags_sub (i32.const 0) (local.get $old) (local.get $r))))
+    ;; NOT leaves the flags alone; the others set them at 32 bits.
+    (if (i32.and (i32.ne (local.get $op) (i32.const 2)) (i32.ne (local.get $wcode) (i32.const 2)))
+      (then (global.set $flag_sign_shift (local.get $shift))))
+    (i64.or (i64.const 0x100000000) (i64.extend_i32_u (local.get $r))))
+  (func $lock_alu (param $op i32) (param $a i32) (param $b i32) (param $mask i32) (param $shift i32)
+                  (result i32)
+    (if (result i32) (i32.eq (local.get $mask) (i32.const -1))
+      (then (call $do_alu32 (local.get $op) (local.get $a) (local.get $b)))
+      (else (call $do_alu_sized (local.get $op) (i32.and (local.get $a) (local.get $mask))
+              (i32.and (local.get $b) (local.get $mask)) (local.get $mask) (local.get $shift)))))
+  (func $th_lock_rmw (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (local $addr i32) (local $kind i32) (local $sub i32) (local $reg i32) (local $wcode i32)
+    (local $width i32) (local $mask i32) (local $src i32) (local $old i32) (local $res i64)
+    (local $wq i32) (local $sh i64) (local $qmask i64) (local $q i64) (local $nq i64)
+    (local $f_op i32) (local $f_a i32) (local $f_b i32) (local $f_res i32) (local $f_ss i32) (local $f_cf i32)
+    (local.set $addr (call $read_addr))
+    (local.set $kind (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $sub (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $wcode (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 3)))
+    (local.set $width (i32.shl (i32.const 1) (local.get $wcode)))
+    (local.set $mask (if (result i32) (i32.eq (local.get $wcode) (i32.const 2))
+      (then (i32.const -1))
+      (else (i32.sub (i32.shl (i32.const 1) (i32.shl (i32.const 8) (local.get $wcode))) (i32.const 1)))))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then (local.set $src (i32.and (read-thread-word) (local.get $mask))))
+      (else (if (i32.ne (local.get $kind) (i32.const 2))
+        (then (local.set $src (i32.and (call $lock_get_reg (local.get $reg) (local.get $wcode))
+                                       (local.get $mask)))))))
+    ;; Every attempt starts from the flags as they were before the
+    ;; instruction: ADC/SBB read CF, INC/DEC carry it over.
+    (local.set $f_op (global.get $flag_op)) (local.set $f_a (global.get $flag_a))
+    (local.set $f_b (global.get $flag_b)) (local.set $f_res (global.get $flag_res))
+    (local.set $f_ss (global.get $flag_sign_shift)) (local.set $f_cf (global.get $saved_cf))
+    (if (i32.le_u (i32.add (i32.and (local.get $addr) (i32.const 7)) (local.get $width)) (i32.const 8))
+      (then
+        (local.set $wq (call $g2w (i32.and (local.get $addr) (i32.const -8))))
+        (local.set $sh (i64.extend_i32_u (i32.shl (i32.and (local.get $addr) (i32.const 7)) (i32.const 3))))
+        (local.set $qmask (i64.shl (i64.extend_i32_u (local.get $mask)) (local.get $sh)))
+        (loop $cas
+          (local.set $q (i64.atomic.load (local.get $wq)))
+          (local.set $old (i32.and (i32.wrap_i64 (i64.shr_u (local.get $q) (local.get $sh))) (local.get $mask)))
+          (global.set $flag_op (local.get $f_op)) (global.set $flag_a (local.get $f_a))
+          (global.set $flag_b (local.get $f_b)) (global.set $flag_res (local.get $f_res))
+          (global.set $flag_sign_shift (local.get $f_ss)) (global.set $saved_cf (local.get $f_cf))
+          (local.set $res (call $lock_compute (local.get $kind) (local.get $sub) (local.get $old)
+                            (local.get $src) (local.get $wcode)))
+          (if (i32.wrap_i64 (i64.shr_u (local.get $res) (i64.const 32)))
+            (then
+              (local.set $nq (i64.or (i64.and (local.get $q) (i64.xor (local.get $qmask) (i64.const -1)))
+                (i64.and (i64.shl (i64.and (local.get $res) (i64.const 0xFFFFFFFF)) (local.get $sh))
+                         (local.get $qmask))))
+              (br_if $cas (i64.ne (i64.atomic.rmw.cmpxchg (local.get $wq) (local.get $q) (local.get $nq))
+                                  (local.get $q)))
+              (call $invalidate_code_write (local.get $addr) (local.get $width))))))
+      (else
+        ;; Split lock: a process-wide mutex around the plain accessors.
+        (loop $spin
+          (br_if $spin (i32.atomic.rmw.cmpxchg (global.get $LOCK_MUTEX) (i32.const 0) (i32.const 1))))
+        (local.set $old (i32.and
+          (if (result i32) (i32.eqz (local.get $wcode)) (then (call $gl8 (local.get $addr)))
+            (else (if (result i32) (i32.eq (local.get $wcode) (i32.const 1)) (then (call $gl16 (local.get $addr)))
+              (else (call $gl32 (local.get $addr))))))
+          (local.get $mask)))
+        (local.set $res (call $lock_compute (local.get $kind) (local.get $sub) (local.get $old)
+                          (local.get $src) (local.get $wcode)))
+        (if (i32.wrap_i64 (i64.shr_u (local.get $res) (i64.const 32)))
+          (then
+            (if (i32.eqz (local.get $wcode)) (then (call $gs8 (local.get $addr) (i32.wrap_i64 (local.get $res))))
+              (else (if (i32.eq (local.get $wcode) (i32.const 1))
+                (then (call $gs16 (local.get $addr) (i32.wrap_i64 (local.get $res))))
+                (else (call $gs32 (local.get $addr) (i32.wrap_i64 (local.get $res)))))))))
+        (i32.atomic.store (global.get $LOCK_MUTEX) (i32.const 0))))
+    ;; Register results: XADD and XCHG hand back the old value; a CMPXCHG that
+    ;; found a different value loads it into the accumulator.
+    (if (i32.or (i32.eq (local.get $kind) (i32.const 3)) (i32.eq (local.get $kind) (i32.const 5)))
+      (then (call $lock_set_reg (local.get $reg) (local.get $wcode) (local.get $old))))
+    (if (i32.and (i32.eq (local.get $kind) (i32.const 4))
+                 (i32.eqz (i32.wrap_i64 (i64.shr_u (local.get $res) (i64.const 32)))))
+      (then (call $lock_set_reg (i32.const 0) (local.get $wcode) (local.get $old))))
+    (dispatch-next))
+
   ;; 281: 16-bit unary memory: operand = unary_type (0=inc,1=dec,2=not,3=neg), addr in next word
   ;; Counterpart of th_unary_m32 for the 0x66 prefix variant of FF /0, FF /1, F7 /2, F7 /3.
   ;; Without this, "dec word [esp]" mis-decodes as "dec dword [esp]" and trashes loop counters

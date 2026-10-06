@@ -230,6 +230,9 @@ const highFixedAliases = new Map(Object.entries({
   MM_TIMER_THREAD: { owner: 'TIMER_SHARED' },
   // The process-wide QPC count lives at SHARED_COUNTERS+16.
   QPC_SHARED: { owner: 'SHARED_COUNTERS' },
+  // LOCK-prefix atomic mode (+32) and its split-lock mutex (+36).
+  LOCK_MODE: { owner: 'SHARED_COUNTERS' },
+  LOCK_MUTEX: { owner: 'SHARED_COUNTERS' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

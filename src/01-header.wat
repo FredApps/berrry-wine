@@ -1230,7 +1230,8 @@
   ;;                                     +4 decoded-code cache generation,
   ;;                                     +16 last QPC count, i64,
   ;;                                     +24 gamma ramp generation,
-  ;;                                     +28 gamma ramp guest address)
+  ;;                                     +28 gamma ramp guest address,
+  ;;                                     +32 LOCK atomic mode, +36 its mutex)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
   ;; main. They move here on the merge into the threads branch, which grew
@@ -2441,6 +2442,11 @@
   (global $QPC_SHARED i32 (region.addr $SHARED_COUNTERS 0x00000010))
   ;; +24 / +28: the display gamma ramp's generation and guest address
   ;; ($gamma_ramp_store in 10f-gdi-dc.wat).
+  ;; +32: nonzero once guest threads run concurrently on Workers; the decoder
+  ;; then emits LOCK-prefixed RMW (and memory XCHG) as handler 499, an atomic
+  ;; compare-and-swap ($th_lock_rmw). +36: that handler's split-lock mutex.
+  (global $LOCK_MODE i32 (region.addr $SHARED_COUNTERS 0x00000020))
+  (global $LOCK_MUTEX i32 (region.addr $SHARED_COUNTERS 0x00000024))
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; 256 bytes of scratch that belong to the TEST HARNESS, not to the emulator.
   ;; No WAT reads any of it. The layout is fixed by offset so tests in separate
