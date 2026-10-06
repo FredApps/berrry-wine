@@ -174,6 +174,8 @@ delayedRenderer.windows[110] = {
   style: 0,
   zOrder: 1,
 };
+let delayedClock = 1000;
+delayedRenderer._inputNowMs = () => delayedClock;
 delayedRenderer.handleMouseDown(40, 60, 1);
 delayedRenderer.handleMouseUp(40, 60, 1);
 const delayedHitTest = delayedRenderer.checkInput();
@@ -184,6 +186,11 @@ assert.strictEqual(delayedDown.msg, 0x0201, 'queued delayed click should deliver
 assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0x8001, 'queued WM_LBUTTONDOWN should expose held button snapshot even if mouseup is already queued');
 delayedRenderer.setMousePosition(150, 120);
 assert.strictEqual(delayedRenderer.getMousePosition(), (120 << 16) | 150, 'SetCursorPos should supersede any active queued mouse snapshot');
+// Since 37ff2f8d a release is never handed over in the pump that took its
+// press: the next poll ends that pump, then 30 ms must pass. Step that time on
+// the host input clock (renderer._inputNowMs) instead of the wall clock.
+assert.strictEqual(delayedRenderer.checkInput(), 0, 'the queued release waits out the pump that took its press');
+delayedClock += 30;
 const delayedUp = delayedRenderer.checkInput();
 assert.strictEqual(delayedUp.msg, 0x0202, 'queued delayed click should deliver WM_LBUTTONUP second');
 assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0, 'queued WM_LBUTTONUP should expose released button snapshot');
