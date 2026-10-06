@@ -88,6 +88,11 @@ const extraWat = String.raw`
     'explicit PostQuitMessage marker terminates GetMessage');
   assert.strictEqual(msg.getUint32(4, true), 0x0012,
     'explicit marker is delivered as WM_QUIT');
+  // Retrieving WM_QUIT removes it from the queue. Driver drains with
+  // PeekMessage(PM_NOREMOVE) + GetMessage until Peek says empty; a quit that
+  // stayed posted kept that loop spinning forever.
+  assert.strictEqual(e.get_quit_flag(), 0,
+    'GetMessage consumes the posted quit it returns');
 
   e.test_set_quit_flag(0);
   assert.strictEqual(e.test_call_PostThreadMessageA(1, 0x0012), 1,

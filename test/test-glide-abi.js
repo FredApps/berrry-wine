@@ -83,7 +83,12 @@ function call(name, args = [], instance = a) {
     name + ' consumes exactly the decorated stdcall frame');
   return instance.get_eax() >>> 0;
 }
-for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28', '_grTexCombineFunction@8', '_guFogGenerateExp@8']) {
+// guDrawTriangleWithClip clips to grClipWindow; both backends already scissor
+// every draw to that window, so it is grDrawTriangle. Driver resolves it by
+// name and calls the pointer it gets back, so a missing export jumped to 0.
+for (const name of ['guDrawTriangleWithClip', '_guDrawTriangleWithClip@12'])
+  assert.strictEqual(table.find(x => x.name === name).handler, 'grDrawTriangle', name);
+for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28', '_grTexCombineFunction@8', '_guFogGenerateExp@8', '_guDrawTriangleWithClip@12']) {
   const p = wa(0x410000);
   new Uint8Array(memory.buffer, p, name.length + 1).set(Buffer.from(name + '\0'));
   assert.strictEqual(a.glide_test_lookup(p), table.find(x => x.name === name).id);
@@ -237,6 +242,10 @@ assert.strictEqual(call('_grSstVRetraceOn@0'), 0);
 ticks = 16;
 assert.strictEqual(call('_grSstVRetraceOn@0'), 1, 'virtual retrace advances with clock');
 assert.strictEqual(call('_grSstStatus@0') & 64, 0, 'status retrace bit is active low');
+assert.strictEqual(call('_grSstControl@4', [3]), 1, 'GR_CONTROL_RESIZE succeeds');
+assert.strictEqual(call('_grSstControl@4', [4]), 1,
+  'GR_CONTROL_MOVE succeeds (Driver closes its window when it fails)');
+assert.strictEqual(call('_grSstControl@4', [99]), 0, 'unknown control code fails');
 assert.strictEqual(call('_grSstControl@4', [2]), 1);
 call('_grBufferSwap@4', [0]);
 assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(244), 0, 'deactivation accompanies presentation');

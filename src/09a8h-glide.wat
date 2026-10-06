@@ -411,12 +411,18 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $r i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
-    ;; Activation gates presentation; resize/move of the fixed virtual video
-    ;; mode are unsupported and return the specified FxBool failure.
+    ;; Activation gates presentation. GR_CONTROL_RESIZE (3) and MOVE (4) are
+    ;; notifications that a fullscreen board has nothing to do for, and 3dfx's
+    ;; Glide 2 returns FXTRUE for them: Driver calls grSstControl(MOVE) on
+    ;; every WM_MOVE (one arrives at window creation) and posts WM_CLOSE when
+    ;; it fails, so a FALSE here quit the game during boot. Unknown codes fail.
     (if (i32.or (i32.eq (local.get $arg0) (i32.const 1))
         (i32.eq (local.get $arg0) (i32.const 2))) (then
         (i32.store offset=244 (call $glide_state) (i32.eq (local.get $arg0) (i32.const 1)))
         (local.set $r (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $arg0) (i32.const 3))
+        (i32.eq (local.get $arg0) (i32.const 4)))
+      (then (local.set $r (i32.const 1))))
     (i32.store offset=0 (global.get $reg_base) (local.get $r))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))

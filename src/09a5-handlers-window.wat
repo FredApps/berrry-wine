@@ -1944,6 +1944,10 @@
             (return)))))
     (if (i32.eq (global.get $quit_flag) (i32.const 2))
       (then
+        ;; Retrieving WM_QUIT removes it, as from the real queue: a loop that
+        ;; drains with PeekMessage(PM_NOREMOVE) + GetMessage (Driver's
+        ;; 0x513335) otherwise sees the same quit forever and never returns.
+        (global.set $quit_flag (i32.const 0))
         ;; Fill MSG with WM_QUIT (0x0012).
         (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))

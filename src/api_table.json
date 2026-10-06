@@ -35520,5 +35520,21 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2526300818
+  },
+  {
+    "id": 4207,
+    "name": "guDrawTriangleWithClip",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2537645813,
+    "handler": "grDrawTriangle"
+  },
+  {
+    "id": 4208,
+    "name": "_guDrawTriangleWithClip@12",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 51546553,
+    "handler": "grDrawTriangle"
   }
 ]
