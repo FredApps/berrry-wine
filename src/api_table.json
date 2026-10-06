@@ -35211,5 +35211,19 @@
     "convention": "stdcall",
     "hash": 1205302862,
     "ret": "BOOL"
+  },
+  {
+    "id": 4167,
+    "name": "DebugBreak",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1703094871
+  },
+  {
+    "id": 4168,
+    "name": "FatalAppExitA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2465888635
   }
 ]

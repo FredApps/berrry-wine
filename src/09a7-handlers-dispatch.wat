@@ -384,6 +384,23 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; FatalAppExitA(uAction, lpMessageText) — the message, then process exit
+  ;; (as Wine: MessageBox, then ExitProcess(0)). The text goes to the same log
+  ;; sink as OutputDebugStringA rather than a modal box, since nothing runs
+  ;; after it. Carmageddon 2's BRender driver loader resolves it by name.
+  (func $handle_FatalAppExitA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $length i32) (local $wa i32)
+    (if (local.get $arg1)
+      (then
+        (local.set $length (call $guest_strlen (local.get $arg1)))
+        (if (local.get $length)
+          (then
+            (local.set $wa (call $g2w_affine_span (local.get $arg1) (local.get $length)))
+            (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+              (then (call $host_log (local.get $wa) (local.get $length))))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
+    (call $host_exit (i32.const 0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)))
+
   ;; 715: AdjustWindowRect(lpRect, dwStyle, bMenu) — adjust rect for window chrome
   (func $handle_AdjustWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $border i32) (local $caption i32) (local $frame i32)

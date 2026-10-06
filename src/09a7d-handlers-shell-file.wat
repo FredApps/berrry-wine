@@ -50,6 +50,17 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
   )
 
+  ;; DebugBreak() — 0 args stdcall. KERNEL32's body is an int3, so it raises
+  ;; EXCEPTION_BREAKPOINT to the caller's SEH chain; with no debugger an
+  ;; unhandled one ends the process. A handler that continues execution
+  ;; resumes after the call. Carmageddon 2's BRender driver loader resolves
+  ;; KERNEL32:DebugBreak by name and refuses to load its renderer without it.
+  (func $handle_DebugBreak (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $delphi_resume_eip (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (global.set $delphi_resume_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $raise_delphi_exception (i32.const 0x80000003) (i32.const 0) (i32.const 0) (i32.const 0)))
+
   ;; 413: GetUserDefaultLCID — STUB: unimplemented
   (func $handle_GetUserDefaultLCID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Return 0x0409 = English (US)
