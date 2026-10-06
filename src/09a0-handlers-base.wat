@@ -6023,7 +6023,22 @@
   )
 
   ;; 57: TerminateProcess
+  ;; Only this process's own handles end this process. A child that
+  ;; CreateProcess started (09d7-pipes.wat) is stopped by its host -- this
+  ;; used to call host_exit for any handle, so a parent killing its engine
+  ;; killed itself.
   (func $handle_TerminateProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $pid i32)
+    (local.set $pid (call $pipe_child_pid (local.get $arg0)))
+    (if (local.get $pid)
+      (then
+        (if (i32.eq (call $host_process_ctl (i32.const 1) (local.get $pid) (local.get $arg1)) (i32.const 1))
+          (then (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
+          (else
+            (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (return)))
     (call $host_exit (local.get $arg1)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)
   )
 

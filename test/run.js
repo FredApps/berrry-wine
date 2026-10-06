@@ -3716,7 +3716,13 @@ async function main() {
   }
 
   // --- Override exit to also log ---
-  h.exit = code => { logs.push('[Exit] code=' + code); stopped = true; };
+  h.exit = code => {
+    logs.push('[Exit] code=' + code); stopped = true;
+    // A child process_spawn started: its parent's GetExitCodeProcess and
+    // WaitForSingleObject need the guest's own exit code, not this
+    // process's.
+    if (PIPE_STD && process.send) process.send({ t: 'child-exit', code: code >>> 0 });
+  };
 
   // --- Override shell_about to log; the WAT side ($handle_ShellAboutA →
   // $create_about_dialog → $host_register_dialog_frame) drives all
@@ -3776,6 +3782,23 @@ async function main() {
   // wire. This process becomes the hub of that wire. 0 = "cannot", and the
   // guest falls back to its old CreateProcess path.
   const pipeChildren = [];
+  const pipeChildByPid = new Map();
+  // op 0: exit code (259 STILL_ACTIVE while running); op 1: terminate.
+  const processCtl = (op, pid, arg) => {
+    const rec = pipeChildByPid.get(pid & 0xFFFF);
+    if (!rec) return -1;
+    if (op === 0) return rec.exitCode >>> 0;
+    if (op === 1) {
+      if (rec.exitCode === 259) {
+        rec.exitCode = arg >>> 0;
+        rec.child.kill();
+      }
+      return 1;
+    }
+    return -1;
+  };
+  h.process_ctl = processCtl;
+  ctx.processCtl = processCtl;
   h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
     const cmd = cmdWa ? readStr(cmdWa) : '';
     if (!cmd || !EXE_PATH) return 0;
@@ -3837,9 +3860,18 @@ async function main() {
     }
     ctx.vlanWire.addChild(child, ip);
     pipeChildren.push(child);
+    const pid = (0x4000 + pipeChildren.length * 4) & 0xFFFF;
+    const rec = { child, exitCode: 259 };
+    pipeChildByPid.set(pid, rec);
+    child.on('message', msg => {
+      if (msg && msg.t === 'child-exit' && rec.exitCode === 259) rec.exitCode = msg.code >>> 0;
+    });
+    // An emulator that ends without a guest ExitProcess (a crash, a
+    // --max-seconds stop) still ends the child process: report it as exited.
+    child.on('exit', code => { if (rec.exitCode === 259) rec.exitCode = (code == null ? 1 : code) >>> 0; });
     if (pipeChildren.length === 1) process.on('exit', () => { for (const c of pipeChildren) c.kill(); });
     console.log(`[pipe] CreateProcess "${cmd}" -> ${hostExe} at ${ipText}, std ${spec.join(' ')}`);
-    return 0x4000 + pipeChildren.length * 4;
+    return pid;
   };
 
   // --- Override set_dlg_item_text to log ---
@@ -4926,6 +4958,9 @@ async function main() {
       path.basename(EXE_PATH), info, instance.exports, memory.buffer,
       { log: (m) => console.log(m) }),
   });
+  // Waits on a child process's handle (src/09d7-pipes.wat) ask the host
+  // that started it.
+  threadManager.processCtl = (op, pid, arg) => (ctx.processCtl ? ctx.processCtl(op, pid, arg) : -1);
   ctx.closeSyncHandle = handle => threadManager.closeSyncHandle(handle);
 
   const mem = new Uint8Array(memory.buffer);

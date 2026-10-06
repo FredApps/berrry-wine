@@ -552,8 +552,9 @@
     (call $heap_free (local.get $spec))
     (if (local.get $pi)
       (then
-        (call $gs32 (local.get $pi) (i32.const 0x000E3001))
-        (call $gs32 (i32.add (local.get $pi) (i32.const 4)) (i32.const 0x000E3002))
+        (call $gs32 (local.get $pi) (call $pipe_child_process_handle (local.get $pid)))
+        (call $gs32 (i32.add (local.get $pi) (i32.const 4))
+          (i32.or (i32.const 0x00E50000) (i32.and (local.get $pid) (i32.const 0xFFFF))))
         (call $gs32 (i32.add (local.get $pi) (i32.const 8)) (local.get $pid))
         (call $gs32 (i32.add (local.get $pi) (i32.const 12)) (i32.add (local.get $pid) (i32.const 1)))))
     (i32.const 1))
@@ -562,3 +563,17 @@
   ;; sharing hStdOutput's pipe). The same handle, as Windows would hand it.
   (func (export "pipe_set_std") (param $which i32) (param $h i32) (result i32)
     (call $console_std_handle_set (local.get $which) (local.get $h)))
+
+  ;; ---- phase 3: the child's process object -------------------------------
+  ;; hProcess = 0x00E40000 | pid and hThread = 0x00E50000 | pid for a child
+  ;; process_spawn started; the host answers for its state (process_ctl).
+  ;; Waits on hProcess are answered by lib/thread-manager.js waitSingle.
+
+  (func $pipe_child_process_handle (param $pid i32) (result i32)
+    (i32.or (i32.const 0x00E40000) (i32.and (local.get $pid) (i32.const 0xFFFF))))
+
+  ;; The child pid an hProcess names, or 0 when $h is not a child handle.
+  (func $pipe_child_pid (param $h i32) (result i32)
+    (if (result i32) (i32.eq (i32.and (local.get $h) (i32.const 0xFFFF0000)) (i32.const 0x00E40000))
+      (then (i32.and (local.get $h) (i32.const 0xFFFF)))
+      (else (i32.const 0))))
