@@ -214,6 +214,11 @@ const MAX_SECONDS = parseFloat(getArg('max-seconds', '0')) || 0;
 // (i32.shl (memory.size) 16): correct up to 3GB because every comparison it
 // feeds is unsigned, wrapping to 0 at exactly 4GB. 2048 is the last value that
 // is safe without auditing that arithmetic again.
+// An app whose registry entry sets `bigMemory: true` gets 2048 by default, the
+// first size the browser's ladder (host.js) tries for it; --memory-mb wins.
+// Before this the CLI ignored the flag, and Pirates! (2004) ran out of guest
+// heap loading its assets on the CLI while the page did not.
+const MEMORY_MB_EXPLICIT = getArg('memory-mb', null) !== null;
 const MEMORY_PAGES = (() => {
   const mb = parseInt(getArg('memory-mb', '512'), 10);
   if (!(mb >= 512 && mb <= 2048)) { console.error(`--memory-mb must be 512..2048, got ${mb}`); process.exit(2); }
@@ -4023,7 +4028,9 @@ async function main() {
   }
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: MEMORY_PAGES, maximum: MEMORY_PAGES, shared: true });
+  const memoryPages = !MEMORY_MB_EXPLICIT && APP_ENTRY && APP_ENTRY.bigMemory === true
+    ? 2048 * 16 : MEMORY_PAGES;
+  const memory = new WebAssembly.Memory({ initial: memoryPages, maximum: memoryPages, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 
