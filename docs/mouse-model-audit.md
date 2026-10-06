@@ -65,7 +65,31 @@ capture choice was made explicit.
   works until the pointer reaches the edge of the page: then turning stops.
   Pointer Lock has no edge.
 
-## Autodetect (proposal)
+## Autodetect (implemented 2026-10-06, MOUSE-AUTODETECT)
+
+An app whose registry entry has no `relativeMouse` now follows the guest:
+`lib/browser-input.js` asks `renderer.wantsRelativeMouse(x, y, 'auto')`,
+which (during exclusive presentation only, as before) returns true when
+
+- `renderer._noteCursorWarp` saw a recentring loop: three `SetCursorPos`
+  warps to one point (within 2 px), each within 500 ms of the last. It stays
+  armed for 2 s after the latest such warp, so a menu that stops recentring
+  gets the plain cursor back. Every guest thread's `SetCursorPos` reaches
+  this renderer through `set_mouse_position`.
+- or the WAT export `get_mouse_capture_hint` reports a DirectInput mouse
+  (device kind 2) that is acquired with `DISCL_EXCLUSIVE`. It scans the DX
+  object table in shared memory, so a device acquired on any guest thread
+  counts; the page polls it at most every 250 ms.
+
+`relativeMouse: true` / `false` remain explicit overrides
+(`lib/browser-shell.js` now passes an absent flag through as undefined
+instead of false). Pointer Lock still needs the player's click; the signal
+only decides that the click asks for it, and on a phone `mobileTouch: 'auto'`
+follows the same answer. Covered by `test/test-relative-mouse-autodetect.js`.
+Not covered: in Threads mode the page instance may not expose
+`get_mouse_capture_hint`, so there only the recentring signal applies.
+
+## Autodetect (the original proposal)
 
 Both deciding signals pass through code we own:
 

@@ -1371,6 +1371,29 @@
   ;; is normally drawing/tracking its own (often through DirectInput).
   (func (export "get_cursor_display_count") (result i32)
     (global.get $cursor_count))
+  ;; 1 when some DirectInput device that is a mouse (misc0 kind 2) is acquired
+  ;; with DISCL_EXCLUSIVE (low bit of the DISCL_* the device flags keep): the
+  ;; game reads mouse counts only and hides the system cursor, so the page
+  ;; should capture the pointer (docs/mouse-model-audit.md). The DX table is in
+  ;; shared memory, so this answers for a device any guest thread acquired.
+  ;; A full table scan, which is why the page polls it at most every 250 ms.
+  (func (export "get_mouse_capture_hint") (result i32)
+    (local $i i32) (local $entry i32) (local $flags i32)
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.shl (local.get $i) (i32.const 5))))
+      (if (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 7)) (then
+        (local.set $flags (load.field DxObject flags (local.get $entry)))
+        (if (i32.and
+              (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 2))
+              (i32.and
+                (i32.ne (i32.and (local.get $flags) (global.get $DIDEV_ACQUIRED)) (i32.const 0))
+                (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))))
+          (then (return (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.const 0))
   ;; Synchronous NCHITTEST helper — JS calls before generating mouse
   ;; events so classification lives in WAT. Returns HT* code.
   (func (export "hittest_sync")
