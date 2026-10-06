@@ -20,23 +20,46 @@
 // the first message box) and runs each app twice; this runs each once.
 //
 // Results are appended to --jsonl as each run finishes, so an interrupted
-// sweep resumes where it stopped (ids already in the file are skipped).
+// sweep resumes where it stopped (id+mode pairs already in the file are
+// skipped).
+//
+// DUAL MODE. Every game must work under the cooperative scheduler AND with
+// real guest threads, and the two break differently (a Worker that traps, a
+// repaint that only one scheduler delivers, a sound thread starved in one).
+// --modes=coop,threads runs each app once per mode (run.js --no-threads /
+// --threads) and records, beside the signature, two signals no signature
+// can see:
+//   frame   the final screen (--png at exit): `content` when it has more than
+//           a handful of colours and no one colour covers >98% of it, else
+//           `blank`
+//   audio   the raw waveOut PCM (--audio-out): `sound` when any byte differs
+//           from the format's silence, `silent` when PCM arrived but was all
+//           silence, `none` when nothing was written
+// --compare then lists every app whose two modes disagree on any of the
+// three, worst first (a crash beats a blank frame beats a missing sound), and
+// --gate exits 1 when that list is non-empty: the repeatable check to run
+// after a large merge.
 //
 // Usage:
 //   node tools/crash-sweep.js --all --jsonl=out.jsonl [--seconds=20]
 //   node tools/crash-sweep.js --apps=a,b --jsonl=out.jsonl
-//   node tools/crash-sweep.js --summary --jsonl=out.jsonl [--md]
+//   node tools/crash-sweep.js --all --modes=coop,threads --jobs=2 --jsonl=dual.jsonl
+//   node tools/crash-sweep.js --summary --jsonl=out.jsonl [--md] [--mode=threads]
+//   node tools/crash-sweep.js --compare --jsonl=dual.jsonl [--md] [--gate]
 //
 // Options:
 //   --seconds=N      run.js --max-seconds (default 20); the external kill is N+90
-//   --rerun          ignore ids already in --jsonl
+//   --modes=a,b      coop and/or threads (default coop: run.js's own default)
+//   --jobs=N         runs at once (default 1). Each run holds a 512 MB guest;
+//                    keep N small, and run long sweeps on a separate box
+//   --rerun          ignore results already in --jsonl
 //   --no-build       reuse build/wine-assembly.wasm (the sweep builds once first otherwise)
-//   --md             print the summary as a Markdown table
+//   --md             print the summary / comparison as a Markdown table
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(ROOT, 'test', 'run.js');
@@ -54,16 +77,27 @@ if (!JSONL) {
   console.error('crash-sweep: --jsonl=FILE is required');
   process.exit(2);
 }
+const MODES = (opt('modes', 'coop') || 'coop').split(',').filter(Boolean);
+for (const m of MODES) {
+  if (m !== 'coop' && m !== 'threads') {
+    console.error(`crash-sweep: unknown mode ${m} (coop, threads)`);
+    process.exit(2);
+  }
+}
+const JOBS = Math.max(1, parseInt(opt('jobs', '1'), 10) || 1);
+const MODE_ARGS = { coop: '--no-threads', threads: '--threads' };
 
-// The last line for an id wins, so a --rerun supersedes earlier results.
+// The last line for an id+mode wins, so a --rerun supersedes earlier results.
+// Lines written before modes existed are cooperative runs.
 function readResults() {
   if (!fs.existsSync(JSONL)) return [];
-  const byId = new Map();
+  const byKey = new Map();
   for (const l of fs.readFileSync(JSONL, 'utf8').split('\n').filter(Boolean)) {
     const r = JSON.parse(l);
-    byId.set(r.id, r);
+    if (!r.mode) r.mode = 'coop';
+    byKey.set(`${r.id}|${r.mode}`, r);
   }
-  return [...byId.values()];
+  return [...byKey.values()];
 }
 
 // Pull the signature out of a run's combined output. Order matters: an
@@ -117,33 +151,121 @@ function headTail(file, n) {
   return out;
 }
 
-function runOne(id) {
-  const args = [RUN, `--app=${id}`, '--no-build', '--quiet-api',
-    `--max-seconds=${SECONDS}`, '--max-batches=1000000000'];
+// The final screen: `content` or `blank` (see the header), with the numbers.
+function frameSignal(file) {
+  if (!fs.existsSync(file)) return { frame: 'none' };
+  let png;
+  try { png = require('pngjs').PNG.sync.read(fs.readFileSync(file)); }
+  catch (_) { return { frame: 'none' }; }
+  const counts = new Map();
+  const d = png.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const k = (d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | (d[i + 2] >> 3);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const pixels = d.length / 4;
+  const top = Math.max(...counts.values());
+  const dominant = top / pixels;
+  return {
+    frame: counts.size > 8 && dominant <= 0.98 ? 'content' : 'blank',
+    colors: counts.size,
+    dominant: +dominant.toFixed(3),
+  };
+}
+
+// The waveOut PCM: `sound`, `silent` or `none`. Formats differ (8-bit
+// silence is 0x80, 16-bit is 0), so any byte that is neither is sound.
+function audioSignal(file) {
+  if (!fs.existsSync(file)) return { audio: 'none', audioBytes: 0 };
+  const size = fs.statSync(file).size;
+  if (!size) return { audio: 'none', audioBytes: 0 };
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.alloc(1 << 20);
+  let pos = 0, loud = false;
+  while (pos < size && !loud) {
+    const n = fs.readSync(fd, buf, 0, buf.length, pos);
+    if (!n) break;
+    for (let i = 0; i < n; i++) {
+      if (buf[i] !== 0 && buf[i] !== 0x80 && buf[i] !== 0x7f && buf[i] !== 0xff) { loud = true; break; }
+    }
+    pos += n;
+  }
+  fs.closeSync(fd);
+  return { audio: loud ? 'sound' : 'silent', audioBytes: size };
+}
+
+function runOne(id, mode) {
+  const tag = `${id}.${mode}`;
+  const pngFile = path.join(LOG_DIR, `${tag}.png`);
+  const pcmFile = path.join(LOG_DIR, `${tag}.pcm`);
+  const args = [RUN, `--app=${id}`, MODE_ARGS[mode], '--no-build', '--quiet-api',
+    `--max-seconds=${SECONDS}`, '--max-batches=1000000000',
+    '--no-close', `--png=${pngFile}`, `--audio-out=${pcmFile}`];
   // run.js prints a register line per batch, so a healthy 20 s run is ~100 MB:
   // send it to a file and read back only the head and tail, which is where
   // every line classify() looks for lives.
-  const logFile = path.join(LOG_DIR, `${id}.log`);
+  const logFile = path.join(LOG_DIR, `${tag}.log`);
   const fd = fs.openSync(logFile, 'w');
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, args, {
-    cwd: ROOT, stdio: ['ignore', fd, fd], timeout: (SECONDS + 90) * 1000, killSignal: 'SIGKILL',
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', fd, fd] });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, (SECONDS + 90) * 1000);
+    child.on('exit', status => {
+      clearTimeout(timer);
+      fs.closeSync(fd);
+      const log = headTail(logFile, 256 * 1024);
+      const out = {
+        id, mode, ...classify(log, timedOut ? null : status, timedOut),
+        secs: +((Date.now() - t0) / 1000).toFixed(1),
+        ...frameSignal(pngFile), ...audioSignal(pcmFile),
+      };
+      const batches = [...log.matchAll(/(\d+) batches in /g)].pop();
+      if (batches) out.batches = +batches[1];
+      const apis = /Stats: (\d+) API calls/.exec(log);
+      if (apis) out.apis = +apis[1];
+      for (const f of [logFile, pngFile, pcmFile]) fs.rmSync(f, { force: true });
+      resolve(out);
+    });
   });
-  fs.closeSync(fd);
-  const log = headTail(logFile, 256 * 1024);
-  fs.unlinkSync(logFile);
-  const timedOut = r.error && r.error.code === 'ETIMEDOUT';
-  const out = { id, ...classify(log, r.status, timedOut), secs: +((Date.now() - t0) / 1000).toFixed(1) };
-  const batches = [...log.matchAll(/(\d+) batches in /g)].pop();
-  if (batches) out.batches = +batches[1];
-  const apis = /Stats: (\d+) API calls/.exec(log);
-  if (apis) out.apis = +apis[1];
-  return out;
+}
+
+// A signature that ends the run early, as opposed to one that just names how
+// a still-healthy run stopped.
+const FATAL = sig => /^(unimpl|trap|error|timeout|exit)/.test(sig);
+
+// Disagreements between an app's two modes, worst first: a crash only one
+// mode has, then a picture only one mode reached, then sound only one made.
+function compare(results) {
+  const byId = new Map();
+  for (const r of results) {
+    if (!byId.has(r.id)) byId.set(r.id, {});
+    byId.get(r.id)[r.mode] = r;
+  }
+  const rows = [];
+  for (const [id, m] of byId) {
+    const a = m.coop, b = m.threads;
+    if (!a || !b || a.sig === 'missing-files' || b.sig === 'missing-files') continue;
+    const issues = [];
+    if (FATAL(a.sig) !== FATAL(b.sig) || (FATAL(a.sig) && a.sig !== b.sig)) {
+      issues.push({ rank: 0, what: `crash: coop ${a.sig} / threads ${b.sig}` });
+    }
+    if (a.frame !== b.frame && (a.frame === 'content' || b.frame === 'content')) {
+      issues.push({ rank: 1, what: `frame: coop ${a.frame} / threads ${b.frame}` });
+    }
+    if (a.audio !== b.audio && (a.audio === 'sound' || b.audio === 'sound')) {
+      issues.push({ rank: 2, what: `audio: coop ${a.audio} / threads ${b.audio}` });
+    }
+    if (issues.length) rows.push({ id, rank: Math.min(...issues.map(i => i.rank)), issues, a, b });
+  }
+  return rows.sort((x, y) => x.rank - y.rank || x.id.localeCompare(y.id));
 }
 
 function summary(results, md) {
   const bySig = new Map();
+  const only = opt('mode', null);
   for (const r of results) {
+    if (only && r.mode !== only) continue;
     const key = r.sig.startsWith('exit:') ? r.sig : r.sig;
     if (!bySig.has(key)) bySig.set(key, []);
     bySig.get(key).push(r.id);
@@ -163,6 +285,25 @@ if (flag('summary')) {
   process.exit(0);
 }
 
+if (flag('compare')) {
+  const results = readResults();
+  const rows = compare(results);
+  const both = new Set(results.filter(r => r.mode === 'threads').map(r => r.id));
+  const pairs = results.filter(r => r.mode === 'coop' && both.has(r.id)).length;
+  if (flag('md')) {
+    console.log('| app | divergence | coop | threads |');
+    console.log('|---|---|---|---|');
+    for (const r of rows) {
+      const cell = x => `${x.sig} / ${x.frame} / ${x.audio}`.replace(/\|/g, '\\|');
+      console.log(`| ${r.id} | ${r.issues.map(i => i.what.split(':')[0]).join(', ')} | ${cell(r.a)} | ${cell(r.b)} |`);
+    }
+  } else {
+    for (const r of rows) console.log(`${r.id}\n  ${r.issues.map(i => i.what).join('\n  ')}`);
+  }
+  console.log(`\n${rows.length} of ${pairs} apps run in both modes disagree`);
+  process.exit(flag('gate') && rows.length ? 1 : 0);
+}
+
 const { APPS } = require('../lib/apps');
 let ids = flag('all') ? Object.keys(APPS)
   : (opt('apps', '') || '').split(',').filter(Boolean);
@@ -171,15 +312,25 @@ if (unknown.length) {
   console.error(`crash-sweep: unknown app id(s): ${unknown.join(', ')}`);
   process.exit(2);
 }
+let work = [];
+for (const id of ids) for (const mode of MODES) work.push({ id, mode });
 if (!flag('rerun')) {
-  const done = new Set(readResults().map(r => r.id));
-  ids = ids.filter(id => !done.has(id));
+  const done = new Set(readResults().map(r => `${r.id}|${r.mode}`));
+  work = work.filter(w => !done.has(`${w.id}|${w.mode}`));
 }
 if (!flag('no-build')) execFileSync('bash', [path.join(ROOT, 'tools', 'build.sh')], { cwd: ROOT, stdio: 'ignore' });
 
-for (const id of ids) {
-  const r = runOne(id);
-  fs.appendFileSync(JSONL, JSON.stringify(r) + '\n');
-  console.log(`${id}  ${r.sig}  ${r.secs}s${r.batches != null ? '  b=' + r.batches : ''}`);
-}
-fs.rmSync(LOG_DIR, { recursive: true, force: true });
+(async () => {
+  let next = 0;
+  const worker = async () => {
+    while (next < work.length) {
+      const { id, mode } = work[next++];
+      const r = await runOne(id, mode);
+      fs.appendFileSync(JSONL, JSON.stringify(r) + '\n');
+      console.log(`${id} [${mode}]  ${r.sig}  ${r.frame}/${r.audio}  ${r.secs}s` +
+        `${r.batches != null ? '  b=' + r.batches : ''}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(JOBS, work.length) }, worker));
+  fs.rmSync(LOG_DIR, { recursive: true, force: true });
+})();
