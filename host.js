@@ -2017,14 +2017,20 @@ class WineAssembly {
     // fire-and-forget, and frames sent before the child runs wait in its
     // wire's inbox. 0 = "cannot", and the guest falls back to its old path.
     h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
-      // An ordinary CreateProcess (no redirected std handles) keeps the
-      // visible chain launch through shell_execute here; only the CLI runs
-      // those as merged-back children so far (test/run.js --spawn-processes).
-      if (!count) return 0;
+      // An ordinary CreateProcess (no redirected std handles) is a child too
+      // when the app runs children for every CreateProcess (`spawnProcesses`
+      // in lib/apps.js, as test/run.js --spawn-processes): a visible instance
+      // on a copy of this C:\, whose files come back here when it ends,
+      // before a wait on it returns. Otherwise it keeps the old visible chain
+      // launch through shell_execute. The registry needs no merge: every
+      // instance on the page shares one store.
+      const pipes = count > 0;
+      if (!pipes && !self.spawnProcesses) return 0;
       const shell = window.wineShell;
       const Vlan = window.VlanWire;
-      if (!shell || !shell.launchVfsExe || !Vlan || !Vlan.LoopbackSegment) return 0;
-      if (self.vlanWire && !self._childSegment) {
+      if (!shell || !shell.launchVfsExe) return 0;
+      if (pipes && (!Vlan || !Vlan.LoopbackSegment)) return 0;
+      if (pipes && self.vlanWire && !self._childSegment) {
         console.log('[process_spawn] this process is already in a room; nested children are not supported');
         return 0;
       }
@@ -2042,13 +2048,18 @@ class WineAssembly {
         spec.push({ which: view.getInt32(at, true), end: view.getInt32(at + 4, true),
           lport: view.getInt32(at + 8, true), rport: view.getInt32(at + 12, true) });
       }
-      if (!self._childSegment) {
-        self._childSegment = new Vlan.LoopbackSegment();
-        self.vlanWire = self._childSegment.attach();
+      if (!self._children) {
         self._children = new Map();
         // A parent that ends takes its children with it.
         self._stopChildren = () => { for (const c of self._children.values()) if (c.wine && c.exitCode === 259) c.wine.stop(); };
       }
+      if (pipes && !self._childSegment) {
+        self._childSegment = new Vlan.LoopbackSegment();
+        self.vlanWire = self._childSegment.attach();
+      }
+      // What C:\ held when the child started, by entry identity: the child's
+      // copy shares these entries, so one it replaced or added is its write.
+      const before = !pipes && vfs ? new Map(vfs.files) : null;
       // Waits on the child's hProcess are answered by the thread manager.
       if (self.threadManager) self.threadManager.processCtl = (op, p, arg) => h.process_ctl(op, p, arg);
       const ip = childIp >>> 0;
@@ -2058,6 +2069,7 @@ class WineAssembly {
       self._children.set(pid, rec);
       const beforeRun = async (child) => {
         rec.wine = child;
+        if (!pipes) return;
         await child.callGuest('set_vlan_local_ip', ip | 0);
         await child.callGuest('pipe_detach_console');
         const byPort = new Map();
@@ -2073,13 +2085,22 @@ class WineAssembly {
       };
       const onExit = (child) => {
         if (rec.exitCode !== 259) return;
+        const childVfs = child && child._helpCtx && child._helpCtx.vfs;
+        if (before && childVfs) {
+          try {
+            const r = vfs.mergeChildFrom(before, childVfs);
+            console.log(`[process_spawn] ${file} ended: ${r.written} file(s) written back, ${r.deleted} deleted`);
+          } catch (e) {
+            console.log(`[process_spawn] merging ${file}'s files back failed: ${e.message}`);
+          }
+        }
         rec.exitCode = (child && child._exitCode != null) ? (child._exitCode >>> 0) : (child ? 0 : 1);
         // EOF for the parent's ends of the child's pipes.
-        if (self.vlanWire && self.vlanWire.peerGone) self.vlanWire.peerGone(ip);
+        if (pipes && self.vlanWire && self.vlanWire.peerGone) self.vlanWire.peerGone(ip);
       };
       const ok = shell.launchVfsExe(file, self, dir, parsed.params.trim(), {
-        lanLink: { wire: self._childSegment.attach(), address: ipText, local: true },
-        bypassSingleApp: true, hidden: true, beforeRun, onExit,
+        ...(pipes ? { lanLink: { wire: self._childSegment.attach(), address: ipText, local: true } } : {}),
+        bypassSingleApp: true, hidden: pipes, beforeRun, onExit,
       });
       if (!ok) { self._children.delete(pid); return 0; }
       console.log(`[process_spawn] CreateProcess "${cmd}" -> ${file} at ${ipText}, pid ${pid}`);

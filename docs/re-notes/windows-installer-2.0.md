@@ -57,13 +57,33 @@ node test/run.js --exe=scratch/w5-msi/cap1/windows/temp/ixp000.tmp/msiinst.exe \
 Result (run `20261006T1340Z-instmsi-msiexec`): all three msiexec children exit
 0, 13 files merged into C:\WINDOWS\SYSTEM (msi.dll, msiexec.exe, msihnd.dll,
 msimsg.dll, msisip.dll, cabinet.dll, ...), msiinst exits 0. About 6M batches
-for the /i child. Running `instmsi.exe` itself with `--spawn-processes`
-starts all three levels in one run (seen up to msiexec /i; not yet run to
-the end, it needs a longer budget than 150 s plus the OK press).
+for the /i child.
+
+One run of the registry app does the whole thing: `node test/run.js
+--app=windows_installer_20 --quiet-api --quiet-blocks --stuck-after=0
+--max-seconds=1400 --max-batches=2000000000` (run
+`20261006T1415Z-instmsi-boat-single-run`, on a boat: three nested 512 MB
+guests). instmsi -> msiinst -> msiexec /regserver, msiexec /i with its custom
+actions `msiexec /D` and `msiexec /Y msi.dll` as grandchildren (no more
+1722), then the installed msiexec /regserver; every process exits 0 and the
+installed files reach the top-level C:\. `--pipe-child-args` is forwarded
+down the tree, so a `--input=B:dlg-cmd:3001` there reaches the msiexec that
+shows the completion box; that run did not need it.
+
+The installed `C:\WINDOWS\SYSTEM\msiexec.exe /?` starts and shows a box
+reading "Err": FormatMessageA has no FORMAT_MESSAGE_FROM_SYSTEM text, so a
+system message comes back as the generic "Error" (clipped). Not an install
+problem; a Win98 system message table is its own piece of work.
 
 ## Open
 
-- The browser does not run ordinary CreateProcess as children yet (host.js
-  `process_spawn` returns 0 for a launch without redirected handles and the
-  old visible chain-launch takes it), so this installs only on the CLI.
+- Browser (registry id `windows_installer_20`, `spawnProcesses: true`):
+  host.js starts each CreateProcess as a visible in-page instance on a copy
+  of C:\ and merges its files back on exit (`VirtualFS.mergeChildFrom`; the
+  registry store is page-wide already). msiinst and msiexec /regserver run
+  and merge (run `20261006T1410Z-instmsi-web`), but msiexec /i ends on
+  "unexpected error ... 2761" (cannot begin transaction: global mutex). The
+  CLI does not hit it, so suspect what the browser shares that the CLI
+  snapshots: the live registry (msi's InProgress key) or named objects.
+  Next step: get msi's own `/L*v` log out of the page.
 - An MSI-based corpus installer as acceptance (The Movies demo is deferred).

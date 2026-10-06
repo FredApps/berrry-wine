@@ -3913,6 +3913,8 @@ async function main() {
       '--spawned-child', '--spawn-processes',
       `--save-vfs=${outDir}`, `--reg-import=${regIn}`, `--reg-export=${regOut}`,
       ...PIPE_CHILD_ARGS,
+      // and on down the tree: instmsi's msiexec is a grandchild.
+      ...(PIPE_CHILD_ARGS.length ? [`--pipe-child-args=${PIPE_CHILD_ARGS.join(' ')}`] : []),
     ];
     const { fork } = require('child_process');
     const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });

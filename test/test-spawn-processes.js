@@ -116,5 +116,34 @@ const extraWat = String.raw`
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
+  // --- the browser's merge: a child VFS sharing the parent's entries ---
+  {
+    const parent = new VirtualFS();
+    const put = (vfs, p, text) => {
+      const h = vfs.createFile(p, 0x40000000, 2);
+      vfs.writeFile(h, new Uint8Array(Buffer.from(text)), text.length);
+      vfs.closeHandle(h);
+    };
+    const read = (vfs, p) => {
+      const e = vfs.files.get(vfs._resolvePath(p));
+      return e ? Buffer.from(e.data).toString() : null;
+    };
+    put(parent, 'c:\\inst\\keep.txt', 'same');
+    put(parent, 'c:\\inst\\change.txt', 'old');
+    put(parent, 'c:\\inst\\gone.txt', 'bye');
+    const before = new Map(parent.files);
+    const child = new VirtualFS();
+    child.files = new Map(parent.files);
+    child.dirs = new Set(parent.dirs);
+    put(child, 'c:\\inst\\change.txt', 'new');
+    put(child, 'c:\\windows\\system\\msiexec.exe', 'MZ');
+    child.deleteFile('c:\\inst\\gone.txt');
+    parent.mergeChildFrom(before, child);
+    assert.strictEqual(read(parent, 'c:\\inst\\keep.txt'), 'same');
+    assert.strictEqual(read(parent, 'c:\\inst\\change.txt'), 'new', 'browser merge: a changed file');
+    assert.strictEqual(read(parent, 'c:\\windows\\system\\msiexec.exe'), 'MZ', 'browser merge: a new file');
+    assert.strictEqual(read(parent, 'c:\\inst\\gone.txt'), null, 'browser merge: a deleted file');
+  }
+
   console.log('PASS test-spawn-processes');
 })().catch(err => { console.error(err); process.exit(1); });

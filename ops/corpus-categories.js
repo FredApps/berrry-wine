@@ -36,7 +36,7 @@ const registryGroups = [
   // test/binaries/SOURCES.md identifies Bricks as Klotski, not a brick breaker.
   ['puzzle-board', 'Puzzle / board games', ['fourstones','pawn','runenlegen','jigssawme','empipe','marbles','bricks']],
   ['collections', 'Collections / extras', ['winarc']],
-  ['tools', 'Applications / tools', ['claass','xp_eos','tour98','welcome98']],
+  ['tools', 'Applications / tools', ['claass','xp_eos','tour98','welcome98','windows_installer_20']],
   ['platform', 'Platform games', ['abedemo','captain_claw_demo']],
   ['adventure', 'Adventure', ['broken_sword_demo','curse_monkey_island_demo','atlantis_demo','dark_earth_demo']],
   ['role-playing', 'Role-playing', ['darkstone_demo','diablo_demo','morrowind']],
