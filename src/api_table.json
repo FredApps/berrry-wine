@@ -35184,5 +35184,13 @@
     "nargs": 5,
     "convention": "cdecl",
     "hash": 539032803
+  },
+  {
+    "id": 4164,
+    "name": "QueueUserAPC",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2299245819,
+    "ret": "DWORD"
   }
 ]

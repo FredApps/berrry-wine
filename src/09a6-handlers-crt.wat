@@ -2481,6 +2481,7 @@
   )
 
   (func $handle__endthreadex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $apc_drop_shared_current)
     (call $host_exit_thread (local.get $arg0))
     (global.set $yield_reason (i32.const 2))
     (global.set $eip (i32.const 0))

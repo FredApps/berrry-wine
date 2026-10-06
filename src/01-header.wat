@@ -508,6 +508,13 @@
   (import "host" "duplicate_current_thread" (func $host_duplicate_current_thread (param i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
+  ;; QueueUserAPC's two halves. thread_apc_target resolves a thread HANDLE to
+  ;; its Win32 thread id (main is 1), or 0 for an unknown or exited thread;
+  ;; thread_alert, called after the APC is published in $THREAD_APC_QUEUES,
+  ;; ends that thread's alertable SleepEx early so the APC runs now rather than
+  ;; at the sleep's timeout.
+  (import "host" "thread_apc_target" (func $host_thread_apc_target (param i32 i32) (result i32)))
+  (import "host" "thread_alert" (func $host_thread_alert (param i32)))
   (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
   (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
   (import "host" "get_thread_locale" (func $host_get_thread_locale (param i32) (result i32)))
@@ -2454,6 +2461,11 @@
   ;; to nowhere with no bad pointer anywhere in the guest's own code.
   ;; $thunk_reserve allocates from here; $update_thunk_end keeps the two in step.
   (global $THUNK_NEXT_SHARED i32 (region.addr $LOCK_TABLE 0x00000140))
+  ;; The cross-thread user-APC inboxes (09a7d, $apc_shared_slot): one dword per
+  ;; Win32 thread id 1..16, the guest address of the newest queued node, 0 when
+  ;; empty. Lock-free (cmpxchg push, xchg take-all), so no lock line is needed;
+  ;; this is the table's last free 64-byte line, which is exactly 16 dwords.
+  (global $THREAD_APC_QUEUES i32 (region.addr $LOCK_TABLE 0x000001C0))
   ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
   ;; the WAT exports directly and still expect HeapAlloc to work. This was the
   ;; old initial value of the $heap_ptr global.

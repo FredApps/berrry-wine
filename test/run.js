@@ -4057,6 +4057,8 @@ async function main() {
   h.duplicate_current_thread = (tid) => threadManager.duplicateCurrentThread(tid);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
+  h.thread_apc_target = (handle, tid) => threadManager.threadApcTarget(handle, tid);
+  h.thread_alert = (tid) => threadManager.alertThread(tid);
   h.get_thread_priority = (handle, tid) => threadManager.getThreadPriority(handle, tid);
   h.set_thread_priority = (handle, priority, tid) => threadManager.setThreadPriority(handle, priority, tid);
   h.get_thread_locale = (tid) => threadManager.getThreadLocale(tid);

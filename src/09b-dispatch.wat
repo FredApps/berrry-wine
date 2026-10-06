@@ -129,6 +129,10 @@
     ;; wake, so a park costs exactly one tick, same as any other call.
     (global.set $spin_dispatch_seq
       (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    ;; Any call after an alertable sleep or wait parked means that wait is over
+    ;; (09a7d, cross-thread user APCs); the Ex handlers set these again.
+    (global.set $apc_alert_sleep (i32.const 0))
+    (global.set $wait_alertable (i32.const 0))
 
     ;; Worker threads instantiate a fresh module over the process's shared
     ;; memory. Restore per-instance COM vtable globals before any imported API

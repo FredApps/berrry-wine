@@ -2224,6 +2224,9 @@ class WineAssembly {
     h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
+    h.thread_apc_target = (handle, tid) => self.threadManager
+      ? self.threadManager.threadApcTarget(handle, tid) : 0;
+    h.thread_alert = (tid) => { if (self.threadManager) self.threadManager.alertThread(tid); };
     h.get_thread_priority = (handle, tid) => self.threadManager
       ? self.threadManager.getThreadPriority(handle, tid) : 0x7FFFFFFF;
     h.set_thread_priority = (handle, priority, tid) => self.threadManager

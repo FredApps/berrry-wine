@@ -19,6 +19,7 @@
 
 ;; 469: ExitThread(dwExitCode) — 1 arg, no return
   (func $handle_ExitThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $apc_drop_shared_current)
     (call $host_exit_thread (local.get $arg0))
     (global.set $yield_reason (i32.const 2))
     (global.set $eip (i32.const 0))
@@ -1735,7 +1736,9 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (i32.const 0) (local.get $name_ptr))
     (if (i32.eq (global.get $yield_reason) (i32.const 1))
-      (then (global.set $wait_stack_bytes (i32.const 24)))
+      (then
+        (global.set $wait_alertable (i32.ne (local.get $arg4) (i32.const 0)))
+        (global.set $wait_stack_bytes (i32.const 24)))
       (else
         (i32.store offset=16 (global.get $reg_base)
           (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))))

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 260,
+  "count": 262,
   "sigs": {
     "log": {
       "params": [
@@ -1979,6 +1979,21 @@
       "results": [
         "i32"
       ]
+    },
+    "thread_apc_target": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "thread_alert": {
+      "params": [
+        "i32"
+      ],
+      "results": []
     },
     "get_thread_priority": {
       "params": [

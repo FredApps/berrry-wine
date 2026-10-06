@@ -29,6 +29,8 @@
       (then (call $win16_task_boot)))
     ;; Animate controls playing on comctl32's "thread" (09c3-wndprocs6).
     (call $anim_service)
+    ;; Resuming from an alertable SleepEx with an APC queued: run it first.
+    (call $apc_resume_alert_sleep)
     ;; FlushInstructionCache broadcasts through shared memory because decoded
     ;; blocks are instance-local. Check once per host/Worker slice, not once per
     ;; x86 block; the API is rare and a slice boundary is the first point at

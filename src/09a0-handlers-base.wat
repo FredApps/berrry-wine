@@ -4076,15 +4076,25 @@
   ;; SleepEx dispatches completed I/O only on its submitting thread and only
   ;; when alertable. Otherwise it uses the ordinary cooperative sleep path.
   (func $handle_SleepEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
     (if (local.get $arg1) (then
       (if (call $io_apc_start (i32.const 12)) (then (return)))))
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
     (global.set $yield_flag (i32.const 1))
     (if (local.get $arg0)
       (then
         (global.set $sleep_yielded (i32.const 1))
-        (global.set $sleep_timeout (local.get $arg0))))
+        (global.set $sleep_timeout (local.get $arg0))
+        ;; An alertable sleep that parks: an APC queued to this thread before
+        ;; it resumes is run at the resumption ($apc_resume_alert_sleep), and
+        ;; QueueUserAPC's thread_alert cuts the sleep short.
+        (if (local.get $arg1)
+          (then
+            (global.set $apc_alert_sleep (i32.const 1))
+            (global.set $apc_alert_ret (local.get $ret))
+            (global.set $apc_alert_esp (i32.load offset=16 (global.get $reg_base)))))))
   )
 
   ;; A token handle close has to run before the generic host-file fallback:
@@ -4911,6 +4921,7 @@
     (local.set $result (call $host_wait_single (local.get $arg0) (local.get $arg1)))
     (if (i32.eq (local.get $result) (i32.const 0xFFFF))
       (then
+        (global.set $wait_alertable (i32.ne (local.get $arg2) (i32.const 0)))
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0))
         (global.set $wait_timeout (local.get $arg1))
