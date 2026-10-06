@@ -631,6 +631,15 @@
                        (i32.eq (load.field.memarg WndRecord parent (local.get $addr)) (local.get $hwnd)))
             (then
               (call $wnd_destroy_tree (local.get $child))
+              ;; Tell the renderer about every descendant, as
+              ;; $wnd_destroy_recursive does; the root is the caller's to
+              ;; report. A CreateDialog page under a sheet's frame control is
+              ;; a renderer window whose parent the renderer never saw, so the
+              ;; root's host_destroy_window cannot reach it: Unreal
+              ;; Tournament's last wizard page stayed hit-testable over the
+              ;; game window and swallowed every click. Unknown hwnds are a
+              ;; no-op on the host.
+              (call $host_destroy_window (local.get $child))
               (br $rescan)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $scan)))))

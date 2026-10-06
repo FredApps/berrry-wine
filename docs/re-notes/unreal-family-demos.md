@@ -23,7 +23,7 @@ enforced by `tools/install-unreal-demo.js`.
 | Candidate | Authentic setup result | Installed payload | Installed-game result |
 | --- | --- | ---: | --- |
 | Unreal Special Edition | InstallShield bootstrap launched `_INS*.MP`; license and destination flow completed | 191 MB, `System/Unreal.exe` SHA-256 `5fbc5853a8669a802446ac12e102351053bc6a5ce9f554b03483eb634269f408` | Software launch loads `SoftDrv`, opens `WindowsViewport0`, initializes the game engine/player, and renders the playable intro |
-| Unreal Tournament 348 | Unreal `System/Setup.exe` completed | 104 MB, `System/UnrealTournament.exe` | Reaches the renderer-selection wizard |
+| Unreal Tournament 348 | Unreal `System/Setup.exe` completed | 104 MB, `System/UnrealTournament.exe` | `--app=ut348_demo`: first-run wizard, UWindow menu, DM-Morpheus practice match on SoftDrv with walk + mouse-look (see "UT 348 route" below) |
 | UT2003 2206 | Unreal `System/Setup.exe` completed with the shipped `MSVCR70.dll` | 344 MB, `System/UT2003.exe` SHA-256 `97e027dc9765f048beacfa461bc93c71ba1831cd3e8dff0cd7d71c1b478f88a2` | The D3D8 wrapper renders textured first-person Antalus gameplay; an authentic dedicated server and direct-connect client exchange the native protocol over `vln/1` |
 | UT2004 new demo | Unreal `System/Setup.exe` completed with the shipped `MSVCR71.dll` | 525 MB, `System/UT2004.exe` SHA-256 `2a95e2fa8c22ae94eb1c361fdb49ea8ec44c5e2a93faa00831308c01e951db8d` | Uses the same pre-renderer D3D8 probe; further post-probe launch diagnosis remains |
 
@@ -531,3 +531,33 @@ Route (box2; flags as for UT2003 above):
 6. By batch 8200: DM-Rankin with "Press [Fire] to join the match!".
 7. Click in the viewport (340,300). By 8600 the player has spawned, with the
    HUD, the weapon bar and the assault rifle.
+
+## UT 348 route (2026-10-06)
+
+`--app=ut348_demo` mounts `test/binaries/candidates/unreal-tournament-348-demo/extracted/`
+through a manifest written by `node tools/gen-tree-manifest.js <root>
+--exe=System/UnrealTournament.exe --flatten=System`. The game opens
+`UnrealTournament.ini` relative to the exe and its packages through
+`..\System`, `..\Maps` etc., so `System\` files are mounted at both
+`c:\<name>` and `c:\System\<name>`. Without the mapping it dies early with
+"Can't find file for package 'Engine'" (an `appThrowf`; Core's static message
+buffer is at `core+0x101f65fc`, readable with `--dump` after the exit).
+
+- `FirstRun=0` in the shipped INI opens the setup wizard. Its device probe
+  ShellExecutes a second copy (`testrendev=D3DDrv.D3DRenderDevice
+  log=Detected.log`) and polls `Detected.ini` 100 x `Sleep(100)`, about
+  10 guest seconds, then continues by itself.
+- Wizard buttons render without labels (Back/Next at about (223,418), Cancel at
+  (401,418)). Next x3 by mouse reaches the UWindow menu.
+- Once the wizard ended, its last page stayed in the renderer over the game
+  window and ate every click: `$wnd_destroy_tree` never told the host about
+  windows below the root. Fixed in 09c3a; covered by
+  `test/test-dialog-teardown-grandchild.js`.
+- In the UWindow menus the cursor moves by `relmousemove` at roughly 46% of the
+  requested delta. Game > Start Practice Session opens on DM-Morpheus; Start
+  (about (598,418)) loads the map; "Waiting for ready signals" until a fire
+  click. VK_UP then walks and relmousemove turns the view.
+- Not evaluated: audio, FPS, browser. Some frames between kills are black with
+  only the HUD (death/respawn view).
+
+Evidence: `scratch/runs/20261006T001500Z-ut348-demo-claude202b4b39-dm-morpheus`.
