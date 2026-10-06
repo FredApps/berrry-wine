@@ -2883,6 +2883,15 @@ const vbDirectX7Methods = [
 ];
 for(const row of vbDirectX7Methods){let current=existing.find(api=>api.name===row.name);if(!current){current={id:existing.length,...row};existing.push(current);seen.add(row.name);}Object.assign(current,row);}
 
+// Full separate Unicode DirectPlay4 ABI, appended after established interfaces.
+for (const api of existing.filter(a => /^IDirectPlay[34]_/.test(a.name))) {
+  const name = 'IDirectPlay4W_' + api.name.split('_')[1];
+  if (!seen.has(name)) {
+    existing.push({ id: existing.length, name, nargs: api.nargs, convention: 'stdcall', hash: 0 });
+    seen.add(name);
+  }
+}
+
 // Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
 // belongs to the API row rather than the name/hash generator.
 const table = existing.map((api, id) => {

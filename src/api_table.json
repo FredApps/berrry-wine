@@ -34748,5 +34748,392 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 4104,
+    "name": "IDirectPlay4W_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2038522316
+  },
+  {
+    "id": 4105,
+    "name": "IDirectPlay4W_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1974688471
+  },
+  {
+    "id": 4106,
+    "name": "IDirectPlay4W_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 809369056
+  },
+  {
+    "id": 4107,
+    "name": "IDirectPlay4W_AddPlayerToGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2730284589
+  },
+  {
+    "id": 4108,
+    "name": "IDirectPlay4W_Close",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 826840265
+  },
+  {
+    "id": 4109,
+    "name": "IDirectPlay4W_CreateGroup",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3473053498
+  },
+  {
+    "id": 4110,
+    "name": "IDirectPlay4W_CreatePlayer",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2206250930
+  },
+  {
+    "id": 4111,
+    "name": "IDirectPlay4W_DeletePlayerFromGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3911717148
+  },
+  {
+    "id": 4112,
+    "name": "IDirectPlay4W_DestroyGroup",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1895657570
+  },
+  {
+    "id": 4113,
+    "name": "IDirectPlay4W_DestroyPlayer",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4288400858
+  },
+  {
+    "id": 4114,
+    "name": "IDirectPlay4W_EnumGroupPlayers",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3114817905
+  },
+  {
+    "id": 4115,
+    "name": "IDirectPlay4W_EnumGroups",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2024472010
+  },
+  {
+    "id": 4116,
+    "name": "IDirectPlay4W_EnumPlayers",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1632630928
+  },
+  {
+    "id": 4117,
+    "name": "IDirectPlay4W_EnumSessions",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "hash": 2655119431
+  },
+  {
+    "id": 4118,
+    "name": "IDirectPlay4W_GetCaps",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 1800695760
+  },
+  {
+    "id": 4119,
+    "name": "IDirectPlay4W_GetGroupData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 69376364
+  },
+  {
+    "id": 4120,
+    "name": "IDirectPlay4W_GetGroupName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 214644831
+  },
+  {
+    "id": 4121,
+    "name": "IDirectPlay4W_GetMessageCount",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3689347107
+  },
+  {
+    "id": 4122,
+    "name": "IDirectPlay4W_GetPlayerAddress",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "hash": 485626152
+  },
+  {
+    "id": 4123,
+    "name": "IDirectPlay4W_GetPlayerCaps",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "hash": 1305783993
+  },
+  {
+    "id": 4124,
+    "name": "IDirectPlay4W_GetPlayerData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3485786720
+  },
+  {
+    "id": 4125,
+    "name": "IDirectPlay4W_GetPlayerName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1806096347
+  },
+  {
+    "id": 4126,
+    "name": "IDirectPlay4W_GetSessionDesc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 3556815770
+  },
+  {
+    "id": 4127,
+    "name": "IDirectPlay4W_Initialize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "stub": { "pop": 12, "ret": 2147500033 },
+    "hash": 1841572441
+  },
+  {
+    "id": 4128,
+    "name": "IDirectPlay4W_Open",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 1824581663
+  },
+  {
+    "id": 4129,
+    "name": "IDirectPlay4W_Receive",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": { "pop": 28, "ret": 2147500033 },
+    "hash": 3882055488
+  },
+  {
+    "id": 4130,
+    "name": "IDirectPlay4W_Send",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 4173012965
+  },
+  {
+    "id": 4131,
+    "name": "IDirectPlay4W_SetGroupData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3233982512
+  },
+  {
+    "id": 4132,
+    "name": "IDirectPlay4W_SetGroupName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1463872203
+  },
+  {
+    "id": 4133,
+    "name": "IDirectPlay4W_SetPlayerData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 303445444
+  },
+  {
+    "id": 4134,
+    "name": "IDirectPlay4W_SetPlayerName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2967643095
+  },
+  {
+    "id": 4135,
+    "name": "IDirectPlay4W_SetSessionDesc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 594765774
+  },
+  {
+    "id": 4136,
+    "name": "IDirectPlay4W_AddGroupToGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 716267867
+  },
+  {
+    "id": 4137,
+    "name": "IDirectPlay4W_CreateGroupInGroup",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 4100188876
+  },
+  {
+    "id": 4138,
+    "name": "IDirectPlay4W_DeleteGroupFromGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1823252278
+  },
+  {
+    "id": 4139,
+    "name": "IDirectPlay4W_EnumConnections",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2617749511
+  },
+  {
+    "id": 4140,
+    "name": "IDirectPlay4W_EnumGroupsInGroup",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2750328412
+  },
+  {
+    "id": 4141,
+    "name": "IDirectPlay4W_GetGroupConnectionSettings",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "hash": 1877399065
+  },
+  {
+    "id": 4142,
+    "name": "IDirectPlay4W_InitializeConnection",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 552187317
+  },
+  {
+    "id": 4143,
+    "name": "IDirectPlay4W_SecureOpen",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "hash": 1573461258
+  },
+  {
+    "id": 4144,
+    "name": "IDirectPlay4W_SendChatMessage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "hash": 2867113778
+  },
+  {
+    "id": 4145,
+    "name": "IDirectPlay4W_SetGroupConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": { "pop": 20, "ret": 2147500033 },
+    "hash": 2551992781
+  },
+  {
+    "id": 4146,
+    "name": "IDirectPlay4W_StartSession",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": { "pop": 16, "ret": 2147500033 },
+    "hash": 1719735331
+  },
+  {
+    "id": 4147,
+    "name": "IDirectPlay4W_GetGroupFlags",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2303101911
+  },
+  {
+    "id": 4148,
+    "name": "IDirectPlay4W_GetGroupParent",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1931597164
+  },
+  {
+    "id": 4149,
+    "name": "IDirectPlay4W_GetPlayerAccount",
+    "nargs": 5,
+    "convention": "stdcall",
+    "stub": { "pop": 24, "ret": 2147500033 },
+    "hash": 3569725351
+  },
+  {
+    "id": 4150,
+    "name": "IDirectPlay4W_GetPlayerFlags",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 817584683
+  },
+  {
+    "id": 4151,
+    "name": "IDirectPlay4W_GetGroupOwner",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2179673315
+  },
+  {
+    "id": 4152,
+    "name": "IDirectPlay4W_SetGroupOwner",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1514097407
+  },
+  {
+    "id": 4153,
+    "name": "IDirectPlay4W_SendEx",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 3910256456
+  },
+  {
+    "id": 4154,
+    "name": "IDirectPlay4W_GetMessageQueue",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2332345523
+  },
+  {
+    "id": 4155,
+    "name": "IDirectPlay4W_CancelMessage",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1432922132
+  },
+  {
+    "id": 4156,
+    "name": "IDirectPlay4W_CancelPriority",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4186605625
   }
 ]

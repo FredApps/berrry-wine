@@ -3197,8 +3197,8 @@
           (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
           (return)))
       (if (i32.eq (local.get $local_class) (i32.const 1))
-        (then (local.set $hr (call $dplay_query_interface_wa
-          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 0)))))
+        (then (local.set $hr (call $dplay_query_interface
+          (local.get $obj_guest) (local.get $arg3) (local.get $arg4) (i32.const 0)))))
       (if (i32.eq (local.get $local_class) (i32.const 2))
         (then (local.set $hr (call $dx_query_interface_single_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)

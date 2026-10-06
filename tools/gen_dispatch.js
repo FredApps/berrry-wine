@@ -452,6 +452,8 @@ for (const v of d3d8Vtables) comInterfaces.push(v);
 // IUnknown and its IMarshal. Tail again, same registry-offset reason.
 comInterfaces.push({ prefix: 'IFtmInner', global: 'DX_VTBL_FTM_INNER' });
 comInterfaces.push({ prefix: 'IFtmMarshal', global: 'DX_VTBL_FTM_MARSHAL' });
+// Separate Unicode DirectPlay4 interface; never aliases ANSI method semantics.
+comInterfaces.push({ prefix: 'IDirectPlay4W', global: 'DX_VTBL_DPLAY4W' });
 
 // IDirectInputDevice7: the v2 device vtable plus EnumEffectsInFile and
 // WriteEffectToFile. An app that asks for IID_IDirectInputDevice7A and is
