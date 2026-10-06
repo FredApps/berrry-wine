@@ -66,6 +66,12 @@ const extraWat = String.raw`
   const rampBytes = ramp =>
     Array.from(bytes.slice(wa(ramp), wa(ramp) + RAMP_BYTES));
 
+  const { gammaLut, applyGamma } = require('../lib/dib');
+  assert.strictEqual(e.gamma_ramp_wa() >>> 0, 0,
+    'no ramp is exported for the presenter before one is set');
+  assert.strictEqual(gammaLut(e, memory.buffer), null,
+    'the presenter applies nothing to an unset display');
+
   const gamma = e.test_gamma_create(1) >>> 0;
   const nonPrimary = e.test_gamma_create(0) >>> 0;
   assert(gamma && nonPrimary, 'gamma-control test surfaces are allocated');
@@ -92,6 +98,32 @@ const extraWat = String.raw`
     'GetGammaRamp retrieves the installed ramp');
   assert.deepStrictEqual(rampBytes(output), expected,
     'the display owns its ramp instead of aliasing the caller buffer');
+
+  // The presenter sees the installed ramp through the shared exports and
+  // rebuilds its tables on the next generation only.
+  const gen0 = e.gamma_ramp_gen() >>> 0;
+  const lut = gammaLut(e, memory.buffer);
+  assert(lut, 'a non-identity ramp yields presenter tables');
+  const hi = (ch, i) => (0x1234 + ch * 0x1111 + i * 193) & 0xffff;
+  assert.deepStrictEqual([lut.r[10], lut.g[200], lut.b[255]],
+    [hi(0, 10) >>> 8, hi(1, 200) >>> 8, hi(2, 255) >>> 8],
+    'each channel maps through the high byte of its ramp word');
+  assert.strictEqual(gammaLut(e, memory.buffer), lut, 'tables are cached per generation');
+  const px = new Uint32Array([0x80C8640A]);  // A=0x80 B=200 G=100 R=10
+  applyGamma(lut, px, 0, 1);
+  assert.strictEqual(px[0] >>> 0, (0x80000000 | (lut.b[200] << 16)
+    | (lut.g[100] << 8) | lut.r[10]) >>> 0, 'a canvas word maps per channel, alpha kept');
+
+  const identity = allocRamp();
+  for (let ch = 0; ch < 3; ch++) {
+    for (let i = 0; i < 256; i++) view.setUint16(wa(identity) + ch * 512 + i * 2, i * 257, true);
+  }
+  assert.strictEqual(e.test_gamma_set(gamma, 0, identity) >>> 0, DD_OK);
+  assert.strictEqual(e.gamma_ramp_gen() >>> 0, gen0 + 1, 'each set bumps the generation');
+  assert.strictEqual(gammaLut(e, memory.buffer), null,
+    'an identity ramp costs the presenter nothing');
+  view.setUint16(wa(supplied), 0x1234, true);  // undo the aliasing probe above
+  assert.strictEqual(e.test_gamma_set(gamma, 0, supplied) >>> 0, DD_OK);
 
   const screenDc = e.test_call_GetDC(0) >>> 0;
   const gdiOutput = allocRamp();

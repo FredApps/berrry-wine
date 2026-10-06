@@ -11545,6 +11545,14 @@ if (VERBOSE) {
         data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
       }
     }
+    // The display gamma ramp, as the browser presenter applies it
+    // (_presentDxSurfaceToMainWindow), so a capture matches the page.
+    const { gammaLut, applyGamma } = require('../lib/dib');
+    const gamma = DX_RAW_INDEX ? null : gammaLut(instance.exports, memory.buffer);
+    if (gamma) {
+      applyGamma(gamma, new Uint32Array(data.buffer, data.byteOffset, surface.w * surface.h),
+        0, surface.w * surface.h);
+    }
     return data;
   };
 

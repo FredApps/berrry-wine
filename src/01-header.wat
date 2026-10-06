@@ -1228,7 +1228,9 @@
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide state; +0 class atom,
   ;;                                     +4 decoded-code cache generation,
-  ;;                                     +16 last QPC count, i64)
+  ;;                                     +16 last QPC count, i64,
+  ;;                                     +24 gamma ramp generation,
+  ;;                                     +28 gamma ramp guest address)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
   ;; main. They move here on the merge into the threads branch, which grew
@@ -1945,10 +1947,10 @@
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
-  ;; GDI batching is synchronous in this emulator, but the public limit and
-  ;; display gamma ramp remain observable process state.
+  ;; GDI batching is synchronous in this emulator, but the public limit remains
+  ;; observable process state. (The display gamma ramp is the shared
+  ;; process state in $SHARED_COUNTERS, see $gamma_ramp_store in 10f-gdi-dc.wat.)
   (global $gdi_batch_limit (mut i32) (i32.const 310))
-  (global $gdi_gamma_ramp_guest (mut i32) (i32.const 0))
   ;; Set while a window's backing surface is being replaced after a resize and
   ;; its chrome is being drawn back onto the new one. The repaint allocates a
   ;; window DC, which comes back through $gdi_window_surface_ensure; this stops
@@ -2437,6 +2439,8 @@
   ;; +16: the last QueryPerformanceCounter count handed to any guest thread
   ;; (i64, see $qpc_next).
   (global $QPC_SHARED i32 (region.addr $SHARED_COUNTERS 0x00000010))
+  ;; +24 / +28: the display gamma ramp's generation and guest address
+  ;; ($gamma_ramp_store in 10f-gdi-dc.wat).
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; 256 bytes of scratch that belong to the TEST HARNESS, not to the emulator.
   ;; No WAT reads any of it. The layout is fixed by offset so tests in separate

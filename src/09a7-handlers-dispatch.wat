@@ -2573,35 +2573,24 @@
       (i32.const 0xC0007AAD) (i32.const 0x4E9BC24F)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IDirectDrawGammaControl_GetGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ramp i32) (local $i i32) (local $value i32)
+    (local $ramp i32)
     (if (i32.eqz (call $ddraw_gamma_control_valid (local.get $arg0)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x88760082))) ;; DDERR_INVALIDOBJECT
       (else (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg2)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)))
       (else
         ;; A DDGAMMARAMP is 1536 bytes and always crosses a guest page
-        ;; boundary, whose two halves need not be adjacent in WASM memory.
-        ;; The stored ramp is our own heap allocation, so only the caller's
-        ;; buffer needs gathering.
+        ;; boundary, whose two halves need not be adjacent in WASM memory, so
+        ;; the caller's buffer is gathered and written back.
         (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
-        (if (global.get $gdi_gamma_ramp_guest)
-          (then
-            (memory.copy (local.get $ramp)
-              (call $g2w (global.get $gdi_gamma_ramp_guest)) (i32.const 1536)))
-          (else
-            (local.set $i (i32.const 0))
-            (block $done (loop $fill
-              (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-              (local.set $value (i32.mul (local.get $i) (i32.const 257)))
-              (i32.store16 (i32.add (local.get $ramp) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (i32.store16 (i32.add (i32.add (local.get $ramp) (i32.const 512)) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (i32.store16 (i32.add (i32.add (local.get $ramp) (i32.const 1024)) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (local.set $i (i32.add (local.get $i) (i32.const 1)))
-              (br $fill)))))
+        (call $gamma_ramp_load (local.get $ramp))
         (call $guest_span_writeback (local.get $arg2) (local.get $ramp) (i32.const 1536))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; The ramp is the display's (src/10f $gamma_ramp_store): the host applies it
+  ;; when it presents the primary, which is why the driver caps can offer
+  ;; DDCAPS2_PRIMARYGAMMA.
   (func $handle_IDirectDrawGammaControl_SetGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ramp i32)
     (if (i32.eqz (call $ddraw_gamma_control_valid (local.get $arg0)))
@@ -2611,22 +2600,13 @@
           (i32.eqz (local.get $arg2)))
         (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))) ;; DDERR_INVALIDPARAMS
         (else
-          (if (i32.eqz (global.get $gdi_gamma_ramp_guest))
-            (then
-              (local.set $ramp (call $heap_alloc (i32.const 1536)))
-              (if (i32.eqz (local.get $ramp))
-                (then
-                  (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
-                  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-                  (return)))
-              (global.set $gdi_gamma_ramp_guest (local.get $ramp))))
           ;; The caller's 1536-byte ramp can straddle two sparse guest pages
           ;; that are not adjacent in WASM memory; gather it before copying.
           (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
-          (memory.copy (call $g2w (global.get $gdi_gamma_ramp_guest))
-            (local.get $ramp) (i32.const 1536))
-          (call $guest_span_release (local.get $ramp) (i32.const 1536))
-          (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
+          (i32.store offset=0 (global.get $reg_base)
+            (select (i32.const 0) (i32.const 0x8007000E) ;; DD_OK / DDERR_OUTOFMEMORY
+              (call $gamma_ramp_store (local.get $ramp))))
+          (call $guest_span_release (local.get $ramp) (i32.const 1536))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; CLSID_ShellLink's Win98 interfaces. Inno Setup configures IShellLinkA,

@@ -3446,8 +3446,12 @@
       ;; dwCaps2 = DDCAPS2_CANRENDERWINDOWED: every D3D device here draws
       ;; into a window's canvas. Deus Ex's D3DDrv reads this bit and, without
       ;; it, refuses a -windowed viewport ("D3D Device: Fullscreen only").
+      ;; | DDCAPS2_PRIMARYGAMMA (0x20000): IDirectDrawGammaControl's ramp is
+      ;; applied when the primary is presented (lib/gamma-lut.js). Without it
+      ;; D3DDrv logs "Gamma control not available" and its frame is darker
+      ;; than the same scene through SoftDrv.
       (if (i32.gt_u (local.get $sz) (i32.const 8))
-        (then (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x80000))))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0xA0000))))
       ;; dwZBufferBitDepths = DDBD_16 (0x400) — MCM checks
       (if (i32.gt_u (local.get $sz) (i32.const 0x38))
         (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))
