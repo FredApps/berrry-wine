@@ -17,7 +17,9 @@
 //
 // Steps (semicolon separated, left to right):
 //   move:X,Y      move the pointer to guest pixel X,Y
-//   click:X,Y     move, then press and release the left button
+//   click:X,Y     move, then press and release the left button (60ms hold)
+//   qclick:X,Y    the same with no hold: press and release in one tick, as a
+//                 fast click or a tap reaches a busy guest (both queued together)
 //   tap:X,Y       a touchscreen tap (needs --touch); drives the touch bridge,
 //                 which `click` never reaches
 //   down:X,Y      / up:X,Y   — the halves of a drag
@@ -604,12 +606,13 @@ async function main() {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.touchscreen.tap(p.x, p.y);
-      } else if (kind === 'move' || kind === 'click' || kind === 'dbl'
+      } else if (kind === 'move' || kind === 'click' || kind === 'qclick' || kind === 'dbl'
                  || kind === 'down' || kind === 'up') {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.mouse.move(p.x, p.y);
         if (kind === 'click') { await page.mouse.down(); await wait(60); await page.mouse.up(); }
+        else if (kind === 'qclick') { await page.mouse.down(); await page.mouse.up(); }
         // A double-click has to happen inside one step: every step is followed
         // by a settle wait, so two `click` steps are always further apart than
         // any guest's double-click time. Diablo's Choose Class screen confirms
