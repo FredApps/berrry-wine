@@ -34699,5 +34699,13 @@
     "convention": "stdcall",
     "hash": 2732690397,
     "ret": "INT"
+  },
+  {
+    "id": 4100,
+    "name": "StringFromIID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2069023294,
+    "handler": "StringFromCLSID"
   }
 ]

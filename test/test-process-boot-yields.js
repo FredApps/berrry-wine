@@ -221,6 +221,90 @@ function fakeGuest(name, { nameGetter }) {
     findDllSync: () => { throw new Error('no yield pending'); } }), false, 'no pending yield, nothing to do');
   console.log('PASS  LoadLibrary yield inside DllMain: serviced synchronously or left for the async path');
 
+  // A LoadLibrary maps the target's static imports first, as Windows does.
+  // Blood 2's Client.exe LoadLibrary's ima.dll, which imports IMUSIC25.DLL
+  // (and it AM18.DLL) and MSYNTH25.DLL; mapping ima.dll alone left those
+  // imports on WAT stubs and the game trapped on _AllocAAEngine2@8. Only
+  // registry-loadable names are followed, and a module already mapped is not
+  // mapped again. The loader's guest-facing steps are recorded, not run.
+  const loader = require('../lib/dll-loader');
+  const saved = {};
+  const calls = [];
+  const bases = { 'am18.dll': 0x30000000, 'imusic25.dll': 0x31000000,
+    'msynth25.dll': 0x32000000, 'ima.dll': 0x33000000 };
+  for (const name of ['loadDll', 'patchDllImports', 'callDllMain', 'loadedModuleNames',
+    'resumeAfterLoadLibraryYield']) saved[name] = loader[name];
+  const imageOf = new Map();
+  loader.loadDll = (_e, _m, bytes, modulePath) => {
+    const name = imageOf.get(bytes);
+    calls.push(['map', name, modulePath]);
+    return { loadAddr: bases[name], dllMain: bases[name] + 0x10 };
+  };
+  loader.patchDllImports = (_e, _m, dlls) => calls.push(['patch', dlls[0].name]);
+  loader.callDllMain = (_e, base) => calls.push(['init', base]);
+  loader.loadedModuleNames = () => new Set(['msynth25.dll']);
+  loader.resumeAfterLoadLibraryYield = () => {};
+  const withImports = (name, imports) => {
+    // One section at RVA 0x1000 holding the import descriptors and the names.
+    const bytes = Buffer.alloc(0x400);
+    bytes.writeUInt16LE(0x5a4d, 0);
+    bytes.writeUInt32LE(0x80, 0x3c);
+    bytes.writeUInt32LE(0x00004550, 0x80);
+    bytes.writeUInt16LE(1, 0x86);
+    bytes.writeUInt16LE(0xe0, 0x94);
+    bytes.writeUInt32LE(0x1000, 0x80 + 128);
+    const section = 0x80 + 24 + 0xe0;
+    bytes.writeUInt32LE(0x1000, section + 12);
+    bytes.writeUInt32LE(0x200, section + 16);
+    bytes.writeUInt32LE(0x200, section + 20);
+    let text = 0x1000 + 20 * (imports.length + 1);
+    imports.forEach((dll, i) => {
+      bytes.writeUInt32LE(text, 0x200 + i * 20 + 12);
+      bytes.write(dll + '\0', 0x200 + (text - 0x1000), 'ascii');
+      text += dll.length + 1;
+    });
+    const image = new Uint8Array(bytes);
+    imageOf.set(image, name);
+    return image;
+  };
+  const files = {
+    'ima.dll': withImports('ima.dll', ['IMUSIC25.DLL', 'MSYNTH25.DLL', 'KERNEL32.dll']),
+    'imusic25.dll': withImports('imusic25.dll', ['AM18.dll', 'KERNEL32.dll']),
+    'am18.dll': withImports('am18.dll', ['KERNEL32.dll']),
+  };
+  try {
+    const d = fakeGuest('C:\\GAME\\ima.dll', { nameGetter: 'get_loadlib_name' });
+    const looked = [];
+    await handleLoadLibraryYield({ exports: d.exports, memoryBuffer: d.memory,
+      findDll: (fileName, fullName) => { looked.push(fullName); return files[fileName] || null; } });
+    assert.deepStrictEqual(looked, ['C:\\GAME\\ima.dll', 'C:\\GAME\\imusic25.dll', 'C:\\GAME\\am18.dll'],
+      'dependencies are looked up beside the importing module; kernel32 and the mapped msynth25 are not');
+    assert.deepStrictEqual(calls, [
+      ['map', 'am18.dll', 'C:\\GAME\\am18.dll'], ['patch', 'am18.dll'],
+      ['map', 'imusic25.dll', 'C:\\GAME\\imusic25.dll'], ['patch', 'imusic25.dll'],
+      ['map', 'ima.dll', 'C:\\GAME\\ima.dll'], ['patch', 'ima.dll'],
+      ['init', 0x30000000], ['init', 0x31000000], ['init', 0x33000000],
+    ], 'each dependency is mapped and patched before its importer, and initialized first');
+    assert.strictEqual(d.state.eax, 0x33000000, 'LoadLibraryA returns the module it was asked for');
+    assert.strictEqual(d.state.yield, 0);
+
+    calls.length = 0;
+    const s2 = fakeGuest('C:\\GAME\\ima.dll', { nameGetter: 'get_loadlib_name' });
+    s2.exports.get_yield_reason = () => s2.state.yield;
+    assert.strictEqual(serviceLoadLibraryYieldSync({ exports: s2.exports, memoryBuffer: s2.memory,
+      findDllSync: fileName => (fileName === 'ima.dll' ? files[fileName] : Promise.resolve(files[fileName])) }),
+    false, 'a dependency that needs I/O defers the whole load to the async path');
+    assert.strictEqual(s2.state.yield, 5);
+    assert.deepStrictEqual(calls, [], 'and nothing was mapped');
+    assert.strictEqual(serviceLoadLibraryYieldSync({ exports: s2.exports, memoryBuffer: s2.memory,
+      findDllSync: fileName => files[fileName] || null }), true);
+    assert.strictEqual(calls.filter(c => c[0] === 'map').length, 3,
+      'the synchronous pump maps the same dependency closure');
+  } finally {
+    Object.assign(loader, saved);
+  }
+  console.log('PASS  LoadLibrary yield maps the static imports of the requested DLL first');
+
   const c = fakeGuest('shdocvw.dll', { nameGetter: 'get_com_dll_name' });
   const comMissing = await handleComDllYield({
     exports: c.exports,

@@ -1200,6 +1200,9 @@
     (local.set $type (i32.load (local.get $entry_wa)))
     (if (i32.eq (local.get $type) (i32.const 2))
       (then (call $dx_surf_note_write (local.get $entry_wa))))
+    ;; A DirectInput device's custom data-format map is a guest-heap block.
+    (if (i32.eq (local.get $type) (i32.const 7))
+      (then (call $di_format_map_drop (local.get $entry_wa))))
     (call $vbdd_draw_state_reset (local.get $entry_wa))
     ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
     (i32.store (local.get $entry_wa) (i32.const 0))
@@ -9209,6 +9212,177 @@
       (br $objects_loop)))
     (local.get $data_size))
 
+  ;; Application-defined DIDATAFORMATs. DirectInput matches each format object
+  ;; to a device object by GUID and DIDFT type/instance and reports that
+  ;; object at the format's dwOfs; device objects the format does not name are
+  ;; not reported at all. LithTech (Blood 2) builds exactly such a format for
+  ;; the keys a player has bound -- dwOfs = 4*i, each object named by the dwType
+  ;; EnumObjects gave it -- after first setting one with no objects, and reads
+  ;; dwOfs/4 back as an index into its own binding table.
+  ;;
+  ;; A device with a custom format keeps the guest address of its offset map
+  ;; at +0 of its DX_SURF_STATE record ($dx_create_com_obj zeroes that record,
+  ;; so 0 = one of the standard formats). The map is a guest-heap block of 256
+  ;; i32 app offsets indexed by native object index ($di_object_exists
+  ;; numbering: DIK code / mouse 0..5), -1 for an object the format omits.
+  ;; $dx_free returns it; a heap block may sit in sparse guest memory, so it is
+  ;; only ever read and written an entry at a time.
+  (global $DI_FORMAT_MAP_BYTES i32 (i32.const 1024))
+
+  ;; Guest address of this device's custom offset map, or 0 for a standard format.
+  (func $di_format_map (param $entry i32) (result i32)
+    (i32.load (call $dx_surf_state_ptr (local.get $entry))))
+
+  ;; Install a fully built map, returning the one it replaces to the heap.
+  (func $di_format_map_install (param $entry i32) (param $map i32)
+    (call $di_format_map_drop (local.get $entry))
+    (i32.store (call $dx_surf_state_ptr (local.get $entry)) (local.get $map)))
+
+  ;; Back to a standard format (or the device is being freed).
+  (func $di_format_map_drop (param $entry i32)
+    (local $map i32)
+    (local.set $map (call $di_format_map (local.get $entry)))
+    (if (local.get $map)
+      (then
+        (call $heap_free (local.get $map))
+        (i32.store (call $dx_surf_state_ptr (local.get $entry)) (i32.const 0)))))
+
+  (func $di_format_map_get (param $map i32) (param $index i32) (result i32)
+    (call $gl32 (i32.add (local.get $map) (i32.shl (local.get $index) (i32.const 2)))))
+
+  (func $di_format_map_set (param $map i32) (param $index i32) (param $ofs i32)
+    (call $gs32 (i32.add (local.get $map) (i32.shl (local.get $index) (i32.const 2)))
+      (local.get $ofs)))
+
+  ;; Data1 of the object's guidType (GUID_XAxis/YAxis/ZAxis, GUID_Button,
+  ;; GUID_Key); the rest of each GUID is fixed, see $di_fill_object_guid.
+  (func $di_object_guid_data1 (param $kind i32) (param $index i32) (result i32)
+    (if (result i32) (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (if (result i32) (i32.lt_u (local.get $index) (i32.const 3))
+          (then (i32.add (i32.const 0xA36D02E0) (local.get $index)))
+          (else (i32.const 0xA36D02F0))))
+      (else (i32.const 0x55728220))))
+
+  (func $di_object_guid_matches (param $guid i32) (param $kind i32) (param $index i32) (result i32)
+    (local $data1 i32)
+    (local.set $data1 (call $di_object_guid_data1 (local.get $kind) (local.get $index)))
+    (i32.and
+      (i32.and
+        (i32.eq (call $gl32 (local.get $guid)) (local.get $data1))
+        (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 4)))
+          (i32.or (i32.const 0x11CF0000)
+            (select (i32.const 0xD33C) (i32.const 0xC9F3)
+              (i32.eq (local.get $data1) (i32.const 0x55728220))))))
+      (i32.and
+        (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 8))) (i32.const 0x4544C7BF))
+        (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 12))) (i32.const 0x00005453)))))
+
+  ;; Build $entry's map from a non-standard DIDATAFORMAT. Returns dwDataSize,
+  ;; or -1 when DirectInput would refuse the format (a non-optional object
+  ;; with no match, an offset outside the data, a misaligned axis).
+  (func $di_custom_data_format (param $entry i32) (param $format_guest i32) (result i32)
+    (local $format i32) (local $kind i32) (local $data_size i32) (local $count i32)
+    (local $objects_guest i32) (local $object i32) (local $map i32)
+    (local $i i32) (local $n i32) (local $limit i32) (local $want i32) (local $guid i32)
+    (local $ofs i32) (local $type_bits i32) (local $inst i32) (local $found i32)
+    (local $obj_type i32) (local $width i32)
+    (if (i32.eqz (local.get $format_guest)) (then (return (i32.const -1))))
+    (local.set $format (call $g2w_affine_span (local.get $format_guest) (i32.const 24)))
+    (if (i32.eq (local.get $format) (global.get $NULL_SENTINEL))
+      (then (return (i32.const -1))))
+    (local.set $kind (load.field DxObject misc0 (local.get $entry)))
+    (local.set $data_size (i32.load offset=12 (local.get $format)))
+    (local.set $count (i32.load offset=16 (local.get $format)))
+    (local.set $objects_guest (i32.load offset=20 (local.get $format)))
+    ;; dwSize, dwObjSize, dwFlags (DIDF_ABSAXIS/DIDF_RELAXIS), dwDataSize.
+    (if (i32.or
+          (i32.or (i32.ne (i32.load (local.get $format)) (i32.const 24))
+                  (i32.ne (i32.load offset=4 (local.get $format)) (i32.const 16)))
+          (i32.or
+            (i32.gt_u (i32.load offset=8 (local.get $format)) (i32.const 2))
+            (i32.or (i32.ne (i32.and (local.get $data_size) (i32.const 3)) (i32.const 0))
+                    (i32.gt_u (local.get $data_size) (i32.const 0x10000)))))
+      (then (return (i32.const -1))))
+    (if (i32.and (i32.ne (local.get $kind) (i32.const 1))
+                 (i32.ne (local.get $kind) (i32.const 2)))
+      (then (return (i32.const -1))))
+    (if (i32.gt_u (local.get $count) (i32.const 256)) (then (return (i32.const -1))))
+    (if (i32.and (i32.ne (local.get $count) (i32.const 0))
+                 (i32.eqz (local.get $objects_guest)))
+      (then (return (i32.const -1))))
+    ;; Built in a fresh block and installed only once every object matched:
+    ;; a refused SetDataFormat leaves the device's current format in force.
+    (local.set $map (call $heap_alloc (global.get $DI_FORMAT_MAP_BYTES)))
+    (if (i32.eqz (local.get $map)) (then (return (i32.const -1))))
+    (block $cleared (loop $clear
+      (br_if $cleared (i32.ge_u (local.get $n) (i32.const 256)))
+      (call $di_format_map_set (local.get $map) (local.get $n) (i32.const -1))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $clear)))
+    (local.set $limit (select (i32.const 6) (i32.const 256)
+      (i32.eq (local.get $kind) (i32.const 2))))
+    (block $done (loop $objects
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      ;; DIOBJECTDATAFORMAT: pguid, dwOfs, dwType, dwFlags.
+      (local.set $object (i32.add (local.get $objects_guest) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $guid (call $gl32 (local.get $object)))
+      (local.set $ofs (call $gl32 (i32.add (local.get $object) (i32.const 4))))
+      (local.set $want (call $gl32 (i32.add (local.get $object) (i32.const 8))))
+      (local.set $type_bits (i32.and (local.get $want) (i32.const 0xFF)))
+      (local.set $inst (i32.and (i32.shr_u (local.get $want) (i32.const 8)) (i32.const 0xFFFF)))
+      (local.set $found (i32.const -1))
+      (local.set $n (i32.const 0))
+      (block $matched (loop $candidates
+        (br_if $matched (i32.ge_u (local.get $n) (local.get $limit)))
+        (local.set $obj_type (call $di_object_type (local.get $kind) (local.get $n)))
+        (if (i32.and
+              (i32.and
+                (call $di_object_exists (local.get $kind) (local.get $n))
+                ;; Each device object is assigned to at most one format object.
+                (i32.eq (call $di_format_map_get (local.get $map) (local.get $n)) (i32.const -1)))
+              (i32.and
+                (i32.or (i32.eqz (local.get $type_bits))
+                        (i32.ne (i32.and (local.get $obj_type) (local.get $type_bits)) (i32.const 0)))
+                (i32.and
+                  (i32.or (i32.eq (local.get $inst) (i32.const 0xFFFF))
+                          (i32.eq (local.get $inst) (local.get $n)))
+                  (i32.or (i32.eqz (local.get $guid))
+                          (call $di_object_guid_matches (local.get $guid) (local.get $kind) (local.get $n))))))
+          (then (local.set $found (local.get $n)) (br $matched)))
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        (br $candidates)))
+      (if (i32.lt_s (local.get $found) (i32.const 0))
+        (then
+          ;; DIDFT_OPTIONAL objects may be absent from the device.
+          (if (i32.eqz (i32.and (local.get $want) (i32.const 0x80000000)))
+            (then (call $heap_free (local.get $map)) (return (i32.const -1)))))
+        (else
+          ;; An axis is a DWORD at a DWORD-aligned offset; a button is one byte.
+          (local.set $width (select (i32.const 4) (i32.const 1)
+            (i32.ne (i32.and (call $di_object_type (local.get $kind) (local.get $found)) (i32.const 3))
+                    (i32.const 0))))
+          (if (i32.or
+                (i32.gt_u (i32.add (local.get $ofs) (local.get $width)) (local.get $data_size))
+                (i32.and (i32.eq (local.get $width) (i32.const 4))
+                         (i32.ne (i32.and (local.get $ofs) (i32.const 3)) (i32.const 0))))
+            (then (call $heap_free (local.get $map)) (return (i32.const -1))))
+          (call $di_format_map_set (local.get $map) (local.get $found) (local.get $ofs))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $objects)))
+    (call $di_format_map_install (local.get $entry) (local.get $map))
+    (local.get $data_size))
+
+  ;; The offset at which this device reports native object $index, or -1 when
+  ;; its data format leaves the object out. Standard formats report the
+  ;; c_dfDIKeyboard / DIMOUSESTATE offsets.
+  (func $di_format_offset (param $entry i32) (param $kind i32) (param $index i32) (result i32)
+    (local $map i32)
+    (local.set $map (call $di_format_map (local.get $entry)))
+    (if (result i32) (local.get $map)
+      (then (call $di_format_map_get (local.get $map) (local.get $index)))
+      (else (call $di_object_offset (local.get $kind) (local.get $index)))))
+
   ;; Acquire is deliberately not reference-counted. A second call succeeds
   ;; with S_FALSE, and one Unacquire releases the device, matching DirectInput.
   (func $handle_IDirectInputDevice_Acquire (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9340,10 +9514,12 @@
 
   ;; Fill up to $max buffered keyboard records at $rgdod (0 to count only) and
   ;; return how many edges were reported. When $commit is 0 the caller peeked,
-  ;; so the reported state is left in place for the next read.
-  (func $di_kbd_collect (param $rgdod i32) (param $cb i32) (param $max i32) (param $commit i32)
-                        (result i32)
-    (local $dik i32) (local $count i32) (local $live i32) (local $rec i32)
+  ;; so the reported state is left in place for the next read. Each record
+  ;; carries the offset $entry's data format gives the key; a key the format
+  ;; leaves out is not reported.
+  (func $di_kbd_collect (param $entry i32) (param $rgdod i32) (param $cb i32) (param $max i32)
+                        (param $commit i32) (result i32)
+    (local $dik i32) (local $count i32) (local $live i32) (local $rec i32) (local $ofs i32)
     (local.set $dik (i32.const 0))
     (local.set $count (i32.const 0))
     ;; A DX5 DIDEVICEOBJECTDATA is 16 bytes. A caller that understates the
@@ -9353,8 +9529,10 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $dik) (i32.const 256)))
       (br_if $done (i32.ge_u (local.get $count) (local.get $max)))
+      (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 1) (local.get $dik)))
       (if (i32.and
-            (i32.eqz (call $di_kbd_scan_skip (local.get $dik)))
+            (i32.and (i32.eqz (call $di_kbd_scan_skip (local.get $dik)))
+                     (i32.ge_s (local.get $ofs) (i32.const 0)))
             (i32.ne (call $di_dik_to_vk_strict (local.get $dik)) (i32.const 0)))
         (then
           (local.set $live (call $di_kbd_live (local.get $dik)))
@@ -9365,7 +9543,7 @@
                   ;; DIDEVICEOBJECTDATA: dwOfs, dwData, dwTimeStamp, dwSequence.
                   (local.set $rec (i32.add (local.get $rgdod)
                     (i32.mul (local.get $count) (local.get $cb))))
-                  (call $gs32 (local.get $rec) (local.get $dik))
+                  (call $gs32 (local.get $rec) (local.get $ofs))
                   (call $gs32 (i32.add (local.get $rec) (i32.const 4))
                     (select (i32.const 0x80) (i32.const 0) (local.get $live)))
                   (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (call $host_get_ticks))
@@ -9389,6 +9567,42 @@
     (local.set $vk (call $di_dik_to_vk_strict (local.get $dik)))
     (if (local.get $vk) (then (return (local.get $vk))))
     (local.get $dik))
+
+  ;; GetDeviceState under an application-defined format: each object the
+  ;; format names, at its offset ($wa is the zeroed, dwDataSize-long buffer;
+  ;; SetDataFormat already proved every offset fits). Wheel motion is never
+  ;; produced by our hosts, so a mapped lZ stays 0.
+  (func $di_custom_device_state (param $entry i32) (param $kind i32) (param $wa i32)
+    (local $i i32) (local $ofs i32) (local $buttons i32)
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (block $done (loop $keys
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
+          (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 1) (local.get $i)))
+          (if (i32.and (i32.ge_s (local.get $ofs) (i32.const 0))
+                       (call $di_kbd_live (local.get $i)))
+            (then (i32.store8 (i32.add (local.get $wa) (local.get $ofs)) (i32.const 0x80))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $keys)))
+        (return)))
+    (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2) (i32.const 0)))
+    (if (i32.ge_s (local.get $ofs) (i32.const 0))
+      (then (i32.store (i32.add (local.get $wa) (local.get $ofs)) (call $di_mouse_delta_take_x))))
+    (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2) (i32.const 1)))
+    (if (i32.ge_s (local.get $ofs) (i32.const 0))
+      (then (i32.store (i32.add (local.get $wa) (local.get $ofs)) (call $di_mouse_delta_take_y))))
+    (local.set $buttons (call $host_get_mouse_buttons_live))
+    (local.set $i (i32.const 0))
+    (block $done (loop $mouse_buttons
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 2)))
+      (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2)
+        (i32.add (local.get $i) (i32.const 3))))
+      (if (i32.and (i32.ge_s (local.get $ofs) (i32.const 0))
+                   (i32.ne (i32.and (local.get $buttons) (i32.shl (i32.const 1) (local.get $i)))
+                           (i32.const 0)))
+        (then (i32.store8 (i32.add (local.get $wa) (local.get $ofs)) (i32.const 0x80))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mouse_buttons))))
 
   ;; GetDeviceState(this, cbData, lpvData)
   ;; For keyboard: fill 256-byte DirectInput DIK array with 0x80 for each pressed key
@@ -9419,6 +9633,12 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
     (call $zero_memory (local.get $wa) (local.get $arg1))
+    (if (call $di_format_map (local.get $entry))
+      (then
+        (call $di_custom_device_state (local.get $entry) (local.get $dev_type) (local.get $wa))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
       (then
         ;; Keyboard — fill 256 bytes, key[dik] = 0x80 if pressed
@@ -9451,6 +9671,13 @@
         ))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; Native mouse object index ($di_object_exists numbering) for a
+  ;; DIMOUSESTATE offset: lX/lY/lZ at 0/4/8, rgbButtons[i] at 12+i.
+  (func $di_mouse_object_index (param $state_ofs i32) (result i32)
+    (if (result i32) (i32.lt_u (local.get $state_ofs) (i32.const 12))
+      (then (i32.shr_u (local.get $state_ofs) (i32.const 2)))
+      (else (i32.sub (local.get $state_ofs) (i32.const 9)))))
 
   (func $di_mouse_data_write (param $base i32) (param $cb i32) (param $index i32)
                              (param $ofs i32) (param $data i32) (param $stamp i32)
@@ -9555,12 +9782,12 @@
             ;; query must not consume them, whatever DIGDD_PEEK says.
             (if (local.get $arg3)
               (then (call $gs32 (local.get $arg3)
-                (call $di_kbd_collect (i32.const 0) (local.get $arg1)
+                (call $di_kbd_collect (local.get $entry) (i32.const 0) (local.get $arg1)
                   (local.get $requested) (i32.const 0)))))
             (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
             (return)))
-        (local.set $data (call $di_kbd_collect (local.get $arg2)
+        (local.set $data (call $di_kbd_collect (local.get $entry) (local.get $arg2)
           (local.get $arg1) (local.get $requested)
           (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))))
         (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $data))))
@@ -9638,16 +9865,23 @@
               (else
                 (select (i32.const 0x80) (i32.const 0)
                   (i32.ne (i32.and (local.get $event_type) (i32.const 1)) (i32.const 0))))))
-          (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
-            (local.get $delivered) (local.get $ofs) (local.get $data)
-            (call $di_mouse_event_stamp (local.get $event) (local.get $event_type)))
+          ;; $ofs is the DIMOUSESTATE offset; the device's format decides where
+          ;; (and whether) the object is reported.
+          (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2)
+            (call $di_mouse_object_index (local.get $ofs))))
+          (if (i32.ge_s (local.get $ofs) (i32.const 0))
+            (then
+              (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+                (local.get $delivered) (local.get $ofs) (local.get $data)
+                (call $di_mouse_event_stamp (local.get $event) (local.get $event_type)))))
           (if (local.get $commit)
             (then
               (if (i32.le_u (local.get $event_type) (i32.const 4))
                 (then (call $di_mouse_button_commit_state (local.get $event_type))))
               (global.set $di_mouse_data_sequence
                 (i32.add (global.get $di_mouse_data_sequence) (i32.const 1)))))
-          (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+          (if (i32.ge_s (local.get $ofs) (i32.const 0))
+            (then (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))))
           (local.set $button_index (i32.add (local.get $button_index) (i32.const 1)))
           (br $buttons_loop)))
 
@@ -9659,9 +9893,12 @@
           (then
             (local.set $data (select (i32.const 0x80) (i32.const 0)
               (i32.ne (i32.and (local.get $buttons) (i32.const 1)) (i32.const 0))))
-            (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
-              (local.get $delivered) (i32.const 12) (local.get $data) (call $host_get_ticks))
-            (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+            (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2) (i32.const 3)))
+            (if (i32.ge_s (local.get $ofs) (i32.const 0))
+              (then
+                (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+                  (local.get $delivered) (local.get $ofs) (local.get $data) (call $host_get_ticks))
+                (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))))
             (if (local.get $commit)
               (then
                 (global.set $di_mouse_data_sequence
@@ -9676,9 +9913,12 @@
           (then
             (local.set $data (select (i32.const 0x80) (i32.const 0)
               (i32.ne (i32.and (local.get $buttons) (i32.const 2)) (i32.const 0))))
-            (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
-              (local.get $delivered) (i32.const 13) (local.get $data) (call $host_get_ticks))
-            (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+            (local.set $ofs (call $di_format_offset (local.get $entry) (i32.const 2) (i32.const 4)))
+            (if (i32.ge_s (local.get $ofs) (i32.const 0))
+              (then
+                (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+                  (local.get $delivered) (local.get $ofs) (local.get $data) (call $host_get_ticks))
+                (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))))
             (if (local.get $commit)
               (then
                 (global.set $di_mouse_data_sequence
@@ -9696,8 +9936,9 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
   ;; SetDataFormat accepts the standard keyboard, DIMOUSESTATE and
-  ;; DIMOUSESTATE2 layouts that the browser can reproduce. The format may be
-  ;; replaced while unacquired, but DirectInput rejects changes while acquired.
+  ;; DIMOUSESTATE2 layouts, and any application-defined format whose objects
+  ;; the device has ($di_custom_data_format). The format may be replaced while
+  ;; unacquired, but DirectInput rejects changes while acquired.
   (func $handle_IDirectInputDevice_SetDataFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $data_size i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
@@ -9708,7 +9949,12 @@
         (return)))
     (local.set $data_size
       (call $di_standard_data_format_size (local.get $entry) (local.get $arg1)))
-    (if (i32.eqz (local.get $data_size))
+    (if (local.get $data_size)
+      (then (call $di_format_map_drop (local.get $entry)))
+      (else
+        (local.set $data_size
+          (call $di_custom_data_format (local.get $entry) (local.get $arg1)))))
+    (if (i32.lt_s (local.get $data_size) (i32.const 0))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))

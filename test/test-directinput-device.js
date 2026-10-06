@@ -161,6 +161,13 @@ const extraWat = `
       (local.get $obj) (local.get $property_id) (local.get $property)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_di_get_state_sized")
+        (param $obj i32) (param $cb i32) (param $buffer i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_GetDeviceState
+      (local.get $obj) (local.get $cb) (local.get $buffer)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_di_buffer_size") (param $obj i32) (result i32)
     (i32.load offset=12 (call $dx_from_this (local.get $obj))))
 `;
@@ -224,9 +231,9 @@ const extraWat = `
   assert.strictEqual(wat.test_di_set_data_format(mouse, 0) >>> 0, 0x80070057,
     'SetDataFormat rejects a null descriptor');
   writeFormat(mouseFormat, mouseObjects, 'mouse');
-  wat.guest_write32(mouseObjects + 4, 4);
+  wat.guest_write32(mouseObjects + 4, 2);
   assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0x80070057,
-    'SetDataFormat rejects a nonstandard object offset');
+    'SetDataFormat rejects an axis that is not DWORD-aligned');
   wat.guest_write32(mouseObjects + 4, 0);
   assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0,
     'SetDataFormat accepts the standard DIMOUSESTATE layout');
@@ -591,6 +598,72 @@ const extraWat = `
   }
   renderer._mouseButtonsMask = 0;
   renderer._activeInputEvent = null;
+
+  // Application-defined data formats, in LithTech's (Blood 2) shape: first a
+  // format with no objects, then one naming only the bound keys by the dwType
+  // EnumObjects reported, at dwOfs = 4*i. The game reads dwOfs/4 back as an
+  // index into its own binding table; before this, SetDataFormat refused
+  // both, the game released the device, and no key ever reached the player.
+  const lith = wat.test_di_keyboard_create() >>> 0;
+  const lithFormat = 0x00415000;
+  const lithObjects = 0x00415100;
+  const guidKey = 0x00415200;
+  [0x55728220, 0x11cfd33c, 0x4544c7bf, 0x00005453]
+    .forEach((word, i) => wat.guest_write32(guidKey + 4 * i, word));
+  const setLithFormat = objects => {
+    wat.guest_write32(lithFormat, 24);
+    wat.guest_write32(lithFormat + 4, 16);
+    wat.guest_write32(lithFormat + 8, 2);
+    wat.guest_write32(lithFormat + 12, objects.length * 4);
+    wat.guest_write32(lithFormat + 16, objects.length);
+    wat.guest_write32(lithFormat + 20, lithObjects);
+    objects.forEach(([guid, type], i) => {
+      wat.guest_write32(lithObjects + i * 16, guid);
+      wat.guest_write32(lithObjects + i * 16 + 4, i * 4);
+      wat.guest_write32(lithObjects + i * 16 + 8, type >>> 0);
+      wat.guest_write32(lithObjects + i * 16 + 12, 0);
+    });
+    return wat.test_di_set_data_format(lith, lithFormat) >>> 0;
+  };
+  const DIK_UP = 0xc8, DIK_LCONTROL = 0x1d;
+  assert.strictEqual(setLithFormat([]), 0, 'a format with no objects is accepted');
+  assert.strictEqual(setLithFormat([[guidKey, 0x04 | (DIK_UP << 8)], [0, 0x0c | (DIK_LCONTROL << 8)]]), 0,
+    'a format naming keys by GUID_Key and DIDFT instance is accepted');
+  assert.strictEqual(setLithFormat([[0, 0x0c | (0x54 << 8)]]), 0x80070057,
+    'a required object the keyboard does not have refuses the format');
+  assert.strictEqual(setLithFormat([[0, (0x8000000c | (0x54 << 8)) >>> 0], [guidKey, 0x04 | (DIK_UP << 8)]]), 0,
+    'a DIDFT_OPTIONAL object the keyboard lacks is skipped');
+  assert.strictEqual(setLithFormat([[guidKey, 0x04 | (DIK_UP << 8)], [0, 0x0c | (DIK_LCONTROL << 8)]]), 0);
+  assert.strictEqual(setLithFormat([[0, 0x01 | (DIK_UP << 8)]]), 0x80070057,
+    'an axis type never matches a key');
+  assert.strictEqual(wat.test_di_set_cooperative_level(lith, 0x10000, 6) >>> 0, 0);
+  assert.strictEqual(wat.test_di_acquire(lith) >>> 0, 0,
+    'the refused format left the previous custom format in force');
+
+  renderer.pokeAsyncKeyState(0x26, true); // VK_UP
+  renderer.pokeAsyncKeyState(0x41, true); // 'A' -- not in the format
+  wat.guest_write32(count, 8);
+  assert.strictEqual(wat.test_di_mouse_get_data(lith, data, count, 0) >>> 0, 0);
+  assert.deepStrictEqual([wat.guest_read32(count), wat.guest_read32(data), wat.guest_read32(data + 4)],
+    [1, 0, 0x80], 'Up is reported at its format offset 0 and A, outside the format, not at all');
+  renderer.pokeAsyncKeyState(0x11, true); // VK_CONTROL (DIK_LCONTROL)
+  wat.guest_write32(count, 8);
+  wat.test_di_mouse_get_data(lith, data, count, 0);
+  assert.deepStrictEqual([wat.guest_read32(count), wat.guest_read32(data), wat.guest_read32(data + 4)],
+    [1, 4, 0x80], 'the second format object is reported at dwOfs 4');
+  wat.guest_write32(data, 0xffffffff);
+  wat.guest_write32(data + 4, 0xffffffff);
+  assert.strictEqual(wat.test_di_get_state_sized(lith, 8, data) >>> 0, 0);
+  assert.deepStrictEqual([wat.guest_read32(data) >>> 0, wat.guest_read32(data + 4) >>> 0], [0x80, 0x80],
+    'GetDeviceState lays the held keys out at their format offsets');
+  renderer.pokeAsyncKeyState(0x26, false);
+  renderer.pokeAsyncKeyState(0x41, false);
+  renderer.pokeAsyncKeyState(0x11, false);
+  wat.guest_write32(count, 8);
+  wat.test_di_mouse_get_data(lith, data, count, 0);
+  assert.deepStrictEqual([wat.guest_read32(count), wat.guest_read32(data), wat.guest_read32(data + 4),
+    wat.guest_read32(data + 16), wat.guest_read32(data + 20)],
+  [2, 4, 0, 0, 0], 'releases come back at the same offsets, again without A');
 
   console.log('PASS  DirectInput enumerates Win98 devices/objects and preserves browser input');
 })().catch(error => {
