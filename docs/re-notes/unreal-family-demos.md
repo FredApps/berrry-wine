@@ -562,6 +562,19 @@ buffer is at `core+0x101f65fc`, readable with `--dump` after the exit).
     so it never showed this.
   The child's log never reaches the parent (a VFS child gets a copy of the
   file map), so the wizard always settles on Software Rendering.
+- Engine errors (`appErrorf` throws an `int` while guarded; every `unguard` is
+  `catch(...) { appUnwindThrow(...); throw; }`) went **unhandled** until
+  867f35a3: the nested rethrow dispatch overwrote the software SEH walk's
+  globals, so the outer walk carried on with the rethrow's null-ThrowInfo
+  record. Now they reach UT's own "Critical Error" box. Quick repro:
+  `--args="DM-Morpheus -window"` (the demo's map is `DM-MorpheusDEMO`) plus
+  wizard clicks gives "Failed to enter DM-Morpheus: Can't find file".
+- `--args="DM-MorpheusDEMO -window"` goes from the wizard straight into a
+  match. In the browser, `tools/web-input-probe.js --before-load=` can set
+  `wineApps.APPS.ut348_demo.args` (evidence
+  `scratch/runs/20261006T141000Z-ut348-web-cxx-throw-fixed`, both thread modes).
+  With Threads on, wizard button clicks needed 61686c8e: the renderer had been
+  pressing them on the idle shadow instance.
 - The child mode by itself (`--args="testrendev=D3DDrv.D3DRenderDevice
   log=Detected.log"`) loads D3DDrv, tests it and exits 0 headlessly. Pass
   `--stuck-after=1000000`: its CPU-speed loop trips the stuck detector.
