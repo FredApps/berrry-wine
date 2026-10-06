@@ -104,3 +104,26 @@ a 640x480 capture with a substantial green terrain region, detailed world
 pixels, and the dark lower command/minimap HUD; it also rejects clean early
 `ExitProcess` as a failure. It then pans from batch 1602 through 1640 and rejects
 stale cursor-background rectangles in the fog.
+
+## 2026-10-06: startup regressions and the invisible cursor
+
+Three things had broken the trial on main, all fixed:
+
+- **"requires DirectX 6.1a or higher".** `DirectPlayCreate` then QueryInterface
+  for the Unicode `IDirectPlay4` {0AB1C530-…} returned E_NOINTERFACE (since the
+  2026-09-09 QI validation). Codex's DPLAY4W-UNICODE implementation, never
+  committed, was landed in 91bbc717.
+- **"Could not initialize graphics system".** The game opens `data\*.drs`
+  relative to its directory. The manifest's bare URLs mount at
+  `C:\<basename>`, and the VFS basename fallback that used to bridge that had
+  been narrowed. Subdirectory files now mount at their relative paths too
+  (a87fced6).
+- **The EULA Accept button** moved to about (161,433) when dialogs started
+  being centred; the test clicks there now.
+
+The in-game cursor shares AoE I's mechanism and its fix (see
+`age-of-empires.md`: `GetClipper` must answer DDERR_NOCLIPPERATTACHED).
+
+Open: on the test route the frame stops changing after batch 1600 (byte-identical
+captures with full 50k-block batches and few API calls), so the camera-pan
+check fails. This is independent of the cursor fix (A/B).
