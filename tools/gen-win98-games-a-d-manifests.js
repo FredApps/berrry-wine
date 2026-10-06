@@ -135,6 +135,17 @@ const GAMES = [
     vfsRoot: 'c:\\darkdemo\\',
   },
   {
+    // Braveheart demo (Red Lemon/Eidos 1999). Its InstallShield 5 Disk1,
+    // installed headlessly like Drakan's, wrote this tree to
+    // C:\Program Files\Red Lemon Studios\Braveheart Covermount Demo. Three
+    // renderers ship side by side: brave.exe (Glide), bhd3d.exe (Direct3D)
+    // and bhsoft.exe (software), the one the registry entry runs.
+    id: 'braveheart_demo',
+    root: 'braveheart-demo-Glide-installed/braveheart covermount demo',
+    exe: 'bhsoft.exe',
+    vfsRoot: 'c:\\program files\\red lemon studios\\braveheart covermount demo\\',
+  },
+  {
     // Drakan: Order of the Flame demo. Its InstallShield 5 Disk1, installed
     // headlessly (SETUP.EXE --capture-launch, then the captured _ins5176._mp
     // with --save-vfs-prefix='c:\program files'), wrote this tree to

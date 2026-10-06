@@ -107,6 +107,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Descent 3 (demo) | [descent3-demo.md](descent3-demo.md) |
 | Anno 1602 (demo) | [anno1602-demo.md](anno1602-demo.md) |
 | Drakan: Order of the Flame (demo) | [drakan-demo.md](drakan-demo.md) |
+| Braveheart (demo) | [braveheart-demo.md](braveheart-demo.md) |
 | Driver (demo) | [driver-demo.md](driver-demo.md) |
 | Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
