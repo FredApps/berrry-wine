@@ -76,6 +76,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | War Wind (USA) and War Wind II (Europe) CD installs | [war-wind.md](war-wind.md) |
 | Over 1000 Games for Windows (Nodtronics CD) | [over1000games-shareware.md](over1000games-shareware.md) |
 | Pawn 3 | [pawn.md](pawn.md) |
+| Plus! 98 DirectAnimation theme savers (CORBIS, FASHION, HORROR, WOTRAVEL) | [plus98-directanimation-savers.md](plus98-directanimation-savers.md) |
 | Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |
 | Tomb Raider II demo (Venice) | [tomb-raider-2-demo.md](tomb-raider-2-demo.md) |
 | Tomb Raider III demo (India/Jungle) | [tomb-raider-3-demo.md](tomb-raider-3-demo.md) |
