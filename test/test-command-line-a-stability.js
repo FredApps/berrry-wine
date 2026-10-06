@@ -22,6 +22,18 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_p_argv") (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle___p___argv
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_p_argc") (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle___p___argc
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_get_proc_address") (param $name i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle_GetProcAddress
@@ -73,6 +85,14 @@ const checkCommandLine = async (extraText, expectedArgv, expectedRaw, exeName = 
   assert.strictEqual(e.guest_read32(argv + argc * 4) >>> 0, 0, 'argv is NULL-terminated');
   assert.strictEqual(e.guest_read32(e.guest_read32(envpOut) >>> 0) >>> 0, 0,
     'empty envp is NULL-terminated');
+  // __p___argv / __p___argc (LithTech's lithtech.exe) point at the same
+  // arguments __getmainargs hands out.
+  const argvCell = e.test_p_argv() >>> 0;
+  assert.notStrictEqual(argvCell, 0, '__p___argv returns a cell');
+  assert.strictEqual(e.guest_read32(argvCell) >>> 0, argv, '*__p___argv() is __getmainargs argv');
+  assert.strictEqual(e.test_p_argv() >>> 0, argvCell, '__p___argv returns one stable cell');
+  assert.strictEqual(e.guest_read32(e.test_p_argc() >>> 0) >>> 0, argc,
+    '*__p___argc() is __getmainargs argc');
   const acmdlnCell = e.test_p_acmdln() >>> 0;
   assert.strictEqual(e.guest_read32(acmdlnCell) >>> 0, first,
     '__p__acmdln points at the same full command line');

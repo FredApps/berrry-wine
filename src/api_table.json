@@ -37633,5 +37633,19 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 614637455
+  },
+  {
+    "id": 4473,
+    "name": "__p___argv",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 2542902502
+  },
+  {
+    "id": 4474,
+    "name": "__p___argc",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 2895232501
   }
 ]
