@@ -67,3 +67,19 @@ Published `scratch/runs/20261005-dredmor-release-controlled-gameplay` (38 hashed
 Level1 **The Crab-Like Shore of Parties**: `before-movement.png` shows the player at the entrance. Two normal150ms ArrowDown presses at249033–249185 and250186–250341ms move south; `after-down.png` shows fixed world landmarks shifted upward approximately128pixels, revealing lower room/lever/doors while the camera keeps the player centered. One150ms ArrowUp at265734–265886ms reverses by approximately64pixels and faces north (`after-up.png`). This is causal ordinary movement, not merely sprite animation; root independently reviewed before/down.
 
 Gameplay screenshot/control task qualifies in this narrow scope. FPS, audio quality, longer gameplay and public release do not. The initial fixed-wait batch reached skills later than expected; it was stopped at the observed scene and normal visible controls completed setup. `story1.png` is misnamed skills imagery; pixels/logs remain authoritative. Source-only release proposal `scratch/dredmor-lazy-20261005/release-review-proposal.json` preserves remaining gates and exact measured hashes; no deployment or ready-for-release claim.
+
+## 2026-10-06 instantaneous clicks diagnosed and fixed (37ff2f8d)
+
+The open question above ("instantaneous clicks remain insufficiently
+diagnosed") is answered: the game's GUI polls `SDL_GetMouseState`, so a click
+whose WM_LBUTTONDOWN and WM_LBUTTONUP reach the guest in one PeekMessage pump
+is never seen -- a tap, or any click that queued while the guest was busy.
+That was the user's "Next button does nothing". The launcher's Start Game
+takes such clicks; the main menu's New Game and the setup/story buttons do
+not. `renderer.takeInput` now holds a release until the press's pump has ended
+(one empty poll) and 30 ms have passed. Browser A/B, Threads on, instant click
+(`tools/web-input-probe.js qclick:863,173` on New Game, after `qclick:635,563`
+on the launcher): `window.__waMinButtonHoldMs=-1` (old) stays on the menu;
+default opens Choose Your Difficulty.
+`scratch/runs/20261006T1520Z-dungeons_of_dredmor_release-quick-click`.
+Guest coordinates there are page minus (10,160) at the default desktop size.
