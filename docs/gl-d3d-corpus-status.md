@@ -55,7 +55,7 @@ screenshot cited was looked at.
 | alien_shooter | D3D8 | loading at 120 s | not run | CPU-bound load |
 | crimsonland | D3D8 | **menu** after `1fdd9a64` (was blocked: "DirectX8.1 or newer not detected") | not run | Play Game opens; the Survival click does not start a game yet (`scratch/runs/20261006T031629Z-crimsonland-dx81`) |
 | pawn | D3D9 | **gameplay** (board) | gameplay (2026-09-23) | — |
-| pirates_2004 | D3D9 | **blocked**: "Unable to initialize DirectX." | not run | DirectX version detection (below) |
+| pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not run | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
 | winamp | D3D8 (MilkDrop) | not run | — | needs a Winamp 5 exe |
 
@@ -81,11 +81,12 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
 
 ## Open blockers in the GL/D3D set, ranked
 
-1. **DirectX version detection** -- pirates_2004 (D3D9) stops at startup: it
-   asks the DxDiag provider (`dxdiagn.dll`), which needs
-   `setupapi!SetupDiEnumDeviceInfo` and `ole32!CoCreateInstanceEx`.
-   Crimsonland's half (the GetDXVersion file-version fallback) is fixed by
-   `1fdd9a64`, a versioned `D3D8.DLL` stub (DirectX 8.1).
+1. ~~DirectX version detection~~ -- both fixed. Crimsonland: `1fdd9a64`, a
+   versioned `D3D8.DLL` stub (DirectX 8.1). Pirates: the DxDiag query was
+   only its error-message chooser; the real failure was `MaxTextureBlendStages`
+   = 0 in our caps (`ba161dfb`), then a failed `CoCreateInstance` (Miles A3D)
+   re-running its thunk (`12408feb`), then the CLI ignoring `bigMemory`
+   (`d7f5a429`).
 2. **crimsonland in-menu click**: Play Game opens, but Survival does not start
    a game; a lost second DirectInput click is the first suspect.
 3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
