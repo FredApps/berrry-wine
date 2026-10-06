@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// Browser pointer handlers run outside the guest's GetMessage/DispatchMessage
-// call stack. A dialog BUTTON must therefore be queued into that pump. If the
-// renderer invokes it synchronously and BN_CLICKED opens a nested DoModal, the
-// browser event cannot return to deliver input to the new dialog.
+// A WAT dialog BUTTON in cooperative mode stays on dialog_route_mouse: the
+// renderer's instance is the running guest, and the button procedure only
+// changes control state and queues BN_CLICKED (4de7c7cc). In guest-main Worker
+// mode the renderer's instance is an idle shadow, so a synchronous route would
+// press the button against the shadow's USER globals and the guest would never
+// hear of it (Unreal Tournament's setup-wizard Next did nothing with Threads
+// on). There the click is queued into slot 0's own message pump, except for a
+// common MessageBox/file dialog, whose call is parked in the CACA0006 pump.
 
 const assert = require('assert');
 const { installInputHandlers } = require('../lib/renderer-input');
@@ -60,8 +64,20 @@ renderer.scheduleRepaint = () => {};
 renderer.repaint = () => {};
 
 assert.strictEqual(renderer._queueNativeDialogChildMouseDown(
+  dialog, 132, 79, 0x0201, 1), false,
+'cooperative mode: a WAT dialog BUTTON stays on dialog_route_mouse');
+assert.strictEqual(renderer.inputQueue.length, 0, 'and nothing is queued');
+
+renderer._guestWorkerWasms = new WeakSet([wasm]);
+wasm.exports.modal_dialog_hwnd = () => 0x40001;
+assert.strictEqual(renderer._queueNativeDialogChildMouseDown(
+  dialog, 132, 79, 0x0201, 1), false,
+'Worker mode: a common modal dialog BUTTON stays on dialog_route_mouse');
+delete wasm.exports.modal_dialog_hwnd;
+
+assert.strictEqual(renderer._queueNativeDialogChildMouseDown(
   dialog, 132, 79, 0x0201, 1), true,
-'WAT dialog BUTTON down should enter the guest queue');
+'Worker mode: a WAT dialog BUTTON down enters the guest queue');
 assert.strictEqual(synchronousRoutes, 0,
   'dialog BUTTON down must not synchronously enter its parent wndproc');
 assert.deepStrictEqual(renderer.inputQueue[0], {
@@ -89,4 +105,4 @@ assert.deepStrictEqual(renderer.inputQueue[1], {
   mouseButtons: 0,
 });
 
-console.log('PASS  browser dialog BUTTON clicks stay on the guest message pump');
+console.log('PASS  Worker-mode dialog BUTTON clicks go through the guest message pump');
