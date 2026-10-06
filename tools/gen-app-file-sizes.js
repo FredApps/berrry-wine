@@ -22,7 +22,8 @@
 // httpRange, which learns the real length from the server, so a stale size can
 // misplace a file between the two piles but cannot corrupt a read.
 //
-// Only files of at least SMALL_FILE_BYTES are recorded: an unsized file stays
+// Only files of at least SMALL_FILE_BYTES are recorded (all files once the
+// policy has no such rule, i.e. the constant is gone): an unsized file stays
 // eager anyway, and so does a small one, so a smaller size changes no decision
 // and would only make every page load a bigger script. (The one rule that
 // wants every size, "whole app under APP_EAGER_BYTES -> all eager", then
@@ -36,7 +37,9 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { SMALL_FILE_BYTES } = require(path.join(ROOT, 'lib', 'app-files.js'));
+const policy = require(path.join(ROOT, 'lib', 'app-files.js'));
+// No small-file rule in the policy => every size can change a decision.
+const RECORD_FROM = Number.isSafeInteger(policy.SMALL_FILE_BYTES) ? policy.SMALL_FILE_BYTES : 0;
 const OUTPUT = path.join(ROOT, 'lib', 'app-file-sizes.generated.js');
 const CHECK = process.argv.includes('--check');
 const rootArg = process.argv.find(a => a.startsWith('--data-root='));
@@ -100,7 +103,7 @@ for (const url of urls) {
     else missing.push(url);
     continue;
   }
-  if (size < SMALL_FILE_BYTES) {
+  if (size < RECORD_FROM) {
     if (recorded[url] !== undefined) stale.push(`${url}: recorded ${recorded[url]}, now below the threshold`);
     continue;
   }

@@ -17,6 +17,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const sizes = require(path.join(ROOT, 'lib', 'app-file-sizes.generated.js'));
 const { SMALL_FILE_BYTES, normalizeLazyFiles } = require(path.join(ROOT, 'lib', 'app-files.js'));
+const RECORD_FROM = Number.isSafeInteger(SMALL_FILE_BYTES) ? SMALL_FILE_BYTES : 0;
 
 const load = off => {
   if (off) process.env.WA_APP_FILE_SIZES_OFF = '1'; else delete process.env.WA_APP_FILE_SIZES_OFF;
@@ -30,7 +31,7 @@ const stamped = load(false);
 
 assert(Object.keys(sizes).length > 100, 'the generated map is populated');
 for (const [url, size] of Object.entries(sizes)) {
-  assert(Number.isSafeInteger(size) && size >= SMALL_FILE_BYTES, `${url}: ${size} is a recorded large size`);
+  assert(Number.isSafeInteger(size) && size >= RECORD_FROM, `${url}: ${size} is a recordable size`);
 }
 
 let stringsStamped = 0, objectsStamped = 0, declaredKept = 0, unrecordedKept = 0;
