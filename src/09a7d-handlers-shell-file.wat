@@ -239,6 +239,24 @@
   ;; 422: DuplicateHandle
   (func $handle_DuplicateHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $duplicate i32) (local $file_duplicate i32) (local $stack_w i32)
+    ;; An anonymous pipe handle: a new handle on the same end, carrying the
+    ;; caller's bInheritHandle ([ESP+24]); DUPLICATE_CLOSE_SOURCE ([ESP+28]
+    ;; bit 0) closes the original. This is how a parent keeps a
+    ;; non-inheritable copy of its own end of a child's pipe.
+    (if (i32.ne (call $pipe_slot (local.get $arg1)) (i32.const 0))
+      (then
+        (local.set $stack_w (call $g2w (i32.load offset=16 (global.get $reg_base))))
+        (if (i32.eqz (local.get $arg3))
+          (then (call $pipe_ret (i32.const 0) (i32.const 87) (i32.const 32)) (return)))
+        (local.set $duplicate (call $pipe_duplicate (local.get $arg1)
+          (i32.load offset=24 (local.get $stack_w))))
+        (if (i32.eqz (local.get $duplicate))
+          (then (call $pipe_ret (i32.const 0) (i32.const 4) (i32.const 32)) (return)))
+        (if (i32.and (i32.load offset=28 (local.get $stack_w)) (i32.const 1))
+          (then (drop (call $pipe_close (local.get $arg1)))))
+        (call $gs32 (local.get $arg3) (local.get $duplicate))
+        (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 32))
+        (return)))
     ;; Pseudo handles are contextual and cannot be copied into a durable output
     ;; handle. Miles duplicates GetCurrentThread() during startup, then its
     ;; WinMM callback suspends and resumes that real handle while servicing
@@ -784,6 +802,10 @@
     ;; A handle with an OVERLAPPED but no port binding falls through to the
     ;; ordinary path below, which is what Win32 does for a file opened
     ;; without FILE_FLAG_OVERLAPPED.
+    ;; Anonymous pipes (09d7-pipes.wat) finish or park the call themselves.
+    (if (call $pipe_read_file (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3))
+      (then (return)))
     (if (i32.and (i32.ne (local.get $arg4) (i32.const 0))
                  (i32.ne (call $iocp_assoc_find (local.get $arg0)) (i32.const 0)))
       (then

@@ -4129,6 +4129,14 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
+    (local.set $console_result (call $pipe_close (local.get $arg0)))
+    (if (i32.ge_s (local.get $console_result) (i32.const 0))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (local.get $console_result))
+        (if (i32.eqz (local.get $console_result))
+          (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $console_result (call $token_close_handle (local.get $arg0)))
     (if (i32.ge_s (local.get $console_result) (i32.const 0))
       (then
@@ -5753,6 +5761,11 @@
   ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console, FILE_TYPE_DISK=1 for files
   (func $handle_GetFileType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $resolved i32)
+    (if (call $pipe_slot (local.get $arg0))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 3)) ;; FILE_TYPE_PIPE
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $resolved (call $console_handle_resolve (local.get $arg0)))
     (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.or
             (i32.and (i32.ge_u (local.get $resolved) (i32.const 1))
@@ -5766,6 +5779,10 @@
   ;; 51: WriteFile(hFile, lpBuffer, nBytesToWrite, lpBytesWritten, lpOverlapped) — 5 args
   (func $handle_WriteFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $saved_pos i32) (local $ok i32) (local $written i32)
+    ;; Anonymous pipes (09d7-pipes.wat) finish or park the call themselves.
+    (if (call $pipe_write_file (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3))
+      (then (return)))
     ;; Output screen-buffer handles route through the same active/inactive cell
     ;; store as WriteConsoleA; stdin retains the historical compatibility no-op.
     (if (call $console_buffer_record (local.get $arg0))

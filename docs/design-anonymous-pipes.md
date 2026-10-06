@@ -48,25 +48,35 @@ Measured with `tools/pe-imports.js --all` (KERNEL32, filtered):
   TerminateProcess(GetCurrentProcess) ExitProcess`. Its CRT classifies the std
   handles with `GetFileType`, so a pipe must answer `FILE_TYPE_PIPE`; and
   `SetFilePointer` / `FlushFileBuffers` on a pipe need Windows' answers
-  (seek fails with `ERROR_INVALID_FUNCTION`-class errors, flush succeeds once
-  the reader has drained, or immediately for a non-blocking caller).
+  (not yet implemented for pipes; measure what GNUChess's CRT does with the
+  answer before choosing one).
 - Neither imports `Get/SetHandleInformation`; no new API ids are needed for
   Phase 1.
 
 ## Design
 
-### Phase 1 — pipe objects inside one process
+### Phase 1 — pipe objects inside one process (built: `src/09d7-pipes.wat`)
 
-A WAT pipe table in its own region, in shared memory under one lock (guest
-threads are separate instances over one memory, and a pipe between two
-threads of one process is the first thing to test).
+A pipe is a connected pair of the virtual-LAN stream records
+(`$VSOCK_TABLE`), like `socketpair()`: the read end's record owns the ring,
+the write end's record names it as its peer. Destroying the write record
+gives the reader an orderly EOF, destroying the read record leaves the writer
+peerless, and phase 2's cross-instance end is a record whose peer is across
+the wire (`peer = -2`) — the transport the virtual LAN already has.
 
-- Record: ring buffer (`nSize`, 0 → 4096), head/len, reader and writer
-  endpoint refcounts.
-- Handles: new tag `0x0033xxxx`; low bit = end (0 read, 1 write), the rest the
-  pipe index plus a per-handle slot so `DuplicateHandle` mints a distinct
-  value. Inherit flag per handle (from `SECURITY_ATTRIBUTES.bInheritHandle`,
-  changed by `SetHandleInformation`/`DuplicateHandle`).
+- **No new region.** The map below `0x08000000` is at its shake ceiling
+  (`tools/region-alloc.js --shake-all` reports two modes with 0 bytes free,
+  and even a 1 KB region broke them). A pipe record has no address and is never
+  a listener, so the handle bookkeeping lives in socket fields it does not
+  use: `proto` marks the record as a pipe end, `backlog` says which end,
+  `acc_queue[k]` holds open/inherit flags for up to 13 handles per end, and
+  the address fields hold a parked write's progress.
+- Handles: tag `0x0033xxxx` = `TAG | record << 4 | k`. `DuplicateHandle`
+  opens another `k` on the same record (and honours `bInheritHandle` and
+  `DUPLICATE_CLOSE_SOURCE`); the record is destroyed when its last handle
+  closes. A tagged handle that is not open is `ERROR_INVALID_HANDLE`.
+- Inherit flag per handle, from `SECURITY_ATTRIBUTES.bInheritHandle` or
+  `DuplicateHandle`.
 - `ReadFile` on a read end: copy `min(len, available)` (partial reads are
   normal); empty with a live writer → park via `$io_block` and re-enter; empty
   with every writer closed → FALSE, `ERROR_BROKEN_PIPE` (109), 0 bytes.

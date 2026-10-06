@@ -116,11 +116,12 @@ for (const file of SRC) {
     if (/call \$crt_cexit_run_next\b/.test(code)) delegates = true;
     // Three spellings of "esp += N": the historical wasm-global form, the
     // per-thread register-file form where esp is slot +16 of $reg_base, and
-    // `(call $amstream_finish RESULT (i32.const N))`, the helper that does
-    // both stores. That last one must fit on one line; N is its last const.
+    // `(call $amstream_finish RESULT (i32.const N))` or
+    // `(call $pipe_ret OK ERR (i32.const N))` (09d7-pipes.wat), helpers that
+    // do both stores. Those must fit on one line; N is the last const.
     const em = code.match(/global\.set \$esp\s*\(i32\.add\s*\(global\.get \$esp\)\s*\(i32\.const (\d+)\)/)
       || code.match(/i32\.store offset=16 \(global\.get \$reg_base\)\s*\(i32\.add\s*\(i32\.load offset=16 \(global\.get \$reg_base\)\)\s*\(i32\.const (\d+)\)/)
-      || code.match(/call \$amstream_finish\b.*\(i32\.const (\d+)\)\)/);
+      || code.match(/call \$(?:amstream_finish|pipe_ret)\b.*\(i32\.const (\d+)\)\)/);
     if (em) adjustments.push({ value: parseInt(em[1], 10), line: i + 1 });
 
     for (const c of code) { if (c === '(') depth++; else if (c === ')') depth--; }
