@@ -619,8 +619,19 @@ const bitFrom = (m, b) => {
 // 200k). So the budget is checked where a boundary already exists: the counter
 // runs to zero, the block finishes, and the handback happens on its way out.
 // The overrun is bounded by one block.
+//
+// $ifarm is the third refusal (docs: if-enable/IF-ENABLE-DESIGN.md, section 3).
+// `sti` raises it when it finds IF=0 while the host holds a pending IRQ
+// ($irqpend), and compile.js puts a block transfer on exactly the boundary that
+// STI's interrupt shadow ends at -- after the instruction FOLLOWING the STI.
+// So the first CONT after an arming `sti` is that boundary, in every arm, and
+// the refusal hands back there with $gip = the boundary. Nothing else sets it;
+// `cli` and the host clear it. COST: one global.get and one i32.or on every
+// block transfer. The zero-instruction alternative is a high bit of $smc,
+// which overloads the flag the host repairs code on; not chosen without a
+// fixed-work measurement (V8 + SpiderMonkey disassembly) of both.
 const CONT = (arena) => `(select (i32.const 0) ${arena}
-    (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0))))`;
+    (i32.or (i32.or (global.get $smc) (global.get $ifarm)) (i32.lt_s (global.get $steps) (i32.const 0))))`;
 // The handback a block boundary takes when the budget ran out or the guest
 // patched itself. It is its own function ONLY so the flag analysis can name
 // it: this exit resumes the guest at $gip -- the successor block's own head --
@@ -633,7 +644,9 @@ const SLICE_EXIT = '(call $slice_exit)';
 // host reads it after a handback that left budget unspent, to say WHICH early
 // exit the guest paid for (dos-loop.js, EXIT_WHY). It is set on the cold arm
 // alone, so it costs nothing on a linked edge and moves no dispatch count.
-const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10 };
+// `ifen` is jmp_ifen's refusal: the boundary after STI's shadow, reached with
+// $ifarm up (see CONT and jmp_ifen).
+const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10, ifen: 11 };
 // Where dos.js parks every vector (its STUB_SEG:STUB_OFF+v), repeated here
 // because emit.js does not load the machine; dos-loop.js refuses to start if
 // the two ever disagree.
@@ -899,6 +912,23 @@ function genBranches() {
   ${JMP_SYN_BUDGET_TEST ? GO('(local.get $t0)', '(local.get $t1)') : GO_SYN('(local.get $t0)', '(local.get $t1)')}
 `);
   TAKEN_AT.set(jmpSyn, 1);
+  // THE BOUNDARY STI'S INTERRUPT SHADOW ENDS AT. compile.js emits this, and
+  // only this, after the instruction that follows an STI, when that
+  // instruction is not itself a transfer (a transfer's own CONT is then the
+  // boundary). It is jmp_syn in every respect -- a dispatch that gives its
+  // step back and does not test the budget, so neither the charge nor the stop
+  // points of a block without a pending IRQ move -- plus one test: an `sti`
+  // that armed ($ifarm) hands back HERE, with $gip the boundary, so the host
+  // can deliver the IRQ it is holding for IF exactly where an 8259 + CPU would
+  // (SDM Vol. 2B 4-674, Vol. 3A 7.8.1).
+  const jmpIfen = h('jmp_ifen', 2, `
+  ${ops(2)}
+  (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+  (if (global.get $ifarm)
+    (then (global.set $gip (local.get $t1)) ${EXIT('ifen')})
+    (else ${JMP_SYN_BUDGET_TEST ? GO('(local.get $t0)', '(local.get $t1)') : GO_SYN('(local.get $t0)', '(local.get $t1)')}))
+`);
+  TAKEN_AT.set(jmpIfen, 1);
   // `jmp $` is the purest spin there is, and the one a demo parks on when it
   // is finished. The compiler only offers this twin for a block that is the
   // jump and nothing else, so a `jmp` back to the head from further down a
@@ -1028,12 +1058,21 @@ function genExtras() {
   // it just armed -- which is the whole of a DOS trace decryptor. Setting TF is
   // the only way in (nothing else writes it) and it happens a handful of times
   // in a run, so the cost is one compare on a POPF that leaves TF clear.
+  // ...and the second thing a POPF can owe at this boundary: an IRQ the host
+  // is holding for IF ($irqpend), now that the popped IF is 1. POPF has no
+  // interrupt shadow (SDM Vol. 2B 4-407ff says nothing of one), so the
+  // boundary right after it is eligible -- the same rule IRET already follows
+  // below. Only $irqpend, not $irqwant: the Sound Blaster's port-armed line
+  // keeps its existing boundaries (IRET and the next stop) unchanged.
+  const POPF_OWES = `(if (i32.or (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF})) (i32.const 0))
+              (i32.and (global.get $irqpend)
+                       (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF})) (i32.const 0))))`;
   h('popf', 1, `
   ${ops(1)}
   (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
-  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+  ${POPF_OWES}
     (then (global.set $gip (local.get $t0))
           (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
@@ -1057,7 +1096,7 @@ function genExtras() {
   (call $flags_put (i32.or
     (i32.and (i32.and (call $pop32) (i32.const 0xFFFF)) ${DEFINED})
     ${RESERVED}))
-  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+  ${POPF_OWES}
     (then (global.set $gip (local.get $t0))
           (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
@@ -1278,8 +1317,17 @@ function genExtras() {
   h('cmc', 0, `(call $flags_put (i32.xor (call $flags_word) (i32.const ${1 << F.CF})))`);
   h('cld', 0, setF(F.DF, 0));
   h('std', 0, setF(F.DF, 1));
-  h('cli', 0, setF(F.IF, 0));
-  h('sti', 0, setF(F.IF, 1));
+  // `cli` also drops $ifarm: STI; CLI recognizes no interrupt (SDM Vol. 2B
+  // 4-674), and without this the boundary transfer after the CLI would hand
+  // back for nothing. `sti` arms only when it is the IF 0 -> 1 edge AND the
+  // host is holding an IRQ for IF ($irqpend, 0/1); an STI with IF already set
+  // has no shadow and needs no boundary.
+  h('cli', 0, `${setF(F.IF, 0)} (global.set $ifarm (i32.const 0))`);
+  h('sti', 0, `
+  (if (i32.and (global.get $irqpend)
+               (i32.eqz (i32.and (global.get $flags) (i32.const ${1 << F.IF}))))
+    (then (global.set $ifarm (i32.const 1))))
+  ${setF(F.IF, 1)}`);
   h('nop', 0, '');
 
   // SAHF/LAHF move the low byte of FLAGS through AH.
@@ -1502,8 +1550,11 @@ function genExtras() {
   ;; asks for a trap after this instruction, and an IRQ the host is holding
   ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
   ;; handler) is delivered at the handback the IRET used to take.
+  ;; ...or a timer IRQ held pending since a stop found IF=0 ($irqpend, see
+  ;; dos-loop.js timerPending): IRET has no interrupt shadow, so the boundary
+  ;; right after it is an eligible delivery instant.
   (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
-              (i32.and (global.get $irqwant)
+              (i32.and (i32.or (global.get $irqwant) (global.get $irqpend))
                        (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
                                (i32.const 0))))
     (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
@@ -1541,8 +1592,11 @@ function genExtras() {
   ;; asks for a trap after this instruction, and an IRQ the host is holding
   ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
   ;; handler) is delivered at the handback the IRET used to take.
+  ;; ...or a timer IRQ held pending since a stop found IF=0 ($irqpend, see
+  ;; dos-loop.js timerPending): IRET has no interrupt shadow, so the boundary
+  ;; right after it is an eligible delivery instant.
   (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
-              (i32.and (global.get $irqwant)
+              (i32.and (i32.or (global.get $irqwant) (global.get $irqpend))
                        (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
                                (i32.const 0))))
     (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
@@ -6016,7 +6070,13 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook'];
+// irqpend/ifarm: the IF-enable boundary (CONT, `sti`, jmp_ifen). $irqpend is
+// set by the host before each slice, 0/1, while it holds a timer IRQ a stop
+// found IF=0 for; $ifarm is raised by an arming `sti` and cleared by `cli` and
+// by the host. Neither is guest-architectural: they are listed here for the
+// accessors and for carryState, and excluded from guest-state comparisons
+// (trace-jit.js, uop-harness.js NOT_GUEST) the way irqwant is.
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook', 'irqpend', 'ifarm'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually

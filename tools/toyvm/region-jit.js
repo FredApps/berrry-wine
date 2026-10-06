@@ -199,7 +199,9 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   // past that point is another block's code that readTrace ran into.
   const blockOps = (blk) => {
     const t = traceAt(blk);
-    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    // ...and the IF-enable boundary's ops: a region through one is declined
+    // by buildRegion, so neither walk goes through one (IF_BOUNDARY_OPS).
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name) || IF_BOUNDARY_OPS.test(o.name));
     let cut = t.ops.length;
     for (let i = 0; i < t.ops.length - 1; i++) {
       const fa = fallArena(t.ops[i]);
@@ -609,7 +611,9 @@ function traceFrom(head, headByAddr, traceAt, maxOps, why, heat, maxDepth = 3, a
     const blk = headByAddr.get(cur);
     if (!blk) { stop = `0x${cur.toString(16)} is not a block head`; break; }
     const t = traceAt(blk);
-    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    // ...and the IF-enable boundary's ops: a region through one is declined
+    // by buildRegion, so neither walk goes through one (IF_BOUNDARY_OPS).
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name) || IF_BOUNDARY_OPS.test(o.name));
     if (bad) { stop = `0x${cur.toString(16)} contains ${bad.name}`; break; }
     let cut = t.ops.length;
     for (let i = 0; i < t.ops.length - 1; i++) {
@@ -990,10 +994,16 @@ function arenaSlots(fn) {
 const ARENA_EXPR = String.raw`(?:\(i32\.const \d+\)|\(local\.get \$t\d\))`;
 // The second alternative is emit.js GO_SYN's condition (fix J): a jmp_syn
 // selects on $smc alone, and its baked arena is just as stale as GO's.
+// The first alternative is emit.js CONT's condition, which reads $ifarm since
+// the IF-enable boundary. It must match CONT's text exactly: a GO this misses is
+// left with its stale profiling-run arena, silently (see above).
 const GO_RE = new RegExp(
   String.raw`\(if \(select \(i32\.const 0\) ${ARENA_EXPR}`
-  + String.raw`(\s*(?:\(i32\.or \(global\.get \$smc\) \(i32\.lt_s \(global\.get \$steps\)`
+  + String.raw`(\s*(?:\(i32\.or \(i32\.or \(global\.get \$smc\) \(global\.get \$ifarm\)\) \(i32\.lt_s \(global\.get \$steps\)`
   + String.raw` \(i32\.const 0\)\)\)|\(global\.get \$smc\))\)\s*\(then \(global\.set \$ip )${ARENA_EXPR}`, 'g');
+// The ops the IF-enable boundary lives in (emit.js `sti`, `popf`/`popf32`,
+// `jmp_ifen`). See buildRegion.
+const IF_BOUNDARY_OPS = /^(sti|popf|popf32|jmp_ifen)$/;
 
 function resolveGoArena(body) {
   if (flag('keep-go-arena')) return body;
@@ -1251,6 +1261,23 @@ const EXIT_SITES = [];   // --exit-census: one entry per `br $out` site, across 
 
 function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], forwards = []) {
   prepareTables();
+  // THE IF-ENABLE BOUNDARY IS NOT LOWERED: a region holding one declines.
+  // The interpreter hands back mid-block after a POPF that owes an IRQ, and at
+  // the transfer after STI's follower when `sti` armed $ifarm. Neither is a
+  // test this lowering makes: `edge()`'s boundaryTest reads $smc/$halt/$steps
+  // and not $ifarm, and an inlined op body that sets $halt is only noticed at
+  // the NEXT edge, so the ops behind a halting POPF would run on inside the
+  // region. Rather than diverge from the interpreter there, refuse to compile
+  // across it (tree-fold's loop and call trees go through here too).
+  // The scan covers EVERY op the region would compile: the path's AND each
+  // detour arm's (appended below, and compiled into the region like the path).
+  // `inner` loops and non-detour forwards add no ops of their own -- they index
+  // into the path -- so path + detours is the whole list. It runs before the
+  // loop below writes `f.start` onto the caller's forwards, so a declined
+  // region leaves its inputs untouched.
+  const ifOp = rawOps.find(o => IF_BOUNDARY_OPS.test(o.name))
+    || forwards.flatMap(f => (f.detour ? f.detour.ops : [])).find(o => IF_BOUNDARY_OPS.test(o.name));
+  if (ifOp) return { declined: `contains ${ifOp.name} (IF-enable boundary)` };
   // Detour arms ride behind the path's ops so the tiers see them as part of
   // one region (the same promoted registers, the same folded operands); each
   // one remembers where its ops start. The path is ops 0..mainLen-1.

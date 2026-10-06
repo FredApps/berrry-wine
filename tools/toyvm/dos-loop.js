@@ -1240,6 +1240,10 @@ class DosSession {
     this.stuck = 0;
     this.stuckAt = null;
     this.lastIrq = 0;
+    // A timer IRQ a stop found due but could not deliver because IF was 0 --
+    // and only for that reason. Held until the guest's own IF-enable boundary
+    // (ifenExit) or the next stop that finds IF=1. See step().
+    this.timerPending = false;
     // Dispatch count the audio was last rendered up to. See the render call in
     // step(): rendering happens at quantum crossings, not at every handback.
     this.audioAt = 0;
@@ -1764,6 +1768,13 @@ class DosSession {
     // IRET handlers in emit.js. Only the Sound Blaster's port-armed line is
     // delivered off the schedule, so only it needs the boundary.
     if (vm.exports.set_irqwant) vm.exports.set_irqwant(machine.sbForced && machine.sbForced() ? 1 : 0);
+    // ...and whether the guest's IF-enable boundaries have to stop here for a
+    // timer IRQ held for IF (emit.js `sti`/CONT, `popf`, `iret`). Separate
+    // from $irqwant so the Sound Blaster's port-armed line keeps exactly the
+    // boundaries it had. Schedule only: without it every handback is a stop.
+    // $ifarm starts every slice down; only an `sti` inside it raises it.
+    if (vm.exports.set_irqpend) vm.exports.set_irqpend(this.irqSchedule && this.timerPending ? 1 : 0);
+    if (vm.exports.set_ifarm) vm.exports.set_ifarm(0);
     // Unresolved direct edges resolve through the jump table (emit.js GO) --
     // not while single-stepping: a oneInsn block leaves its branch targets
     // unresolved so that the handback after one instruction can raise INT 1,
@@ -1891,6 +1902,32 @@ class DosSession {
     // that spent its budget is a `date` when it reached the schedule's stop
     // and `budget` when a host cap ended it first; anything else with budget
     // left is `early` -- an unresolved transfer or an uncompiled target.
+    // ...and whether it ended on the guest's own IF-enable boundary, read here
+    // for the same reason (the rungs below raise vectors). Only these exits
+    // are such a boundary (IF-ENABLE-DESIGN.md section 3):
+    //   ifen  -- jmp_ifen after an arming STI's follower (emit.js);
+    //   popf  -- POPF loaded IF=1 with an IRQ pending (or TF: same boundary);
+    //   iret  -- IRET, likewise (its lookup miss names it too, and is still
+    //            the boundary right after the IRET);
+    //   edge/ret/indirect/far32 WITH $ifarm up -- the STI's follower was itself
+    //            a transfer, and its CONT refused on $ifarm: the boundary is
+    //            that transfer's target.
+    // Not `end`: an armed `end` is the trap flag's one-instruction block or an
+    // unimplemented follower, i.e. INSIDE the shadow. HLT is `end` too, and is
+    // left for a later cut (see CANDIDATE.md). $ifarm is dropped here whatever
+    // happens: it never outlives the boundary it was raised for.
+    const endWhy = vm.raw('exitwhy');
+    const armed = vm.exports.get_ifarm ? vm.raw('ifarm') : 0;
+    if (armed) vm.set('ifarm', 0);
+    const ifenExit = endWhy === EXIT_WHY.ifen || endWhy === EXIT_WHY.popf || endWhy === EXIT_WHY.iret
+      || (armed !== 0 && (endWhy === EXIT_WHY.edge || endWhy === EXIT_WHY.ret
+        || endWhy === EXIT_WHY.indirect || endWhy === EXIT_WHY.far32));
+    // An eligible delivery instant: an EARLY handback (budget left; a stop
+    // keeps the stop's own rungs and clockAt) on such a boundary, IF=1 there,
+    // a timer IRQ pending, not single-stepping (the trap owns that handback)
+    // and not a port-write cut (the Sound Blaster's own instant).
+    const ifen = this.irqSchedule && this.timerPending && ifenExit && !atStop && left >= 0
+      && cut < 0 && !stepping && (vm.get('flags') & 0x200) !== 0;
     const endCs = vm.get('cs');
     let exitKind = stepping ? 'trap'
       : endCs === STUB_SEG
@@ -2086,7 +2123,15 @@ class DosSession {
     // every GUS module player here, so it is not rate-limited the way the
     // Sound Blaster's block is; the slice above is already cut to it.
     const gvec = atStop && (vm.get('flags') & 0x200) && machine.gusIrq ? machine.gusIrq() : 0;
-    const tvec = atStop ? machine.timerVector() : 0;
+    // The timer is asked at a stop, as before, and at an eligible IF-enable
+    // boundary (`ifen`, above) while one is pending -- the one rung allowed off
+    // the schedule's stops besides the Sound Blaster's forced line, and for the
+    // same reason: the instant is the guest's own instruction boundary, at the
+    // same dispatch count in every arm. Keyboard, retrace and GUS would follow
+    // the same pattern; this first cut does the timer only.
+    const tvec = atStop || ifen ? machine.timerVector() : 0;
+    // IF as this handback found it, before any rung below raises a vector.
+    const ifHere = (vm.get('flags') & 0x200) !== 0;
     // A frame, not a tick: the vertical retrace comes round about 70 times a
     // second against the timer's 18.2, so it is the fastest thing here. Asked
     // for the vector up front like the Sound Blaster's, so that a rung which
@@ -2112,10 +2157,15 @@ class DosSession {
       // that overshoot differently by one single op walk apart over a run.
       // Advancing by whole intervals keeps every later date the same number in
       // every arm, which is the point of having a schedule at all.
+      // At an IF-enable boundary `clockAt` is the boundary's own dispatch
+      // count (not a stop, so it is `dispatched`), and the grid advance below
+      // is the same expression: every later date is unchanged. No audio render
+      // is added there -- renders stay on stops.
       const ti = this.timerInterval();
       this.lastIrq = this.irqSchedule
         ? this.lastIrq + Math.floor((clockAt - this.lastIrq) / ti) * ti
         : this.dispatched;
+      this.timerPending = false;
       this.raise(tvec, 'timer');
     } else if (rvec) {
       this.retraceEdge = false;
@@ -2131,6 +2181,17 @@ class DosSession {
         && (vm.get('flags') & 0x200)) {
       const kvec = machine.keyboardIrq();
       if (kvec) { this.lastKbIrq = clockAt; this.raise(kvec, 'kbd'); }
+    }
+    // PENDING: a stop where the timer rung's condition held except for IF.
+    // Decided only at a stop (a date, the same in every arm), from IF as the
+    // stop found it -- a higher rung winning the stop is not "blocked by IF".
+    // An unhooked timer drops it, so a stale pending cannot keep the guest's
+    // POPFs handing back. An eligible boundary that found the timer unhooked
+    // drops it the same way.
+    if (this.irqSchedule && (atStop || ifen)) {
+      const tv = machine.timerVector();
+      if (!tv) this.timerPending = false;
+      else if (atStop && !ifHere && clockAt - this.lastIrq >= this.timerInterval()) this.timerPending = true;
     }
 
     this.checkProgress(cs, ip, this.cache.refusedEntries.has(entry));
