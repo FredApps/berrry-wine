@@ -138,6 +138,8 @@ function parseSession(provider, records, file, partial, root) {
   session.parentAgentId = provider === 'claude' && path.basename(path.dirname(file)) === 'subagents'
     ? `claude:${path.basename(path.dirname(path.dirname(file)))}` : null;
   session.summary = null;
+  // Claude Code /goal: the latest condition and whether its Stop hook judged it met.
+  session.goal = null;
   let projectMatch = false;
   let usageAtCompaction = false;
   let hasSessionMeta = false;
@@ -197,6 +199,14 @@ function parseSession(provider, records, file, partial, root) {
       if (e.sessionId && !file.includes(`${path.sep}subagents${path.sep}`)) session.id = `claude:${e.sessionId}`;
       if (e.type === 'ai-title') session.title = clip(e.aiTitle, 160);
       if (e.type === 'system' && e.subtype === 'compact_boundary') { session.compactions++; usageAtCompaction = true; }
+      if (e.type === 'attachment' && e.attachment?.type === 'goal_status' && typeof e.attachment.condition === 'string')
+        session.goal = { condition: clip(e.attachment.condition, 1000), met: e.attachment.met === true, at: time };
+      if (e.type === 'user' && typeof e.message?.content === 'string') {
+        const out = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(e.message.content)?.[1] || '';
+        const set = /^Goal set: ([\s\S]+)/.exec(out.trim());
+        if (set) session.goal = { condition: clip(set[1], 1000), met: false, at: time };
+        else if (/^Goal (?:cleared|removed)/i.test(out.trim())) session.goal = null;
+      }
       if (e.type === 'user') {
         const content = e.message?.content;
         const isTool = Array.isArray(content) && content.some(c => c.type === 'tool_result');

@@ -1131,6 +1131,9 @@ dd {
 /* Urgent decisions precede ordinary telemetry. */
 .agent-attention { border-left:3px solid var(--amber); }
 .agent-decision { color:var(--amber); font-size:12px; line-height:1.5; margin:8px 0; }
+.agent-goal { font-size:12px; line-height:1.5; margin:6px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-goal.goal-active strong { color:var(--green); }
+.agent-goal.goal-met strong, .agent-goal.goal-none { color:var(--amber); }
 .agent-routine .badge.good { background:transparent; border-color:var(--line); color:#a7c9ae; }
 .agent .provider { background:transparent; border-color:transparent; color:var(--muted); padding-left:0; }
 .agent::before { display:none; }

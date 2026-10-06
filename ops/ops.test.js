@@ -563,3 +563,16 @@ test('the private emulator can serve a checkout other than the dashboard root', 
   const b=createReader({root:'/tmp/dash-root',emulatorRoot:'/tmp/web-root',codexRoot:false,claudeRoot:false});
   assert.equal(b.root,'/tmp/dash-root');assert.equal(b.emulatorRoot,'/tmp/web-root');
 });
+
+test('a Claude /goal is read from its set command and its latest Stop-hook status', () => {
+  const root = '/project', at = s => `2026-10-06T00:${s}:00Z`;
+  const set = {type:'user', cwd:root, sessionId:'w', timestamp:at('10'), message:{role:'user', content:'<local-command-stdout>Goal set: Finish the Myth lane with evidence</local-command-stdout>'}};
+  const status = met => ({type:'attachment', cwd:root, sessionId:'w', timestamp:at('20'), attachment:{type:'goal_status', met, condition:'Finish the Myth lane with evidence'}});
+  assert.equal(parseSession('claude', [set], '/logs/w.jsonl', false, root).goal.met, false);
+  assert.equal(parseSession('claude', [set], '/logs/w.jsonl', false, root).goal.condition, 'Finish the Myth lane with evidence');
+  assert.equal(parseSession('claude', [set, status(true)], '/logs/w.jsonl', false, root).goal.met, true);
+  const cleared = {...set, timestamp:at('30'), message:{role:'user', content:'<local-command-stdout>Goal cleared</local-command-stdout>'}};
+  assert.equal(parseSession('claude', [set, cleared], '/logs/w.jsonl', false, root).goal, null);
+  const plain = {type:'assistant', cwd:root, sessionId:'w', timestamp:at('40'), message:{content:[{type:'text',text:'hi'}],stop_reason:'end_turn'}};
+  assert.equal(parseSession('claude', [plain], '/logs/w.jsonl', false, root).goal, null);
+});
