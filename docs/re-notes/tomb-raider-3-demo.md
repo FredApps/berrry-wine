@@ -86,3 +86,15 @@ Partly investigated, not fixed:
   only the PCM converter and the game runs silent.
 
 Repro for the passport: `--app=tomb_raider_3_demo --input=8:dlg-cmd:1,40:dlg-cmd:1,18000:keydown:13,18100:keyup:13,18500:png:out.png --dx-surfaces`.
+
+## Page route (claude:202b4b39, 2026-10-06)
+
+The page reaches Jungle gameplay on WebGL; an earlier "title only" result was
+route timing, not input (scratch/runs/20261006T2030Z-tr3-web-title-input).
+With `web-input-probe --gpu`: OK both startup dialogs, then the title ring is
+up ~28 s later and, left idle, times out into the `jungle.DEM` attract demo
+by ~60 s (any key there returns to the title). Press Enter (hold ~300 ms)
+while the ring is up to open the passport on New Game, wait ~6 s for the
+passport to finish opening (a press 3 s in is swallowed by the animation),
+Enter again, and Jungle loads with its Controls overlay; one key dismisses
+it and Up runs Lara forward.
