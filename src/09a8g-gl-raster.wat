@@ -180,6 +180,8 @@
   (global $gl_sw_tex_unsupported (mut i32) (i32.const 0))
   ;; GL's default clear colour is (0,0,0,0).
   (global $gl_sw_clear_color (mut i32) (i32.const 0))
+  ;; glClearDepth's value as a 16-bit depth: GL's default 1.0 is 0xFFFF.
+  (global $gl_sw_clear_depth_value (mut i32) (i32.const 0xFFFF))
   ;; glPushAttrib depth, 0..16. GL requires at least 16.
   (global $gl_sw_attrib_depth (mut i32) (i32.const 0))
 
@@ -942,18 +944,29 @@
   (func $gl_sw_clear_depth
     (call $gl_sw_fill_depth (global.get $gl_sw_zbuf)))
 
-  ;; Depth 1.0 over a 16bpp depth surface or a view into one, row by row so a
-  ;; scissor view leaves the rest of each row alone.
+  ;; glClearDepth's value (1.0 unless set) over a 16bpp depth surface or a
+  ;; view into one, row by row so a scissor view leaves the rest of each row
+  ;; alone. Both bytes alike (1.0 is 0xFFFF) is one fill per row.
   (func $gl_sw_fill_depth (param $z i32)
     (local $y i32) (local $h i32) (local $row i32) (local $pitch i32) (local $bytes i32)
+    (local $v i32) (local $x i32)
     (if (i32.eqz (local.get $z)) (then (return)))
+    (local.set $v (global.get $gl_sw_clear_depth_value))
     (local.set $h (load.field DxObject height (local.get $z)))
     (local.set $pitch (load.field DxObject pitch (local.get $z)))
     (local.set $bytes (i32.shl (load.field DxObject width (local.get $z)) (i32.const 1)))
     (local.set $row (load.field DxObject misc1 (local.get $z)))
     (block $done (loop $lp
       (br_if $done (i32.ge_s (local.get $y) (local.get $h)))
-      (memory.fill (local.get $row) (i32.const 0xFF) (local.get $bytes))
+      (if (i32.eq (i32.and (local.get $v) (i32.const 0xFF)) (i32.shr_u (local.get $v) (i32.const 8)))
+        (then (memory.fill (local.get $row) (i32.and (local.get $v) (i32.const 0xFF)) (local.get $bytes)))
+        (else
+          (local.set $x (i32.const 0))
+          (block $row_done (loop $px
+            (br_if $row_done (i32.ge_u (local.get $x) (local.get $bytes)))
+            (i32.store16 (i32.add (local.get $row) (local.get $x)) (local.get $v))
+            (local.set $x (i32.add (local.get $x) (i32.const 2)))
+            (br $px)))))
       (local.set $row (i32.add (local.get $row) (local.get $pitch)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
@@ -1297,6 +1310,14 @@
       (then (call $gl_sw_push_attrib (i32.load offset=4 (local.get $stack))) (return)))
     (if (i32.eq (local.get $op) (i32.const 77))
       (then (call $gl_sw_pop_attrib) (return)))
+    ;; 110 glClearDepth(GLclampd): clamped to [0,1], kept as 16-bit depth.
+    (if (i32.eq (local.get $op) (i32.const 110))
+      (then
+        (global.set $gl_sw_clear_depth_value (i32.trunc_sat_f64_u (f64.add
+          (f64.mul (f64.min (f64.max (f64.load offset=4 (local.get $stack)) (f64.const 0)) (f64.const 1))
+                   (f64.const 65535))
+          (f64.const 0.5))))
+        (return)))
     ;; 3 glClearColor(four GLclampf)
     (if (i32.eq (local.get $op) (i32.const 3))
       (then
@@ -2941,4 +2962,5 @@
     (global.set $gl_sw_clipped (i32.const 0))
     (global.set $gl_sw_culled (i32.const 0))
     (global.set $gl_sw_clear_color (i32.const 0))
+    (global.set $gl_sw_clear_depth_value (i32.const 0xFFFF))
     (call $gl_sw_state_defaults))

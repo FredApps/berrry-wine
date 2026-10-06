@@ -20,6 +20,8 @@
   (global $gl_immediate_mode (mut i32) (i32.const -1))
   (global $gl_shade_model (mut i32) (i32.const 0x1D01))
   (global $gl_current_context (mut i32) (i32.const 0))
+  ;; The HDC the current context was made current on (wglGetCurrentDC).
+  (global $gl_current_dc (mut i32) (i32.const 0))
   (global $gl_color_r (mut f32) (f32.const 1))
   (global $gl_color_g (mut f32) (f32.const 1))
   (global $gl_color_b (mut f32) (f32.const 1))
@@ -454,6 +456,8 @@
     (local $wide i64)
     (local.set $arg (i32.const -1))
     (if (i32.eq (local.get $op) (i32.const 34)) (then (local.set $arg (i32.const 0)) (local.set $len (i32.const 64))))
+    ;; 109 glMultMatrixf: the same 16 floats as glLoadMatrixf.
+    (if (i32.eq (local.get $op) (i32.const 109)) (then (local.set $arg (i32.const 0)) (local.set $len (i32.const 64))))
     (if (i32.eq (local.get $op) (i32.const 43)) (then
       (local.set $arg (i32.const 1))
       (local.set $wide (i64.shl (i64.extend_i32_u (i32.load offset=4 (local.get $stack))) (i64.const 2)))
@@ -569,7 +573,13 @@
         (call $gl_is_barrier (local.get $op)))
       (then (local.set $result (call $gl_wat_stream_flush))))
     (if (i32.and (i32.eq (local.get $op) (i32.const 51)) (i32.ne (local.get $result) (i32.const 0)))
-      (then (call $gl_state_context_changed (i32.load offset=8 (local.get $stack)))))
+      (then
+        (call $gl_state_context_changed (i32.load offset=8 (local.get $stack)))
+        ;; wglMakeCurrent(hdc, NULL) releases the context and its DC alike.
+        (global.set $gl_current_dc
+          (if (result i32) (i32.load offset=8 (local.get $stack))
+            (then (i32.load offset=4 (local.get $stack)))
+            (else (i32.const 0))))))
     (if (i32.and (i32.eq (local.get $op) (i32.const 49)) (i32.ne (local.get $result) (i32.const 0)))
       (then (call $gl_state_context_deleted (i32.load offset=4 (local.get $stack)))))
     (local.get $result))
@@ -581,4 +591,5 @@
     (global.set $gl_immediate_floats (i32.const 0))
     (global.set $gl_immediate_mode (i32.const -1))
     (call $gl_state_reset)
-    (global.set $gl_current_context (i32.const 0)))
+    (global.set $gl_current_context (i32.const 0))
+    (global.set $gl_current_dc (i32.const 0)))

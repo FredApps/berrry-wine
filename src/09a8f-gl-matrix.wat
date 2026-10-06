@@ -824,7 +824,9 @@
     ;; index, and without this it passes the range test below and walks the
     ;; whole compare chain. Measured on Quake II's menu, that is 530916 calls
     ;; a run taking the long way to do nothing.
-    (if (i32.gt_u (local.get $op) (i32.const 107)) (then (return)))
+    ;; 109 glMultMatrixf is the one transform op appended past that range.
+    (if (i32.and (i32.gt_u (local.get $op) (i32.const 107))
+                 (i32.ne (local.get $op) (i32.const 109))) (then (return)))
     (if (i32.and
           (i32.and (i32.or (i32.lt_u (local.get $op) (i32.const 32))
               (i32.gt_u (local.get $op) (i32.const 41)))
@@ -866,6 +868,10 @@
     ;; 34 glLoadMatrixf takes a GUEST pointer to 16 floats.
     (if (i32.eq (local.get $op) (i32.const 34))
       (then (call $gl_mtx_load (call $g2w (i32.load offset=4 (local.get $stack))))
+        (return)))
+    ;; 109 glMultMatrixf, the same guest pointer, multiplied onto the top.
+    (if (i32.eq (local.get $op) (i32.const 109))
+      (then (call $gl_mtx_mult (call $g2w (i32.load offset=4 (local.get $stack))))
         (return)))
 
     ;; 41 glTranslatef, 40 glScalef, 39 glRotatef -- GLfloat arguments.

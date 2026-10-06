@@ -182,3 +182,25 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
     (call $present_frame_end)
   )
+
+  ;; The OpenGL 1.1 surface outside the measured set. Unreal-engine OpenGlDrv
+  ;; resolves its whole GL table through GetProcAddress and refuses to bind if
+  ;; a single name is missing, so every GL 1.1 entry point is an api_table
+  ;; name. Those not implemented yet land here: fail fast with the guest frame,
+  ;; so the first one an app really calls names itself.
+  (func $handle_gl_unimplemented (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_crash_unimplemented (local.get $name_ptr)
+      (i32.load offset=16 (global.get $reg_base)) (global.get $eip) (i32.load offset=20 (global.get $reg_base)))
+    (unreachable))
+
+  ;; wglGetCurrentContext() / wglGetCurrentDC(): this thread's current HGLRC
+  ;; and the HDC it was made current on (both NULL when none is current).
+  ;; Per guest thread, as in Windows, because each thread instance owns its
+  ;; own encoder globals.
+  (func $handle_wglGetCurrentContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (global.get $gl_current_context))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  (func $handle_wglGetCurrentDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (global.get $gl_current_dc))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))

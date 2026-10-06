@@ -278,6 +278,11 @@ const gpuApis = new Map([
   ['glMultiTexCoord2fARB', 3],
   // Descent 3's OpenGL renderer draws its client arrays unindexed.
   ['glDrawArrays', 3],
+  // Unreal-engine OpenGlDrv composes its view transform with glMultMatrixf
+  // (Deus Ex demo, OPENGLDRV-GL11-SURFACE).
+  ['glMultMatrixf', 1],
+  // glClearDepth(GLclampd): two physical stack dwords.
+  ['glClearDepth', 2],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

@@ -182,6 +182,7 @@ const stats = {
     let arg = -1, length = 0, borrow = false;
     switch (opcode | 0) {
       case 34: arg = 0; length = 64; break; // glLoadMatrixf
+      case 109: arg = 0; length = 64; break; // glMultMatrixf
       case 43: // glDeleteTextures(count, names)
         arg = 1; length = u32At(view, stackWa, 0) * 4; break;
       case 45: { // glTexImage2D

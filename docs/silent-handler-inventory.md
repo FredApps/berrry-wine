@@ -763,3 +763,15 @@ level of the source mip chain into the destination's through
 $d3dim_texture_load, and fails loudly for the destination-point / source-rect
 form, which needs a sub-rectangle copy nobody has asked for yet.
 Pin241/f8ef783a7756762629ecdc59b8dd352acbd3ad08be8e42d254cb2516b779ab76.
+
+### 2026-10-06: wglGetCurrentContext / wglGetCurrentDC
+
+241 -> 243: two getters, straight-line by nature. Each returns state the GL
+frontend already tracks per guest thread: the HGLRC $gl_current_context holds
+since wglMakeCurrent, and the HDC it was made current on, which
+wglMakeCurrent/wglDeleteContext now keep in $gl_current_dc (both NULL when
+nothing is current). Unreal-engine OpenGlDrv resolves the whole GL 1.1 + WGL
+surface through GetProcAddress and refuses to bind if one name is missing
+(OPENGLDRV-GL11-SURFACE-20261006); the other GL 1.1 names it needs fail fast
+through $handle_gl_unimplemented until something calls them.
+Pin243/cbc5a1e287e085f12a7fcd0c4b4c48aeab5b9c1a9c3b9a62c4efc1afc074aa9c.

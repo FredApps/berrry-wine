@@ -35536,5 +35536,2105 @@
     "convention": "stdcall",
     "hash": 51546553,
     "handler": "grDrawTriangle"
+  },
+  {
+    "id": 4209,
+    "name": "glAccum",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4053872309,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4210,
+    "name": "glAreTexturesResident",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3345315088,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4211,
+    "name": "glBitmap",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3504426053,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4212,
+    "name": "glCallList",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 248177406,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4213,
+    "name": "glCallLists",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3596788727,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4214,
+    "name": "glClearAccum",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3378134478,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4215,
+    "name": "glClearDepth",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3394571592
+  },
+  {
+    "id": 4216,
+    "name": "glClearIndex",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1151101333,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4217,
+    "name": "glClearStencil",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1687502789,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4218,
+    "name": "glClipPlane",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2518167642,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4219,
+    "name": "glColor3b",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3758493084,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4220,
+    "name": "glColor3bv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2475157342,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4221,
+    "name": "glColor3d",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3724937846,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4222,
+    "name": "glColor3dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2206318080,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4223,
+    "name": "glColor3i",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3943046893,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4224,
+    "name": "glColor3iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2510433793,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4225,
+    "name": "glColor3s",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3506828799,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4226,
+    "name": "glColor3sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2506196651,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4227,
+    "name": "glColor3ub",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2707233889,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4228,
+    "name": "glColor3ui",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2522680080,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4229,
+    "name": "glColor3uiv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 444133778,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4230,
+    "name": "glColor3us",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2422014366,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4231,
+    "name": "glColor3usv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 711589944,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4232,
+    "name": "glColor4b",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3524047703,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4233,
+    "name": "glColor4bv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3405642995,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4234,
+    "name": "glColor4d",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3490492465,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4235,
+    "name": "glColor4dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3405348805,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4236,
+    "name": "glColor4i",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3406604370,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4237,
+    "name": "glColor4iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3370954924,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4238,
+    "name": "glColor4s",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3775711988,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4239,
+    "name": "glColor4sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3374500518,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4240,
+    "name": "glColor4ui",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3357428709,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4241,
+    "name": "glColor4uiv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2595289193,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4242,
+    "name": "glColor4us",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3726536327,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4243,
+    "name": "glColor4usv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2598937955,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4244,
+    "name": "glColorMask",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2216263645,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4245,
+    "name": "glColorSubTableEXT",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2645535030,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4246,
+    "name": "glColorTableEXT",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1518335638,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4247,
+    "name": "glCopyPixels",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2926253350,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4248,
+    "name": "glCopyTexImage1D",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1015384472,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4249,
+    "name": "glCopyTexImage2D",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 781042259,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4250,
+    "name": "glCopyTexSubImage1D",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1979036634,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4251,
+    "name": "glCopyTexSubImage2D",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 1207119065,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4252,
+    "name": "glDeleteLists",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3424876370,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4253,
+    "name": "glDrawPixels",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 932088857,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4254,
+    "name": "glEdgeFlag",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1320812425,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4255,
+    "name": "glEdgeFlagPointer",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2682520694,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4256,
+    "name": "glEdgeFlagv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3989700205,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4257,
+    "name": "glEndList",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2514076291,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4258,
+    "name": "glEvalCoord1d",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3165597868,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4259,
+    "name": "glEvalCoord1dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3788105518,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4260,
+    "name": "glEvalCoord1f",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3199153106,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4261,
+    "name": "glEvalCoord1fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3519957804,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4262,
+    "name": "glEvalCoord2d",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4004920103,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4263,
+    "name": "glEvalCoord2dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 434069635,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4264,
+    "name": "glEvalCoord2f",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4038475341,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4265,
+    "name": "glEvalCoord2fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 702805729,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4266,
+    "name": "glEvalMesh1",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 265051324,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4267,
+    "name": "glEvalMesh2",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 315384181,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4268,
+    "name": "glEvalPoint1",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1623610901,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4269,
+    "name": "glEvalPoint2",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1573278044,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4270,
+    "name": "glFeedbackBuffer",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1957509147,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4271,
+    "name": "glFogiv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2580535473,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4272,
+    "name": "glGenLists",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 6702901,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4273,
+    "name": "glGetBooleanv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 603315500,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4274,
+    "name": "glGetClipPlane",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3484929470,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4275,
+    "name": "glGetColorTableEXT",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2771411226,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4276,
+    "name": "glGetColorTableParameterfvEXT",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2387016153,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4277,
+    "name": "glGetColorTableParameterivEXT",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 736054296,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4278,
+    "name": "glGetDoublev",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3539617267,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4279,
+    "name": "glGetLightfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 394865258,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4280,
+    "name": "glGetLightiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 159831497,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4281,
+    "name": "glGetMapdv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2816348658,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4282,
+    "name": "glGetMapfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2816746016,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4283,
+    "name": "glGetMapiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2852022467,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4284,
+    "name": "glGetMaterialfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4003991015,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4285,
+    "name": "glGetMaterialiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3701449420,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4286,
+    "name": "glGetPixelMapfv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 121990212,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4287,
+    "name": "glGetPixelMapuiv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2053668292,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4288,
+    "name": "glGetPixelMapusv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2049431150,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4289,
+    "name": "glGetPointerv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2774712999,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4290,
+    "name": "glGetPolygonStipple",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2289857601,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4291,
+    "name": "glGetTexEnvfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1574874430,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4292,
+    "name": "glGetTexEnviv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1341223765,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4293,
+    "name": "glGetTexGendv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3376895889,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4294,
+    "name": "glGetTexGenfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3108159795,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4295,
+    "name": "glGetTexGeniv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3072780176,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4296,
+    "name": "glGetTexImage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1965967156,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4297,
+    "name": "glGetTexLevelParameterfv",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2209778378,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4298,
+    "name": "glGetTexLevelParameteriv",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1974744617,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4299,
+    "name": "glGetTexParameterfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3347005802,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4300,
+    "name": "glGetTexParameteriv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3111972041,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4301,
+    "name": "glIndexd",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1002911090,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4302,
+    "name": "glIndexdv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 513307980,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4303,
+    "name": "glIndexf",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 969355852,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4304,
+    "name": "glIndexfv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 781455694,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4305,
+    "name": "glIndexi",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1086799185,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4306,
+    "name": "glIndexiv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 547701861,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4307,
+    "name": "glIndexMask",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3953228106,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4308,
+    "name": "glIndexPointer",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2842639523,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4309,
+    "name": "glIndexs",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1187464899,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4310,
+    "name": "glIndexsv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 548687599,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4311,
+    "name": "glIndexub",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 885225717,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4312,
+    "name": "glIndexubv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2461447737,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4313,
+    "name": "glInitNames",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3794929508,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4314,
+    "name": "glInterleavedArrays",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3220552727,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4315,
+    "name": "glIsList",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3892698318,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4316,
+    "name": "glIsTexture",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3124442213,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4317,
+    "name": "glLighti",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4012332113,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4318,
+    "name": "glLightiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2716432741,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4319,
+    "name": "glLightModelf",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2324296571,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4320,
+    "name": "glLightModeliv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 304268636,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4321,
+    "name": "glLineStipple",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3043607833,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4322,
+    "name": "glListBase",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3613272967,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4323,
+    "name": "glLoadMatrixd",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2672760829,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4324,
+    "name": "glLoadName",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4133864253,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4325,
+    "name": "glLockArraysEXT",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 818055582,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4326,
+    "name": "glLogicOp",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3516458443,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4327,
+    "name": "glMap1d",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 1844543069,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4328,
+    "name": "glMap1f",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1810987831,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4329,
+    "name": "glMap2d",
+    "nargs": 14,
+    "convention": "stdcall",
+    "hash": 2348018734,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4330,
+    "name": "glMap2f",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 2314463496,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4331,
+    "name": "glMapGrid1d",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3499103869,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4332,
+    "name": "glMapGrid1f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3465548631,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4333,
+    "name": "glMapGrid2d",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 4002579534,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4334,
+    "name": "glMapGrid2f",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3969024296,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4335,
+    "name": "glMaterialiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1765296568,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4336,
+    "name": "glMultiTexCoord1fARB",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 329861533,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4337,
+    "name": "glMultiTexCoord1fvARB",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4224085547,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4338,
+    "name": "glMultiTexCoord2fvARB",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2196628464,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4339,
+    "name": "glMultiTexCoord3fARB",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 770281527,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4340,
+    "name": "glMultiTexCoord3fvARB",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 223840765,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4341,
+    "name": "glMultiTexCoord4fARB",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3564003166,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4342,
+    "name": "glMultiTexCoord4fvARB",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 226138626,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4343,
+    "name": "glMultMatrixd",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1152402571,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4344,
+    "name": "glMultMatrixf",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1185957809
+  },
+  {
+    "id": 4345,
+    "name": "glNewList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3094182928,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4346,
+    "name": "glNormal3b",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1813816296,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4347,
+    "name": "glNormal3bv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3474297274,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4348,
+    "name": "glNormal3d",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1914482010,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4349,
+    "name": "glNormal3dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3475283012,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4350,
+    "name": "glNormal3i",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1729928201,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4351,
+    "name": "glNormal3iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3507117037,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4352,
+    "name": "glNormal3s",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1562152011,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4353,
+    "name": "glNormal3sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3505439751,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4354,
+    "name": "glPassThrough",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2625785572,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4355,
+    "name": "glPixelMapfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 49403264,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4356,
+    "name": "glPixelMapuiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1860601096,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4357,
+    "name": "glPixelMapusv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1587922050,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4358,
+    "name": "glPixelStoref",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 585549431,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4359,
+    "name": "glPixelTransferf",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1894232325,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4360,
+    "name": "glPixelTransferi",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1911009944,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4361,
+    "name": "glPixelZoom",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2886141361,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4362,
+    "name": "glPolygonStipple",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1773272613,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4363,
+    "name": "glPopClientAttrib",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2112515186,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4364,
+    "name": "glPopName",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 345809854,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4365,
+    "name": "glPrioritizeTextures",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1518120815,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4366,
+    "name": "glPushClientAttrib",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1343635417,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4367,
+    "name": "glPushName",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2338014613,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4368,
+    "name": "glRasterPos2d",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3735310609,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4369,
+    "name": "glRasterPos2dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3819709733,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4370,
+    "name": "glRasterPos2f",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3701755371,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4371,
+    "name": "glRasterPos2fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4087754279,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4372,
+    "name": "glRasterPos2i",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3651422514,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4373,
+    "name": "glRasterPos2iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3785315852,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4374,
+    "name": "glRasterPos2s",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4020530132,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4375,
+    "name": "glRasterPos2sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3788861446,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4376,
+    "name": "glRasterPos3d",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 4171381608,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4377,
+    "name": "glRasterPos3dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2237861946,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4378,
+    "name": "glRasterPos3f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4204936846,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4379,
+    "name": "glRasterPos3fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2238259304,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4380,
+    "name": "glRasterPos3i",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4121048751,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4381,
+    "name": "glRasterPos3iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2270975899,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4382,
+    "name": "glRasterPos3s",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4020383037,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4383,
+    "name": "glRasterPos3sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2269990161,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4384,
+    "name": "glRasterPos4d",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3667905943,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4385,
+    "name": "glRasterPos4dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 177281331,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4386,
+    "name": "glRasterPos4f",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3701461181,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4387,
+    "name": "glRasterPos4fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 446017425,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4388,
+    "name": "glRasterPos4i",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3449796896,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4389,
+    "name": "glRasterPos4iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 141607522,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4390,
+    "name": "glRasterPos4s",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3886014990,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4391,
+    "name": "glRasterPos4sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 414286568,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4392,
+    "name": "glRectd",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 2059700056,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4393,
+    "name": "glRectdv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1902169450,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4394,
+    "name": "glRectf",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2093255294,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4395,
+    "name": "glRectfv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1902463640,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4396,
+    "name": "glRecti",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2009367199,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4397,
+    "name": "glRectiv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1935283403,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4398,
+    "name": "glRects",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2445585293,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4399,
+    "name": "glRectsv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1939520545,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4400,
+    "name": "glRenderMode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1275256249,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4401,
+    "name": "glScaled",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1174487656,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4402,
+    "name": "glSelectBuffer",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1873869072,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4403,
+    "name": "glStencilFunc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2395659844,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4404,
+    "name": "glStencilMask",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 89924970,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4405,
+    "name": "glStencilOp",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3124205573,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4406,
+    "name": "glTexCoord1d",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1163476005,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4407,
+    "name": "glTexCoord1dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2121922217,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4408,
+    "name": "glTexCoord1f",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1129920767,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4409,
+    "name": "glTexCoord1fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2389966763,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4410,
+    "name": "glTexCoord1i",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1213808862,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4411,
+    "name": "glTexCoord1iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2357250168,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4412,
+    "name": "glTexCoord1s",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1314474576,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4413,
+    "name": "glTexCoord1sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2089794002,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4414,
+    "name": "glTexCoord2d",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1666951670,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4415,
+    "name": "glTexCoord2dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3914060928,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4416,
+    "name": "glTexCoord2i",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1885060717,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4417,
+    "name": "glTexCoord2iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4218176641,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4418,
+    "name": "glTexCoord2s",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1448842623,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4419,
+    "name": "glTexCoord2sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4213939499,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4420,
+    "name": "glTexCoord3d",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1365101623,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4421,
+    "name": "glTexCoord3dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1470663251,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4422,
+    "name": "glTexCoord3f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1398656861,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4423,
+    "name": "glTexCoord3fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1739399345,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4424,
+    "name": "glTexCoord3i",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1146992576,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4425,
+    "name": "glTexCoord3iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1434989442,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4426,
+    "name": "glTexCoord3s",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1583210670,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4427,
+    "name": "glTexCoord3sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1707668488,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4428,
+    "name": "glTexCoord4d",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 1868577288,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4429,
+    "name": "glTexCoord4dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3531347034,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4430,
+    "name": "glTexCoord4f",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1902132526,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4431,
+    "name": "glTexCoord4fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3531641224,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4432,
+    "name": "glTexCoord4i",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1818244431,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4433,
+    "name": "glTexCoord4iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3564357819,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4434,
+    "name": "glTexCoord4s",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1717578717,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4435,
+    "name": "glTexCoord4sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3563372081,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4436,
+    "name": "glTexEnvfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3996550074,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4437,
+    "name": "glTexEnviv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3761516313,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4438,
+    "name": "glTexGend",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2128753545,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4439,
+    "name": "glTexGendv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3172457069,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4440,
+    "name": "glTexGeniv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3140623044,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4441,
+    "name": "glTexImage1D",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3454809797,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4442,
+    "name": "glTexParameterfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3449537550,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4443,
+    "name": "glTexParameteriv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3215783717,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4444,
+    "name": "glTexSubImage1D",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 218817537,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4445,
+    "name": "glTranslated",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 4030969880,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4446,
+    "name": "glUnlockArraysEXT",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1414930011,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4447,
+    "name": "glVertex2d",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4052569066,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4448,
+    "name": "glVertex2dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3714975380,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4449,
+    "name": "glVertex2iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3746809405,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4450,
+    "name": "glVertex2s",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4237122875,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4451,
+    "name": "glVertex2sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3750354999,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4452,
+    "name": "glVertex3d",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 261077435,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4453,
+    "name": "glVertex3dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1279360439,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4454,
+    "name": "glVertex3i",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 177189340,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4455,
+    "name": "glVertex3iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1244966558,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4456,
+    "name": "glVertex3s",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 76523626,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4457,
+    "name": "glVertex3sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1243980820,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4458,
+    "name": "glVertex4d",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 226389364,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4459,
+    "name": "glVertex4dv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1074108966,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4460,
+    "name": "glVertex4f",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 259944602,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4461,
+    "name": "glVertex4fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1342948228,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4462,
+    "name": "glVertex4i",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 41835555,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4463,
+    "name": "glVertex4iv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1105942991,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4464,
+    "name": "glVertex4s",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4236137137,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4465,
+    "name": "glVertex4sv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1104957253,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4466,
+    "name": "wglGetCurrentContext",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2339120867
+  },
+  {
+    "id": 4467,
+    "name": "wglGetCurrentDC",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 548415565
+  },
+  {
+    "id": 4468,
+    "name": "wglShareLists",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2397422737,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4469,
+    "name": "wglCopyContext",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 765119519,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4470,
+    "name": "wglCreateLayerContext",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1320404273,
+    "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4471,
+    "name": "wglSwapIntervalEXT",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 25254542,
+    "handler": "gl_unimplemented"
   }
 ]

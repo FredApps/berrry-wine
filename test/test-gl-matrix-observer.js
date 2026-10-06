@@ -153,6 +153,15 @@ class Stack {
   call('glLoadMatrixf', s => s.i32(argsGuest));
   assert.deepStrictEqual(transform(top(), 1, 1, 1), [2, 2, 2],
     'glLoadMatrixf follows its guest pointer');
+  // glMultMatrixf (op 109, appended after the observer's old upper bound):
+  // multiplies onto the top, scale(2) * translate(1,2,3).
+  floats.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1]);
+  call('glMultMatrixf', s => s.i32(argsGuest));
+  assert.deepStrictEqual(transform(top(), 1, 1, 1), [4, 6, 8],
+    'glMultMatrixf multiplies its guest matrix onto the top');
+  floats.set([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]);
+  call('glLoadMatrixf', s => s.i32(argsGuest));
+  assert.strictEqual(e.gl_mtx_untrusted(), 0, 'and the mirror stays trusted');
 
   // glLightfv(GL_POSITION) is transformed by the modelview at the time of the
   // call, so this also proves the observer did not reorder the two.
