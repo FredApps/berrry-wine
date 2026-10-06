@@ -3287,6 +3287,72 @@
     (i32.store offset=0 (global.get $reg_base) (call $shell_path_append_w (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; PathAppendA(pszPath, pszMore): PathAppendW's rules over byte strings.
+  ;; Every decision in $shell_path_append_w looks only at '\\', '.', ':' and
+  ;; NUL, so widening each byte to a code unit and narrowing the result back is
+  ;; exact for a single-byte code page. The narrowed result (the joined path,
+  ;; or the emptied string PathAppendW's overflow rule leaves) is written back
+  ;; only when it fits the caller's buffer.
+  (func $handle_PathAppendA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wdst i32) (local $ok i32)
+    (local.set $wdst (call $shell_path_widen_pair (local.get $arg0) (local.get $arg1)))
+    (if (local.get $wdst) (then
+      (local.set $ok (call $shell_path_append_w (local.get $wdst) (i32.add (local.get $wdst) (i32.const 520))))
+      (if (i32.eqz (call $shell_path_narrow_into (local.get $arg0) (local.get $wdst)))
+        (then (local.set $ok (i32.const 0))))
+      (call $heap_free (local.get $wdst))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; Widen two MAX_PATH byte strings into one heap block: the first at +0, the
+  ;; second at +520. 0 when either is NULL, unreadable or unterminated.
+  (func $shell_path_widen_pair (param $a_g i32) (param $b_g i32) (result i32)
+    (local $a i32) (local $b i32) (local $w i32)
+    (local.set $a (call $shell_path_alen (local.get $a_g)))
+    (local.set $b (call $shell_path_alen (local.get $b_g)))
+    (if (i32.or (i32.lt_s (local.get $a) (i32.const 0)) (i32.lt_s (local.get $b) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $w (call $heap_alloc (i32.const 1040)))
+    (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
+    (call $shell_path_widen (local.get $w) (local.get $a_g) (local.get $a))
+    (call $shell_path_widen (i32.add (local.get $w) (i32.const 520)) (local.get $b_g) (local.get $b))
+    (local.get $w))
+
+  ;; Copy n bytes plus the terminator into code units.
+  (func $shell_path_widen (param $dst i32) (param $src i32) (param $n i32)
+    (local $i i32)
+    (block $d (loop $l
+      (call $shell_path_put (local.get $dst) (local.get $i) (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+
+  ;; Narrow a MAX_PATH UTF-16 string back into a guest byte buffer; 0 when it
+  ;; is unterminated or the destination cannot hold it.
+  (func $shell_path_narrow_into (param $dst i32) (param $src i32) (result i32)
+    (local $n i32) (local $i i32)
+    (local.set $n (call $shell_path_wlen (local.get $src) (i32.const 260)))
+    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (return (i32.const 0))))
+    (if (call $ptr_range_access_bad (local.get $dst) (i32.add (local.get $n) (i32.const 1)) (i32.const 1))
+      (then (return (i32.const 0))))
+    (block $d (loop $l
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (call $shell_path_wc (local.get $src) (local.get $i)))
+      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (i32.const 1))
+
+  ;; Bounded byte-string length for the ANSI MAX_PATH shell APIs; -1 for NULL,
+  ;; an unreadable byte, or no terminator within MAX_PATH.
+  (func $shell_path_alen (param $path i32) (result i32)
+    (local $n i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
+    (loop $scan
+      (if (i32.ge_u (local.get $n) (i32.const 260)) (then (return (i32.const -1))))
+      (if (call $ptr_range_access_bad (i32.add (local.get $path) (local.get $n)) (i32.const 1) (i32.const 0))
+        (then (return (i32.const -1))))
+      (if (i32.eqz (call $gl8 (i32.add (local.get $path) (local.get $n)))) (then (return (local.get $n))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1))) (br $scan))
+    (i32.const -1))
+
   (func $shell_path_attrs_w (param $path i32) (param $len i32) (result i32)
     (local $copy i32) (local $attrs i32)
     ;; Per-call heap allocation avoids sharing a gather arena across Workers.

@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { bootRenderHarness } = require('./render-helper');
 const apis = require('../src/api_table.json');
-const names = ['PathAppendW', 'PathFileExistsW', 'SHCreateDirectoryExW', 'SHCreateDirectoryExA'];
+const names = ['PathAppendW', 'PathFileExistsW', 'SHCreateDirectoryExW', 'SHCreateDirectoryExA', 'PathAppendA'];
 const extraWat = names.map((name, index) => `
   (func (export "path_test_${index}") (param $a i32) (param $b i32) (param $c i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (call $w2g (region.addr $GUEST_STACK 524288)))
@@ -98,6 +98,30 @@ const extraWat = names.map((name, index) => `
   }
   assert.equal(vfs.getFileAttributes('C:\\ansi') & 16, 16);
   assert.equal(vfs.getFileAttributes('C:\\caf\u00e9') & 16, 16);
+  // PathAppendA: the same rules over byte strings (Dungeons of Dredmor's
+  // beta builds its save directory with it at startup).
+  function readA(p) {
+    let s = '';
+    for (let i = 0; i < 260; i++) { const c = e.guest_read8(p + i); if (!c) return s; s += String.fromCharCode(c); }
+    throw Error('Unterminated ANSI output');
+  }
+  function appendA(a, b, expected, result = 1) {
+    const p = ansi(a), q = ansi(b);
+    assert.equal(e.path_test_4(p, q, 0), result, `A: ${a} + ${b}`);
+    assert.equal(e.path_stack_delta(), 12);
+    assert.equal(readA(p), expected, `A: ${a} + ${b}`); count++;
+  }
+  appendA('C:\\My Documents', 'Gaslamp Games\\Dungeons of Dredmor', 'C:\\My Documents\\Gaslamp Games\\Dungeons of Dredmor');
+  appendA('C:\\base\\', 'child', 'C:\\base\\child');
+  appendA('C:\\base', '\\child', 'C:\\base\\child');
+  appendA('C:\\base', 'D:\\other', 'D:\\other');
+  appendA('C:\\base\\nested', '..\\child', 'C:\\base\\child');
+  appendA('C:\\caf\u00e9', 'r\u00e9sum\u00e9', 'C:\\caf\u00e9\\r\u00e9sum\u00e9');
+  appendA('C:', '', 'C:\\');
+  appendA('a'.repeat(257), 'b', 'a'.repeat(257) + '\\b');
+  appendA('a'.repeat(258), 'b', '', 0);
+  assert.equal(e.path_test_4(0, ansi('x'), 0), 0);
+  assert.equal(e.path_stack_delta(), 12); count++;
   vfs.readOnlyDrives.add('c');
   assert.equal(e.path_test_2(0, wide('C:\\readonly-new'), 0), 5);
   assert.equal(vfs.getFileAttributes('C:\\readonly-new') >>> 0, 0xffffffff); count++;

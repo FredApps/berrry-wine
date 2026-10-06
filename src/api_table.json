@@ -34715,5 +34715,24 @@
     "convention": "stdcall",
     "hash": 2746033651,
     "ret": "DWORD"
+  },
+  {
+    "id": 4102,
+    "name": "PathAppendA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 813350201,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "pszMore",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
