@@ -242,7 +242,11 @@ function runOne(id, mode) {
   const pcmFile = path.join(LOG_DIR, `${tag}.pcm`);
   const args = [RUN, `--app=${id}`, MODE_ARGS[mode], '--no-build', '--quiet-api',
     `--max-seconds=${SECONDS}`, '--max-batches=1000000000',
-    '--no-close', `--png=${pngFile}`, `--audio-out=${pcmFile}`];
+    '--no-close', `--png=${pngFile}`, `--audio-out=${pcmFile}`,
+    // A few MB answers "sound or silent"; the batch clock can render thousands
+    // of guest seconds of PCM per wall second (Tile World: 2.9 GB in a 15 s
+    // coop run, which filled the disk and cost the run its PNG).
+    `--audio-out-max=${4 << 20}`];
   if (STUCK_AFTER !== null) args.push(`--stuck-after=${STUCK_AFTER}`);
   // run.js prints a register line per batch, so a healthy 20 s run is ~100 MB:
   // send it to a file and read back only the head and tail, which is where
@@ -297,7 +301,13 @@ function compare(results) {
       issues.push({ rank: 1, what: `progress: coop ${a.sig} ${a.secs}s / threads ${b.sig} ${b.secs}s` });
     }
     if (a.frame !== b.frame && (a.frame === 'content' || b.frame === 'content')) {
-      issues.push({ rank: 1, what: `frame: coop ${a.frame} / threads ${b.frame}` });
+      // Both arms get the same wall-clock seconds, not the same work: coop and
+      // --threads retire different batch counts in that time, so a blank arm is
+      // often just one caught earlier in its boot. Print both counts; re-run the
+      // pair at one --max-batches before calling it a bug (2026-10-06: icy_tower,
+      // deus_ex_demo, dungeons_of_dredmor_release are byte-identical that way).
+      const b2 = x => x.batches != null ? ` b=${x.batches}` : '';
+      issues.push({ rank: 1, what: `frame: coop ${a.frame}${b2(a)} / threads ${b.frame}${b2(b)}` });
     }
     if (a.audio !== b.audio && (a.audio === 'sound' || b.audio === 'sound')) {
       issues.push({ rank: 2, what: `audio: coop ${a.audio} / threads ${b.audio}` });
@@ -340,7 +350,7 @@ if (flag('compare')) {
     console.log('| app | divergence | coop | threads |');
     console.log('|---|---|---|---|');
     for (const r of rows) {
-      const cell = x => `${x.sig} / ${x.frame} / ${x.audio}`.replace(/\|/g, '\\|');
+      const cell = x => `${x.sig} / ${x.frame} / ${x.audio}${x.batches != null ? ` / b=${x.batches}` : ''}`.replace(/\|/g, '\\|');
       console.log(`| ${r.id} | ${r.issues.map(i => i.what.split(':')[0]).join(', ')} | ${cell(r.a)} | ${cell(r.b)} |`);
     }
   } else {

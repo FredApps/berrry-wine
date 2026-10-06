@@ -1308,6 +1308,11 @@ const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],.
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
 const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
+// --audio-out-max=N: stop writing --audio-out after N bytes (the byte count
+// keeps running). The headless clock is batch-driven, so a fast app can render
+// thousands of guest seconds of PCM in a few wall seconds: Tile World wrote
+// 663 MB in 2 s of coop, and a 15 s sweep run filled the disk before its PNG.
+const AUDIO_OUT_MAX = parseInt(getArg('audio-out-max', '0'), 10) || 0;
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread in a real OS thread (node worker_threads) instead of the cooperative scheduler
@@ -2624,6 +2629,8 @@ async function main() {
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
+    // One counter for the whole process: guest threads write the same file.
+    _audioOutCount: AUDIO_OUT ? { max: AUDIO_OUT_MAX, bytes: 0 } : undefined,
     sharedAudio: {},  // shared waveOut state across threads
     audioTap: () => (videoRecorder && videoRecorder.active ? videoRecorder : null),
     registerAudioTapPump: fn => { if (typeof fn === 'function') audioTapPumps.add(fn); },
@@ -10448,8 +10455,9 @@ async function main() {
       await new Promise(resolve => setImmediate(resolve));
     }
     if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {
-      let audioBytes = 0;
-      try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
+      // The running count, not the file size: --audio-out-max may cap the file.
+      let audioBytes = ctx._audioOutCount ? ctx._audioOutCount.bytes : 0;
+      if (!audioBytes) try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
       if (audioBytes >= AUDIO_EXIT_BYTES) {
         console.log(`[audio] captured ${audioBytes} bytes; stopping at --audio-exit-bytes=${AUDIO_EXIT_BYTES}`);
         stopped = true;
