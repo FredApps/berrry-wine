@@ -5287,14 +5287,17 @@ async function main() {
       }
     }
   }
+  // A LoadLibraryA from inside a DllMain (UBER.DLL loading Myth's
+  // modules\TCPIP.DLL) is serviced in place: callDllMain cannot await. So is
+  // one from inside a nested synchronous send ($wnd_send_message asks through
+  // the service_load_library import), which cannot return to this loop either.
+  const onLoadLibraryYield = ex => serviceLoadLibraryYieldSync({
+    exports: ex, memoryBuffer: memory.buffer, resourceHost: ctx, log: console.log,
+    findDllSync: findRuntimeDllBytes, onLoadLibraryYield,
+  });
+  ctx.serviceLoadLibrary = () => onLoadLibraryYield(instance.exports);
   if (dlls.length > 0) {
     mountLoadedDllFiles(ctx.vfs, dlls);
-    // A LoadLibraryA from inside a DllMain (UBER.DLL loading Myth's
-    // modules\TCPIP.DLL) is serviced in place: callDllMain cannot await.
-    const onLoadLibraryYield = ex => serviceLoadLibraryYieldSync({
-      exports: ex, memoryBuffer: memory.buffer, resourceHost: ctx, log: console.log,
-      findDllSync: findRuntimeDllBytes, onLoadLibraryYield,
-    });
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
       onLoadLibraryYield,
       exeName: path.basename(EXE_PATH),

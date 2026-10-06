@@ -211,6 +211,14 @@
     (block $sync_done (loop $sync_run
       (call $run (i32.const 1000000))
       (br_if $sync_done (i32.eqz (global.get $eip)))
+      ;; A LoadLibraryA inside the procedure (Diablo's Select Connection
+      ;; dialog loads every *.snp from WM_INITDIALOG) yields for the host to
+      ;; map the DLL, and nothing returns to the host from here: every later
+      ;; round would stop on the same yield and the message be abandoned.
+      ;; Have the host finish the load now, as it does for one in a DllMain.
+      (if (i32.and (i32.eq (global.get $yield_reason) (i32.const 5))
+            (i32.ne (call $host_service_load_library) (i32.const 0)))
+        (then (br $sync_run)))
       (if (global.get $sleep_yielded)
         (then
           (global.set $sleep_yielded (i32.const 0))

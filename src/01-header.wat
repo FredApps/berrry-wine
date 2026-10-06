@@ -487,6 +487,11 @@
   ;; DLL file check (for dynamic LoadLibrary)
   (import "host" "has_dll_file" (func $host_has_dll_file (param i32) (result i32)))
   ;; has_dll_file(nameWA) → 1 if DLL file exists in VFS/host, 0 if not
+  (import "host" "service_load_library" (func $host_service_load_library (result i32)))
+  ;; service_load_library() → 1 when the host finished a pending LoadLibraryA
+  ;; yield (reason 5) in place: DLL mapped, DllMain run, EAX/ESP/EIP set and the
+  ;; yield cleared. 0 leaves it pending (bytes need I/O, or no such host). For
+  ;; a nested synchronous send, which cannot return to the host's event loop.
 
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))

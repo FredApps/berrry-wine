@@ -1831,6 +1831,20 @@ class WineAssembly {
     if (!opts.detached) {
       self._helpCtx = ctx;
       self.hostCtx = ctx;
+      // A LoadLibraryA raised inside a nested synchronous send (Diablo's
+      // Select Connection dialog loads its *.snp from WM_INITDIALOG) cannot
+      // come back to the step loop, so finish it in place when the bytes are
+      // resident. Only for a guest running on this thread: with the guest's
+      // main thread in a Worker, the instance answering is not this one.
+      ctx.serviceLoadLibrary = () => {
+        if (self.guestWorker || !self.instance) return false;
+        const onLoadLibraryYield = ex => ProcessBoot.serviceLoadLibraryYieldSync({
+          exports: ex, memoryBuffer: self.memory.buffer, resourceHost: self, log: console.log,
+          advanceGuestTime: ms => self._advanceGuestTickMs(ms, ctx.sharedAudio), onLoadLibraryYield,
+          findDllSync: (fileName, fullName) => self._findDllBytesSync(fileName, fullName),
+        });
+        return onLoadLibraryYield(self.instance.exports);
+      };
     }
     const base = createHostImports(ctx);
     ctx.sharedGdi = base.gdi;

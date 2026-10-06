@@ -2694,7 +2694,23 @@ Enter Name and OK are unchanged from the multiplayer recipe. Both the Choose
 Class and Enter Name screens render correctly on this path (no blue portrait
 panel — that was transient on the multiplayer route).
 
-## OPEN (2026-08-25): the multiplayer Select Connection screen is blank
+## SOLVED (2026-10-06): the multiplayer Select Connection screen was blank
+
+The dialog's WM_INITDIALOG enumerates `C:\*.snp` and calls `LoadLibraryA` on
+each (`battle.snp`, then `standard.snp`), and WM_INITDIALOG is a synchronous
+send. `LoadLibraryA` yields (reason 5) for the host to map the DLL, a nested
+`$wnd_send_message` cannot return to the host, so every later round stopped on
+the same yield: run.js printed `[sync] ABANDONED wndproc hwnd=… msg=0x110 …
+(yield_reason=5)`, `LoadLibraryA` "returned" a stack address, `standard.snp`
+was never even found, and nothing painted. The send now has the host finish
+the load in place (`service_load_library` import → `serviceLoadLibraryYieldSync`,
+the path a LoadLibrary inside a DllMain already used). The screen lists
+Battle.net, Local Area Network (IPX), Modem and Direct Cable Connection.
+Pinned by `test/test-sync-send-loadlibrary.js`. Reach it with the multiplayer
+recipe above plus the name keys and OK, capture at batch ~2640. The original
+note follows.
+
+### Original note (2026-08-25)
 
 Clicking OK on Enter Name in *multiplayer* now advances — the name is accepted
 and no "Invalid name" box appears — to a new 640x482 top-level dialog `0x10028`
