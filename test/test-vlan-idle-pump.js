@@ -12,7 +12,7 @@ const { compile, makeNode } = require('./vlan-node');
   let peeks = 0;
   const peek = wire.peek.bind(wire);
   wire.peek = () => { peeks++; return peek(); };
-  const node = await makeNode(wasm, wire, '10.0.0.1');
+  const node = await makeNode(wasm, wire, '10.0.0.1', { wsaStartup: false });
 
   node.pump();
   assert.strictEqual(peeks, 0,
