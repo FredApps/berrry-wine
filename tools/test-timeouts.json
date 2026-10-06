@@ -15,6 +15,11 @@
     "reason": "Four headless browsers each boot Quake II: the host loads demo1 as a listen server, then three joiners (server list, toast after a 20-second poll, a ?room= link) connect over WebRTC and load the level. 203 seconds at load 34; its own 540-second budget covers a slower box, plus 60 seconds for Chrome and cleanup."
   },
   {
+    "test": "test/test-simcity2000-net-vlan-gameplay.js",
+    "seconds": 600,
+    "reason": "Three emulator processes (server + two clients) on the virtual LAN: the clients' city is live only near batch 290000 at ~1000-1300 batches/s once joined, so they get a 420-second guard and the server 450; 540 seconds for the whole pair plus 60 for startup and cleanup. Heavy: run it on a boat sandbox."
+  },
+  {
     "test": "test/test-diablo2-demo-gameplay.js",
     "seconds": 480,
     "reason": "Diablo II's Direct3D route to character creation and the Act I load costs 49 seconds of user CPU and about 55 seconds of wall clock on an idle box; its 420-second guest guard is sized for this machine at load 50, where the same work gets a fraction of a core, plus 60 seconds for loading and cleanup."
