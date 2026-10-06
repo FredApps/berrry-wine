@@ -592,3 +592,32 @@ buffer is at `core+0x101f65fc`, readable with `--dump` after the exit).
   only the HUD (death/respawn view).
 
 Evidence: `scratch/runs/20261006T001500Z-ut348-demo-claude202b4b39-dm-morpheus`.
+
+## Deus Ex demo on OpenGlDrv (2026-10-06, OPENGLDRV-GL11-SURFACE)
+
+OpenGlDrv resolves the whole GL 1.1 + WGL table by name and aborts ("Missing
+symbols") if one is absent; since 5f17bb07 every GL 1.1 name is an API
+(unimplemented ones fail fast by name) and it binds. Select it locally by
+setting `deusExRenderer` in lib/apps.js to `OpenGlDrv.OpenGLRenderDevice`
+(the committed default stays SoftDrv) and run the CLI with
+`--gl-renderer=software`.
+
+- The calls it really makes beyond the old set: glMultMatrixf (GL op 109)
+  and glClearDepth (op 110), both implemented. glGetString is queried for
+  GL_EXTENSIONS eleven times (one per extension it probes); no glGet*v or
+  glReadPixels at all.
+- It then plays the 3D logo intro for 170 s with no trap (run
+  `20261006T1440Z-opengldrv-deusex`, intro.png).
+- **Open: Escape out of the intro crashes, on OpenGlDrv only** (SoftDrv
+  with the same `--input=200000:keydown:27,200100:keyup:27` reaches the
+  menu). The last GL calls are a 256x256 GL_RGBA8 upload with nine mip
+  levels and two glTexParameteri, then engine+0x1030cba6 (`call
+  [eax+0x28]` on the object at `[esi+4]`, a per-element loop over an
+  array of 0x28-byte records) jumps to 0x410054 ("execution entered
+  zeros"). That object's vtable pointer is 0x7da2f600, the same value the
+  caller holds in EBX, i.e. a heap address where a vtable should be:
+  most likely a use-after-free (a freed block's link word read as a
+  vtable), not a GL write -- no GL call that writes guest memory runs in
+  that window. Next: --watch the object's first dword
+  (`--watch=0x7e2f17d0 --watch-log`, addresses deterministic) to name
+  the free that recycled it, and compare HeapFree/HeapReAlloc semantics.
