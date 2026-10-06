@@ -426,7 +426,8 @@
     (owner "08c-ne-loader.wat:$win16_thunk_for"))
   (region.declare $WIN16_SEG_TABLE (size 0x00020000) (align 0x00001000)
     (owner "08c-ne-loader.wat:$win16_seg_base"))
-  (region.declare $API_HASH_TABLE (size 0x00008000) (align 0x00001000)
+  ;; 8 bytes per API (hash, id); 0x8000 filled up at 4096 APIs (2026-10-06).
+  (region.declare $API_HASH_TABLE (size 0x00010000) (align 0x00001000)
     (owner "10-helpers.wat:$lookup_api_id"))
   (region.declare $TEXT_SCRATCH (size 0x00000400) (align 0x00001000)
     (owner "01-header.wat:$TEXT_SCRATCH"))
