@@ -635,3 +635,13 @@ or size from the file) smashing the stack, i.e. a file-read difference, not
 a GL call. SoftDrv may never touch that texture. Next: `--trace-fs` on the
 package reads in batches 211000-211300 and a stack-guard watch on the
 caller's frame (EBP 0x179ff694).
+
+Static follow-up (same day): engine 0x10303904 -> 0x1030cc60 is
+`operator<<(FArchive&, TArray<BYTE>&)` (compact-index count, Realloc, then
+Serialize into the heap buffer) -- nothing there writes the stack. The
+FArchive at `[this+4]` has Core's vtable 0x1017a3f8 (file 0x10c443f8 at
+runtime), and its slot 10 (Tell, 0x101634b0) and slot 13 (Seek, 0x10163410)
+are real functions, so the loader's two virtual calls are sound. The jump
+into zeros therefore happens later, inside Seek/Serialize or after the
+loader returns; the next runtime step is `--trace-at=core+0x10163410` on
+the last hits before batch 211297 and a `--trace-stack-scan` at the crash.
