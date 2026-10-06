@@ -50,7 +50,40 @@ menu.
 
 Evidence: `scratch/runs/20261006T1720Z-anachronox_demo-menu-to-world`.
 
-## Open: the opening dialogue never advances (parked 2026-10-06)
+## Dialogue: click with the game's cursor over the box (solved 2026-10-06)
+
+The opening dialogue was never stuck; the harness clicked in a way the game
+cannot see. Measured on boat bx_yg8qxb66 with `--count` slots armed live from
+`ctl.js eval` (`exports.set_count` on the main and every thread instance):
+
+- While a dialogue window is open the game context stack is `64,1`
+  (gamex86 `GAME_GetContext`, stack at `[0x10029724]`; ui.dll pushes 0x40 when
+  it opens a window at `0x10006d43` and pops it in `0x10006377`).
+  `selectforward` (ui `0x100045b1`, Space) only acts in context 1, so Space and
+  Enter are inert during dialogue by design.
+- A line advances through the click handler `0x1000553f` (100 ms debounce on
+  `ATime_GetTotalMsec`, then `0x1000535d`), but only while a dialogue window
+  has focus: `[0x100e8eb8]` (window id) and `[0x100e8eb4]` (index) are set by
+  the picker `0x10005e90`, which hit-tests the game's **virtual cursor**
+  (`[0x100f2104]+0x140`, `[0x100f2100]+0xf0`) against the window rectangle.
+- The mouse is a recentring loop, so `run.js mousedown:X:Y` at any point but
+  the centre reads as a jump: after the first click the cursor sat at (0,0) or
+  (162,0), outside the box, focus dropped to -1 and later clicks were ignored.
+
+**Route through it:** one `relmousemove` to put the cursor inside the box
+(e.g. `relmousemove:200:60` from the top-left), then for every line
+`mousedown:320:240`, ~40 batches, `mouseup:320:240`, ~500 batches. Clicking at
+the recentre point adds no motion (the cursor drifts 1-2 px per click). That
+walks Fatima's intro to "Cue the snow."; the context then becomes 256 for the
+snow/mansion cinematic, which plays by itself in ~70k batches; John's lines in
+town take ~9 more clicks; then the context returns to 1 and Boots is under
+player control: holding Up (`+forward`) walks him up the street, while 1500
+idle batches leave him beside John.
+Evidence: `scratch/runs/20261006T1940Z-anachronox_demo-gameplay-w6`.
+
+## Earlier investigation: the opening dialogue "never advances" (parked 2026-10-06)
+
+Kept for the measurements; the cause is the cursor, above.
 
 The opening scene in Fatima's room shows her line "Hi there." and stays on it.
 Measured on two runs (one ctl session to 434k, one scripted to 440k):
