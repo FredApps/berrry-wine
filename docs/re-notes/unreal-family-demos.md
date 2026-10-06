@@ -679,10 +679,49 @@ that build: engine 0x10e82000 (orig 0x10300000), core 0x10bca000 (orig
 - Side note: guest thread 1 (start 0x109010b9) ends at EIP 0 from
   prev_eip 0x10901a29 early in the run; not yet looked at.
 
-Next: count the crash with `--fault-null` off and the sparse translator
-toggled (flat page table vs the record walk), and dump the stack page
-through both the guest view and the backing it should map to at the batch
-before 211244.
+CORRECTION and narrowing (same day, boat bx_rdw8tsqd, main 85141552;
+evidence `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
+
+- Main's stack is NOT on a sparse page. deusex.exe's image base is
+  0x10900000, so guest 0x17900000-0x17a00000 is `$GUEST_STACK` inside the
+  direct window, and the "sparse page translation" lead above is wrong. The
+  translator is single-mode now (flat PTE table), so there is nothing to
+  toggle either.
+- The mechanism, caught with `--trace-eip-range=core+0x101634b0-core+0x101634f4
+  --trace-eip-from=211275 --trace-eip-detail` (run 10, which still crashed):
+  at Tell's landing after its inner `call [eax+0x28]` (core 0x101634e3)
+  every normal hit has ESP 0x179ff644 and EAX = the file position; in the
+  crashing call ESP is 0x179ff654 (+0x10) and EAX = 0. So the inner call
+  came back as if a `ret 0x10` function returning 0 had run. Tell's
+  `pop edi; pop esi` then read 16 bytes too high, and the second slot is
+  `[ebp-0x10]`, where Tell's `mov [ebp-0x10],esp` saved 0x179ff644 -- that
+  is the ESI. Load's next `mov ecx,[esi+4]` reads `this` back from the stack
+  and calls through the two-slot TLazyArray vtable into zeros.
+- The inner call's target is sound and unchanged: `[linker+0x440]` =
+  0x7e9b4100 (watched in run 1), whose vtable 0x109267e4 never changes after
+  construction at batch 9097 (`--watch=0x7e9b4100 --watch-log`, run 11);
+  slot 10 is deusex.exe's ILT thunk 0x10901131 (`jmp 0x109063b0`), and
+  0x109063b0 is a two-instruction `mov eax,[ecx+0x38]; ret`. So the emulator
+  ran different code for that call than the guest bytes say.
+- Ruled out inside the crash batch: a full cache clear (`cache: full
+  clears M 2` already at batch 211281, the same total as a non-crashing run
+  to 211300), any code write or block retirement (`--trace-code-writes
+  --trace-from=211270`, crash still at 211282, nothing logged).
+- Reproduction that survives probes: adding
+  `--input=B:dump-mem:0x179ff600:256` for every B in 211265..211320 makes the
+  crash land at batch 211282 every time, and core-range `--trace-eip-range`
+  / `--decode-stats` / `--trace-code-writes` keep it there; an exe-range
+  trace (0x10901100-0x10906500) or `--trace-at` does not.
+- Leads: (a) the block run for the call target -- the decoder extends runs
+  through `jmp` and fuses `mov esp,ebp; pop ebp; ret` into a pop run + RET
+  whose RET immediate is a thread word; an imm of 0x10 would give exactly
+  +0x10; and the stats show 77 decodes that "evicted a live block". (b)
+  guest thread 3 ends the run with ESP 0xd9f40000 (printed as -0x260c0000),
+  which is not a stack -- worth a look on its own.
+- Tooling trap: `--trace-eip-range=0x00400000-0x7fffffff --trace-eip-from=211282
+  --trace-eip-stream` traced from batch 0 (11 GB log, run reached only
+  104,203 batches in 800 s); check `--trace-eip-from` with an explicit
+  range before reusing it.
 
 ## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
 
