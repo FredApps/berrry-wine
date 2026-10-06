@@ -29339,8 +29339,7 @@
     "name": "IDirect3DDevice8_Reset",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3788986756,
-    "handler": "d3d8_unimplemented"
+    "hash": 3788986756
   },
   {
     "id": 3474,
@@ -29442,8 +29441,7 @@
     "name": "IDirect3DDevice8_CopyRects",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 1283737735,
-    "handler": "d3d8_unimplemented"
+    "hash": 1283737735
   },
   {
     "id": 3488,

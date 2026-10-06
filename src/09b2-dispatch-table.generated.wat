@@ -17812,7 +17812,7 @@
       (call $handle_d3d8_unimplemented (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3473: IDirect3DDevice8_Reset
-      (call $handle_d3d8_unimplemented (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DDevice8_Reset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3474: IDirect3DDevice8_Present
       (call $handle_IDirect3DDevice9_Present (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
@@ -17854,7 +17854,7 @@
       (call $handle_IDirect3DDevice8_CreateImageSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3487: IDirect3DDevice8_CopyRects
-      (call $handle_d3d8_unimplemented (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DDevice8_CopyRects (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 3488: IDirect3DDevice8_UpdateTexture
       (call $handle_IDirect3DDevice9_UpdateTexture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
