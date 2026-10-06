@@ -21,8 +21,8 @@ Windows' blocking, EOF and broken-pipe rules, and no protocol simulation.
 | SetWindowPlacement shows a hidden window (WinBoard's board) | done | d9174bf9 |
 | Remote pipe ends pump the wire without WSAStartup | done | 4eaa29e3 |
 | WinBoard 1.e4 → GNUChess 1…c5, cooperative and `--threads` | done | `test/test-winboard-gnuchess-pipes.js`; runs `20261006T0820Z-winboard-move2`, `20261006T0825Z-winboard-move-threads` |
-| Browser host `process_spawn` | **not done** — host.js falls back to the old ShellExecute handoff; needs a second in-page instance on a LoopbackSegment | — |
-| Phase 3: waitable hProcess, exit code, TerminateProcess(child) | **not done** — hProcess is still the constant 0xE3001 | — |
+| Browser host `process_spawn`: hidden second in-page instance on a private LoopbackSegment | done — WinBoard 1.e4, GNUChess 1…e6 in Chrome | 83f0a302; run `20261006T0840Z-winboard-browser2` |
+| Phase 3: waitable hProcess (0x00E40000\|pid), exit code, TerminateProcess(child) | done (CLI + browser) | fe279617, `test/test-child-process-object.js` |
 | SetFilePointer / FlushFileBuffers on a pipe handle | not implemented; GNUChess has not needed them on this route | — |
 
 The `--threads` run shows one rendering defect unrelated to pipes: after
