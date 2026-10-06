@@ -287,6 +287,38 @@ async function main() {
   check('no peek trips in a pump that does work',
     (e.get_peek_spin_parks() >>> 0) === 0, `${e.get_peek_spin_parks() >>> 0} trips`);
 
+  // Guest work with NO API call between two empty peeks -- Delta Force pumps
+  // PeekMessage between chunks of its PCX decoder while it loads. Above the
+  // block threshold that is not a spin; at or below it, it still is.
+  e.test_spin_reset();
+  let peekParkedWithBlocks = false;
+  for (let i = 0; i < K * 5; i++) {
+    if ((e.test_peek_spin_once(MSG) >>> 0) & PARKED) peekParkedWithBlocks = true;
+    e.test_spin_retire_blocks(WORK_MAX + 1);
+  }
+  check('guest work above the threshold between empty peeks never parks',
+    !peekParkedWithBlocks);
+  e.test_spin_reset();
+  let peekParkedAtSmallWork = -1;
+  for (let i = 1; i <= K + 1; i++) {
+    if ((e.test_peek_spin_once(MSG) >>> 0) & PARKED) { peekParkedAtSmallWork = i; break; }
+    e.test_spin_retire_blocks(WORK_MAX);
+  }
+  check(`a peek spin body of ${WORK_MAX} blocks still parks`,
+    peekParkedAtSmallWork >= K && peekParkedAtSmallWork <= K + 1,
+    `parked at ${peekParkedAtSmallWork}`);
+  e.test_spin_reset();
+  e.set_spin_work_max(0);
+  let peekParkedWithCheckOff = -1;
+  for (let i = 1; i <= K + 1; i++) {
+    if ((e.test_peek_spin_once(MSG) >>> 0) & PARKED) { peekParkedWithCheckOff = i; break; }
+    e.test_spin_retire_blocks(100000);
+  }
+  check('--spin-work-max=0 removes the peek work check too',
+    peekParkedWithCheckOff >= K && peekParkedWithCheckOff <= K + 1,
+    `parked at ${peekParkedWithCheckOff}`);
+  e.set_spin_work_max(WORK_MAX);
+
   e.test_spin_reset();
   e.set_spin_park_k(0);
   let peekParkedWhenOff = false;

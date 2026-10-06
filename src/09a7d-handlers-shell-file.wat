@@ -492,7 +492,9 @@
     ;; The guest-work condition the clock detector has: a loader that pumps
     ;; PeekMessage between chunks of real work (Delta Force decodes its PCX
     ;; art that way) is not spinning, and parking each pump cost it ~20x.
-    (local.set $blk (call $blocks_now))
+    ;; Free fall-through branches retire no block budget, so add $page_ft: a
+    ;; chained loop body would otherwise look like no work at all.
+    (local.set $blk (i32.add (call $blocks_now) (global.get $page_ft)))
     (local.set $idle
       (i32.or (i32.eqz (global.get $spin_work_max))
         (i32.le_u (i32.sub (local.get $blk) (global.get $peek_spin_blk))
