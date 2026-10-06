@@ -1196,7 +1196,12 @@
       (local.set $q (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
       (br_if $invalid (i32.or (i32.eqz (local.get $q))
         (i32.gt_u (local.get $q) (i32.const 4294967275))))
-      (br_if $invalid (i32.ne (call $gl32 (local.get $q)) (i32.const 20)))
+      ;; info->size is not checked. The SDK says to set it to
+      ;; sizeof(GrLfbInfo_t), but the retail drivers only test it with
+      ;; GR_CHECK_F, which exists in debug builds alone. Die by the Sword's
+      ;; rl3dfx.dll passes a GrLfbInfo_t straight off its stack with size
+      ;; never written, and gives up drawing after ten failed locks, so
+      ;; rejecting a stale size left its logos and menu black.
       (local.set $p (call $glide_lfb_stage (local.get $arg1) (local.get $arg3)
         (i32.and (local.get $arg0) (i32.const 1))
         (i32.load offset=24 (global.get $GLIDE_STATE)) (i32.load offset=28 (global.get $GLIDE_STATE))))

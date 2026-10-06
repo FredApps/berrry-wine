@@ -210,6 +210,13 @@ assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 1);
 assert.strictEqual(submissions.at(-1).op, 10);
 assert.strictEqual(submissions.at(-1).bytes.readUInt16LE(20), 0xf800);
 assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 0, 'unmatched unlock is rejected');
+// Retail glide2x does not check info->size (GR_CHECK_F is debug-only), and
+// Die by the Sword's rl3dfx.dll locks with whatever its stack held there.
+view.setUint32(wa(info), 0x7661772e, true);
+assert.strictEqual(call('_grLfbLock@24', [1, 1, 0, 0, 0, info]), 1,
+  'a lock with an uninitialised info->size succeeds');
+assert.strictEqual(view.getUint32(wa(info + 4), true), lfb, 'and still reports the LFB');
+assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 1);
 const sparseInfo = sparseBase + 4094;
 fillGuest(sparseInfo - 4, 28, 0xcc);
 a.guest_write32(sparseInfo, 20);
