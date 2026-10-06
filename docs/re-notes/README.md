@@ -88,6 +88,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Dark Colony (magazine demo) | [dark-colony-demo.md](dark-colony-demo.md) |
 | Daytona USA Deluxe (Win95 demo) | [daytona-usa-deluxe-demo.md](daytona-usa-deluxe-demo.md) |
 | Blood II: The Chosen (demo) | [blood2-demo.md](blood2-demo.md) |
+| Sid Meier's Pirates! (2004) | [pirates-2004.md](pirates-2004.md) |
 | Disciples: Sacred Lands (demo) | [disciples-demo.md](disciples-demo.md) |
 | Commandos: Behind Enemy Lines (demo) | [commandos-demo.md](commandos-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
