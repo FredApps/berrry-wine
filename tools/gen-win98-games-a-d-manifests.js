@@ -56,6 +56,15 @@ const GAMES = [
     root: 'DarkColony-MagDemo-SW',
     exe: 'dc.exe',
   },
+  {
+    // Setup (Ssp.ini: SourcePath1 = game\, LangExeclusive = DOC\English)
+    // copies GAME\ and the language's DOC files into one directory; the game
+    // refuses to start without thanks.txt beside it.
+    id: 'daytona_usa_deluxe_demo',
+    root: 'DaytonaUSA Deluxe-SWonly/GAME',
+    exe: 'DAYTONA USA Deluxe Demo WWW.exe',
+    flatten: ['../DOC/English'],
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
@@ -85,6 +94,18 @@ function manifestFor(game, directory) {
       files.push({
         url: '../' + mediaPath.split(path.sep).join('/'),
         vfsPath: 'c:\\' + mediaPath.split(path.sep).join('\\'),
+      });
+    }
+  }
+  // Directories outside the game root whose files an installer copies flat
+  // into the install directory (Daytona's DOC\English\thanks.txt).
+  for (const flatRoot of game.flatten || []) {
+    const flatDirectory = path.join(directory, flatRoot);
+    for (const relative of walk(flatDirectory)) {
+      const source = path.join(flatRoot, relative);
+      files.push({
+        url: source.split(path.sep).join('/'),
+        vfsPath: 'c:\\' + relative.split(path.sep).join('\\'),
       });
     }
   }
