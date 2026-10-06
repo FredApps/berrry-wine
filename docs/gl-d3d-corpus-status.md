@@ -53,7 +53,7 @@ screenshot cited was looked at.
 | ut2003_demo_server | D3D8 | **gameplay** (listen server renders DM-Antalus) | not run | — |
 | ut2004_demo | D3D8 | splash at 120 s | gameplay (2026-09-25) | slow |
 | alien_shooter | D3D8 | loading at 120 s | not run | CPU-bound load |
-| crimsonland | D3D8 | **blocked**: "DirectX8.1 or newer not detected" | not run | DirectX version detection (below) |
+| crimsonland | D3D8 | **menu** after `1fdd9a64` (was blocked: "DirectX8.1 or newer not detected") | not run | Play Game opens; the Survival click does not start a game yet (`scratch/runs/20261006T031629Z-crimsonland-dx81`) |
 | pawn | D3D9 | **gameplay** (board) | gameplay (2026-09-23) | — |
 | pirates_2004 | D3D9 | **blocked**: "Unable to initialize DirectX." | not run | DirectX version detection (below) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
@@ -81,14 +81,16 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
 
 ## Open blockers in the GL/D3D set, ranked
 
-1. **DirectX version detection** -- crimsonland (D3D8) and pirates_2004 (D3D9)
-   stop at startup. Pirates asks the DxDiag provider (`dxdiagn.dll`), which
-   needs `setupapi!SetupDiEnumDeviceInfo` and `ole32!CoCreateInstanceEx`;
-   Crimsonland falls back to file versions of `C:\WINDOWS\SYSTEM\d3d8.dll`,
-   `dpnet.dll`, `dinput.dll`, `d3d9.dll`, which do not exist there.
-2. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
+1. **DirectX version detection** -- pirates_2004 (D3D9) stops at startup: it
+   asks the DxDiag provider (`dxdiagn.dll`), which needs
+   `setupapi!SetupDiEnumDeviceInfo` and `ole32!CoCreateInstanceEx`.
+   Crimsonland's half (the GetDXVersion file-version fallback) is fixed by
+   `1fdd9a64`, a versioned `D3D8.DLL` stub (DirectX 8.1).
+2. **crimsonland in-menu click**: Play Game opens, but Survival does not start
+   a game; a lost second DirectInput click is the first suspect.
+3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
    reach gameplay only past the 120 s cap on the software arm.
-3. **WebGL column at this build**: needs browser grants, one app at a time.
+4. **WebGL column at this build**: needs browser grants, one app at a time.
 
 Outside the 3D set but found here: the DirectDrawFactory IID typo (fixed
 `fa4be36a`; the theme savers then run the existing DirectAnimation shim, frames
