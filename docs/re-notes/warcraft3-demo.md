@@ -2151,3 +2151,17 @@ probes, no FPU_UNIMPL.
 Still shared and still racy in worker mode, not fixed: `$BX_RG_BASE` (block
 executor region builder, only with `--block-exec`) and `$PAGE_OVFL_MEMO`
 (a heuristic memo; a lost update costs a decision, not correctness).
+
+## Software GL drew nothing, 2026-10-06: a second SetPixelFormat was refused
+
+The GLD3D sweep found `--gl-renderer=software` black from boot: 2.85M
+`glLightfv`, 413 texture uploads, 2677 presents, zero `glDrawElements`. The
+context creator at Game.dll `0x6f0bc180` (runtime `0x61d180`) does GetDC,
+DescribePixelFormat, SetPixelFormat, and calls `wglCreateContext` only if
+SetPixelFormat returned TRUE. WC3 sets format 1, creates and deletes a probe
+context, destroys its BlockingWindow, then sets format 1 again on the same
+window for the real context. `$gdi_pixel_format_set` refused any second set,
+so no real context was ever made. Setting the format a window already has
+succeeds on Windows and in Wine (only a different format is refused): fixed in
+`579ee802`, and the main menu renders on software GL again by batch 2000.
+Evidence `scratch/runs/20261006T030624Z-warcraft3_demo-swgl-regress`.
