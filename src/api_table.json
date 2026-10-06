@@ -35249,5 +35249,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1326080162
+  },
+  {
+    "id": 4172,
+    "name": "GetDiskFreeSpaceExW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1342375048
   }
 ]

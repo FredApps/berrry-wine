@@ -363,19 +363,20 @@
   ;; form of the same geometry, so both calls always agree. No quotas: the
   ;; caller's share is the whole free count. msi.dll requires this export on
   ;; any Win9x build above 1000 and fails the install when it is missing.
-  (func $handle_GetDiskFreeSpaceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; The shared A/W core: $wide selects how lpDirectoryName is read.
+  ;; Returns 1, or 0 with last_error set.
+  (func $disk_free_space_ex (param $dir i32) (param $avail i32) (param $total_out i32)
+                            (param $free_out i32) (param $wide i32) (result i32)
     (local $geo i32) (local $unit i64) (local $free i64) (local $total i64)
     (local.set $geo (call $heap_alloc (i32.const 16)))
     (if (i32.eqz (local.get $geo))
       (then
         (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
-        (return)))
-    (call $disk_free_space (local.get $arg0)
+        (return (i32.const 0))))
+    (call $disk_free_space (local.get $dir)
       (local.get $geo) (i32.add (local.get $geo) (i32.const 4))
       (i32.add (local.get $geo) (i32.const 8)) (i32.add (local.get $geo) (i32.const 12))
-      (i32.const 0))
+      (local.get $wide))
     (local.set $unit (i64.mul
       (i64.extend_i32_u (call $gl32 (local.get $geo)))
       (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 4))))))
@@ -384,10 +385,22 @@
     (local.set $total (i64.mul (local.get $unit)
       (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 12))))))
     (call $heap_free (local.get $geo))
-    (if (local.get $arg1) (then (call $gs64 (local.get $arg1) (local.get $free))))
-    (if (local.get $arg2) (then (call $gs64 (local.get $arg2) (local.get $total))))
-    (if (local.get $arg3) (then (call $gs64 (local.get $arg3) (local.get $free))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (if (local.get $avail) (then (call $gs64 (local.get $avail) (local.get $free))))
+    (if (local.get $total_out) (then (call $gs64 (local.get $total_out) (local.get $total))))
+    (if (local.get $free_out) (then (call $gs64 (local.get $free_out) (local.get $free))))
+    (i32.const 1))
+
+  (func $handle_GetDiskFreeSpaceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $disk_free_space_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
+  )
+
+  ;; GetDiskFreeSpaceExW: the same answer for a wide path. The Movies demo
+  ;; checks the space on its drive with it right after its first-run notice.
+  (func $handle_GetDiskFreeSpaceExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $disk_free_space_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
   )
 
