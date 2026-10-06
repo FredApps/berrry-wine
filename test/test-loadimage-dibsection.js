@@ -114,6 +114,35 @@ function writeCString(wat, ptr, text) {
     assert.strictEqual(wat.test_call_LoadImageA(0, missingGa, 0, 0, 0, 0x10) >>> 0, 0);
   });
 
+  // A streamed (lazy) .bmp, not resident yet: the call parks on IO_WAIT
+  // instead of failing, and the retry after the fill loads it. This is what
+  // lets lib/app-files.js stream image files for apps that name LoadImage.
+  {
+    const bytes = new Uint8Array(makeBmp());
+    vfs.setProviderFile('c:\\lazy.bmp', {
+      provider: { size: bytes.length, readRange: async (off, len) => bytes.subarray(off, off + len) },
+    });
+    const lazyGa = wat.guest_alloc(64) >>> 0;
+    writeCString(wat, lazyGa, 'C:\\LAZY.BMP');
+    const parked = wat.test_call_LoadImageA(0, lazyGa, 0, 0, 0, 0x2010) | 0;
+    check('a nonresident LR_LOADFROMFILE bitmap parks on IO_WAIT', () => {
+      assert.strictEqual(parked, -2, 'the parked call has not produced a handle');
+      assert.strictEqual(wat.get_yield_reason(), 12);
+    });
+    // The run loop's fill, through the pending-read record the parked call
+    // must leave behind (a close before the park dropped it: Dark Colony's
+    // cursor load then parked 2716 times).
+    const pending = vfs.getPendingRead(1);
+    check('the parked load leaves a pending read for the host to fill', () => assert.ok(pending));
+    assert.strictEqual(await vfs.fillPendingRead(pending), true, 'the host fill succeeds');
+    wat.clear_yield();
+    const retried = wat.test_call_LoadImageA(0, lazyGa, 0, 0, 0, 0x2010) >>> 0;
+    check('the retried load returns the bitmap', () => {
+      assert.ok(retried && retried !== 0xFFFFFFFE, 'LoadImageA returned no bitmap after the fill');
+      assert.strictEqual(readBitmap(retried).width, WIDTH);
+    });
+  }
+
   // DDLoadBitmap's two-step load (the DirectX SDK helper, Dark Colony's
   // cursor frames): ask for a bitmap RESOURCE named like the file first, and
   // fall back to LR_LOADFROMFILE only when that returns NULL. A missing

@@ -246,7 +246,12 @@ function makeWave({ format = 1, bits = 8, data = [0x80, 0x90, 0x70, 0x80] } = {}
     e.bass_sample_load(lazyPath, 1, 0);
     assert.strictEqual(e.bass_test_delta(), 0, 'a parked SampleLoad leaves its stdcall frame');
     assert.strictEqual(e.get_yield_reason(), 12, 'a nonresident sample file parks on IO_WAIT');
-    await harness.hostCtx.vfs.materialize('c:\\lazy.wav');
+    // The fill the run loop does: through the pending-read record, which the
+    // parked call must leave behind (closing its handle used to drop it, and
+    // the retry then parked forever).
+    const pending = harness.hostCtx.vfs.getPendingRead(1);
+    assert.ok(pending, 'the parked SampleLoad leaves a pending read for the host to fill');
+    assert.strictEqual(await harness.hostCtx.vfs.fillPendingRead(pending), true, 'the host fill succeeds');
     e.clear_yield();
     const lazySample = call('bass_sample_load', [lazyPath, 1, 0], 32);
     assert.strictEqual(lazySample >>> 24, 0xb1, 'the retried SampleLoad returns an HSAMPLE');

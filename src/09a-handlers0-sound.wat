@@ -73,6 +73,7 @@
     (local $handle i32) (local $size i32) (local $blk i32)
     (local $data_guest i32) (local $data_wa i32) (local $ok i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
+    (call $lazy_park_release)
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $path_guest))
       (i32.const 0x80000000)   ;; GENERIC_READ
@@ -103,7 +104,8 @@
       (then
         (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
           (then
-            (drop (call $host_fs_close_handle (local.get $handle)))
+            ;; Held open, not closed: see $lazy_park_hold.
+            (call $lazy_park_hold (local.get $handle))
             (call $heap_free (local.get $blk))
             (return (i32.const -2))))))
     (drop (call $host_fs_close_handle (local.get $handle)))

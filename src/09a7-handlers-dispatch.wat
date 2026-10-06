@@ -60,7 +60,9 @@
   ;; through the VFS and build the bitmap from its BITMAPFILEHEADER + DIB, so
   ;; the caller gets the file's real pixels at the file's real size. Returns 0
   ;; when the file is missing or is not a BMP, leaving the resource path to
-  ;; decide what to do next.
+  ;; decide what to do next, and -2 when the file is streamed (lazy) and its
+  ;; bytes are not resident yet: the caller parks on IO_WAIT and is re-run
+  ;; once the host has them, as _lread is.
   ;; LR_CREATEDIBSECTION asks for a DIB section rather than a DDB, and the
   ;; difference is visible to the guest: GetObject reports bmBits for a section
   ;; and NULL for a DDB, because a DDB's pixels live in device storage the app
@@ -71,6 +73,8 @@
   (func $load_image_bitmap_file (param $path_wa i32) (param $dib_section i32) (result i32)
     (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
     (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32)
+    (local $ok i32)
+    (call $lazy_park_release)
     (local.set $handle (call $host_fs_create_file
       (local.get $path_wa) (i32.const 0x80000000)
       (i32.const 3) (i32.const 0x80) (i32.const 0)))
@@ -91,8 +95,18 @@
         (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
         (return (i32.const 0))))
     (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $ok (call $host_fs_read_file
       (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
+    ;; Ask before any close, which clears the pending-read state.
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then
+            ;; Held open, not closed: see $lazy_park_hold.
+            (call $lazy_park_hold (local.get $handle))
+            (call $heap_free (local.get $read_ga))
+            (call $heap_free (local.get $buf_ga))
+            (return (i32.const -2))))))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (local.set $size (i32.load (local.get $read_wa)))
     (call $heap_free (local.get $read_ga))
@@ -159,6 +173,8 @@
             ;; which for a device-dependent stand-in is 0.
             (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+            (if (i32.eq (local.get $tmp) (i32.const -2))
+              (then (call $io_block (i32.const 28))))
             (return)))
         (local.set $tmp (call $gdi_native_load_bitmap (local.get $arg0)
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))

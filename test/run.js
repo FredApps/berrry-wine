@@ -5385,7 +5385,6 @@ async function main() {
       // ordinary eager mounts otherwise.
       const policy = require('../lib/app-files').normalizeLazyFiles(ASSET_ENTRY, getAssetFiles(ASSET_ENTRY), {
         isWin16: !!(instance.exports.is_win16 && instance.exports.is_win16()),
-        syncImages: require('../lib/app-files').importsSyncImages(fs.readFileSync(EXE_PATH)),
         // Only the sizes the page has too (an entry's own `size`): a stat()
         // size here made the CLI decide differently from the browser and
         // hid AoE II's black screen (EULA.RTF unsized -> streamed in the page).

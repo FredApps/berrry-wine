@@ -910,6 +910,7 @@
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
     (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
     (local $data_offset i32) (local $parent_wa i32)
+    (local $start_pos i32) (local $saved_id i32) (local $saved_type i32) (local $ok i32)
     ;; RIFF parsing below reads through the host filesystem.
     (if (call $mmio_mem_slot (local.get $arg0))
       (then (call $crash_unimplemented (local.get $name_ptr))))
@@ -931,6 +932,14 @@
         (local.set $end_pos (i32.add
           (i32.load offset=12 (local.get $parent_wa))  ;; parent dwDataOffset
           (i32.load offset=4 (local.get $parent_wa))))))  ;; + parent cksize
+    ;; A streamed (lazy) file whose header bytes are not resident parks the
+    ;; call and reruns it once the host has them (Little Fighter 2 reported
+    ;; "Could not Descend into Wave File"). The search moves the file pointer
+    ;; and writes into lpck as it goes, so the rerun must start from exactly
+    ;; what the caller handed us: remember both, restore both before parking.
+    (local.set $start_pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+    (local.set $saved_id (i32.load (local.get $ck_wa)))
+    (local.set $saved_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
     ;; Scratch area for bytesRead on stack
     (local.set $bytes_read_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
@@ -943,11 +952,20 @@
         (br_if $done (i32.ge_u (local.get $pos) (local.get $end_pos)))
         ;; Read 8 bytes: ckid (4) + cksize (4) into the MMCKINFO struct
         (i32.store (local.get $bytes_read_wa) (i32.const 0))
-        (drop (call $host_fs_read_file
+        (local.set $ok (call $host_fs_read_file
           (local.get $arg0)
           (local.get $arg1)  ;; write directly into MMCKINFO (guest addr)
           (i32.const 8)
           (local.get $bytes_read_ga)))
+        (if (i32.eqz (local.get $ok))
+          (then
+            (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+              (then
+                (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $start_pos) (i32.const 0)))
+                (i32.store (local.get $ck_wa) (local.get $saved_id))
+                (i32.store offset=8 (local.get $ck_wa) (local.get $saved_type))
+                (call $io_block (i32.const 0))
+                (return)))))
         ;; Check if we read 8 bytes
         (br_if $done (i32.lt_u (i32.load (local.get $bytes_read_wa)) (i32.const 8)))
         (local.set $ckid (i32.load (local.get $ck_wa)))
@@ -967,11 +985,20 @@
           (then
             ;; Read fccType (4 bytes) into MMCKINFO+8
             (i32.store (local.get $bytes_read_wa) (i32.const 0))
-            (drop (call $host_fs_read_file
+            (local.set $ok (call $host_fs_read_file
               (local.get $arg0)
               (i32.add (local.get $arg1) (i32.const 8))  ;; fccType field (guest addr)
               (i32.const 4)
               (local.get $bytes_read_ga)))
+            (if (i32.eqz (local.get $ok))
+              (then
+                (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+                  (then
+                    (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $start_pos) (i32.const 0)))
+                    (i32.store (local.get $ck_wa) (local.get $saved_id))
+                    (i32.store offset=8 (local.get $ck_wa) (local.get $saved_type))
+                    (call $io_block (i32.const 0))
+                    (return)))))
             (local.set $fcc_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
           ))
         ;; Store dwDataOffset
@@ -3224,6 +3251,7 @@
     (local $size i32) (local $blk i32) (local $data_guest i32) (local $data i32)
     (local $ok i32) (local $parse i32) (local $out i32) (local $i i32)
     (local $record i32) (local $sample_handle i32) (local $parked i32)
+    (call $lazy_park_release)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (local.set $max (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
     (local.set $flags (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
@@ -3276,7 +3304,10 @@
         (then
           (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
             (then (local.set $parked (i32.const 1))))))
-      (drop (call $host_fs_close_handle (local.get $handle)))
+      ;; A parked read keeps its handle open for the host fill ($lazy_park_hold).
+      (if (local.get $parked)
+        (then (call $lazy_park_hold (local.get $handle)))
+        (else (drop (call $host_fs_close_handle (local.get $handle)))))
       (if (local.get $parked)
         (then
           (call $heap_free (local.get $blk))

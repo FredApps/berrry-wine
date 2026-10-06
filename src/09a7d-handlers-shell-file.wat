@@ -348,6 +348,24 @@
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))
 
+  ;; A consumer that opens a file itself, reads it whole and closes it
+  ;; (PlaySound, BASS_SampleLoad, LoadImage from a file) cannot close before
+  ;; it parks: the close drops the VFS pending-read record, and the host fill
+  ;; needs that record and its still-open handle, so the retry parked again
+  ;; forever (Dark Colony's cursor LoadImageA: 2716 parks, one chunk). The
+  ;; handle is held here instead, and released when the consumer is entered
+  ;; again -- which on this thread is the retry of the same call, after the
+  ;; fill has put the bytes in the shared cache the fresh handle then reads.
+  (global $lazy_park_handle (mut i32) (i32.const 0))
+  (func $lazy_park_release
+    (if (global.get $lazy_park_handle)
+      (then
+        (drop (call $host_fs_close_handle (global.get $lazy_park_handle)))
+        (global.set $lazy_park_handle (i32.const 0)))))
+  (func $lazy_park_hold (param $handle i32)
+    (call $lazy_park_release)
+    (global.set $lazy_park_handle (local.get $handle)))
+
   ;; ---- spin parking ----------------------------------------------------
   ;; See the block comment on $spin_dispatch_seq in src/01-header.wat for why
   ;; a guest that busy-waits on the clock or on an empty message queue can be
