@@ -693,6 +693,19 @@ for (const mode of ['fit', 'zoom']) {
     'Snood starts on a desktop its Medium/Big layouts and back buffer fit');
   assert.strictEqual(snood.singleAppMaximize, false,
     'Snood is not auto-maximized: its maximize picks a fixed layout');
+
+  // The 2026-10-06 phone sweep over DESKTOP_APPS found the same class in
+  // three more: fixed layouts that a phone maximize squeezed or left mostly
+  // empty (Bricks, CWordZap), and a window sized from the 400-wide screen
+  // that clipped its own status bar (EmPipe).
+  const apps = require('../lib/apps').APPS;
+  for (const id of ['bricks', 'cwordzap', 'empipe']) {
+    assert.deepStrictEqual(apps[id].singleAppMinDesktop, { w: 1024, h: 768 },
+      `${id} starts on a desktop its fixed window fits`);
+  }
+  for (const id of ['bricks', 'cwordzap']) {
+    assert.strictEqual(apps[id].singleAppMaximize, false, `${id} is not auto-maximized`);
+  }
 }
 
 // MAGNIFICATION: `mobileZoom` shrinks the guest's desktop so the single-app
