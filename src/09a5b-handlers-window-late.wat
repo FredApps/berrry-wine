@@ -863,11 +863,25 @@
       (i32.const 0))
     ;; showCmd used to be read and dropped, so an app that saved "I was
     ;; maximized" and set the placement back at startup got its normal rect and
-    ;; nothing else. Only a command that actually changes the min/max state is
-    ;; forwarded: SetWindowPlacement is routinely called before the first
-    ;; ShowWindow, and a SW_SHOWNORMAL there must not put a window on screen
-    ;; that the app has not shown yet.
+    ;; nothing else.
     (local.set $show (i32.load offset=8 (local.get $wa)))
+    ;; Windows applies showCmd the way ShowWindow does (Wine: WINPOS_SetPlacement
+    ;; ends in ShowWindow(hwnd, showCmd)), so a hidden window given anything but
+    ;; SW_HIDE comes on screen here. WinBoard never calls ShowWindow on its main
+    ;; window: it creates it hidden, sizes the board, and shows it with
+    ;; SetWindowPlacement(SW_SHOWNORMAL) -- treating that as "not yet shown"
+    ;; left its whole board drawn into an invisible window. Same arity as
+    ;; ShowWindow, so its handler completes this call.
+    (if (i32.and
+          (i32.eqz (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))
+          (i32.ne (local.get $show) (i32.const 0)))
+      (then
+        (call $handle_ShowWindow (local.get $arg0) (local.get $show)
+          (i32.const 0) (i32.const 0) (i32.const 0) (local.get $name_ptr))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+        (return)))
+    ;; A window already on screen: only a command that changes the min/max
+    ;; state needs forwarding.
     (if (i32.or (i32.eq (local.get $show) (i32.const 1))
           (i32.or (i32.eq (local.get $show) (i32.const 2))
             (i32.or (i32.eq (local.get $show) (i32.const 3))
