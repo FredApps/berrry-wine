@@ -2913,6 +2913,17 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
+  ;; WSACancelBlockingCall() -- Winsock 1.1, WSOCK32 ordinal 113. With no
+  ;; blocking call ever in progress (see WSAIsBlocking) there is nothing to
+  ;; cancel, which the 1.1 spec answers with SOCKET_ERROR / WSAEINVAL, or
+  ;; WSANOTINITIALISED before WSAStartup. Descent 3 imports it by ordinal.
+  (func $handle_WSACancelBlockingCall (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                                      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $vsock_set_error
+      (select (i32.const 10022) (i32.const 10093) (global.get $wsa_started))) ;; WSAEINVAL / WSANOTINITIALISED
+    (i32.store offset=0 (global.get $reg_base) (i32.const -1)))
+
   (func $handle_WSASetLastError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                                 (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))

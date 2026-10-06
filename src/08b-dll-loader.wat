@@ -475,6 +475,7 @@
         (if (i32.eq (local.get $ordinal) (i32.const 11))  (then (return (call $lookup_api_id "inet_ntoa"))))
         (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id "__WSAFDIsSet"))))
         (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id "WSASetLastError"))))
+        (if (i32.eq (local.get $ordinal) (i32.const 113)) (then (return (call $lookup_api_id "WSACancelBlockingCall"))))
         (if (i32.eq (local.get $ordinal) (i32.const 14))   (then (return (call $lookup_api_id "ntohl"))))
         (if (i32.eq (local.get $ordinal) (i32.const 5))    (then (return (call $lookup_api_id "getpeername"))))
         (if (i32.eq (local.get $ordinal) (i32.const 57))   (then (return (call $lookup_api_id "gethostname"))))

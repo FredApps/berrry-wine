@@ -35233,5 +35233,14 @@
     "convention": "stdcall",
     "hash": 2841028271,
     "ret": "BOOL"
+  },
+  {
+    "id": 4170,
+    "name": "WSACancelBlockingCall",
+    "nargs": 0,
+    "test_call": true,
+    "convention": "stdcall",
+    "hash": 1649100535,
+    "ret": "int"
   }
 ]
