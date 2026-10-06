@@ -204,6 +204,17 @@ test('Claude transcript replies: final text after a Telegram prompt is direct, t
   replies.enqueue(state,said('[Telegram update] Myth demo found.','end_turn','a4'));
   assert.deepEqual(state.replyQueue.map(r=>r.id),['a2','a4']);
 });
+test('Claude transcript replies: Telegram chat queued while busy still gets its answer relayed',()=>{
+  const replies=require('./telegram-replies'),state={};
+  const said=(text,stop,uuid)=>({type:'assistant',timestamp:'t',uuid,message:{id:'m',stop_reason:stop,content:[{type:'text',text}]}});
+  const queued=prompt=>({type:'attachment',timestamp:'t',attachment:{type:'queued_command',prompt}});
+  replies.enqueue(state,{type:'user',timestamp:'t',message:{role:'user',content:[{type:'text',text:'<task-notification>done</task-notification>'}]}});
+  replies.enqueue(state,queued('[Telegram] still cannot see them'));
+  replies.enqueue(state,said('Fixed: they had no category.','end_turn','q1'));
+  replies.enqueue(state,queued('local note typed while busy'));
+  replies.enqueue(state,said('Autonomous final.','end_turn','q2'));
+  assert.deepEqual(state.replyQueue.map(r=>[r.id,r.direct]),[['q1',true]]);
+});
 
 test('a dim Claude prompt suggestion is not a draft', () => {
   const {claudeChatReady,plainScreen}=require('./work-guard');

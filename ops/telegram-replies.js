@@ -11,6 +11,12 @@ function reply(record){
 // Claude records carry no turn id, so turns fall back to telegramActiveTurn; a text
 // block is final only when its message stopped with end_turn.
 function fromClaude(record){
+ // Chat typed while the orchestrator is busy is recorded as a queued_command
+ // attachment, not a user message; it still opens a Telegram turn.
+ if(record?.type==='attachment'&&record.attachment?.type==='queued_command'&&!record.isSidechain){
+  const p=record.attachment.prompt,text=typeof p==='string'?p:Array.isArray(p)?p.filter(c=>c.type==='text').map(c=>c.text).join('\n'):'';
+  return text?{type:'response_item',timestamp:record.timestamp,payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}:null;
+ }
  if(!['user','assistant'].includes(record?.type)||record.isSidechain||record.isMeta||!record.message)return record;
  const m=record.message,content=typeof m.content==='string'?[{type:'text',text:m.content}]:Array.isArray(m.content)?m.content:[];
  if(record.type==='user'){
