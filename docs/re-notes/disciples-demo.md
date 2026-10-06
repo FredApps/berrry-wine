@@ -28,8 +28,9 @@ its log/INI paths from its own module path and gives up when that directory
 is the drive root. So the tree must mount at its install path **and** the
 image must report `C:\program files\disciples demo\exe\discipdm.exe`. The
 registry entry's new `exeGuestPath` does that: the CLI takes it as
-`--exe-guest-path` and the browser passes it to `loadExe` (browser path
-untested).
+`--exe-guest-path` and the browser passes it to `loadExe`. Verified in the
+browser 2026-10-06: `tools/web-input-probe.js --app=disciples_demo` (headless
+Chrome, `CHROME=/usr/bin/google-chrome` on Linux) shows the main menu at 60 s.
 
 ## Route (headless, `--batch-size=20000`)
 
@@ -84,7 +85,7 @@ Evidence: `scratch/runs/20261006T030000Z-disciples-demo-city/`.
 
 ## Open / not evaluated
 
-- Browser launch with `exeGuestPath` untested (no browser slot taken).
+- Browser gameplay past the main menu not driven (launch to menu verified).
 - Audio, FPS, battles, the Multiplayer modes.
 - The `ole32.dll` warning: the game uses only CoInitialize/CoCreateInstance/
   CoUninitialize, which the WAT handles.
