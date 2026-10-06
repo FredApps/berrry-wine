@@ -81,6 +81,14 @@ const GAMES = [
     exe: 'exe/discipdm.exe',
     vfsRoot: 'c:\\program files\\disciples demo\\',
   },
+  {
+    // The WinZip self-extractor is the installed game itself (it even
+    // carries InstallShield's DeIsL1.isu); unpack it first with
+    //   unzip -q commandos-demo-SWonly.exe -d 'Commandos demo-SWonly/installed'
+    id: 'commandos_demo',
+    root: 'Commandos demo-SWonly/installed',
+    exe: 'Comandos.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
