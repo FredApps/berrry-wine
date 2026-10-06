@@ -467,6 +467,22 @@ function createReader(options = {}) {
           c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(emulatorRoot,app.executable)})));
           if (c.registryOnly) c.fixtureStatus = c.registeredExecutables.every(e=>e.present) ? 'present' : c.registeredExecutables.some(e=>e.present) ? 'partial' : 'missing';
         }
+        // Registry-only entries are named by their app id (aoe1, abedemo), and
+        // most of them are in none of the labelled launcher arrays above. The
+        // emulator's app picker carries a human label for every app it offers,
+        // so use that wherever the corpus still has only the id.
+        const pickerFile = await safeFile(emulatorRoot, 'index.html');
+        if (pickerFile) {
+          const labels = new Map();
+          for (const m of (await readText(pickerFile, 4 * MB)).matchAll(/<option value="([\w.-]+)"[^>]*>([^<]{1,120})<\/option>/g)) {
+            if (!labels.has(m[1])) labels.set(m[1], m[2].trim().replace(/&amp;/g, '&').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"'));
+          }
+          for (const c of candidates) {
+            if (c.name && c.name !== c.id) continue;
+            const label = [c.id, ...(c.appIds || [])].map(id => labels.get(id)).find(Boolean);
+            if (label) c.name = clip(label);
+          }
+        }
         sources.push('lib/apps.js');
       }
     } catch (e) { warnings.push(`App registry: ${e.message}`); }

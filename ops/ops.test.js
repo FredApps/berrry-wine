@@ -52,6 +52,8 @@ test('registry-only corpus rows remain visible and exact app aliases share run e
   const f = await fixture(); t.after(() => fs.rm(f.root, {recursive:true,force:true}));
   await f.write('lib/apps.js', `module.exports={APPS:{demo_alias:{exe:'binaries/candidates/demo/game.exe'},freecell:{exe:'binaries/freecell.exe'},unknown:{exe:'binaries/missing.exe'}},DESKTOP_APPS:[['freecell','FreeCell']]};`);
   await f.write('test/binaries/freecell.exe','fixture');
+  // The emulator's app picker names apps the launcher arrays do not.
+  await f.write('index.html','<select><option value="unknown">Unknown &amp; Friends (demo)</option><option value="freecell">Picker FreeCell</option></select>');
   await f.write('scratch/runs/alias/result.json',JSON.stringify({candidateId:'demo_alias',startedAt:'2026-10-03T01:00:00Z',outcome:'unknown'}));
   const snapshot = await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
   assert.equal(snapshot.candidates.length,3);
@@ -66,6 +68,8 @@ test('registry-only corpus rows remain visible and exact app aliases share run e
   assert.equal(freecell.fixtureStatus,'present');
   const unknown = snapshot.candidates.find(c=>c.id==='unknown');
   assert.equal(unknown.fixtureStatus,'missing');
+  assert.equal(unknown.name,'Unknown & Friends (demo)');
+  assert.equal(freecell.name,'FreeCell','a launcher-array label is kept over the picker');
   assert.equal(unknown.category.id,'unclassified');
   assert.ok(!snapshot.warnings.some(w=>w.includes('demo_alias')));
 });
