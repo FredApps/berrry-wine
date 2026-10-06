@@ -544,9 +544,27 @@ through a manifest written by `node tools/gen-tree-manifest.js <root>
 buffer is at `core+0x101f65fc`, readable with `--dump` after the exit).
 
 - `FirstRun=0` in the shipped INI opens the setup wizard. Its device probe
-  ShellExecutes a second copy (`testrendev=D3DDrv.D3DRenderDevice
-  log=Detected.log`) and polls `Detected.ini` 100 x `Sleep(100)`, about
-  10 guest seconds, then continues by itself.
+  (`exe+0x1090d9e0`) runs inside the WM_PAINT that `UpdateWindow(0x1000c)`
+  sends synchronously. It ShellExecutes a second copy
+  (`testrendev=D3DDrv.D3DRenderDevice log=Detected.log`), then polls the log
+  with `GFileManager->FileSize` and `Sleep(100)` up to 100 times (a 10000 ms
+  budget counted down by iteration, not by the clock), then lists the
+  devices. Two emulator bugs used to stop it (fixed in dd0d6dc8):
+  - `$wnd_send_message` abandoned the paint after 64 rounds, because every
+    Sleep ends a round (`[sync] ABANDONED wndproc hwnd=0x0001000c msg=0xf at
+    0x1090dbfe`). The wizard then sat on "Detecting 3D video devices, please
+    wait..." for good.
+  - In the browser the ShellExecute really starts the child. The child had no
+    `dlls` seeds, so Core/Engine/Window.dll bound to stubs and it trapped on
+    `?appPackage@@YAPBGXZ`, or threw an `int` that went unhandled (the
+    "C++ throw .H ... UNHANDLED EXCEPTION 0xe06d7363" console the user
+    reported, in both thread modes). The CLI's ShellExecute starts no child,
+    so it never showed this.
+  The child's log never reaches the parent (a VFS child gets a copy of the
+  file map), so the wizard always settles on Software Rendering.
+- The child mode by itself (`--args="testrendev=D3DDrv.D3DRenderDevice
+  log=Detected.log"`) loads D3DDrv, tests it and exits 0 headlessly. Pass
+  `--stuck-after=1000000`: its CPU-speed loop trips the stuck detector.
 - Wizard buttons render without labels (Back/Next at about (223,418), Cancel at
   (401,418)). Next x3 by mouse reaches the UWindow menu.
 - Once the wizard ended, its last page stayed in the renderer over the game

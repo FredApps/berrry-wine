@@ -133,7 +133,10 @@ function makeShell(opts = {}) {
   const caller = { _helpCtx: { vfs }, _runSliceAppKey: 'cue:speed-demons',
     asyncMultimediaTimer: true,
     // host.js keys each loaded module twice, with and without the extension.
-    moduleBases: { 'core.dll': coreBase, core: coreBase } };
+    moduleBases: { 'core.dll': coreBase, core: coreBase },
+    // The Worker backend's loader results carry no names, so with Threads on
+    // only the byte cache knows what was loaded.
+    _loadedDllBytesByName: { 'core.dll': new Uint8Array(1), 'engine.dll': new Uint8Array(1) } };
   const ok = shell.launchVfsExe('C:\\windows\\temp\\is-test.tmp\\child.tmp',
     caller, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
   assert.strictEqual(ok, true, 'absolute child exe in the caller VFS is accepted');
@@ -145,7 +148,7 @@ function makeShell(opts = {}) {
     'dynamic child inherits the mounted app Auto run-slice policy');
   assert.strictEqual(child.asyncMultimediaTimer, true,
     'chain-launched installed children inherit multimedia timer semantics');
-  assert.deepStrictEqual(child.inheritedDlls, ['core.dll'],
+  assert.deepStrictEqual(child.inheritedDlls, ['core.dll', 'engine.dll'],
     'a child inherits the names of the DLLs its caller runs as real PEs');
 
   assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
