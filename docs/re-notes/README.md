@@ -94,6 +94,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Age of Wonders (beta demo) | [age-of-wonders-demo.md](age-of-wonders-demo.md) |
 | Sid Meier's Alpha Centauri (demo) | [alpha-centauri-demo.md](alpha-centauri-demo.md) |
 | Betrayal in Antara (demo, parked) | [betrayal-in-antara-demo.md](betrayal-in-antara-demo.md) |
+| Comanche Gold (demo, parked) | [comanche-gold-demo.md](comanche-gold-demo.md) |
 | Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
