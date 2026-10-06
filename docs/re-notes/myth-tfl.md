@@ -9,6 +9,11 @@ keyboard input. Evidence: `scratch/runs/20261005-myth-tfl-retail-iso-gameplay/`
 
 ## Registered app `myth_tfl` (localhost-only)
 
+Build or rebuild the local tree with `node tools/prepare-myth-tfl.js` (runs the
+disc's own Setup.exe headless, ~5 min; `--manifest-only` rewrites just the cue
+and `.wine-assembly-browser.json` from an existing `installed/`). A fresh run
+reproduces the installed tree byte for byte.
+
 `lib/apps.js` LOCAL_CANDIDATE_APPS; refused by `tools/deploy-berrry.js`. Local
 media under `test/binaries/candidates/myth-the-fallen-lords/` (gitignored):
 
