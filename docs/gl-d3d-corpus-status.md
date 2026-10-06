@@ -87,8 +87,12 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
    = 0 in our caps (`ba161dfb`), then a failed `CoCreateInstance` (Miles A3D)
    re-running its thunk (`12408feb`), then the CLI ignoring `bigMemory`
    (`d7f5a429`).
-2. **crimsonland in-menu click**: Play Game opens, but Survival does not start
-   a game; a lost second DirectInput click is the first suspect.
+2. **crimsonland in-menu click**: Play Game opens, but neither Survival nor
+   Quests starts a game. Not an input-delivery bug: dumping its DIMOUSESTATE2
+   at `0x63cbf0` shows button 0 = `0x80` during the second press exactly as
+   during the first. Game-side state (the player selector on that panel) is
+   the next suspect. Note for routes: it polls the mouse once per frame
+   (~110 batches here), so a press must be held across several frames.
 3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
    reach gameplay only past the 120 s cap on the software arm.
 4. **WebGL column at this build**: needs browser grants, one app at a time.
