@@ -84,6 +84,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Ultima IV: Quest of the Avatar (GOG) | [ultima4-gog.md](ultima4-gog.md) |
 | Quake II (demo) | [quake2-demo.md](quake2-demo.md) |
 | Command & Conquer: Red Alert (Win95 demo) | [red-alert-95-demo.md](red-alert-95-demo.md) |
+| Die by the Sword (demo) | [die-by-the-sword-demo.md](die-by-the-sword-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |

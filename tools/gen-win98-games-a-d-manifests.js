@@ -42,6 +42,13 @@ const GAMES = [
     root: 'CnC-Red Alert Demo-SW/INSTALL',
     exe: 'RA95.EXE',
   },
+  {
+    // rlapi.dll and SIMFORCE.dll are LoadLibrary'd from the game directory;
+    // data/ and moves/ must keep their subdirectories.
+    id: 'die_by_the_sword_demo',
+    root: 'Die by the sword demo-SW+Glide',
+    exe: 'dbts_demo.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {

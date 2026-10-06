@@ -19,6 +19,7 @@ const expected = {
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['darkstonedemo.exe', 13],
   red_alert_95_demo: ['RA95.EXE', 8],
+  die_by_the_sword_demo: ['dbts_demo.exe', 28],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
@@ -52,6 +53,8 @@ for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
 
 assert.deepStrictEqual(APPS.broken_sword_demo.dlls.map(file => path.basename(file)),
   ['smackw32.dll']);
+assert.deepStrictEqual(APPS.die_by_the_sword_demo.dlls.map(file => path.basename(file)),
+  ['rlapi.dll', 'SIMFORCE.dll'], 'Die by the Sword statically imports Rlapi.dll');
 assert.strictEqual(APPS.broken_sword_demo.startupInput, undefined,
   'the working opening movie is not skipped automatically');
 assert(APPS.broken_sword_demo.exe.includes('Broken_Sword_demo-SW/installed/'),
