@@ -11,7 +11,24 @@ stdin/stdout (`STARTF_USESTDHANDLES`), and talks the xboard protocol over them.
 The goal is the real thing: ordered bytes between two guest processes, with
 Windows' blocking, EOF and broken-pipe rules, and no protocol simulation.
 
-## What exists today (2026-10-06, origin/main)
+## Status (2026-10-06, end of day)
+
+| Piece | State | Commit / test |
+|---|---|---|
+| Phase 1: pipes inside one process | done | 1b54be50, `test/test-anonymous-pipe.js` |
+| Phase 2.1: ends across instances over the wire | done | 46cf2193, `test/test-pipe-cross-instance.js` |
+| Phase 2.2: CreateProcess starts a real child (CLI) | done | f1902bbc |
+| SetWindowPlacement shows a hidden window (WinBoard's board) | done | d9174bf9 |
+| Remote pipe ends pump the wire without WSAStartup | done | 4eaa29e3 |
+| WinBoard 1.e4 → GNUChess 1…c5, cooperative and `--threads` | done | `test/test-winboard-gnuchess-pipes.js`; runs `20261006T0820Z-winboard-move2`, `20261006T0825Z-winboard-move-threads` |
+| Browser host `process_spawn` | **not done** — host.js falls back to the old ShellExecute handoff; needs a second in-page instance on a LoopbackSegment | — |
+| Phase 3: waitable hProcess, exit code, TerminateProcess(child) | **not done** — hProcess is still the constant 0xE3001 | — |
+| SetFilePointer / FlushFileBuffers on a pipe handle | not implemented; GNUChess has not needed them on this route | — |
+
+The `--threads` run shows one rendering defect unrelated to pipes: after
+1.e4 the e2 square still draws a white pawn.
+
+## What existed before this work (2026-10-06 morning, origin/main)
 
 - `CreatePipe` / `PeekNamedPipe` are fail-fast stubs
   (`src/09a0b-handlers-base-late.wat`).
