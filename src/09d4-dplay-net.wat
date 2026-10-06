@@ -19,7 +19,9 @@
   ;;   3 JOIN_REQ     payload guidInstance
   ;;   4 JOIN_ACK     a = 0
   ;;   5 PLAYER_ADD   a = dpId, b = 1 when part of the join snapshot,
-  ;;                  payload +0 player flags, +4 NUL-terminated short name
+  ;;                  payload +0 player flags, +4 NUL-terminated short name,
+  ;;                  then optionally the IDirectPlay4W short name as raw
+  ;;                  UTF-16 units ending in a 16-bit NUL
   ;;   6 PLAYER_DEL   a = dpId
   ;;   7 DATA         a = from dpId, b = to dpId (0 = everyone), payload bytes
   ;;   8 LEAVE        the sender's session is gone
@@ -46,6 +48,9 @@
   (global $dpn_host_ip (mut i32) (i32.const 0))
   (global $dpn_deadline (mut i32) (i32.const 0))
   (global $dpn_enum_active (mut i32) (i32.const 0))
+  ;; A DPENUMSESSIONS_ASYNC search is running: replies keep filling the found
+  ;; table between the app's polling calls until DPENUMSESSIONS_STOPASYNC.
+  (global $dpn_enum_async (mut i32) (i32.const 0))
   ;; Set while an Open(JOIN) is parked. The host pumps the wire between a
   ;; park and the re-entry (thread-manager's vlan_pump), so the ACK may have
   ;; already moved $dpn_state on: re-entry must be told apart by this, not
@@ -57,13 +62,20 @@
   (global $DPN_PEER_MAX i32 (i32.const 8))
   ;; Hosted session record, laid out exactly as the ENUM_REPLY payload:
   ;; +0 guidInstance, +16 guidApplication, +32 max players, +36 current
-  ;; players, +40 session flags, +44 name (32 bytes, NUL-terminated).
+  ;; players, +40 session flags, +44 name (32 bytes, NUL-terminated), +76 the
+  ;; name an IDirectPlay4W host gave, as its own UTF-16 units (64 bytes,
+  ;; 16-bit NUL; empty for an ANSI host). Narrowing a W name to 1252 is lossy,
+  ;; so a W reader takes +76 when it is there. A sender of the original 76-byte
+  ;; record still reads correctly: the missing tail is an empty W name.
   (global $dpn_session (mut i32) (i32.const 0))
-  (global $DPN_SESSION_SIZE i32 (i32.const 76))
-  ;; Sessions heard during a search, one record each plus a live word at +76.
+  (global $DPN_SESSION_SIZE i32 (i32.const 140))
+  (global $DPN_SESSION_NARROW i32 (i32.const 76))
+  (global $DPN_SESSION_WNAME i32 (i32.const 76))
+  ;; Sessions heard during a search, one record each plus a live word.
   (global $dpn_found (mut i32) (i32.const 0))
   (global $DPN_FOUND_MAX i32 (i32.const 8))
-  (global $DPN_FOUND_STRIDE i32 (i32.const 80))
+  (global $DPN_FOUND_LIVE i32 (i32.const 140))
+  (global $DPN_FOUND_STRIDE i32 (i32.const 144))
   ;; DPSESSIONDESC2 handed to the EnumSessions callback, reused per session.
   (global $dpn_enum_desc (mut i32) (i32.const 0))
   (global $dpn_enum_timeout (mut i32) (i32.const 0))
@@ -85,12 +97,14 @@
       (then (global.set $dpn_peers (call $dpn_alloc_zero
         (i32.shl (global.get $DPN_PEER_MAX) (i32.const 2))))))
     (if (i32.eqz (global.get $dpn_session))
-      (then (global.set $dpn_session (call $dpn_alloc_zero (i32.const 80)))))
+      (then (global.set $dpn_session (call $dpn_alloc_zero (global.get $DPN_SESSION_SIZE)))))
     (if (i32.eqz (global.get $dpn_found))
       (then (global.set $dpn_found (call $dpn_alloc_zero
         (i32.mul (global.get $DPN_FOUND_MAX) (global.get $DPN_FOUND_STRIDE))))))
     (if (i32.eqz (global.get $dpn_enum_desc))
-      (then (global.set $dpn_enum_desc (call $dpn_alloc_zero (i32.const 80)))))
+      ;; 80-byte DPSESSIONDESC2, then room for a 31-character UTF-16 session
+      ;; name at +80 for an IDirectPlay4W enumeration.
+      (then (global.set $dpn_enum_desc (call $dpn_alloc_zero (i32.const 144)))))
     (if (i32.eqz (global.get $dpn_enum_timeout))
       (then (global.set $dpn_enum_timeout (call $dpn_alloc_zero (i32.const 4)))))
     (if (i32.or
@@ -233,6 +247,32 @@
 
   ;; DPMSG_CREATEPLAYERORGROUP (48 bytes) from DPID_SYSMSG. The DPNAME points
   ;; into the new entity's own copy of the name, which outlives the message.
+  ;; A PLAYER_ADD that carries the owner's IDirectPlay4W short name after the
+  ;; 1252 one becomes the remote entity's UTF-16 DPNAME, exactly as stored.
+  ;; Without it $dpw_mirror widens the 1252 name on first use.
+  (func $dpn_remote_wide_name (param $entry i32) (param $payload i32) (param $len i32)
+    (local $w i32) (local $rest i32) (local $tmp i32) (local $name i32) (local $slot i32)
+    (local.set $w (i32.add (local.get $payload)
+      (i32.add (i32.const 5) (call $guest_strlen (i32.add (local.get $payload) (i32.const 4))))))
+    (local.set $rest (i32.sub (i32.add (local.get $payload) (local.get $len)) (local.get $w)))
+    (if (i32.or (i32.lt_s (local.get $rest) (i32.const 2))
+          (i32.or (i32.and (local.get $rest) (i32.const 1))
+            (i32.ne (call $gl16 (i32.sub (i32.add (local.get $payload) (local.get $len)) (i32.const 2)))
+              (i32.const 0))))
+      (then (return)))
+    (local.set $tmp (call $dpn_alloc_zero (i32.const 16)))
+    (if (i32.eqz (local.get $tmp)) (then (return)))
+    (call $gs32 (local.get $tmp) (i32.const 16))
+    (call $gs32 (i32.add (local.get $tmp) (i32.const 8)) (local.get $w))
+    (local.set $name (call $dpw_clone_name (local.get $tmp) (i32.const 1)))
+    (call $heap_free (local.get $tmp))
+    (if (i32.eqz (local.get $name)) (then (return)))
+    (call $dpw_forget (local.get $entry))
+    (local.set $slot (call $dpw_side (local.get $entry) (i32.const 1)))
+    (if (local.get $slot)
+      (then (call $gs32 (local.get $slot) (local.get $name)))
+      (else (call $dp_free_name (local.get $name)))))
+
   (func $dpn_sysmsg_create (param $entry i32)
     (local $msg i32) (local $wa i32) (local $name i32)
     (local.set $msg (call $dpn_alloc_zero (i32.const 48)))
@@ -321,7 +361,7 @@
 
   ;; PLAYER_ADD for one entity, to one address or (dst 0) every peer.
   (func $dpn_announce (param $entry i32) (param $dst i32) (param $snapshot i32)
-    (local $p i32) (local $name i32) (local $str i32) (local $len i32)
+    (local $p i32) (local $name i32) (local $str i32) (local $len i32) (local $wlen i32)
     (local.set $p (call $dpn_payload))
     (call $gs32 (local.get $p) (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
     (local.set $name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
@@ -334,6 +374,22 @@
       (then (call $guest_memmove (i32.add (local.get $p) (i32.const 4)) (local.get $str) (local.get $len))))
     (i32.store8 (call $g2w (i32.add (local.get $p) (i32.add (i32.const 4) (local.get $len)))) (i32.const 0))
     (local.set $len (i32.add (local.get $len) (i32.const 5)))
+    ;; A name set through IDirectPlay4W rides along verbatim after the 1252
+    ;; one: narrowing is lossy, and a Unicode peer must read back the same
+    ;; code units the owner stored (AoE II puts 1252 bytes in its W fields).
+    (local.set $str (i32.const 0))
+    (local.set $name (call $dpw_side (local.get $entry) (i32.const 0)))
+    (if (local.get $name) (then (local.set $name (call $gl32 (local.get $name)))))
+    (if (local.get $name)
+      (then (local.set $str (call $gl32 (i32.add (local.get $name) (i32.const 8))))))
+    (if (local.get $str)
+      (then
+        (local.set $wlen (i32.mul (call $guest_wcslen (local.get $str)) (i32.const 2)))
+        (if (i32.gt_u (local.get $wlen) (i32.const 510)) (then (local.set $wlen (i32.const 510))))
+        (call $guest_memmove (i32.add (local.get $p) (local.get $len)) (local.get $str) (local.get $wlen))
+        (local.set $len (i32.add (local.get $len) (local.get $wlen)))
+        (i32.store16 (call $g2w (i32.add (local.get $p) (local.get $len))) (i32.const 0))
+        (local.set $len (i32.add (local.get $len) (i32.const 2)))))
     (if (local.get $dst)
       (then (call $dpn_send (i32.const 5) (local.get $dst)
         (call $gl32 (local.get $entry)) (local.get $snapshot) (local.get $len)))
@@ -447,17 +503,20 @@
           (global.get $DPN_SESSION_SIZE))
         (return)))
 
-    ;; ENUM_REPLY: remember the session while a search is running.
+    ;; ENUM_REPLY: remember the session while a search is running, blocking
+    ;; or DPENUMSESSIONS_ASYNC.
     (if (i32.eq (local.get $type) (i32.const 2))
       (then
-        (if (i32.eqz (global.get $dpn_enum_active)) (then (return)))
-        (if (i32.lt_u (local.get $len) (global.get $DPN_SESSION_SIZE)) (then (return)))
+        (if (i32.eqz (i32.or (global.get $dpn_enum_active) (global.get $dpn_enum_async))) (then (return)))
+        (if (i32.lt_u (local.get $len) (global.get $DPN_SESSION_NARROW)) (then (return)))
+        (if (i32.gt_u (local.get $len) (global.get $DPN_SESSION_SIZE))
+          (then (local.set $len (global.get $DPN_SESSION_SIZE))))
         (local.set $i (i32.const 0))
         (block $done (loop $scan
           (br_if $done (i32.ge_u (local.get $i) (global.get $DPN_FOUND_MAX)))
           (local.set $entry (i32.add (global.get $dpn_found)
             (i32.mul (local.get $i) (global.get $DPN_FOUND_STRIDE))))
-          (if (call $gl32 (i32.add (local.get $entry) (i32.const 76)))
+          (if (call $gl32 (i32.add (local.get $entry) (global.get $DPN_FOUND_LIVE)))
             (then
               (if (i32.and
                     (i32.eq (call $gl32 (local.get $entry)) (call $gl32 (local.get $payload)))
@@ -469,10 +528,13 @@
           (br $scan)))
         (if (i32.eqz (local.get $slot)) (then (local.set $slot (local.get $free))))
         (if (i32.eqz (local.get $slot)) (then (return)))
-        (call $guest_memmove (local.get $slot) (local.get $payload) (global.get $DPN_SESSION_SIZE))
-        ;; The name is ours to terminate, whatever the sender put there.
+        (call $zero_memory (call $g2w (local.get $slot)) (global.get $DPN_SESSION_SIZE))
+        (call $guest_memmove (local.get $slot) (local.get $payload) (local.get $len))
+        ;; The names are ours to terminate, whatever the sender put there.
         (i32.store8 (call $g2w (i32.add (local.get $slot) (i32.const 75))) (i32.const 0))
-        (call $gs32 (i32.add (local.get $slot) (i32.const 76)) (i32.const 1))
+        (i32.store16 (call $g2w (i32.add (local.get $slot)
+          (i32.sub (global.get $DPN_SESSION_SIZE) (i32.const 2)))) (i32.const 0))
+        (call $gs32 (i32.add (local.get $slot) (global.get $DPN_FOUND_LIVE)) (i32.const 1))
         (return)))
 
     ;; JOIN_REQ: admit the peer and send it the name table.
@@ -524,6 +586,8 @@
         (local.set $entry (call $dpn_add_remote (local.get $a)
           (call $gl32 (local.get $payload))
           (i32.add (local.get $payload) (i32.const 4)) (local.get $src)))
+        (if (local.get $entry)
+          (then (call $dpn_remote_wide_name (local.get $entry) (local.get $payload) (local.get $len))))
         ;; Players already in the session when we joined are learned by
         ;; enumeration, as on Win98; only arrivals are announced.
         (if (i32.and (i32.ne (local.get $entry) (i32.const 0)) (i32.eqz (local.get $b)))
@@ -572,9 +636,11 @@
   ;; ---- Open ----------------------------------------------------------------
 
   ;; Open(lpsd, dwFlags): the stdcall frame is already popped. Returns the
-  ;; HRESULT, or -1 when the call parked and must not write EAX.
-  (func $dpn_open (param $owner i32) (param $desc i32) (param $flags i32) (result i32)
-    (local $session i32) (local $name i32) (local $len i32)
+  ;; HRESULT, or -1 when the call parked and must not write EAX. $wide: the
+  ;; caller is IDirectPlay4W, so lpsd->lpszSessionName is UTF-16; the session
+  ;; table and the wire keep the established 1252 bytes either way.
+  (func $dpn_open (param $owner i32) (param $desc i32) (param $flags i32) (param $wide i32) (result i32)
+    (local $session i32) (local $name i32) (local $len i32) (local $i i32) (local $c i32)
     (if (i32.eqz (local.get $desc)) (then (return (i32.const 0x80070057))))
     ;; Re-entry of a parked join.
     (if (global.get $dpn_open_parked)
@@ -600,7 +666,7 @@
     (local.set $session (global.get $dpn_session))
     (if (i32.and (local.get $flags) (i32.const 2)) ;; DPOPEN_CREATE
       (then
-        (call $zero_memory (call $g2w (local.get $session)) (i32.const 80))
+        (call $zero_memory (call $g2w (local.get $session)) (global.get $DPN_SESSION_SIZE))
         (global.set $dpn_instance_counter
           (i32.add (global.get $dpn_instance_counter) (i32.const 1)))
         (call $gs32 (local.get $session) (global.get $vsock_local_ip))
@@ -613,12 +679,24 @@
         (call $gs32 (i32.add (local.get $session) (i32.const 40))
           (call $gl32 (i32.add (local.get $desc) (i32.const 4))))
         (local.set $name (call $gl32 (i32.add (local.get $desc) (i32.const 48))))
-        (if (local.get $name)
+        (if (i32.and (i32.ne (local.get $name) (i32.const 0)) (i32.eqz (local.get $wide)))
           (then
             (local.set $len (call $guest_strlen (local.get $name)))
             (if (i32.gt_u (local.get $len) (i32.const 31)) (then (local.set $len (i32.const 31))))
             (call $guest_memmove (i32.add (local.get $session) (i32.const 44))
               (local.get $name) (local.get $len))))
+        (if (i32.and (i32.ne (local.get $name) (i32.const 0)) (i32.ne (local.get $wide) (i32.const 0)))
+          (then
+            (block $narrowed (loop $narrow
+              (br_if $narrowed (i32.ge_u (local.get $i) (i32.const 31)))
+              (local.set $c (call $gl16 (i32.add (local.get $name) (i32.shl (local.get $i) (i32.const 1)))))
+              (br_if $narrowed (i32.eqz (local.get $c)))
+              (call $gs8 (i32.add (i32.add (local.get $session) (i32.const 44)) (local.get $i))
+                (call $dpw_encode1252 (local.get $c)))
+              (call $gs16 (i32.add (i32.add (local.get $session) (global.get $DPN_SESSION_WNAME))
+                (i32.shl (local.get $i) (i32.const 1))) (local.get $c))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $narrow)))))
         ;; The app reads its own session back through the descriptor.
         (call $guest_memmove (i32.add (local.get $desc) (i32.const 8)) (local.get $session)
           (i32.const 16))
@@ -632,6 +710,22 @@
       (then (return (i32.const 0x887700AA))))
     (call $guest_memmove (local.get $session) (i32.add (local.get $desc) (i32.const 8))
       (i32.const 16))
+    ;; Keep the whole record the search heard (name, limits, flags), so the
+    ;; joined side's GetSessionDesc describes the same session as the host's.
+    (local.set $i (i32.const 0))
+    (block $found (loop $look
+      (br_if $found (i32.ge_u (local.get $i) (global.get $DPN_FOUND_MAX)))
+      (local.set $c (i32.add (global.get $dpn_found) (i32.mul (local.get $i) (global.get $DPN_FOUND_STRIDE))))
+      (if (i32.and
+            (i32.and (i32.ne (call $gl32 (i32.add (local.get $c) (global.get $DPN_FOUND_LIVE))) (i32.const 0))
+              (i32.eq (call $gl32 (local.get $c)) (call $gl32 (local.get $session))))
+            (i32.eq (call $gl32 (i32.add (local.get $c) (i32.const 8)))
+              (call $gl32 (i32.add (local.get $session) (i32.const 8)))))
+        (then
+          (call $guest_memmove (local.get $session) (local.get $c) (global.get $DPN_SESSION_SIZE))
+          (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $look)))
     (call $dpn_peers_clear)
     (global.set $dpn_owner (local.get $owner))
     (global.set $dpn_host_ip (call $gl32 (i32.add (local.get $desc) (i32.const 8))))
@@ -644,11 +738,90 @@
     (call $vsock_block (i32.const 16))
     (i32.const -1))
 
+  ;; ---- GetSessionDesc --------------------------------------------------------
+
+  ;; GetSessionDesc(lpData, lpdwDataSize): the session this instance hosts or
+  ;; joined, as a DPSESSIONDESC2 with its name stored right after it (1252
+  ;; bytes, or UTF-16 for IDirectPlay4W). A NULL or short buffer gets the size
+  ;; it needs and DPERR_BUFFERTOOSMALL -- the size probe Age of Empires II
+  ;; allocates from, so a size left unwritten became a SmartHeap out-of-memory.
+  ;; Units in a session record's own UTF-16 name; 0 when an ANSI host made it.
+  (func $dpn_wname_len (param $record i32) (result i32)
+    (local $n i32)
+    (block $done (loop $count
+      (br_if $done (i32.ge_u (local.get $n) (i32.const 31)))
+      (br_if $done (i32.eqz (call $gl16 (i32.add (i32.add (local.get $record) (global.get $DPN_SESSION_WNAME))
+        (i32.shl (local.get $n) (i32.const 1))))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $count)))
+    (local.get $n))
+
+  ;; A session record's name as UTF-16 at $out (32 units of room): the host's
+  ;; own units when it gave them, else the 1252 name widened.
+  (func $dpn_put_wname (param $record i32) (param $out i32)
+    (local $n i32) (local $j i32) (local $c i32)
+    (local.set $n (call $dpn_wname_len (local.get $record)))
+    (block $copied (loop $copy
+      (br_if $copied (i32.ge_u (local.get $j) (i32.const 31)))
+      (local.set $c (if (result i32) (local.get $n)
+        (then (if (result i32) (i32.lt_u (local.get $j) (local.get $n))
+          (then (call $gl16 (i32.add (i32.add (local.get $record) (global.get $DPN_SESSION_WNAME))
+            (i32.shl (local.get $j) (i32.const 1)))))
+          (else (i32.const 0))))
+        (else (call $dpw_decode1252 (call $gl8 (i32.add (i32.add (local.get $record) (i32.const 44)) (local.get $j)))))))
+      (br_if $copied (i32.eqz (local.get $c)))
+      (call $gs16 (i32.add (local.get $out) (i32.shl (local.get $j) (i32.const 1))) (local.get $c))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $copy)))
+    (call $gs16 (i32.add (local.get $out) (i32.shl (local.get $j) (i32.const 1))) (i32.const 0)))
+
+  (func $dpn_get_session_desc (param $data i32) (param $size_ptr i32) (param $wide i32) (result i32)
+    (local $session i32) (local $len i32) (local $need i32) (local $i i32) (local $c i32) (local $name i32)
+    (if (i32.eqz (local.get $size_ptr)) (then (return (i32.const 0x80070057))))
+    (if (i32.or (i32.eqz (global.get $dpn_session))
+          (i32.and (i32.ne (global.get $dpn_state) (i32.const 1)) (i32.ne (global.get $dpn_state) (i32.const 3))))
+      (then (return (i32.const 0x887700AA)))) ;; DPERR_NOCONNECTION
+    (local.set $session (global.get $dpn_session))
+    (local.set $len (i32.const 0))
+    (block $measured (loop $measure
+      (br_if $measured (i32.ge_u (local.get $len) (i32.const 31)))
+      (br_if $measured (i32.eqz (call $gl8 (i32.add (i32.add (local.get $session) (i32.const 44)) (local.get $len)))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $measure)))
+    (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
+          (i32.ne (call $dpn_wname_len (local.get $session)) (i32.const 0)))
+      (then (local.set $len (call $dpn_wname_len (local.get $session)))))
+    (local.set $need (i32.add (i32.const 80)
+      (i32.shl (i32.add (local.get $len) (i32.const 1)) (select (i32.const 1) (i32.const 0) (local.get $wide)))))
+    (if (i32.or (i32.eqz (local.get $data)) (i32.lt_u (call $gl32 (local.get $size_ptr)) (local.get $need)))
+      (then (call $gs32 (local.get $size_ptr) (local.get $need)) (return (i32.const 0x8877001E)))) ;; DPERR_BUFFERTOOSMALL
+    (call $gs32 (local.get $size_ptr) (local.get $need))
+    (call $zero_memory (call $g2w (local.get $data)) (i32.const 80))
+    (call $gs32 (local.get $data) (i32.const 80))
+    (call $gs32 (i32.add (local.get $data) (i32.const 4)) (call $gl32 (i32.add (local.get $session) (i32.const 40))))
+    (call $guest_memmove (i32.add (local.get $data) (i32.const 8)) (local.get $session) (i32.const 32))
+    (call $gs32 (i32.add (local.get $data) (i32.const 40)) (call $gl32 (i32.add (local.get $session) (i32.const 32))))
+    (call $gs32 (i32.add (local.get $data) (i32.const 44)) (call $dpn_player_count))
+    (local.set $name (i32.add (local.get $data) (i32.const 80)))
+    (call $gs32 (i32.add (local.get $data) (i32.const 48)) (local.get $name))
+    (if (local.get $wide)
+      (then (call $dpn_put_wname (local.get $session) (local.get $name)) (return (i32.const 0))))
+    (block $copied (loop $copy
+      (local.set $c (if (result i32) (i32.lt_u (local.get $i) (local.get $len))
+        (then (call $gl8 (i32.add (i32.add (local.get $session) (i32.const 44)) (local.get $i))))
+        (else (i32.const 0))))
+      (call $gs8 (i32.add (local.get $name) (local.get $i)) (local.get $c))
+      (br_if $copied (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.const 0))
+
   ;; ---- EnumSessions ----------------------------------------------------------
 
   ;; Stack frame left under the callback, found by CACA0011 at ESP on return:
   ;; +0 'DPES', +4 caller return, +8 callback, +12 context, +16 next index
-  ;; (0x100 once the DPESC_TIMEDOUT call has been made).
+  ;; (0x100 once the DPESC_TIMEDOUT call has been made), +20 nonzero when the
+  ;; caller is IDirectPlay4W and wants UTF-16 session names.
   (global $DPES_FRAME i32 (i32.const 32))
 
   ;; EnumSessions(lpsd, dwTimeout, callback, context, dwFlags). The stdcall
@@ -656,7 +829,7 @@
   ;; timeout, then calls back once per session heard and once more with
   ;; DPESC_TIMEDOUT, as the Win98 provider does.
   (func $dpn_enum_sessions (param $desc i32) (param $timeout i32) (param $callback i32)
-      (param $context i32) (param $flags i32)
+      (param $context i32) (param $flags i32) (param $wide i32)
     (local $ret_addr i32) (local $frame i32)
     (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     (if (i32.eqz (global.get $dpn_enum_active))
@@ -664,7 +837,9 @@
         (i32.store offset=16 (global.get $reg_base)
           (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
         (if (i32.and (local.get $flags) (i32.const 4)) ;; DPENUMSESSIONS_STOPASYNC
-          (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
+          (then
+            (global.set $dpn_enum_async (i32.const 0))
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
         (if (i32.eqz (local.get $callback))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)) (return)))
         ;; Same as the Open path: searching for a game is a networked act, and
@@ -673,6 +848,28 @@
           (then (call $vsock_block (i32.const 28)) (return)))
         (if (i32.eqz (call $dpn_activate (i32.const 0)))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))
+        ;; DPENUMSESSIONS_ASYNC: return at once, reporting the sessions heard
+        ;; so far, while the search goes on. Age of Empires II polls this way
+        ;; from its UI loop; blocking each call for its timeout and wiping the
+        ;; cache every time left its LAN game list at "Looking for games...".
+        (if (i32.and (local.get $flags) (i32.const 0x10))
+          (then
+            (if (i32.eqz (global.get $dpn_enum_async))
+              (then
+                (call $zero_memory (call $g2w (global.get $dpn_found))
+                  (i32.mul (global.get $DPN_FOUND_MAX) (global.get $DPN_FOUND_STRIDE)))
+                (global.set $dpn_enum_async (i32.const 1))))
+            (call $zero_memory (call $g2w (call $dpn_payload)) (i32.const 16))
+            (if (local.get $desc)
+              (then (call $guest_memmove (call $dpn_payload)
+                (i32.add (local.get $desc) (i32.const 24)) (i32.const 16))))
+            (call $dpn_send (i32.const 1) (i32.const -1) (i32.const 0) (i32.const 0) (i32.const 16))
+            (call $vsock_pump)
+            (if (i32.or (i32.eqz (local.get $timeout)) (i32.gt_u (local.get $timeout) (i32.const 5000)))
+              (then (local.set $timeout (i32.const 1500))))
+            (call $gs32 (global.get $dpn_enum_timeout) (local.get $timeout))
+            (call $dpn_enum_report (local.get $ret_addr) (local.get $callback) (local.get $context) (local.get $wide))
+            (return)))
         (call $zero_memory (call $g2w (global.get $dpn_found))
           (i32.mul (global.get $DPN_FOUND_MAX) (global.get $DPN_FOUND_STRIDE)))
         (call $zero_memory (call $g2w (call $dpn_payload)) (i32.const 16))
@@ -695,12 +892,20 @@
     (global.set $dpn_enum_active (i32.const 0))
     (i32.store offset=16 (global.get $reg_base)
       (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+    (call $dpn_enum_report (local.get $ret_addr) (local.get $callback) (local.get $context) (local.get $wide)))
+
+  ;; Report the found-session table to the caller's callback (one call per
+  ;; session, then DPESC_TIMEDOUT) from a DPES frame under the popped stdcall
+  ;; frame. Shared by the synchronous path at its deadline and by ASYNC.
+  (func $dpn_enum_report (param $ret_addr i32) (param $callback i32) (param $context i32) (param $wide i32)
+    (local $frame i32)
     (local.set $frame (i32.sub (i32.load offset=16 (global.get $reg_base)) (global.get $DPES_FRAME)))
     (call $zero_memory (call $g2w (local.get $frame)) (global.get $DPES_FRAME))
     (call $gs32 (local.get $frame) (i32.const 0x53455044)) ;; 'DPES'
     (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $ret_addr))
     (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $callback))
     (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $context))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $wide))
     (i32.store offset=16 (global.get $reg_base) (local.get $frame))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $dpn_enum_sessions_continue))
@@ -732,7 +937,7 @@
             (i32.mul (local.get $i) (global.get $DPN_FOUND_STRIDE))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $i))
-          (if (call $gl32 (i32.add (local.get $entry) (i32.const 76)))
+          (if (call $gl32 (i32.add (local.get $entry) (global.get $DPN_FOUND_LIVE)))
             (then
               (local.set $desc (global.get $dpn_enum_desc))
               (call $zero_memory (call $g2w (local.get $desc)) (i32.const 80))
@@ -747,6 +952,12 @@
                 (call $gl32 (i32.add (local.get $entry) (i32.const 36))))
               (call $gs32 (i32.add (local.get $desc) (i32.const 48))
                 (i32.add (local.get $entry) (i32.const 44)))
+              (if (call $gl32 (i32.add (local.get $frame) (i32.const 20)))
+                (then
+                  ;; IDirectPlay4W: hand the callback a UTF-16 copy of the name.
+                  (call $dpn_put_wname (local.get $entry) (i32.add (local.get $desc) (i32.const 80)))
+                  (call $gs32 (i32.add (local.get $desc) (i32.const 48))
+                    (i32.add (local.get $desc) (i32.const 80)))))
               (call $dpn_enum_sessions_call (local.get $frame) (local.get $desc) (i32.const 0))
               (return)))
           (br $scan)))

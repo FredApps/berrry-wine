@@ -119,7 +119,10 @@ const extraWat=String.raw`
  write(size,0);assert.equal(call(w,16,group,0,size),0x8877001e);const gbuf=alloc(read(size));assert.equal(call(w,16,group,gbuf,size),0);assert.equal(decode(read(gbuf+8)),'組€');
  assert.equal(call(w,28,group,name('新','換名'),0),0);
  // Exercise every explicit unsupported ABI through its real guest thunk.
- const unsupportedMethods=['EnumSessions','GetCaps','GetPlayerAddress','GetPlayerCaps','GetSessionDesc','Initialize','Open','Receive','SetSessionDesc','GetGroupConnectionSettings','InitializeConnection','SecureOpen','SendChatMessage','SetGroupConnectionSettings','StartSession','GetPlayerAccount'];
+ // Open/EnumSessions/InitializeConnection/StartSession/GetCaps/GetPlayerCaps/
+ // Initialize now drive the virtual-LAN provider (Age of Empires II hosts and
+ // joins only through IDirectPlay4W); test-aoe2-vlan-gameplay.js covers them.
+ const unsupportedMethods=['GetPlayerAddress','SetSessionDesc','GetGroupConnectionSettings','SecureOpen','SendChatMessage','SetGroupConnectionSettings','GetPlayerAccount'];
  for(const method of unsupportedMethods){
   const api=apis.find(a=>a.name==='IDirectPlay4W_'+method),first=apis.find(a=>a.name==='IDirectPlay4W_QueryInterface').id;
   assert.deepEqual(api.stub,{pop:4*(api.nargs+1),ret:0x80004001});
@@ -128,9 +131,9 @@ const extraWat=String.raw`
   assert.equal(read(out),0xfeedface,method+' leaves output untouched');assert.equal(e.test_dp_refs(w),refs);
  }
  // Unsupported Unicode networking must neither fabricate success nor outputs.
- write(out,0xfeedface);assert.equal(call(w,22,out,size),0x80004001);assert.equal(read(out),0xfeedface);
- assert.equal(call(w,24,0,0),0x80004001);assert.equal(call(w,25,0,0,0,size,0),0x80004001);
- e.test_net(1);assert.equal(call(w,6,out,n,0,0,0,0),0x80004001);assert.equal(read(out),0);e.test_net(0);
+ write(out,0xfeedface);assert.equal(call(w,22,out,size),0x887700AA,"W GetSessionDesc outside a session is DPERR_NOCONNECTION");assert.equal(read(out),0xfeedface);
+ assert.equal(call(w,24,0,0),0x80070057,"W Open validates a NULL session descriptor");assert.equal(call(w,25,0,0,0,size,0),0x80070057,"W Receive validates its id pointers");
+ e.test_net(1);assert.equal(call(w,6,out,n,0,0,0,0),0,"W CreatePlayer works in a network session");const netPlayer=read(out);assert.notEqual(netPlayer,0);e.test_net(0);assert.equal(call(w,9,netPlayer),0);
  e.test_acp(932);assert.equal(call(w,30,player,n,0),0x80004001);e.test_acp(1252);checkName(next);
  // Allocation rollback: common invalid data fails after name preparation.
  const countBefore=e.test_w_names();assert.equal(call(w,6,out,n,0,0,4,0),0x80070057);assert.equal(read(out),0);assert.equal(e.test_w_names(),countBefore);

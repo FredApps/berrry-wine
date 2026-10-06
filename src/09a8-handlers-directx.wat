@@ -11424,10 +11424,34 @@
   (func $handle_IDirectPlay3_EnumSessions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $dpn_enum_sessions (local.get $arg1) (local.get $arg2) (local.get $arg3)
       (local.get $arg4)
-      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 0)))
+  ;; DPCAPS (40 bytes: dwSize, dwFlags, dwMaxBufferSize, dwMaxQueueSize,
+  ;; dwMaxPlayers, dwHundredBaud, dwLatency, dwMaxLocalPlayers,
+  ;; dwHeaderLength, dwTimeout) for the virtual-LAN TCP/IP provider. Written
+  ;; only within the caller's dwSize: this used to zero 64 bytes, and Age of
+  ;; Empires II keeps its DPCAPS in a 40-byte stack local, so GetPlayerCaps
+  ;; overwrote its saved registers and return address and it returned to 0.
+  (func $dp_fill_caps (param $caps i32) (result i32)
+    (local $size i32)
+    (if (i32.eqz (local.get $caps)) (then (return (i32.const 0x80070057))))
+    (local.set $size (call $gl32 (local.get $caps)))
+    (if (i32.lt_u (local.get $size) (i32.const 40)) (then (return (i32.const 0x80070057))))
+    (call $gs32 (i32.add (local.get $caps) (i32.const 4))
+      (i32.or (i32.const 0x40) ;; DPCAPS_GUARANTEEDSUPPORTED: the room wire is reliable
+        (select (i32.const 0x2) (i32.const 0) (i32.eq (global.get $dpn_state) (i32.const 1))))) ;; DPCAPS_ISHOST
+    (call $gs32 (i32.add (local.get $caps) (i32.const 8)) (i32.const 1400))     ;; dwMaxBufferSize
+    (call $gs32 (i32.add (local.get $caps) (i32.const 12)) (i32.const 0))       ;; dwMaxQueueSize: unlimited
+    (call $gs32 (i32.add (local.get $caps) (i32.const 16)) (i32.const 65536))   ;; dwMaxPlayers
+    (call $gs32 (i32.add (local.get $caps) (i32.const 20)) (i32.const 100000))  ;; dwHundredBaud: 10 Mb/s LAN
+    (call $gs32 (i32.add (local.get $caps) (i32.const 24)) (i32.const 50))      ;; dwLatency (ms)
+    (call $gs32 (i32.add (local.get $caps) (i32.const 28)) (i32.const 65536))   ;; dwMaxLocalPlayers
+    (call $gs32 (i32.add (local.get $caps) (i32.const 32)) (i32.const 20))      ;; dwHeaderLength
+    (call $gs32 (i32.add (local.get $caps) (i32.const 36)) (i32.const 1000))    ;; dwTimeout (ms)
+    (i32.const 0))
   (func $handle_IDirectPlay3_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1) (then (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+    (i32.store offset=0 (global.get $reg_base) (call $dp_fill_caps (local.get $arg1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IDirectPlay3_GetGroupData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $dp_get_data
         (local.get $arg1) (i32.const 0) (local.get $arg2) (local.get $arg3)
@@ -11451,8 +11475,11 @@
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
   (func $handle_IDirectPlay3_GetPlayerCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 64))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+    (i32.store offset=0 (global.get $reg_base)
+      (if (result i32) (call $dp_find_entity (local.get $arg1) (i32.const 1))
+        (then (call $dp_fill_caps (local.get $arg2)))
+        (else (i32.const 0x88770096)))) ;; DPERR_INVALIDPLAYER
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
   (func $handle_IDirectPlay3_GetPlayerData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $dp_get_data
         (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)
@@ -11463,15 +11490,15 @@
         (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
   (func $handle_IDirectPlay3_GetSessionDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+    (i32.store offset=0 (global.get $reg_base) (call $dpn_get_session_desc (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IDirectPlay3_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
   (func $handle_IDirectPlay3_Open (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hr i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
     ;; -1: a join is waiting for the host and the call has been parked.
-    (local.set $hr (call $dpn_open (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local.set $hr (call $dpn_open (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (if (i32.ne (local.get $hr) (i32.const -1))
       (then (i32.store offset=0 (global.get $reg_base) (local.get $hr)))))
   (func $handle_IDirectPlay3_Receive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -13467,7 +13494,10 @@
     (local $w i32) (local $a i32) (local $entry i32) (local $slot i32) (local $hr i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80070057))))
     (call $gs32 (local.get $out) (i32.const 0))
-    (if (i32.or (global.get $dpn_state) (i32.ne (global.get $ansi_code_page) (i32.const 1252))) (then (return (i32.const 0x80004001))))
+    ;; A network session is fine: the entity keeps its 1252 name for the wire
+    ;; (the caller announces it, as the ANSI path does) and the W name rides
+    ;; along as the lossless local mirror.
+    (if (i32.ne (global.get $ansi_code_page) (i32.const 1252)) (then (return (i32.const 0x80004001))))
     (local.set $w (call $dpw_clone_name (local.get $src) (i32.const 1)))
     (if (i32.eqz (local.get $w)) (then (return (i32.const 0x8007000E))))
     (local.set $a (call $dpw_clone_name (local.get $w) (i32.const 2)))
@@ -13554,6 +13584,80 @@
 
   (func $handle_IDirectPlay4W_AddPlayerToGroup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectPlay3_AddPlayerToGroup (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  ;; Session control on the virtual LAN (09d4-dplay-net.wat) through the
+  ;; Unicode interface: same provider, same wire, UTF-16 session names at the
+  ;; boundary. Age of Empires II drives DirectPlay only through this interface.
+  (func $handle_IDirectPlay4W_Open (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+    ;; -1: a join is waiting for the host and the call has been parked.
+    (local.set $hr (call $dpn_open (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (if (i32.ne (local.get $hr) (i32.const -1))
+      (then (i32.store offset=0 (global.get $reg_base) (local.get $hr)))))
+
+  (func $handle_IDirectPlay4W_EnumSessions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $dpn_enum_sessions (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 1)))
+
+  ;; The entity's UTF-16 DPNAME mirror, made from its 1252 name the first time
+  ;; it is needed (a remote player announced over the wire has only that).
+  ;; dpw_forget frees it with the entity.
+  (func $dpw_mirror (param $entry i32) (result i32)
+    (local $slot i32) (local $name i32)
+    (local.set $slot (call $dpw_side (local.get $entry) (i32.const 1)))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (local.set $name (call $gl32 (local.get $slot)))
+    (if (local.get $name) (then (return (local.get $name))))
+    (local.set $name (call $dpw_clone_name (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 0)))
+    (if (local.get $name) (then (call $gs32 (local.get $slot) (local.get $name))))
+    (local.get $name))
+
+  ;; Receive through IDirectPlay4W. The queue holds the established messages;
+  ;; a DPMSG_CREATEPLAYERORGROUP from DPID_SYSMSG names the entity through
+  ;; DPNAME pointers, which a Unicode caller must find pointing at UTF-16.
+  (func $handle_IDirectPlay4W_Receive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32) (local $entry i32) (local $w i32)
+    (call $dpn_poll)
+    (local.set $hr (call $dp_receive (call $dpw_owner (local.get $arg0)) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))))
+    (if (i32.and (i32.eqz (local.get $hr))
+          (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.eqz (call $gl32 (local.get $arg1)))))
+      (then
+        (if (i32.eq (call $gl32 (local.get $arg4)) (i32.const 3)) ;; DPSYS_CREATEPLAYERORGROUP
+          (then
+            (local.set $entry (call $dp_find_entity (call $gl32 (i32.add (local.get $arg4) (i32.const 8)))
+              (select (i32.const 1) (i32.const 0)
+                (i32.eq (call $gl32 (i32.add (local.get $arg4) (i32.const 4))) (i32.const 1)))))
+            (if (local.get $entry) (then (local.set $w (call $dpw_mirror (local.get $entry)))))
+            (call $gs32 (i32.add (local.get $arg4) (i32.const 32))
+              (if (result i32) (local.get $w) (then (call $gl32 (i32.add (local.get $w) (i32.const 8)))) (else (i32.const 0))))
+            (call $gs32 (i32.add (local.get $arg4) (i32.const 36))
+              (if (result i32) (local.get $w) (then (call $gl32 (i32.add (local.get $w) (i32.const 12)))) (else (i32.const 0))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+
+  (func $handle_IDirectPlay4W_GetSessionDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $dpn_get_session_desc (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  (func $handle_IDirectPlay4W_InitializeConnection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectPlay3_InitializeConnection (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectPlay4W_StartSession (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectPlay3_StartSession (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectPlay4W_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectPlay3_GetCaps (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectPlay4W_GetPlayerCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectPlay3_GetPlayerCaps (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectPlay4W_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectPlay3_Initialize (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectPlay4W_Close (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectPlay3_Close (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
@@ -13657,9 +13761,9 @@
 
 
 
+  ;; Payloads are bytes either way, so a networked session goes straight to
+  ;; the ANSI path, which carries remote recipients over the room wire.
   (func $handle_IDirectPlay4W_Send (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (global.get $dpn_state) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (return)))
     (call $handle_IDirectPlay3_Send (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectPlay4W_SetGroupData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -13804,8 +13908,6 @@
     (call $handle_IDirectPlay4_SetGroupOwner (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectPlay4W_SendEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (global.get $dpn_state) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44))) (return)))
     (call $handle_IDirectPlay4_SendEx (call $dpw_owner (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectPlay4W_GetMessageQueue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

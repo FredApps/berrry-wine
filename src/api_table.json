@@ -34848,7 +34848,6 @@
     "name": "IDirectPlay4W_EnumSessions",
     "nargs": 6,
     "convention": "stdcall",
-    "stub": { "pop": 28, "ret": 2147500033 },
     "hash": 2655119431
   },
   {
@@ -34856,7 +34855,6 @@
     "name": "IDirectPlay4W_GetCaps",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": { "pop": 16, "ret": 2147500033 },
     "hash": 1800695760
   },
   {
@@ -34893,7 +34891,6 @@
     "name": "IDirectPlay4W_GetPlayerCaps",
     "nargs": 4,
     "convention": "stdcall",
-    "stub": { "pop": 20, "ret": 2147500033 },
     "hash": 1305783993
   },
   {
@@ -34915,7 +34912,6 @@
     "name": "IDirectPlay4W_GetSessionDesc",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": { "pop": 16, "ret": 2147500033 },
     "hash": 3556815770
   },
   {
@@ -34923,7 +34919,6 @@
     "name": "IDirectPlay4W_Initialize",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": { "pop": 12, "ret": 2147500033 },
     "hash": 1841572441
   },
   {
@@ -34931,7 +34926,6 @@
     "name": "IDirectPlay4W_Open",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": { "pop": 16, "ret": 2147500033 },
     "hash": 1824581663
   },
   {
@@ -34939,7 +34933,6 @@
     "name": "IDirectPlay4W_Receive",
     "nargs": 6,
     "convention": "stdcall",
-    "stub": { "pop": 28, "ret": 2147500033 },
     "hash": 3882055488
   },
   {
@@ -35033,7 +35026,6 @@
     "name": "IDirectPlay4W_InitializeConnection",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": { "pop": 16, "ret": 2147500033 },
     "hash": 552187317
   },
   {
@@ -35065,7 +35057,6 @@
     "name": "IDirectPlay4W_StartSession",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": { "pop": 16, "ret": 2147500033 },
     "hash": 1719735331
   },
   {
