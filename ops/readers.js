@@ -60,6 +60,46 @@ async function windowText(file, start, length) {
   } finally { await h.close(); }
 }
 
+// A Claude /goal record: undefined when the record says nothing about the goal,
+// null when it clears it, otherwise {condition, met, at}.
+function goalOf(e, time) {
+  if (e.type === 'attachment' && e.attachment?.type === 'goal_status' && typeof e.attachment.condition === 'string')
+    return { condition: clip(e.attachment.condition, 1000), met: e.attachment.met === true, at: time };
+  if (e.type === 'user' && typeof e.message?.content === 'string') {
+    const out = (/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(e.message.content)?.[1] || '').trim();
+    const set = /^Goal set: ([\s\S]+)/.exec(out);
+    if (set) return { condition: clip(set[1], 1000), met: false, at: time };
+    if (/^Goal (?:cleared|removed)/i.test(out)) return null;
+  }
+  return undefined;
+}
+
+// Screenshot-heavy Claude logs push a whole 1 MiB tail window past the last goal
+// record, so look for one backwards from `end` down to `stop`, matching only the
+// lines that can carry it. Returns undefined when the range holds none.
+async function scanGoal(file, end, stop) {
+  const h = await fs.open(file, 'r');
+  try {
+    let carry = '';
+    while (end > stop) {
+      const start = Math.max(stop, end - MB), buffer = Buffer.alloc(end - start);
+      await h.read(buffer, 0, buffer.length, start);
+      let text = buffer.toString('utf8') + carry;
+      const first = start > 0 ? text.indexOf('\n') : -1;
+      carry = first >= 0 ? text.slice(0, first) : '';
+      if (first >= 0) text = text.slice(first + 1);
+      const lines = text.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"goal_status"') && !lines[i].includes('Goal set: ') && !lines[i].includes('Goal cleared')) continue;
+        try { const e = JSON.parse(lines[i]); const goal = goalOf(e, date(e.timestamp)); if (goal !== undefined) return goal; } catch { /* partial line */ }
+      }
+      if (carry.length > 16 * MB) carry = '';
+      end = start;
+    }
+    return undefined;
+  } finally { await h.close(); }
+}
+
 // Session logs can exceed 100 MiB. Read complete records from bounded windows;
 // never copy the transcript or serve tool arguments/reasoning to the browser.
 async function logWindows(file, size) {
@@ -199,14 +239,8 @@ function parseSession(provider, records, file, partial, root) {
       if (e.sessionId && !file.includes(`${path.sep}subagents${path.sep}`)) session.id = `claude:${e.sessionId}`;
       if (e.type === 'ai-title') session.title = clip(e.aiTitle, 160);
       if (e.type === 'system' && e.subtype === 'compact_boundary') { session.compactions++; usageAtCompaction = true; }
-      if (e.type === 'attachment' && e.attachment?.type === 'goal_status' && typeof e.attachment.condition === 'string')
-        session.goal = { condition: clip(e.attachment.condition, 1000), met: e.attachment.met === true, at: time };
-      if (e.type === 'user' && typeof e.message?.content === 'string') {
-        const out = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(e.message.content)?.[1] || '';
-        const set = /^Goal set: ([\s\S]+)/.exec(out.trim());
-        if (set) session.goal = { condition: clip(set[1], 1000), met: false, at: time };
-        else if (/^Goal (?:cleared|removed)/i.test(out.trim())) session.goal = null;
-      }
+      const goal = goalOf(e, time);
+      if (goal !== undefined) session.goal = goal;
       if (e.type === 'user') {
         const content = e.message?.content;
         const isTool = Array.isArray(content) && content.some(c => c.type === 'tool_result');
@@ -298,7 +332,16 @@ function createReader(options = {}) {
         let cached = sessionCache.get(entry.file);
         if (!cached || cached.key !== key) {
           const { records, partial } = await logWindows(entry.file, stat.size);
-          cached = { key, session: parseSession(entry.provider, records, entry.file, partial, root) };
+          const session = parseSession(entry.provider, records, entry.file, partial, root);
+          // In a windowed log the newest goal record may sit in the unread middle:
+          // scan back over what was appended since the last look (64 MiB on first
+          // sight), else keep the goal already known, else the windows' answer.
+          if (session && entry.provider === 'claude' && partial) {
+            const before = cached?.goalSize ?? Math.max(0, stat.size - 64 * MB);
+            const found = await scanGoal(entry.file, stat.size, Math.max(0, Math.min(before, stat.size) - MB));
+            session.goal = found !== undefined ? found : cached?.session ? cached.session.goal : session.goal;
+          }
+          cached = { key, session, goalSize: stat.size };
           sessionCache.set(entry.file, cached);
         }
         if (cached.session) result.push({ ...cached.session, logFile: entry.file });
@@ -525,4 +568,4 @@ function createReader(options = {}) {
   return { root, emulatorRoot, snapshot, artifact, analyticsSnapshot };
 }
 
-module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows };
+module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows, scanGoal };

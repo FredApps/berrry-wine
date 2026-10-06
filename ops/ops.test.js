@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-const { parseTasks, parseSession, createReader, logWindows } = require('./readers');
+const { parseTasks, parseSession, createReader, logWindows, scanGoal } = require('./readers');
 const { createServer } = require('./server');
 const { parseProcesses, parseOpenFiles, associate } = require('./processes');
 
@@ -575,4 +575,19 @@ test('a Claude /goal is read from its set command and its latest Stop-hook statu
   assert.equal(parseSession('claude', [set, cleared], '/logs/w.jsonl', false, root).goal, null);
   const plain = {type:'assistant', cwd:root, sessionId:'w', timestamp:at('40'), message:{content:[{type:'text',text:'hi'}],stop_reason:'end_turn'}};
   assert.equal(parseSession('claude', [plain], '/logs/w.jsonl', false, root).goal, null);
+});
+
+test('a goal record older than the 1 MiB tail window is found by the backward scan', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wine-goal-'));
+  const file = path.join(dir, 'w.jsonl');
+  const goal = (met, condition) => JSON.stringify({type:'attachment', timestamp:'2026-10-06T00:10:00Z', attachment:{type:'goal_status', met, condition}});
+  const image = JSON.stringify({type:'user', message:{content:[{type:'tool_result', content:[{type:'image', data:'A'.repeat(900 * 1024)}]}]}});
+  await fs.writeFile(file, [goal(false, 'old goal'), image, goal(false, 'Keep every worker busy'), image, image, ''].join('\n'));
+  const size = (await fs.stat(file)).size;
+  assert.ok(size > 2 * 1024 * 1024);
+  const found = await scanGoal(file, size, 0);
+  assert.equal(found.condition, 'Keep every worker busy');
+  assert.equal(found.met, false);
+  assert.equal(await scanGoal(file, size, size - 1024), undefined, 'a range without goal records says nothing');
+  await fs.rm(dir, {recursive: true});
 });
