@@ -645,3 +645,41 @@ are real functions, so the loader's two virtual calls are sound. The jump
 into zeros therefore happens later, inside Seek/Serialize or after the
 loader returns; the next runtime step is `--trace-at=core+0x10163410` on
 the last hits before batch 211297 and a `--trace-stack-scan` at the crash.
+
+Boat runs (2026-10-06, main 99e861e6, boat bx_n53xdjmt, fresh `npm ci`;
+`deusExRenderer` = OpenGlDrv and `OpenGlDrv.dll` added to the DLL list as a
+boat-local edit; `--gl-renderer=software --quiet-api --quiet-blocks
+--stuck-after=0 --input=200000:keydown:27,200100:keyup:27`). Module bases in
+that build: engine 0x10e82000 (orig 0x10300000), core 0x10bca000 (orig
+0x10100000), opengldrv 0x120d0000.
+
+- The crash is ESI clobbered across a call, not a bad object. It lands in
+  the lazy loader's Load (engine 0x1030cb70, `this` in ESI): the first
+  virtual call (`[eax+0x28]`, ULinkerLoad::Tell, core 0x101634b0) returns,
+  then `mov ecx,[esi+4]` reads garbage because ESI = 0x179ff644, a stack
+  address (crash regs: ESI 0x179ff644, ECX 0x7e2f1848, EDX 0x10fa97fc =
+  the TLazyArray vtable, ESP 0x179ff668 = the Seek call's return slot), so
+  `call [edx+0x34]` indexes past the two-slot TLazyArray vtable into zeros
+  at 0x410054.
+- Ruled out: the linker is not freed (`--watch=0x7e9b46a4` never fires);
+  the mip records (FMipmap, 0x28 bytes, lazy DataArray at +0x10) are well
+  formed (dumped at batch 211263); the micro-op tier (`--no-uop` crashes
+  identically at batch 211244); an unbalanced inner call (at core
+  0x101634e3, just after Tell's inner `call [eax+0x28]`, ESP = EBP-0x24
+  exactly as the frame needs, every hit).
+- It is not a plain race either. Batch 211244 reproduces with the same
+  flags (runs 3 and 4), a dword watch on the linker (0x7e9b46a4) leaves it
+  in place, but `--watch=0x179ff648` -- the slot Tell's `pop esi` reads
+  back -- makes it vanish (211300 batches, no crash, no watch hit), and so
+  does `--trace-api=SetFilePointer,ReadFile,...`. Main's stack (0x179ff...)
+  is outside the direct guest window, so it goes through the sparse page
+  translation; a watched page takes the checked write path. Lead: a stale
+  translation or fast-path write on that sparse stack page, so `pop esi`
+  reads a value the guest never stored there.
+- Side note: guest thread 1 (start 0x109010b9) ends at EIP 0 from
+  prev_eip 0x10901a29 early in the run; not yet looked at.
+
+Next: count the crash with `--fault-null` off and the sparse translator
+toggled (flat page table vs the record walk), and dump the stack page
+through both the guest view and the backing it should map to at the batch
+before 211244.
