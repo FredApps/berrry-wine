@@ -316,6 +316,47 @@ test('the host import reports pending separately from failure', () => {
     'a failed read must not report pending');
 });
 
+test('one ReadFile wider than the chunk cache completes whole across parks', async () => {
+  // Caesar III reads its 9.2 MB c3.555 in one call against a 4 MB sized-lazy
+  // cache. Restarting the call from the top after each park re-fetched the
+  // evicted head forever and the read faulted, silently: the game drew with
+  // empty sprites. Here: the whole 1 MB file in ONE host-import call through a
+  // 256 KB cache (4 x 64 KB), async-only, so every chunk parks.
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const vfs = new VirtualFS();
+  const cache = new bp.ChunkCache(new bp.NodeFileProvider(FILE, { sync: false }),
+    { chunkSize: 65536, maxChunks: 4, readAhead: 0 });
+  vfs.setProviderFile(GUEST, { provider: cache });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({
+    getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 },
+    vfs,
+  });
+  const GUEST_BASE = 0x400000; // maps to WASM 0x12000
+  const NREAD = GUEST_BASE + SIZE + 64;
+  const handle = vfs.createFile(GUEST, 0x80000000, 3);
+  let result, parks = 0;
+  for (;;) {
+    result = imports.fs_read_file_result(handle, GUEST_BASE, SIZE, NREAD);
+    if (result !== 997) break;
+    parks++;
+    assert(parks < 200, 'the read never completed');
+    // The count reported while parked must be zero, never a partial count.
+    assert.strictEqual(new DataView(memory.buffer).getUint32(0x12000 + SIZE + 64, true), 0);
+    await vfs.fillPendingRead(vfs.getIoState(1).pendingRead);
+  }
+  assert.strictEqual(result, 0, `the read failed with ${result}`);
+  assert.strictEqual(new DataView(memory.buffer).getUint32(0x12000 + SIZE + 64, true), SIZE,
+    'one full read is reported');
+  assert(Buffer.from(memory.buffer, 0x12000, SIZE).equals(Buffer.from(BYTES)),
+    'the bytes match the file');
+  assert.strictEqual(vfs.getOpenFile(handle).pos, SIZE, 'the position ends at EOF');
+  // Each park fills one piece of half the cache (2 chunks): ~9 parks for 1 MB.
+  assert(parks >= Math.floor(SIZE / (2 * 65536)), `expected a park per piece, saw ${parks}`);
+  assert(cache._chunks.size <= 4, 'the cache stayed within its bound');
+});
+
 test('a provider whose fill rejects latches a read failure, not a park loop',
   async () => {
     let asked = 0;
