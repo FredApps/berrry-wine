@@ -16,7 +16,6 @@ const expectedLocalCandidates = new Map([
   ['jardinains', 'test/binaries/candidates/jardinains/installed/jardinains.exe'],
   ['nethack_win32', 'test/binaries/candidates/nethack-win32/installed/NetHackW.exe'],
   ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
-  ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
   ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],
   ['heroes3_demo', 'test/binaries/candidates/heroes-3-demo-installer/installed-extracted/Program_Files/h3demo.exe'],
   ['heroes3_demo_installer', 'test/binaries/candidates/heroes-3-demo-installer/installer-engine/_ins5576._mp'],
@@ -121,7 +120,7 @@ assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2data.mpq')),
   'Diablo II mounts its installer-produced data archive');
 assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2music.mpq')),
   'Diablo II mounts its installer-produced music archive');
-for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'fallout_demo',
+for (const id of ['diablo_demo', 'worms2_demo', 'fallout_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(debugIds.has(id), `${id} is reachable from the debug app selector`);
   assert(APPS[id], `${id} has an app manifest`);
@@ -134,6 +133,13 @@ assert(desktopIds.has('heroes2_demo'), 'Heroes II is a desktop app');
 assert(!debugIds.has('heroes2_demo'), 'Heroes II is not listed twice');
 assert(APPS.heroes2_demo, 'heroes2_demo has an app manifest');
 assert(desktopIds.has('starcraft_shareware'), 'StarCraft Demo is a desktop app');
+// id's demo licence allows redistribution, so Quake II left the localhost-only
+// list for the desktop (7532955f); it still launches the pinned local payload.
+assert(desktopIds.has('quake2_demo'), 'Quake II Demo is a desktop app');
+assert.strictEqual(APPS.quake2_demo.exe,
+  'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe',
+  'quake2_demo launches the pinned local payload');
+assert(desktopIds.has('diablo_shareware'), 'Diablo Shareware is a desktop app');
 assert(!debugIds.has('starcraft_shareware'), 'StarCraft Demo is not listed twice');
 
 const starcraft = APPS.starcraft_shareware;
@@ -175,7 +181,12 @@ assert.deepStrictEqual(diabloShareware.dlls, [
   'test/binaries/candidates/diablo-shareware/installed/diabloui.dll',
   'test/binaries/candidates/diablo-shareware/installed/smackw32.dll',
 ]);
-assert.deepStrictEqual(diabloShareware.files, [
+// spawn.mpq streams by HTTP range with a measured preload (d04aed13).
+const spawnMpq = diabloShareware.files.find(file => typeof file === 'object');
+assert.strictEqual(spawnMpq.vfsPath, 'c:\\spawn.mpq');
+assert.strictEqual(spawnMpq.httpRange, true, 'spawn.mpq streams by range');
+assert(spawnMpq.preloadRanges.ranges.length > 0, 'spawn.mpq preloads its in-dialog reads');
+assert.deepStrictEqual(diabloShareware.files.map(file => file.url || file), [
   'test/binaries/candidates/diablo-shareware/installed/spawn.mpq',
   'test/binaries/candidates/diablo-shareware/installed/diablo.ini',
   'test/binaries/candidates/diablo-shareware/installed/battle.snp',
