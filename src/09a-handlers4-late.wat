@@ -912,9 +912,21 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
     ;; The browser moves the complete top-level window while dragging, and the
     ;; classic wheel default is three lines. These are output getters, not
     ;; capability probes: success requires publishing the documented scalar.
+    ;; The screen-saver trio describes a machine with no saver selected:
+    ;; SPI_GETSCREENSAVEACTIVE FALSE, SPI_GETSCREENSAVERRUNNING FALSE, and the
+    ;; stock 900-second SPI_GETSCREENSAVETIMEOUT. Failing them left the caller's
+    ;; own presets in place, and PopCap games preset "active, 1 second": Zuma
+    ;; then stopped drawing one second after the last input, which is exactly
+    ;; "freezes right after CLICK HERE TO PLAY".
     (if (i32.or
-          (i32.eq (local.get $arg0) (i32.const 0x26)) ;; SPI_GETDRAGFULLWINDOWS
-          (i32.eq (local.get $arg0) (i32.const 0x68))) ;; SPI_GETWHEELSCROLLLINES
+          (i32.or
+            (i32.eq (local.get $arg0) (i32.const 0x26))  ;; SPI_GETDRAGFULLWINDOWS
+            (i32.eq (local.get $arg0) (i32.const 0x68))) ;; SPI_GETWHEELSCROLLLINES
+          (i32.or
+            (i32.or
+              (i32.eq (local.get $arg0) (i32.const 0x0e))  ;; SPI_GETSCREENSAVETIMEOUT
+              (i32.eq (local.get $arg0) (i32.const 0x10))) ;; SPI_GETSCREENSAVEACTIVE
+            (i32.eq (local.get $arg0) (i32.const 0x72))))  ;; SPI_GETSCREENSAVERRUNNING
       (then
         (if (i32.eqz (local.get $arg2)) (then (return (i32.const 0))))
         (local.set $buf
@@ -924,7 +936,11 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
         (i32.store (local.get $buf)
           (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x68))
             (then (i32.const 3))
-            (else (i32.const 1))))
+            (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x26))
+              (then (i32.const 1))
+              (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x0e))
+                (then (i32.const 900))
+                (else (i32.const 0))))))))
         (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; Win9x applications commonly pass uiParam=0 and declare the versioned
