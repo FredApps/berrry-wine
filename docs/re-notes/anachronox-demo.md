@@ -75,16 +75,19 @@ Ruled out, with how:
   thread T1 in 30k batches. Single memory dumps catch it at 1 because they land
   mid-pass -- do not read a dump of that counter as "stuck".
 
-Not yet established: whether sound reaches the scene at all. `--trace-api`
-from batch 428k shows **zero** DirectSound buffer calls (Lock, Unlock,
-GetCurrentPosition, Play) while the mixer is demonstrably running on T1, which
-suggests the API trace does not see that guest thread's calls -- check that
-before using it as evidence either way. The voice-line hypothesis
-(`anoxsnd.dll` polls `AIL_sample_status` / `AIL_sample_ms_position`; dialogue
-playback is `A3SV_Playback_*` in `planet.dll`) is therefore open, not
-confirmed. Next lead without the sound question: read how `ui.dll`'s dialogue
-code decides a line is finished (`UI_StartTalk`, `ui_skipscene`,
-`A3SV_Playback_Skip`).
+- **Silent audio.** Sound mixes: thread T1 makes ~314k
+  `IDirectSoundBuffer_GetCurrentPosition` and ~119k `Lock` calls per 60k
+  batches. An earlier "zero DirectSound calls in the scene" was a tracing hole,
+  not a finding: a guest thread's COM calls were logged as `<ord>` (and dropped
+  entirely under `--quiet-api`), so no `--trace-api=NAMES` filter matched them.
+  Fixed in the same commit as this note; a trace run before it says nothing
+  about guest threads.
+
+Next lead: read how `ui.dll`'s dialogue code decides a line is finished
+(`UI_StartTalk`, `ui_skipscene`, `A3SV_Playback_Skip`; scripted playback is
+`A3SV_Playback_*` in `planet.dll`). `anoxsnd.dll` polls `AIL_sample_status` /
+`AIL_sample_ms_position`, so a voice sample that plays but never reports done
+is still possible.
 
 ## Named addresses
 

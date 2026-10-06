@@ -15,7 +15,7 @@ const {
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
 const {
-  processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger,
+  processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger, workerApiShouldLog,
   createInheritedWasmGlobals, recordInheritedWasmGlobal,
 } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
@@ -4883,8 +4883,12 @@ async function main() {
       onCall: (name) => {
         if (apiCounts) apiCounts.set(name, (apiCounts.get(name) || 0) + 1);
       },
-      shouldLog: (name) => TRACE_API && !QUIET_API &&
-        (!TRACE_API_FILTER || TRACE_API_FILTER.has(name)),
+      resolveComName: (id) => {
+        const entry = apiTable[id];
+        return entry && entry.id === id ? entry.name : null;
+      },
+      shouldLog: (name) => workerApiShouldLog(
+        { traceApi: TRACE_API, quietApi: QUIET_API, filter: TRACE_API_FILTER }, name),
       formatValue: hex,
       emit: (line) => logs.push(line),
     });
