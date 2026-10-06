@@ -68,3 +68,24 @@ Registry entry used for the runs (not committed):
 ```
 
 Status 2026-10-06: parked (claude:d10ba697); TODOS NEW-GAME-CROC2-DEMO-20261006.
+
+## 2026-10-06 second look (still parked)
+
+- Renderer choice is `D3DDevice` / `DisplayDevice` under the same key: the
+  *names* of the chosen devices (saved by `0x413410`, loaded by `0x412dd0`,
+  installed by `0x414560(display, d3d, mode, ...)`). Seeding
+  `D3DDevice = "Direct3D HAL"` and `DisplayDevice = "Primary Display Driver"`
+  (our enumeration names) makes the startup pick a D3D record whose +0x10
+  "hardware" byte is 1, yet the game never calls `IDirect3D3_CreateDevice`
+  and keeps drawing with its software renderer (only surface Lock/Unlock/Flip
+  in a 100-batch API window). The fallback test that rejects our HAL was not
+  found.
+- With the defaults it reaches Demo Mode by ~20k batches at ~600 batches per
+  Flip (~8 presents per wall second): the software path is not prohibitively
+  slow.
+- At `--tick-ms-per-batch=10` the Demo Mode picture froze from ~120k batches
+  on (identical frames over 100k batches) while main kept running compute in
+  `0x48xxxx-0x49xxxx` with almost no API calls and T2 looping
+  InterlockedExchange + a critical section. Not followed up: the next step is
+  to find what main is waiting on there (the T2 handshake is the first
+  suspect).
