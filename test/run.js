@@ -485,6 +485,12 @@ const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame 
 // over child IPC, which is how two emulators share one room switch.
 const VLAN_IP = getArg('vlan-ip', null);
 const VLAN_WIRE = hasFlag('vlan-wire');
+// --pipe-std=WHICH:END:LPORT:RIP:RPORT,... -- set by a parent run.js that
+// started this process for a guest CreateProcess with redirected std handles
+// (src/09d7-pipes.wat): each entry becomes a pipe end, connected over the
+// vlan wire to the parent, installed as std handle WHICH before the entry
+// point runs. Not meant to be typed by hand.
+const PIPE_STD = getArg('pipe-std', null);
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
@@ -3732,6 +3738,77 @@ async function main() {
     return result;
   };
 
+  // CreateProcess with redirected std handles (src/09d7-pipes.wat): start
+  // the child as another run.js over the same app manifest and build, at its
+  // own room address, with its std handles wired back here over the vlan
+  // wire. This process becomes the hub of that wire. 0 = "cannot", and the
+  // guest falls back to its old CreateProcess path.
+  const pipeChildren = [];
+  h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
+    const cmd = cmdWa ? readStr(cmdWa) : '';
+    if (!cmd || !EXE_PATH) return 0;
+    const { ParentHub } = require('../lib/vlan-wire');
+    if (ctx.vlanWire && !(ctx.vlanWire instanceof ParentHub)) {
+      console.log(`[pipe] CreateProcess "${cmd}": this process is itself on a room wire; nested children are not supported`);
+      return 0;
+    }
+    const parsed = parseShellLaunchCommand(cmd, '', 'open');
+    const want = path.basename(parsed.file.trim().replace(/\\/g, '/')).toLowerCase();
+    const wantExe = /\.[a-z0-9]+$/.test(want) ? want : want + '.exe';
+    const dir = path.dirname(canonicalPath(EXE_PATH));
+    const hostExe = fs.readdirSync(dir).find(n => n.toLowerCase() === wantExe);
+    if (!hostExe) {
+      console.log(`[pipe] CreateProcess "${cmd}": no ${wantExe} beside ${EXE_PATH}`);
+      return 0;
+    }
+    const mem = new DataView(ctx.getMemory());
+    const parentIp = instance.exports.get_vlan_local_ip
+      ? (instance.exports.get_vlan_local_ip() >>> 0) : 0x0A000001;
+    const spec = [];
+    for (let i = 0; i < count; i++) {
+      const at = specWa + i * 16;
+      spec.push([mem.getInt32(at, true), mem.getInt32(at + 4, true),
+        mem.getInt32(at + 8, true), parentIp | 0, mem.getInt32(at + 12, true)].join(':'));
+    }
+    const ip = childIp >>> 0;
+    const ipText = [ip >>> 24, (ip >>> 16) & 255, (ip >>> 8) & 255, ip & 255].join('.');
+    const args = [
+      ...(APP_ID ? [`--app=${APP_ID}`] : []),
+      `--exe=${path.join(dir, hostExe)}`, `--args=${parsed.params.trim()}`,
+      '--no-build', `--wasm=${WASM_PATH}`, '--quiet-api', '--quiet-blocks',
+      '--vlan-wire', `--vlan-ip=${ipText}`, `--pipe-std=${spec.join(',')}`,
+      '--stuck-after=0', '--vlan-max-waits=1000000000', '--max-batches=1000000000',
+      `--max-seconds=${MAX_SECONDS || 600}`,
+      // The child's side of a wire question is half the answer.
+      // (never --verbose: its per-batch output, relayed here, is unbounded)
+      ...(TRACE_NET ? ['--trace-net'] : []),
+    ];
+    const { fork } = require('child_process');
+    const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const tag = `[child ${ipText} ${hostExe}]`;
+    for (const stream of [child.stdout, child.stderr]) {
+      let pending = '';
+      stream.on('data', chunk => {
+        pending += chunk;
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) console.log(`${tag} ${line}`);
+      });
+    }
+    if (!ctx.vlanWire) {
+      ctx.vlanWire = new ParentHub();
+      if (TRACE_NET) {
+        const { describeFrame } = require('../lib/vlan-wire');
+        ctx.vlanWire.onDeliver = bytes => console.log(`[net] .. arrived ${describeFrame(bytes)}`);
+      }
+    }
+    ctx.vlanWire.addChild(child, ip);
+    pipeChildren.push(child);
+    if (pipeChildren.length === 1) process.on('exit', () => { for (const c of pipeChildren) c.kill(); });
+    console.log(`[pipe] CreateProcess "${cmd}" -> ${hostExe} at ${ipText}, std ${spec.join(' ')}`);
+    return 0x4000 + pipeChildren.length * 4;
+  };
+
   // --- Override set_dlg_item_text to log ---
   h.set_dlg_item_text = (hwnd, ctrlId, textPtr) => {
     const text = readStr(textPtr);
@@ -4434,6 +4511,23 @@ async function main() {
     }
     instance.exports.set_vlan_local_ip(octets.reduce((a, o) => ((a << 8) | o) >>> 0, 0) | 0);
     if (TRACE_NET) console.log(`[net] room address ${VLAN_IP}`);
+  }
+  if (PIPE_STD && instance.exports.pipe_attach_std) {
+    const byPort = new Map();
+    for (const entry of PIPE_STD.split(',').filter(Boolean)) {
+      const [which, end, lport, rip, rport] = entry.split(':').map(v => parseInt(v, 10));
+      let h = byPort.get(lport);
+      if (h) instance.exports.pipe_set_std(which | 0, h | 0);
+      else {
+        h = instance.exports.pipe_attach_std(which | 0, end | 0, lport | 0, rip | 0, rport | 0) >>> 0;
+        if (!h) { console.error(`--pipe-std: could not open ${entry}`); process.exit(2); }
+        byPort.set(lport, h);
+      }
+      console.log(`[pipe] std ${which} = 0x${h.toString(16)} (${end ? 'write' : 'read'} end, port ${lport})`);
+    }
+    // The parent queues this child's frames until now: its std handles exist
+    // to receive them.
+    if (process.send) process.send({ t: 'child-ready' });
   }
   // A frame that reaches this process but that no guest ever peeks is
   // indistinguishable, in the send/peek trace alone, from one that was never

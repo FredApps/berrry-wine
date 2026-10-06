@@ -376,6 +376,15 @@
     (if (local.get $left_ga) (then (call $gs32 (local.get $left_ga) (i32.const 0))))
     (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 28)))
 
+  ;; True when $h is an open pipe handle flagged HANDLE_FLAG_INHERIT.
+  (func $pipe_inheritable (param $h i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $pipe_slot (local.get $h)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.ne (i32.and (load.field-elem VSock acc_queue (local.get $rec) (call $pipe_h_k (local.get $h)))
+                     (i32.const 2))
+            (i32.const 0)))
+
   ;; ---- phase 2: ends whose peer is in another instance -------------------
   ;;
   ;; A child process is a separate instance with its own memory, so the two
@@ -435,3 +444,121 @@
     (store.field VSock peer (local.get $yrec) (i32.const -2))
     (store.field VSock peer (local.get $xrec) (i32.const -1))
     (load.field VSock backlog (local.get $xrec)))
+
+  ;; Child side, before the entry point runs: open the inherited end and make
+  ;; it standard handle $which (-10 input, -11 output, -12 error). Returns
+  ;; the handle, 0 on failure.
+  (func (export "pipe_attach_std")
+        (param $which i32) (param $end i32) (param $lport i32) (param $rip i32) (param $rport i32)
+        (result i32)
+    (local $h i32)
+    (local.set $h (call $pipe_open_remote (local.get $end) (local.get $lport)
+      (local.get $rip) (local.get $rport)))
+    (if (local.get $h)
+      (then (drop (call $console_std_handle_set (local.get $which) (local.get $h)))))
+    (local.get $h))
+
+  ;; Child room addresses handed out by this process, 10.0.0.2 upward in
+  ;; the parent's /24. Per instance, which is per process for CreateProcess
+  ;; callers in practice (a redirecting parent spawns from one thread).
+  (global $pipe_spawned (mut i32) (i32.const 0))
+
+  ;; The first of STARTUPINFO's std handle slots 0..$i naming the same pipe
+  ;; record as slot $i (slot $i itself when none earlier does). WinBoard and
+  ;; most redirecting parents pass one write end as both hStdOutput and
+  ;; hStdError: that is one end, moved once, at one pair of ports, and the
+  ;; host gives the child one handle in both slots.
+  (func $pipe_std_owner (param $si i32) (param $i i32) (result i32)
+    (local $j i32) (local $sock i32) (local $hj i32)
+    (local.set $sock (call $pipe_h_sock (call $gl32 (i32.add (local.get $si)
+      (i32.add (i32.const 56) (i32.shl (local.get $i) (i32.const 2)))))))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $j) (local.get $i)))
+      (local.set $hj (call $gl32 (i32.add (local.get $si)
+        (i32.add (i32.const 56) (i32.shl (local.get $j) (i32.const 2))))))
+      (if (i32.and (i32.ne (call $pipe_inheritable (local.get $hj)) (i32.const 0))
+                   (i32.eq (call $pipe_h_sock (local.get $hj)) (local.get $sock)))
+        (then (return (local.get $j))))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  ;; CreateProcessA's redirected-std-handles half. $si is the guest
+  ;; STARTUPINFOA, $launch the guest command (application name or command
+  ;; line), $dir the guest current directory or 0, $pi the guest
+  ;; PROCESS_INFORMATION or 0. Returns 1 when a child was started (the
+  ;; caller then returns TRUE), 0 when this call is not one this path takes
+  ;; or the host cannot start a child (the caller falls back).
+  (func $pipe_create_process (param $si i32) (param $launch i32) (param $dir i32) (param $pi i32)
+                             (result i32)
+    (local $spec i32) (local $spec_wa i32) (local $i i32) (local $h i32) (local $count i32)
+    (local $child_ip i32) (local $pid i32) (local $e i32) (local $base_port i32) (local $own i32)
+    (if (i32.eqz (local.get $si)) (then (return (i32.const 0))))
+    ;; STARTUPINFOA.dwFlags (+44) & STARTF_USESTDHANDLES; hStdInput +56,
+    ;; hStdOutput +60, hStdError +64.
+    (if (i32.eqz (i32.and (call $gl32 (i32.add (local.get $si) (i32.const 44))) (i32.const 0x100)))
+      (then (return (i32.const 0))))
+    (local.set $spec (call $heap_alloc (i32.const 48)))
+    (if (i32.eqz (local.get $spec)) (then (return (i32.const 0))))
+    (local.set $spec_wa (call $g2w (local.get $spec)))
+    (local.set $child_ip (i32.or
+      (i32.and (global.get $vsock_local_ip) (i32.const 0xFFFFFF00))
+      (i32.add (i32.const 2) (i32.and (global.get $pipe_spawned) (i32.const 0x7F)))))
+    ;; Ports on both sides are chosen here, in a range the guests' own
+    ;; sockets do not hand out, so a child that also uses Winsock cannot
+    ;; collide with its own stdio.
+    (local.set $base_port (i32.add (i32.const 52000)
+      (i32.mul (i32.and (global.get $pipe_spawned) (i32.const 0x7F)) (i32.const 8))))
+    (block $done (loop $each
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
+      (local.set $h (call $gl32 (i32.add (local.get $si)
+        (i32.add (i32.const 56) (i32.shl (local.get $i) (i32.const 2))))))
+      (if (call $pipe_inheritable (local.get $h))
+        (then
+          (local.set $own (call $pipe_std_owner (local.get $si) (local.get $i)))
+          (local.set $e (i32.add (local.get $spec_wa) (i32.shl (local.get $count) (i32.const 4))))
+          (i32.store (local.get $e) (i32.sub (i32.const -10) (local.get $i)))
+          (i32.store offset=4 (local.get $e) (call $pipe_end (local.get $h)))
+          (i32.store offset=8 (local.get $e)
+            (i32.add (local.get $base_port) (i32.shl (local.get $own) (i32.const 1))))
+          (i32.store offset=12 (local.get $e)
+            (i32.add (local.get $base_port) (i32.add (i32.shl (local.get $own) (i32.const 1)) (i32.const 1))))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $each)))
+    (if (i32.eqz (local.get $count))
+      (then (call $heap_free (local.get $spec)) (return (i32.const 0))))
+    (local.set $pid (call $host_process_spawn
+      (call $g2w (local.get $launch))
+      (if (result i32) (local.get $dir) (then (call $g2w (local.get $dir))) (else (i32.const 0)))
+      (local.get $child_ip) (local.get $spec_wa) (local.get $count)))
+    (if (i32.eqz (local.get $pid))
+      (then (call $heap_free (local.get $spec)) (return (i32.const 0))))
+    (global.set $pipe_spawned (i32.add (global.get $pipe_spawned) (i32.const 1)))
+    ;; The child exists: hand it its ends. The spec entries are in handle
+    ;; order (input, output, error), the same walk as above.
+    (local.set $i (i32.const 0))
+    (block $moved (loop $move
+      (br_if $moved (i32.ge_u (local.get $i) (i32.const 3)))
+      (local.set $h (call $gl32 (i32.add (local.get $si)
+        (i32.add (i32.const 56) (i32.shl (local.get $i) (i32.const 2))))))
+      (if (i32.and (i32.ne (call $pipe_inheritable (local.get $h)) (i32.const 0))
+                   (i32.eq (call $pipe_std_owner (local.get $si) (local.get $i)) (local.get $i)))
+        (then (drop (call $pipe_move_to_child (local.get $h) (local.get $child_ip)
+          (i32.add (local.get $base_port) (i32.shl (local.get $i) (i32.const 1)))
+          (i32.add (local.get $base_port) (i32.add (i32.shl (local.get $i) (i32.const 1)) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $move)))
+    (call $heap_free (local.get $spec))
+    (if (local.get $pi)
+      (then
+        (call $gs32 (local.get $pi) (i32.const 0x000E3001))
+        (call $gs32 (i32.add (local.get $pi) (i32.const 4)) (i32.const 0x000E3002))
+        (call $gs32 (i32.add (local.get $pi) (i32.const 8)) (local.get $pid))
+        (call $gs32 (i32.add (local.get $pi) (i32.const 12)) (i32.add (local.get $pid) (i32.const 1)))))
+    (i32.const 1))
+
+  ;; Child side: a second std slot naming an end already attached (hStdError
+  ;; sharing hStdOutput's pipe). The same handle, as Windows would hand it.
+  (func (export "pipe_set_std") (param $which i32) (param $h i32) (result i32)
+    (call $console_std_handle_set (local.get $which) (local.get $h)))

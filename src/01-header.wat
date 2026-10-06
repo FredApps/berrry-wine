@@ -515,6 +515,14 @@
   ;; at the sleep's timeout.
   (import "host" "thread_apc_target" (func $host_thread_apc_target (param i32 i32) (result i32)))
   (import "host" "thread_alert" (func $host_thread_alert (param i32)))
+  ;; CreateProcess with redirected standard handles (09d7-pipes.wat): start
+  ;; the command line as a real child process at room address child_ip, whose
+  ;; std handles are the pipe ends described by count 16-byte entries at spec
+  ;; {which (-10/-11/-12), end, child_port, parent_port}. Returns the child's
+  ;; pid, or 0 when this host cannot start one -- CreateProcessA then takes
+  ;; its old shell_execute path, so a host that never implements this keeps
+  ;; behaving exactly as before.
+  (import "host" "process_spawn" (func $host_process_spawn (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
   (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
   (import "host" "get_thread_locale" (func $host_get_thread_locale (param i32) (result i32)))
