@@ -106,6 +106,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
 | Descent 3 (demo) | [descent3-demo.md](descent3-demo.md) |
 | Anno 1602 (demo) | [anno1602-demo.md](anno1602-demo.md) |
+| Driver (demo) | [driver-demo.md](driver-demo.md) |
 | Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
 | Aliens versus Predator (Alien demo) | [avp-alien-demo.md](avp-alien-demo.md) |

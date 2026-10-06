@@ -161,6 +161,15 @@ const GAMES = [
     exe: '1602.exe',
   },
   {
+    // Reflections' 1999 demo. Its InstallShield 5 setup (16-bit SETUP.EXE ->
+    // _ins5176._mp), run in the emulator, wrote this tree to
+    // C:\Program Files\GT Interactive\Driver Demo.
+    id: 'driver_demo',
+    root: 'Driver-Demo-Glide-D3D/installed',
+    exe: 'game.exe',
+    vfsRoot: 'c:\\program files\\gt interactive\\driver demo\\',
+  },
+  {
     // Codemasters' 1998 CD demo, run from its SETUP\ directory as the CD's
     // autorun does. SETUPDIR\, the cabs and the InstallShield stubs are the
     // installer; the game reads GAME\, DEMO\ and INI\ beside GAME.EXE.
