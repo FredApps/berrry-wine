@@ -10,6 +10,7 @@
     (local $hc_i i32) (local $hc_slot i32) (local $hc_fp i32)
     (local $prev_eip i32) (local $prev_esp i32)
     (local $saved_budget i32) (local $saved_start i32) (local $shared_cache_generation i32)
+    (local $saved_api_depth i32)
     ;; A global rather than a local because $branch_end spends it too — see the
     ;; comment on $block_budget in 01-header.wat. Saved and restored because
     ;; run() is re-entrant: a COM class-factory callback is driven by calling
@@ -18,6 +19,8 @@
     ;; loop whatever the nested one left behind, and it would halt early.
     (local.set $saved_budget (global.get $block_budget))
     (local.set $saved_start (global.get $run_budget_start))
+    (local.set $saved_api_depth (global.get $api_handler_depth))
+    (global.set $api_handler_depth (i32.const 0))
     (global.set $block_budget (local.get $max_blocks))
     (global.set $run_budget_start (local.get $max_blocks))
     ;; A Win16 task started by WinExec: its first slice turns the fresh thread
@@ -327,6 +330,7 @@
     (global.set $blocks_retired_base
       (i32.add (global.get $blocks_retired_base) (global.get $last_run_blocks)))
     (global.set $run_budget_start (local.get $saved_start))
+    (global.set $api_handler_depth (local.get $saved_api_depth))
     (global.set $block_budget (local.get $saved_budget)))
 
   ;; Blocks retired since the instance started, including the running call's

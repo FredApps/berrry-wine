@@ -3577,7 +3577,8 @@
   ;; letting $g2w absorb it into NULL_SENTINEL. 0=off (the shipping behaviour,
   ;; and the only one that costs nothing: the check lives in the miss path,
   ;; after every translation attempt has already failed), 1=log and continue,
-  ;; 2=log and trap. A real Windows program that dereferences NULL takes an
+  ;; 2=log and trap, 3=log and raise, 4=raise silently for the 4KB NULL guard
+  ;; page only (Win98's rule). A real Windows program that dereferences NULL takes an
   ;; access violation; the sentinel makes that read zero and write nowhere,
   ;; which keeps buggy guests alive at the cost of hiding where they went
   ;; wrong. Turn this on when a symptom appears far from its cause.

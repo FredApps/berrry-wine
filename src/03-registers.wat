@@ -250,6 +250,22 @@
     (local.get $start_wa))
 
   (func $g2w_miss (param $ga i32) (result i32)
+    ;; Mode 4: Win98's own rule. Only the 4KB guard page at 0 faults; the rest
+    ;; of low memory is the readable DOS/Win16 arena, so everything above it
+    ;; keeps the quiet sentinel. Dark Reign's debug allocator walks the EBP
+    ;; chain to record a call stack and stops only when reading the outermost
+    ;; frame (saved EBP 0, so [4]) faults into its __except; on the sentinel it
+    ;; read zeros and walked forever.
+    (if (i32.eq (global.get $fault_unmapped) (i32.const 4))
+      (then
+        (if (i32.and (i32.lt_u (local.get $ga) (i32.const 0x1000))
+                     (i32.and (i32.eqz (global.get $fault_raising))
+                              (i32.eqz (global.get $api_handler_depth))))
+          (then
+            (global.set $fault_address (local.get $ga))
+            (call $raise_exception (i32.const 0xC0000005))))
+        (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
+        (return (global.get $NULL_SENTINEL))))
     (if (global.get $fault_unmapped)
       (then
         (call $host_unmapped_trace (local.get $ga) (global.get $eip))

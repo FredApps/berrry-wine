@@ -90,7 +90,19 @@
     (global.set $api_log_on (i32.ne (local.get $on) (i32.const 0))))
   (func (export "get_api_calls") (result i32) (global.get $api_calls))
 
+  ;; Depth of Win32 handler execution. $g2w_miss uses it to tell a guest
+  ;; instruction's access from a handler translating a NULL pointer argument
+  ;; it was handed (GetPrivateProfileStringA(NULL, ...)): only the former may
+  ;; take --fault-null=page0's access violation. $run saves and clears it, so
+  ;; guest code run from inside a handler (a COM callback's nested run()) is
+  ;; guest code again.
+  (global $api_handler_depth (mut i32) (i32.const 0))
   (func $win32_dispatch (param $thunk_idx i32)
+    (global.set $api_handler_depth (i32.add (global.get $api_handler_depth) (i32.const 1)))
+    (call $win32_dispatch_inner (local.get $thunk_idx))
+    (global.set $api_handler_depth (i32.sub (global.get $api_handler_depth) (i32.const 1))))
+
+  (func $win32_dispatch_inner (param $thunk_idx i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32) (local $ending_dlg i32)
