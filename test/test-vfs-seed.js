@@ -110,7 +110,9 @@ check('a runtime-created Win16 temporary module is found by its stripped stem', 
   vfs.files.set('c:\\windows\\~glc0000.tmp', { data: ne, attrs: 0x80 });
   const found = residentWin16Module(vfs, '~GLC0000');
   assert.strictEqual(found.path, 'c:\\windows\\~glc0000.tmp');
-  assert.strictEqual(found.bytes, ne, 'staging reuses the resident guest-written bytes');
+  // A view trimmed to the NE image's extent, over the same memory -- no copy.
+  assert.strictEqual(found.bytes.buffer, ne.buffer, 'staging reuses the resident guest-written bytes');
+  assert.strictEqual(found.bytes.byteOffset, 0);
 });
 
 check('the WISE W32INST PE helper is distinguished from an arbitrary PE', () => {
@@ -165,7 +167,10 @@ check('neither host still spells the candidates itself', () => {
 check('the page loads the module before host.js needs it', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const seed = html.indexOf('lib/vfs-seed.js');
-  const host = html.indexOf('<script src="host.js');
+  // index.html loads its scripts from an ordered list now ("host.js" is one
+  // entry); an older page had a <script src="host.js"> tag.
+  const listed = html.indexOf('"host.js"');
+  const host = listed >= 0 ? listed : html.indexOf('<script src="host.js');
   assert.ok(seed > 0, 'index.html never loads lib/vfs-seed.js — VfsSeed is undefined at launch');
   assert.ok(seed < host, 'vfs-seed.js must be loaded before host.js');
 });
