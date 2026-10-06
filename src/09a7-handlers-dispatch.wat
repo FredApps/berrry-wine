@@ -894,6 +894,33 @@
           (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (i32.const 0))))))
     (local.get $o))
 
+  ;; FORMAT_MESSAGE_FROM_SYSTEM text for a Win32 error code: the template
+  ;; (WASM address) as the system's message table has it, CRLF and all, or 0
+  ;; when the code is not one we carry. The common file/handle/memory errors
+  ;; and the Windows Installer results msiexec reports as system messages (a
+  ;; 1619 used to reach the user as "Err"). Every literal lands in the 4 KB
+  ;; $WATX_STRING_POOL, which the full memory map cannot grow, so this is the
+  ;; short list rather than the whole table.
+  (func $system_message_text (param $id i32) (result i32)
+    (if (i32.eqz (local.get $id)) (then (return "The operation completed successfully.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1)) (then (return "Incorrect function.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 2)) (then (return "The system cannot find the file specified.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 3)) (then (return "The system cannot find the path specified.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 5)) (then (return "Access is denied.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 6)) (then (return "The handle is invalid.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 8)) (then (return "Not enough storage is available to process this command.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 87)) (then (return "The parameter is incorrect.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 112)) (then (return "There is not enough space on the disk.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 126)) (then (return "The specified module could not be found.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 127)) (then (return "The specified procedure could not be found.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 183)) (then (return "Cannot create a file when that file already exists.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1602)) (then (return "User cancelled installation.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1603)) (then (return "Fatal error during installation.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1618)) (then (return "Another installation is already in progress.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1619)) (then (return "This installation package could not be opened.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1639)) (then (return "Invalid command line argument.\r\n")))
+    (i32.const 0))
+
   ;; Find the message this call names and expand it, as ANSI, into $dst — $max
   ;; bytes, or a measuring pass that writes nothing when $dst is 0. Every
   ;; decision FormatMessage makes is here, so both spellings make it the same
@@ -931,6 +958,15 @@
             (return (call $format_message_expand
               (global.get $TEXT_SCRATCH) (local.get $dst) (local.get $max)
               (local.get $args_g)))))))
+    ;; FORMAT_MESSAGE_FROM_SYSTEM (also the fallback after a module miss when
+    ;; both are given, as in Windows): the system message table.
+    (if (i32.and (local.get $flags) (i32.const 0x1000))
+      (then
+        (local.set $len (call $system_message_text (local.get $msg_id)))
+        (if (local.get $len)
+          (then
+            (return (call $format_message_expand
+              (local.get $len) (local.get $dst) (local.get $max) (local.get $args_g)))))))
     ;; Nothing named a message we have: a generic one, written through the same
     ;; bounds-checked put as everything else so a measuring pass stays a
     ;; measuring pass.
