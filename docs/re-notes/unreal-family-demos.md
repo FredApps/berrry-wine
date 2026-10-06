@@ -723,6 +723,46 @@ evidence `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
   104,203 batches in 800 s); check `--trace-eip-from` with an explicit
   range before reusing it.
 
+The overwrite (same day, boat bx_e35gh894, main 8c360029; evidence appended
+to `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
+
+- The decoded code is NOT at fault. A boat-local `--input=B:dump-stream:0xGA`
+  probe (two throwaway exports over `$page_cached_stream`, never committed)
+  shows the threaded streams for the ILT thunk 0x10901131, the reader Tell
+  0x109063b0, and core Tell's entry and landing decoded exactly as the guest
+  bytes say (pop run + RET imm 0, push runs, rop loads/stores), and their
+  chunk addresses do not move in batches 211270-211282.
+- What changes is the vtable itself: `--watch=0x1092680c --watch-log`
+  (slot 10 of the reader vtable 0x109267e4 in deusex.exe .rdata) fires at
+  batch 211227, `0x10901131 -> 0xffff00ff` (a pixel value), 17 batches
+  before the crash. With the slot reading 0xffff00ff the inner call goes
+  into an API thunk-like target that pops 16 bytes and returns 0 -- the
+  ESP+0x10 / EAX 0 seen at Tell's landing. Same overwrite with `--no-uop`.
+- The watch names main at OpenGlDrv's P8->RGBA converter (opengldrv
+  0x10008fde..0x10009024: `mov al,[ecx+edi]; mov ecx,[pal+eax*4];
+  mov eax,[ebp-0x18]; mov [eax],ecx; add eax,4`), but that attribution is
+  probably wrong: the converter's destination `[ebp-0x18]` holds plain heap
+  addresses (0x7ce3d408 / e408 / f408 at the row heads of batches
+  211226-211228) that NO mapping covers (`--dump-virtual-maps`: the nearest
+  record is guest 0x7cdf0000..0x7ce31000; a boat-local `--input=B:g2w:`
+  probe gives `test_g2w_slow` = 0xf0 sentinel for them before AND after the
+  write), `--fault-null` reports none of its stores, and a value-filtered
+  watch on `[ebp-0x18]` never sees 0x1092680c. A watch is only checked on
+  the watching instance's own block boundaries.
+- Lead: guest thread 3 (spawned at 0x17a06908 -- inside the THUNK_BASE window
+  for this image base, guest 0x17a00000+ -- with ESP 0x7d0afff8) ends every
+  run in msvcrt with a garbage ESP that differs run to run (0xd9f40000,
+  0xa1fe0000, 0xa68a0000; printed signed). A thread whose ESP sweeps through
+  guest 0x108EE000..0x188EE000 writes deusex.exe's image through the direct
+  window with every push, and the cooperative interleaving would explain why
+  every probe moves the crash. Next: `--trace-thread`/`--trace-sched` on T3,
+  find what sets its ESP, and identify the callback behind thunk
+  0x17a06908.
+- Separately: the converter writing through an unmapped destination is
+  itself wrong on real hardware (it would fault), so either an allocation
+  path failed to record a mapping for 0x7ce3xxxx or the guest overruns its
+  buffer; check after the thread lead.
+
 ## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
 
 GlideDrv played the 3D intro on the CLI but "exited to the desktop" in the
