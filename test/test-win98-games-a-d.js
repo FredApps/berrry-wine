@@ -18,6 +18,7 @@ const expected = {
   broken_sword_demo: ['winsword.exe', 63],
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['darkstonedemo.exe', 13],
+  red_alert_95_demo: ['RA95.EXE', 8],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
@@ -79,4 +80,4 @@ assert.deepStrictEqual(APPS.atomic_bomberman_june_demo.touchControls.buttons,
 // The June demo's expiry is a calendar pin, not a patch to the binary.
 assert.strictEqual(APPS.atomic_bomberman_june_demo.wallClock, '1997-07-01T12:00:00Z');
 
-console.log('PASS  five Archive.org Windows 98 demos are reproducible local apps');
+console.log(`PASS  ${Object.keys(expected).length} Archive.org Windows 98 demos are reproducible local apps`);

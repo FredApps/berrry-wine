@@ -35,6 +35,13 @@ const GAMES = [
     root: 'DarkstoneDemo-D3D/installed',
     exe: 'darkstonedemo.exe',
   },
+  {
+    // The CD's INSTALL\ directory is the game itself: RA95.EXE runs from it
+    // unpacked, with MAIN.MIX/REDALERT.MIX beside it.
+    id: 'red_alert_95_demo',
+    root: 'CnC-Red Alert Demo-SW/INSTALL',
+    exe: 'RA95.EXE',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {

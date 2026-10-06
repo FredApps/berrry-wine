@@ -34679,5 +34679,14 @@
     "convention": "stdcall",
     "hash": 3776656871,
     "handler": "grDrawPolygonVertexList"
+  },
+  {
+    "id": 4098,
+    "name": "_IPX_Initialise",
+    "nargs": 0,
+    "stub": { "pop": 4, "ret": 0 },
+    "convention": "cdecl",
+    "hash": 3679586753,
+    "ret": "BOOL"
   }
 ]

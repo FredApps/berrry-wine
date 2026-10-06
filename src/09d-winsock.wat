@@ -281,6 +281,13 @@
     (if (local.get $len_ga)
       (then (i32.store (local.get $len_wa) (i32.const 16)))))
 
+  ;; THIPX32.DLL (Westwood's Win95 IPX layer, Red Alert) is a flat thunk to
+  ;; THIPX16 and the real-mode IPX driver, which this machine does not have.
+  ;; Its _IPX_Initialise is a constant-FALSE stub row in api_table.json: the
+  ;; answer Red Alert gets on a Win98 box without the IPX protocol, after
+  ;; which it disables IPX play. The other _IPX_* exports are only reached
+  ;; after a successful initialise and stay unimplemented.
+
   ;; ---- AF_IPX ---------------------------------------------------------
   ;;
   ;; An IPX datagram socket is a room UDP socket under another address

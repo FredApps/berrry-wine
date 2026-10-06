@@ -701,6 +701,11 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; _IPX_Initialise: pop 4, return 0
+  (func $handle__IPX_Initialise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
   ;; ============================================================
   ;; TEST-CALL EXPORTS — GENERATED, do not edit
   ;; Opted in with test_call:true in api_table.json.
@@ -3594,7 +3599,7 @@
       (then
         (call $dispatch_api_table_page_15 (i32.sub (local.get $api_id) (i32.const 3840)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 4098))
+    (if (i32.lt_u (local.get $api_id) (i32.const 4099))
       (then
         (call $dispatch_api_table_page_16 (i32.sub (local.get $api_id) (i32.const 4096)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -20114,16 +20119,20 @@
   )
 
   (func $dispatch_api_table_page_16 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 4096..4097
+    ;; api ids 4096..4098
     (block $fallback
+    (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $fallback (local.get $api_id))
     ) ;; 4096: grDrawPolygonVertexList
       (call $handle_grDrawPolygonVertexList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 4097: _grDrawPolygonVertexList@8
       (call $handle_grDrawPolygonVertexList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4098: _IPX_Initialise
+      (call $handle__IPX_Initialise (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 4096)))
