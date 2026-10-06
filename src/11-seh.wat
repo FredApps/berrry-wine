@@ -133,10 +133,21 @@
             (call $gl32 (global.get $fs_base)))
           ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord,
           ;; DispatcherContext) under a dispatcher node: the node takes the
-          ;; 12 bytes above the argument frame, and 0xCACA000E pops both.
-          (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+          ;; 20 bytes above the argument frame, and 0xCACA000E pops both.
+          ;; The node's +12/+16 keep this raise's resume point, and with the
+          ;; node's next (the head before the call) and the record and frame
+          ;; arguments they are this dispatch's whole state. A raise inside
+          ;; the handler -- MSVC runs a catch block, and its `throw;`, from
+          ;; inside the frame handler -- starts a nested dispatch that
+          ;; overwrites every $delphi_* global, so 0xCACA000E reloads them
+          ;; from here instead of trusting them.
+          (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
           (call $seh_push_dispatch_node
             (i32.load offset=16 (global.get $reg_base)) (global.get $delphi_seh_rec))
+          (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))
+            (global.get $delphi_resume_eip))
+          (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))
+            (global.get $delphi_resume_esp))
           (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
           (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $delphi_seh_thunk))
           (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)) (global.get $delphi_exception_record))

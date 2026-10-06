@@ -208,10 +208,25 @@
     ;; clean the handler's cdecl arguments and invoke the next registration.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000E))
       (then
+        ;; This dispatch's state, from its own frame: the handler's record and
+        ;; frame arguments, and the node's saved head and resume point. A
+        ;; nested raise inside the handler overwrote the globals; Unreal
+        ;; Tournament's `throw;` from an unguard catch block left the outer
+        ;; walk holding the rethrow's null-ThrowInfo record, so every outer
+        ;; frame declined it and the int went unhandled.
+        (global.set $delphi_exception_record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+        (global.set $delphi_seh_rec
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+        (global.set $delphi_seh_head_before
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+        (global.set $delphi_resume_eip
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+        (global.set $delphi_resume_esp
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         ;; Then the dispatcher node $dispatch_delphi_exception_handler linked.
         (call $seh_pop_dispatch_node (i32.load offset=16 (global.get $reg_base)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
         (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 1))
           (then
             (call $delphi_seh_continue_search)

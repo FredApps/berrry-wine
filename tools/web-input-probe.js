@@ -146,6 +146,15 @@ const VIEWPORT = (() => {
 // semicolons in it does not have to be escaped past the shell and the step
 // splitter both.
 const FINAL_EVAL_RAW = opt('eval', '');
+// --before-load=JS (or @PATH): run in every new document before any page script,
+// as profile-web-frames.js's flag does. The seam for changing what the page
+// itself reads at startup, e.g. an app's registry args:
+//   Object.defineProperty(window, 'wineApps', { configurable: true,
+//     set(v) { v.APPS.ut348_demo.args = 'DM-Morpheus -window'; this._wa = v; },
+//     get() { return this._wa; } })
+const BEFORE_LOAD_RAW = opt('before-load', '');
+const BEFORE_LOAD = BEFORE_LOAD_RAW.startsWith('@')
+  ? fs.readFileSync(BEFORE_LOAD_RAW.slice(1), 'utf8') : BEFORE_LOAD_RAW;
 const FINAL_EVAL = FINAL_EVAL_RAW.startsWith('@')
   ? require('fs').readFileSync(FINAL_EVAL_RAW.slice(1), 'utf8')
   : FINAL_EVAL_RAW;
@@ -385,6 +394,7 @@ async function main() {
         if (apis.length) window.__waTraceApiNames = new Set(apis);
       }, TRACE, TRACE_API);
     }
+    if (BEFORE_LOAD) await page.evaluateOnNewDocument(BEFORE_LOAD);
     if (NO_FULLSCREEN_API) {
       await page.evaluateOnNewDocument(() => {
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen',
