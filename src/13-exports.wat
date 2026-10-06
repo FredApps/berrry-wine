@@ -3450,6 +3450,23 @@
     ;; Windows does instead of treating it as VirtualAlloc'd memory.
     (call $mapped_view_register (local.get $guest) (local.get $size))
     (local.get $guest))
+  ;; A guest thread's stack. Win9x CreateThread reserves it with VirtualAlloc,
+  ;; so every thread stack lies ABOVE the main thread's, which the loader made
+  ;; first. Single-threaded Watcom programs depend on that: their __CHK keeps
+  ;; one stack floor (the main thread's) and judges every thread's ESP against
+  ;; it, so a callback on a timer thread whose stack came from the low guest
+  ;; heap, below $GUEST_STACK, reported "Stack Overflow!" and ExitProcess'd
+  ;; (Atlantis demo's MSS timer). 0 means no range was free; the caller falls
+  ;; back to guest_alloc.
+  (func (export "guest_stack_alloc") (param $requested i32) (result i32)
+    (local $size i32) (local $guest i32)
+    (local.set $size
+      (i32.and (i32.add (local.get $requested) (i32.const 0xFFF))
+        (i32.const 0xFFFFF000)))
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $guest (call $virtual_reserve_down (local.get $size)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
   ;; Paired with guest_map_alloc; heap_free cannot release a sparse mapping.
