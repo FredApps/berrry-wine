@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { bootRenderHarness } = require('./render-helper');
 const apis = require('../src/api_table.json');
-const names = ['PathAppendW', 'PathFileExistsW', 'SHCreateDirectoryExW', 'SHCreateDirectoryExA', 'PathAppendA'];
+const names = ['PathAppendW', 'PathFileExistsW', 'SHCreateDirectoryExW', 'SHCreateDirectoryExA', 'PathAppendA', 'PathFileExistsA'];
 const extraWat = names.map((name, index) => `
   (func (export "path_test_${index}") (param $a i32) (param $b i32) (param $c i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (call $w2g (region.addr $GUEST_STACK 524288)))
@@ -122,6 +122,12 @@ const extraWat = names.map((name, index) => `
   appendA('a'.repeat(258), 'b', '', 0);
   assert.equal(e.path_test_4(0, ansi('x'), 0), 0);
   assert.equal(e.path_stack_delta(), 12); count++;
+  for (const [path, expected] of [['C:\\existing.txt', 1], ['C:\\My Documents', 1], ['C:\\missing', 0], ['\\\\server', 0]]) {
+    assert.equal(e.path_test_5(ansi(path), 0, 0), expected, 'PathFileExistsA ' + path);
+    assert.equal(e.path_stack_delta(), 8); count++;
+  }
+  assert.equal(e.path_test_5(0, 0, 0), 0);
+  assert.equal(e.path_stack_delta(), 8); count++;
   vfs.readOnlyDrives.add('c');
   assert.equal(e.path_test_2(0, wide('C:\\readonly-new'), 0), 5);
   assert.equal(vfs.getFileAttributes('C:\\readonly-new') >>> 0, 0xffffffff); count++;

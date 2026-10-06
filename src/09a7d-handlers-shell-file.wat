@@ -3318,6 +3318,16 @@
     (call $shell_path_widen (i32.add (local.get $w) (i32.const 520)) (local.get $b_g) (local.get $b))
     (local.get $w))
 
+  ;; Widen one MAX_PATH byte string into a fresh heap buffer; 0 as above.
+  (func $shell_path_widen_one (param $a_g i32) (result i32)
+    (local $a i32) (local $w i32)
+    (local.set $a (call $shell_path_alen (local.get $a_g)))
+    (if (i32.lt_s (local.get $a) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $w (call $heap_alloc (i32.const 520)))
+    (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
+    (call $shell_path_widen (local.get $w) (local.get $a_g) (local.get $a))
+    (local.get $w))
+
   ;; Copy n bytes plus the terminator into code units.
   (func $shell_path_widen (param $dst i32) (param $src i32) (param $n i32)
     (local $i i32)
@@ -3362,7 +3372,9 @@
     (local.set $attrs (call $host_fs_get_file_attributes (call $g2w (local.get $copy)) (i32.const 1)))
     (call $heap_free (local.get $copy)) (local.get $attrs))
 
-  (func $handle_PathFileExistsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; PathFileExists core over a UTF-16 guest string; sets ERROR_FILE_NOT_FOUND
+  ;; when the answer is FALSE.
+  (func $shell_path_file_exists_w (param $arg0 i32) (result i32)
     (local $len i32) (local $found i32) (local $i i32) (local $slashes i32)
     (local.set $len (call $shell_path_wlen (local.get $arg0) (i32.const 260)))
     ;; UNC server/share roots are not file objects for this API.
@@ -3379,8 +3391,26 @@
     (if (i32.gt_s (local.get $len) (i32.const 0)) (then
       (local.set $found (i32.ne (call $shell_path_attrs_w (local.get $arg0) (local.get $len)) (i32.const -1)))))
     (if (i32.eqz (local.get $found)) (then (global.set $last_error (i32.const 2))))
+    (local.get $found))
+
+  (func $handle_PathFileExistsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $shell_path_file_exists_w (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+  ;; PathFileExistsA(pszPath): widen the byte string and ask the same core.
+  ;; NULL, unreadable or over-long input answers FALSE / ERROR_FILE_NOT_FOUND,
+  ;; as the wide spelling does for the same input.
+  (func $handle_PathFileExistsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $w i32) (local $found i32)
+    (local.set $w (call $shell_path_widen_one (local.get $arg0)))
+    (if (local.get $w)
+      (then
+        (local.set $found (call $shell_path_file_exists_w (local.get $w)))
+        (call $heap_free (local.get $w)))
+      (else (global.set $last_error (i32.const 2))))
     (i32.store offset=0 (global.get $reg_base) (local.get $found))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
 
   ;; Wide recursive directory creation uses actual VFS attributes and creation,
   ;; never a success-only stub. SECURITY_ATTRIBUTES descriptors are unsupported:

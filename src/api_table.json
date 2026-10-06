@@ -34734,5 +34734,19 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 4103,
+    "name": "PathFileExistsA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1127219107,
+    "args": [
+      {
+        "name": "pszPath",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
