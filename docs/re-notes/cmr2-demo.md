@@ -72,6 +72,15 @@ from 32k to 90k a flat fade. So the front end is not timing out on a fast
 guest clock; something sends it straight into attract mode. The next thing to
 read is the state machine that follows the `.rcf` writes.
 
+Ruled out as well: a stale key. Picking the language with a DirectInput-only
+press (`30000:di-keydown:13`, so no WM_KEYDOWN is queued) takes the same path.
+The 3D frames drawn between the front-end file opens and the stage load are
+the **loading screen** itself, not a menu: an untextured white trianglelist
+(`SetTexture(NULL)`), then ARGB4444 text strips tinted `0xd7ebda` ("loading |
+rally | ..." and "Stage Record") and sixteen 16x16 progress squares with
+alpha ramping 0x11..0xff, all `SRCALPHA/INVSRCALPHA`. It fades in from flat
+`0x9ab4a8`.
+
 So no front-end menu frame was ever presented. A uniform capture after a key is
 the fade or the inflate stretch, not a broken renderer: `--dx-surfaces` and
 `--trace-dx` show nothing drawn there. Untried: a mouse click and the joystick
