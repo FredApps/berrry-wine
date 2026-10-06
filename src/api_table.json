@@ -9288,7 +9288,10 @@
     "name": "IDirectSound_CreateSoundBuffer",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 383371466
+    "hash": 383371466,
+    "args": [{"name": "this", "type": "HANDLE"}, {"name": "desc", "type": "LPDSBUFFERDESC"},
+             {"name": "ppBuffer", "type": "LPVOIDPTR", "out": true}, {"name": "outer", "type": "HANDLE"}],
+    "ret": "HRESULT"
   },
   {
     "id": 1048,
@@ -34688,5 +34691,13 @@
     "convention": "cdecl",
     "hash": 3679586753,
     "ret": "BOOL"
+  },
+  {
+    "id": 4099,
+    "name": "LZInit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2732690397,
+    "ret": "INT"
   }
 ]

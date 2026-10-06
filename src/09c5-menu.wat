@@ -2235,7 +2235,7 @@
         (param $blob i32) (param $hdr i32) (param $id i32) (param $disabled i32)
         (result i32)
     (local $count i32) (local $i i32) (local $it i32) (local $flags i32)
-    (local $ret i32)
+    (local $ret i32) (local $child_off i32) (local $r i32)
     (local.set $ret (i32.const -1))
     (local.set $count (i32.load (local.get $hdr)))
     (block $done (loop $scan
@@ -2253,6 +2253,16 @@
             (select (i32.or (local.get $flags) (i32.const 2))
                     (i32.and (local.get $flags) (i32.const -3))
                     (local.get $disabled)))))
+      ;; By command id reaches cascaded popups too (Daytona USA Deluxe greys
+      ;; its Settings > Screen mode items one level below the dropdown).
+      (local.set $child_off (i32.load offset=24 (local.get $it)))
+      (if (local.get $child_off)
+        (then
+          (local.set $r (call $menu_group_set_disabled
+            (local.get $blob) (i32.add (local.get $blob) (local.get $child_off))
+            (local.get $id) (local.get $disabled)))
+          (if (i32.eq (local.get $ret) (i32.const -1))
+            (then (local.set $ret (local.get $r))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (return (local.get $ret))
@@ -4119,6 +4129,7 @@
         (param $hmenu i32) (param $id i32) (result i32)
     (local $hwnd i32) (local $bar i32) (local $bars i32)
     (local $i i32) (local $n i32) (local $sw i32)
+    (local $blob i32) (local $hdr i32) (local $flags i32)
     (local.set $sw (call $menu_query_dynamic_w (local.get $hmenu)))
     (if (local.get $sw)
       (then (return (call $dynamic_menu_query_state
@@ -4141,6 +4152,46 @@
           (br $items)))
         (local.set $bar (i32.add (local.get $bar) (i32.const 1)))
         (br $tops)))
+    ;; Not a dropdown item: by command id also searches cascaded popups.
+    (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const -1))))
+    (local.set $bar (i32.const 0))
+    (block $cdone
+      (loop $ctops
+        (br_if $cdone (i32.ge_s (local.get $bar) (local.get $bars)))
+        (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $bar)))
+        (if (local.get $hdr)
+          (then
+            (local.set $flags (call $menu_group_find_flags
+              (local.get $blob) (local.get $hdr) (local.get $id)))
+            (if (i32.ne (local.get $flags) (i32.const -1))
+              (then (return (call $menu_flags_to_mf (local.get $flags)))))))
+        (local.set $bar (i32.add (local.get $bar) (i32.const 1)))
+        (br $ctops)))
+    (i32.const -1))
+
+  ;; Blob flags of the item with command id $id in the popup at $hdr or any
+  ;; popup cascaded below it, or -1.
+  (func $menu_group_find_flags
+        (param $blob i32) (param $hdr i32) (param $id i32) (result i32)
+    (local $count i32) (local $i i32) (local $it i32) (local $child_off i32)
+    (local $r i32)
+    (local.set $count (i32.load (local.get $hdr)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $it (i32.add (local.get $hdr)
+        (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 28)))))
+      (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
+        (then (return (i32.load offset=16 (local.get $it)))))
+      (local.set $child_off (i32.load offset=24 (local.get $it)))
+      (if (local.get $child_off)
+        (then
+          (local.set $r (call $menu_group_find_flags
+            (local.get $blob) (i32.add (local.get $blob) (local.get $child_off))
+            (local.get $id)))
+          (if (i32.ne (local.get $r) (i32.const -1)) (then (return (local.get $r))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
     (i32.const -1))
 
   ;; Resolve a handle+item pair to (top index, child index). Returns -1 in the

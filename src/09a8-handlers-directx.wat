@@ -5629,7 +5629,9 @@
         (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (load.field DxObject misc2 (local.get $entry)))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
       (else
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0x887600FF))))
+        ;; No key set: DDERR_NOCOLORKEY. Daytona USA Deluxe tolerates exactly
+        ;; this code and treats any other failure as fatal.
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x887600D7))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; GetDC(this, lphDC) — return a synthetic HDC for GDI operations on the surface

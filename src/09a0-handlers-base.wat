@@ -3724,6 +3724,10 @@
       (local.get $creation)
       (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
       (i32.const 0)))         ;; ANSI path
+    ;; A read-only open goes through LZInit, so an SZDD file reads expanded.
+    (if (i32.and (i32.ne (local.get $handle) (i32.const -1))
+          (i32.eqz (i32.and (local.get $arg2) (i32.const 0x1003))))
+      (then (local.set $handle (call $lz_init (local.get $handle)))))
     (if (local.get $arg1)
       (then
         (local.set $of_wa (call $g2w (local.get $arg1)))
@@ -3735,8 +3739,193 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
+  ;; SZDD (COMPRESS.EXE) streams. LZInit expands a compressed file whole into
+  ;; a guest heap buffer and answers an LZ handle, 0x400 + slot as in LZ32, so
+  ;; LZRead/LZSeek/LZClose can tell it from a file handle. Slot records are
+  ;; 16 bytes in a lazily allocated guest table: source file handle, buffer,
+  ;; expanded size, read position. Daytona USA Deluxe ships 72 of its
+  ;; Resource\ files this way and reads them all through LZInit/LZRead.
+  (global $LZ_MAX_STATES i32 (i32.const 16))
+  (global $LZ_MIN_HANDLE i32 (i32.const 0x400))
+  (global $lz_states_g (mut i32) (i32.const 0))
+
+  ;; Guest address of the live slot record for LZ handle $h, or 0.
+  (func $lz_state (param $h i32) (result i32)
+    (local $slot i32) (local $rec i32)
+    (if (i32.eqz (global.get $lz_states_g)) (then (return (i32.const 0))))
+    (local.set $slot (i32.sub (local.get $h) (global.get $LZ_MIN_HANDLE)))
+    (if (i32.ge_u (local.get $slot) (global.get $LZ_MAX_STATES))
+      (then (return (i32.const 0))))
+    (local.set $rec (i32.add (global.get $lz_states_g)
+      (i32.shl (local.get $slot) (i32.const 4))))
+    (if (i32.eqz (call $gl32 (i32.add (local.get $rec) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.get $rec))
+
+  ;; Expand SZDD LZSS data: a 4 KB ring prefilled with spaces and written
+  ;; from 4096-16. Each control byte's bits, low first, select a literal (1)
+  ;; or a 2-byte back reference (0): 12-bit ring offset, 4-bit length - 3.
+  ;; Returns the number of bytes written to $out (at most $out_size).
+  (func $lz_expand_szdd
+        (param $src i32) (param $src_len i32) (param $out i32) (param $out_size i32)
+        (param $ring i32) (result i32)
+    (local $in i32) (local $n i32) (local $pos i32) (local $ctl i32)
+    (local $bit i32) (local $b i32) (local $b2 i32) (local $off i32)
+    (local $len i32) (local $k i32)
+    (block $fill_done (loop $fill
+      (br_if $fill_done (i32.ge_u (local.get $k) (i32.const 4096)))
+      (call $gs8 (i32.add (local.get $ring) (local.get $k)) (i32.const 0x20))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $fill)))
+    (local.set $pos (i32.const 4080))
+    (block $done (loop $blocks
+      (br_if $done (i32.ge_u (local.get $in) (local.get $src_len)))
+      (br_if $done (i32.ge_u (local.get $n) (local.get $out_size)))
+      (local.set $ctl (call $gl8 (i32.add (local.get $src) (local.get $in))))
+      (local.set $in (i32.add (local.get $in) (i32.const 1)))
+      (local.set $bit (i32.const 0))
+      (block $bits_done (loop $bits
+        (br_if $bits_done (i32.ge_u (local.get $bit) (i32.const 8)))
+        (br_if $done (i32.ge_u (local.get $in) (local.get $src_len)))
+        (br_if $done (i32.ge_u (local.get $n) (local.get $out_size)))
+        (if (i32.and (local.get $ctl) (i32.shl (i32.const 1) (local.get $bit)))
+          (then
+            (local.set $b (call $gl8 (i32.add (local.get $src) (local.get $in))))
+            (local.set $in (i32.add (local.get $in) (i32.const 1)))
+            (call $gs8 (i32.add (local.get $out) (local.get $n)) (local.get $b))
+            (local.set $n (i32.add (local.get $n) (i32.const 1)))
+            (call $gs8 (i32.add (local.get $ring) (local.get $pos)) (local.get $b))
+            (local.set $pos (i32.and (i32.add (local.get $pos) (i32.const 1)) (i32.const 0xFFF))))
+          (else
+            (br_if $done (i32.ge_u (i32.add (local.get $in) (i32.const 1)) (local.get $src_len)))
+            (local.set $b (call $gl8 (i32.add (local.get $src) (local.get $in))))
+            (local.set $b2 (call $gl8 (i32.add (local.get $src) (i32.add (local.get $in) (i32.const 1)))))
+            (local.set $in (i32.add (local.get $in) (i32.const 2)))
+            (local.set $off (i32.or (local.get $b)
+              (i32.shl (i32.and (local.get $b2) (i32.const 0xF0)) (i32.const 4))))
+            (local.set $len (i32.add (i32.and (local.get $b2) (i32.const 0x0F)) (i32.const 3)))
+            (local.set $k (i32.const 0))
+            (block $copy_done (loop $copy
+              (br_if $copy_done (i32.ge_u (local.get $k) (local.get $len)))
+              (br_if $done (i32.ge_u (local.get $n) (local.get $out_size)))
+              (local.set $b (call $gl8 (i32.add (local.get $ring)
+                (i32.and (i32.add (local.get $off) (local.get $k)) (i32.const 0xFFF)))))
+              (call $gs8 (i32.add (local.get $out) (local.get $n)) (local.get $b))
+              (local.set $n (i32.add (local.get $n) (i32.const 1)))
+              (call $gs8 (i32.add (local.get $ring) (local.get $pos)) (local.get $b))
+              (local.set $pos (i32.and (i32.add (local.get $pos) (i32.const 1)) (i32.const 0xFFF)))
+              (local.set $k (i32.add (local.get $k) (i32.const 1)))
+              (br $copy)))))
+        (local.set $bit (i32.add (local.get $bit) (i32.const 1)))
+        (br $bits)))
+      (br $blocks)))
+    (local.get $n))
+
+  ;; LZInit's body: $hf itself for an ordinary file (rewound), an LZ handle
+  ;; for an SZDD file, or a negative LZERROR_* code.
+  (func $lz_init (param $hf i32) (result i32)
+    (local $hdr i32) (local $nread i32) (local $file_size i32) (local $comp i32)
+    (local $comp_len i32) (local $out_size i32) (local $out i32) (local $ring i32)
+    (local $slot i32) (local $rec i32) (local $got i32)
+    (if (i32.eq (local.get $hf) (i32.const -1)) (then (return (i32.const -1)))) ;; LZERROR_BADINHANDLE
+    (local.set $hdr (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $hdr)) (then (return (i32.const -5))))            ;; LZERROR_GLOBALLOC
+    (local.set $nread (i32.add (local.get $hdr) (i32.const 16)))
+    (drop (call $host_fs_set_file_pointer (local.get $hf) (i32.const 0) (i32.const 0)))
+    (call $gs32 (local.get $nread) (i32.const 0))
+    (drop (call $host_fs_read_file (local.get $hf) (local.get $hdr) (i32.const 14) (local.get $nread)))
+    (if (i32.or
+          (i32.ne (call $gl32 (local.get $nread)) (i32.const 14))
+          (i32.or
+            (i32.ne (call $gl32 (local.get $hdr)) (i32.const 0x44445A53))   ;; "SZDD"
+            (i32.ne (call $gl32 (i32.add (local.get $hdr) (i32.const 4))) (i32.const 0x3327F088))))
+      (then
+        (call $heap_free (local.get $hdr))
+        (drop (call $host_fs_set_file_pointer (local.get $hf) (i32.const 0) (i32.const 0)))
+        (return (local.get $hf))))
+    (local.set $out_size (call $gl32 (i32.add (local.get $hdr) (i32.const 10))))
+    (call $heap_free (local.get $hdr))
+    ;; Find a free slot before allocating the buffers.
+    (if (i32.eqz (global.get $lz_states_g))
+      (then
+        (global.set $lz_states_g (call $heap_alloc
+          (i32.shl (global.get $LZ_MAX_STATES) (i32.const 4))))
+        (if (i32.eqz (global.get $lz_states_g)) (then (return (i32.const -5))))
+        (call $zero_memory (call $g2w (global.get $lz_states_g))
+          (i32.shl (global.get $LZ_MAX_STATES) (i32.const 4)))))
+    (local.set $slot (i32.const 0))
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $slot) (global.get $LZ_MAX_STATES))
+        (then (return (i32.const -5))))
+      (local.set $rec (i32.add (global.get $lz_states_g)
+        (i32.shl (local.get $slot) (i32.const 4))))
+      (br_if $found (i32.eqz (call $gl32 (i32.add (local.get $rec) (i32.const 4)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.set $file_size
+      (call $host_fs_set_file_pointer (local.get $hf) (i32.const 0) (i32.const 2)))
+    (local.set $comp_len (i32.sub (local.get $file_size) (i32.const 14)))
+    (if (i32.lt_s (local.get $comp_len) (i32.const 0)) (then (return (i32.const -3)))) ;; LZERROR_READ
+    (local.set $comp (call $heap_alloc (i32.add (local.get $comp_len) (i32.const 4))))
+    (local.set $ring (call $heap_alloc (i32.const 4096)))
+    (local.set $out (call $heap_alloc (select (local.get $out_size) (i32.const 1)
+      (i32.ne (local.get $out_size) (i32.const 0)))))
+    (if (i32.or (i32.eqz (local.get $comp))
+          (i32.or (i32.eqz (local.get $ring)) (i32.eqz (local.get $out))))
+      (then
+        (if (local.get $comp) (then (call $heap_free (local.get $comp))))
+        (if (local.get $ring) (then (call $heap_free (local.get $ring))))
+        (if (local.get $out) (then (call $heap_free (local.get $out))))
+        (return (i32.const -5))))
+    (drop (call $host_fs_set_file_pointer (local.get $hf) (i32.const 14) (i32.const 0)))
+    (call $gs32 (i32.add (local.get $comp) (local.get $comp_len)) (i32.const 0))
+    (if (i32.eqz (call $host_fs_read_file (local.get $hf) (local.get $comp)
+          (local.get $comp_len) (i32.add (local.get $comp) (local.get $comp_len))))
+      (then
+        (call $heap_free (local.get $comp))
+        (call $heap_free (local.get $ring))
+        (call $heap_free (local.get $out))
+        (return (i32.const -3))))
+    (local.set $got (call $gl32 (i32.add (local.get $comp) (local.get $comp_len))))
+    (drop (call $lz_expand_szdd (local.get $comp) (local.get $got)
+      (local.get $out) (local.get $out_size) (local.get $ring)))
+    (call $heap_free (local.get $comp))
+    (call $heap_free (local.get $ring))
+    (call $gs32 (local.get $rec) (local.get $hf))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (local.get $out))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (local.get $out_size))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (i32.const 0))
+    (i32.add (global.get $LZ_MIN_HANDLE) (local.get $slot)))
+
+  ;; LZInit(hfSource)
+  (func $handle_LZInit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $lz_init (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
   (func $handle_LZRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $bytes_ga i32) (local $bytes_wa i32)
+    (local $rec i32) (local $pos i32) (local $n i32) (local $buf i32) (local $i i32)
+    (local.set $rec (call $lz_state (local.get $arg0)))
+    (if (local.get $rec)
+      (then
+        (local.set $buf (call $gl32 (i32.add (local.get $rec) (i32.const 4))))
+        (local.set $pos (call $gl32 (i32.add (local.get $rec) (i32.const 12))))
+        (local.set $n (i32.sub (call $gl32 (i32.add (local.get $rec) (i32.const 8))) (local.get $pos)))
+        (if (i32.lt_s (local.get $arg2) (i32.const 0))
+          (then (local.set $n (i32.const -7)))                                ;; LZERROR_BADVALUE
+          (else
+            (if (i32.lt_u (local.get $arg2) (local.get $n)) (then (local.set $n (local.get $arg2))))
+            (block $done (loop $copy
+              (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+              (call $gs8 (i32.add (local.get $arg1) (local.get $i))
+                (call $gl8 (i32.add (local.get $buf) (i32.add (local.get $pos) (local.get $i)))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $copy)))
+            (call $gs32 (i32.add (local.get $rec) (i32.const 12))
+              (i32.add (local.get $pos) (local.get $n)))))
+        (i32.store offset=0 (global.get $reg_base) (local.get $n))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
     (i32.store (local.get $bytes_wa) (i32.const 0))
@@ -3748,6 +3937,25 @@
   )
 
   (func $handle_LZSeek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rec i32) (local $base i32) (local $new i32)
+    (local.set $rec (call $lz_state (local.get $arg0)))
+    (if (local.get $rec)
+      (then
+        (local.set $base
+          (if (result i32) (i32.eq (local.get $arg2) (i32.const 1))
+            (then (call $gl32 (i32.add (local.get $rec) (i32.const 12))))
+            (else (if (result i32) (i32.eq (local.get $arg2) (i32.const 2))
+              (then (call $gl32 (i32.add (local.get $rec) (i32.const 8))))
+              (else (i32.const 0))))))
+        (local.set $new (i32.add (local.get $base) (local.get $arg1)))
+        (if (i32.or (i32.gt_u (local.get $arg2) (i32.const 2))
+              (i32.or (i32.lt_s (local.get $new) (i32.const 0))
+                (i32.gt_s (local.get $new) (call $gl32 (i32.add (local.get $rec) (i32.const 8))))))
+          (then (local.set $new (i32.const -7)))                              ;; LZERROR_BADVALUE
+          (else (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (local.get $new))))
+        (i32.store offset=0 (global.get $reg_base) (local.get $new))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (i32.store offset=0 (global.get $reg_base) (call $legacy_file_seek
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (i32.const -7)))       ;; LZERROR_BADVALUE
@@ -3794,6 +4002,17 @@
   )
 
   (func $handle_LZClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rec i32)
+    (local.set $rec (call $lz_state (local.get $arg0)))
+    (if (local.get $rec)
+      (then
+        (drop (call $host_fs_close_handle (call $gl32 (local.get $rec))))
+        (call $heap_free (call $gl32 (i32.add (local.get $rec) (i32.const 4))))
+        (call $gs32 (local.get $rec) (i32.const 0))
+        (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (drop (call $host_fs_close_handle (local.get $arg0)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
