@@ -67,7 +67,10 @@ function check(name, pass, detail) {
 
 const install = run([
   `--exe=${INSTALLER}`, '--args=/S',
-  '--max-batches=8000', '--batch-size=5000', '--quiet-api',
+  // The silent installer exits by itself (batch ~9156 at 2026-10-06). A batch is
+  // a budget of blocks, not of work: b545745e shortened blocks and pushed the
+  // finish past the old 8000, which cut the install to 26 files. Leave headroom.
+  '--max-batches=40000', '--batch-size=5000', '--quiet-api',
   '--overlay-flush-ms=1',
   `--overlay-dir=${overlayDir}`, `--save-vfs=${exportOne}`,
 ], 'installer run');
