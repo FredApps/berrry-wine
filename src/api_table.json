@@ -33473,8 +33473,7 @@
     "name": "IDirectMusic_Activate",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 575003748,
-    "handler": "ftm_unimplemented"
+    "hash": 575003748
   },
   {
     "id": 3954,
@@ -33489,8 +33488,7 @@
     "name": "IDirectMusic_SetDirectSound",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1597275093,
-    "handler": "ftm_unimplemented"
+    "hash": 1597275093
   },
   {
     "id": 3956,

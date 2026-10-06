@@ -2397,6 +2397,28 @@
     (i32.store offset=16 (global.get $reg_base)
       (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; SetDirectSound(pDirectSound, hWnd): which DirectSound object the ports'
+  ;; output goes to. DirectMusic only records it here -- it matters when a
+  ;; port is created and activated, and none can be (EnumPort above) -- so
+  ;; accepting it is the whole of the call, a NULL included (it means "make
+  ;; your own"). Croc 2's ads.dll sets it right after creating the object.
+  (func $handle_IDirectMusic_SetDirectSound
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; Activate(fEnable): turns every port of this DirectMusic object on or
+  ;; off. There are no ports, so there is nothing to switch and both
+  ;; directions succeed; Croc 2's ads.dll deactivates in its teardown.
+  (func $handle_IDirectMusic_Activate
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
   (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
     (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
