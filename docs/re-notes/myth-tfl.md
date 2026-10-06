@@ -176,6 +176,32 @@ Evidence: scratch/runs/20261006T003007Z-myth-3dfx-inlevel-final (CLI,
 scratch/runs/20261005-myth-tfl-retail-iso-gameplay/05-gameplay.png. Software
 stays selectable in Myth's own Preferences.
 
+**Choosing the renderer (user-facing).** A fresh install starts on **3Dfx**.
+To switch, open **Preferences** from the main menu, pick **Graphics → Rendering
+→ Software** (or 3Dfx to switch back), and press **OK**. The next game uses it.
+Give the menu a few seconds after OK before clicking: Myth reinitialises its
+renderer there, and an immediate New Game click is ignored. The choice is stored
+in Myth's own preference file `C:\TAGS\LOCAL\PREF\GAME`. Whether it survives a
+page reload depends on the browser keeping the emulated C: drive; that was not
+tested, because every probe starts a fresh profile.
+
+**Browser verification (2026-10-06, headless Chrome, SwiftShader WebGL):**
+- Default 3Dfx, Threads on: `scratch/runs/20261006T010423Z-myth-3dfx-web-threads-fixed`.
+- Default 3Dfx, Threads off: `scratch/runs/20261006T011714Z-myth-3dfx-web-threads-off`.
+- Preferences shows 3Dfx selected; Software selected + OK, then in-level
+  software rendering (Threads on): `scratch/runs/20261006T010821Z-myth-3dfx-web-switch-software`.
+- `test/test-myth-byo-iso-web.js` PASS on the 3Dfx default (in-level is the
+  filtered 3Dfx frame; camera turn and audio pass):
+  `scratch/runs/20261006T011945Z-myth-3dfx-byo-iso-web`.
+
+**Threads crash (fixed b7acece2).** With Threads on, Glide goes through
+`lib/glide-render-worker.js`, which accepted only a 20-byte open packet. 8cd80d5a's
+24-byte `grSstWinOpen` packet (word 5 = nColBuffers) made it throw
+`Invalid Glide open packet`, trapping the guest at EIP `0x4602f6` (Myth's
+`grSstWinOpen`). Safari reports the page-side frame instead
+(`lib/render-worker.js:54 _receive`, which rejects with the worker's error).
+Regression: `test/test-glide-webgl-fallback.js`.
+
 ## Bring-your-own ISO in the page (2026-10-06)
 
 Evidence: `scratch/runs/20261006-myth-tfl-byo-iso-run6/` (reviewed). Regression:
