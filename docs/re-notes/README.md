@@ -109,6 +109,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Drakan: Order of the Flame (demo) | [drakan-demo.md](drakan-demo.md) |
 | Braveheart (demo) | [braveheart-demo.md](braveheart-demo.md) |
 | Anachronox (demo) | [anachronox-demo.md](anachronox-demo.md) |
+| Die Hard: Nakatomi Plaza (demo, in progress) | [diehard-nakatomi-demo.md](diehard-nakatomi-demo.md) |
 | Driver (demo) | [driver-demo.md](driver-demo.md) |
 | Colin McRae Rally 2.0 (demo) | [cmr2-demo.md](cmr2-demo.md) |
 | Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
