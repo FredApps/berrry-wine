@@ -33,6 +33,19 @@ was waiting for input), which is the normal state of a GUI app at rest.
 
 ## Fixed
 
+- **nfs3_glide_demo / diablo2_glide_demo** (cfdf0368, claude:202b4b39):
+  the `$glide_record` → `$glide_fail` trap on a closed context. **Neither
+  game draws before `grSstWinOpen`.** `--trace-api` shows both calling it
+  (NFS III from its loader thread T1, Diablo II at API #15476) and getting 0:
+  under the default `--glide-renderer=webgl`, `test/run.js` gave the Glide
+  bridge no canvas (`ctx.createCanvas` stays null unless `--headless-gl`, for
+  GL/D3D9's sake), so `lib/glide-host.js` never reached its WebGL→software
+  fallback. The games ignore the failed open, and their next `grBufferClear` /
+  `guGammaCorrectionRGB` trapped. The fix is `ctx.glideCreateCanvas`, Glide's
+  own drawable factory. NFS III Glide now reaches the race and Diablo II its
+  main menu headless (`scratch/runs/20261006T040500Z-glide-winopen-cli*`).
+  The closed-context trap stays: a draw after a *failed* open is still
+  an emulator gap worth failing on. Pinned by `test/test-glide-webgl-fallback.js`.
 - **dungeons_of_dredmor** (Steam beta): `PathAppendA` (api 4102), then
   `PathFileExistsA` (api 4103), both over the existing W cores. Reaches its
   launcher: `scratch/runs/20261006T0305Z-dredmor-beta-path-apis` (reviewed).
@@ -51,19 +64,6 @@ was waiting for input), which is the normal state of a GUI app at rest.
 
 ## Open, with what is known
 
-- **nfs3_glide_demo / diablo2_glide_demo** (now GLIDE-DRAW-BEFORE-OPEN-20261006, claude:202b4b39) — the same trap: `$glide_record`
-  → `$glide_fail` because the Glide context is not open (state +12 is 0) when
-  `grBufferClear` (NFS III) / `guGammaCorrectionRGB` (Diablo II) record a
-  command. NFS III's thrash driver `voodooa.dll` resolves `_grSstWinOpen@28`
-  by `GetProcAddress` but never calls it before `grSstQueryHardware`,
-  `grSstSelect(0)`, `grRenderBuffer` and `grLfbLock` (return 0x00b325aa /
-  0x00b32f6b in voodooa). **Not a regression from the Myth Glide work**: the
-  pre-8cd80d5a tree plus the CLI loader fix 09e9b09f traps identically; before
-  09e9b09f the CLI never got this far. Root cause: nfs3demo.exe's renderer
-  switch (0x4b3f60, jump table 0x4b3f34) sends cases 3/4 to 0x4b4058, which
-  calls THRASH_setstate/clearwindow without THRASH_setvideomode, so the clear
-  legitimately precedes any grSstWinOpen (harmless on a real Voodoo 1 after
-  grSstSelect). Handed to the Glide owner (board 2026-10-06T03:42).
 - **winboard** — `CreatePipe`: no pipe object exists in the emulator; WinBoard
   wants anonymous pipes to a chess-engine child. Needs a real pipe handle type
   with ReadFile/WriteFile/PeekNamedPipe, not a stub.
