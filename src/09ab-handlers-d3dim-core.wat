@@ -92,12 +92,28 @@
       (global.set $d3dim_present_pending (i32.const 0))
       (call $dx_present (local.get $front)))))
 
+  ;; The WebGL executor's queued Flip (lib/d3dim-gpu.js _flip) owes one
+  ;; present: its back buffer's readback is still in flight into the DIB that
+  ;; is now the front's. Collect just that -- a fence ranged to the front DIB,
+  ;; which never reads back the frame being drawn now -- and present it.
+  (func $d3dim_gpu_present_owed
+    (local $front i32)
+    (local.set $front (global.get $d3dim_present_pending))
+    (if (i32.eqz (local.get $front)) (then (return)))
+    (global.set $d3dim_present_pending (i32.const 0))
+    (drop (call $host_gpu_gl_call (i32.const 0x20001)
+      (load.field DxObject misc1 (local.get $front))
+      (i32.mul (load.field DxObject pitch (local.get $front))
+               (load.field DxObject height (local.get $front)))))
+    (call $dx_present (local.get $front)))
+
   ;; CPU access to one surface: WebGL executes draws synchronously, so only
   ;; overlapping GPU-owned backing bytes need readback. Result 2 keeps pending
   ;; set for other dirty targets; result 1 says all targets are synchronized.
   ;; The software render Worker and deferred presentation retain global ordering.
   (func $d3dim_surface_fence (param $entry i32)
     (local $dib i32) (local $length i32) (local $synchronized i32)
+    (if (global.get $d3dim_gpu_on) (then (call $d3dim_gpu_present_owed)))
     (if (local.get $entry) (then
       (local.set $synchronized (call $d3dim_lazy_fence (load.field DxObject misc1 (local.get $entry))
         (i32.mul (load.field DxObject pitch (local.get $entry))
@@ -128,7 +144,13 @@
   (func $d3dim_worker_try_flip (param $front i32) (param $back i32) (result i32)
     (local $desc i32)
     (if (i32.eqz (global.get $d3dim_worker_pending)) (then (return (i32.const 0))))
-    (if (global.get $d3dim_present_pending) (then (return (i32.const 0))))
+    ;; The render Worker keeps one frame in flight: a second Flip fences
+    ;; first. The WebGL executor collects only the owed frame and goes on, so
+    ;; its next readback is queued too instead of paid synchronously.
+    (if (global.get $d3dim_present_pending) (then
+      (if (global.get $d3dim_gpu_on)
+        (then (call $d3dim_gpu_present_owed))
+        (else (return (i32.const 0))))))
     (local.set $desc (global.get $d3dim_flip_desc))
     (if (i32.eqz (local.get $desc)) (then
       (local.set $desc (call $g2w (call $heap_alloc (i32.const 8))))

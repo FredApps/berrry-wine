@@ -3345,6 +3345,10 @@ class WineAssembly {
       this.d3dimGpu = new gpu.D3DIMGpu({
         getExports: () => self.instance.exports,
         getMemory: () => self.memory.buffer,
+        // This executor runs on the guest main thread's own instance, so a
+        // Flip may queue its readback and swap the chain here (d3dim-gpu.js
+        // _flip); the shared render Worker keeps the synchronous Flip.
+        asyncFlip: true,
         createCanvas: (width, height) => {
           const canvas = document.createElement('canvas');
           canvas.width = width; canvas.height = height;
