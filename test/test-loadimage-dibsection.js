@@ -114,5 +114,24 @@ function writeCString(wat, ptr, text) {
     assert.strictEqual(wat.test_call_LoadImageA(0, missingGa, 0, 0, 0, 0x10) >>> 0, 0);
   });
 
+  // DDLoadBitmap's two-step load (the DirectX SDK helper, Dark Colony's
+  // cursor frames): ask for a bitmap RESOURCE named like the file first, and
+  // fall back to LR_LOADFROMFILE only when that returns NULL. A missing
+  // resource used to come back as a blank 32x32 stand-in, which the helper
+  // took for success -- every cursor frame was empty and the pointer invisible.
+  const ddName = wat.guest_alloc(64) >>> 0;
+  writeCString(wat, ddName, 'land01.bmp');
+  check('a missing bitmap resource returns NULL with ERROR_RESOURCE_NAME_NOT_FOUND', () => {
+    wat.test_call_SetLastError(0);
+    assert.strictEqual(wat.test_call_LoadImageA(0x400000, ddName, 0, 0, 0, 0x2000) >>> 0, 0,
+      'a named bitmap resource the module does not have must not yield a stand-in');
+    assert.strictEqual(wat.test_call_GetLastError() >>> 0, 1814);
+  });
+  check('the LR_LOADFROMFILE fallback then loads the same name as a file', () => {
+    const fromFile = wat.test_call_LoadImageA(0, ddName, 0, 0, 0, 0x2010) >>> 0;
+    assert.ok(fromFile, 'the file fallback returned NULL');
+    assert.strictEqual(readBitmap(fromFile).width, WIDTH);
+  });
+
   console.log(`\n${passed} checks passed`);
 })().catch(err => { console.error(err); process.exit(1); });

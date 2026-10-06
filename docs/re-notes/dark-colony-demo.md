@@ -43,9 +43,20 @@ Evidence: `scratch/runs/20261006T014500Z-dark-colony-demo-build-scroll/`.
 - The mouse is DirectInput **relative**: `GetDeviceState` on the mouse each
   frame. `0x43bd90` adds lX/lY into `0x4f8e80/84`, clamps to 639x479 and
   publishes the cursor at `0x4b4434/38`. Button 0 drives the press/release
-  call at `0x43bf49`. The cursor starts at **(0,0)**, not the centre, and the
-  menus draw no cursor. So drive it with `relmousemove` deltas measured from
-  (0,0), plus `di-mousedown`/`di-mouseup`. An absolute `mousedown` does nothing.
+  call at `0x43bf49`. The cursor starts at **(0,0)**, not the centre. So drive
+  it with `relmousemove` deltas measured from (0,0), plus
+  `di-mousedown`/`di-mouseup`. An absolute `mousedown` does nothing.
+- The cursor is a software sprite on every screen (menus included): the
+  frame routine `0x420708` BltFasts the back buffer `[0x467edc]` into the
+  flip surface `[0x467ed8]`, then BltFasts cursor frame `[0x4b43b0 + i*4]`
+  at `0x4b4434/38` with DDBLTFAST_SRCCOLORKEY, then Flips. The 28 frames come
+  from `CURSOR\CURSOR%d.BMP` through a DDLoadBitmap-style loader (`0x43b3e0`):
+  `LoadImageA(module, "cursor/cursor%d.bmp", IMAGE_BITMAP, ..., LR_CREATEDIBSECTION)`
+  first, `LR_LOADFROMFILE` only if that is NULL. "No cursor" (2026-10-06) was
+  our LoadImageA answering a missing *resource* with a blank 32x32 stand-in:
+  the file fallback never ran and every frame was empty (`--dx-surfaces`:
+  32x32 `nonZero=0`). Fixed: a missing resource is NULL /
+  ERROR_RESOURCE_NAME_NOT_FOUND; the frames are now 31x31/33x27 with pixels.
 - A leftward `relmousemove` from the host's initial (0,0) point is dropped in
   `renderer-input.js` (`handleMouseMove` returns when the absolute point maps
   outside the canvas, before queuing the DI delta). Harmless here, because the

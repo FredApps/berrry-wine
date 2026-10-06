@@ -164,9 +164,14 @@
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
             (then (local.get $arg1))
             (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
+        ;; A resource that is not there is NULL with ERROR_RESOURCE_NAME_NOT_FOUND,
+        ;; as in Windows -- not a blank stand-in bitmap. DDLoadBitmap-style
+        ;; loaders try the resource first and fall back to LR_LOADFROMFILE only
+        ;; on NULL: Dark Colony asks for "cursor/cursor%d.bmp" that way, took
+        ;; the stand-in for success, and drew its whole mouse cursor from 24
+        ;; empty 32x32 frames, so the pointer was invisible everywhere.
         (if (i32.eqz (local.get $tmp))
-          (then (local.set $tmp (call $gdi_native_create_compat_bitmap
-            (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
+          (then (global.set $last_error (i32.const 1814))))
         (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (return)))
     ;; IMAGE_ICON (1): intern the resource so DrawIconEx can find its pixels
