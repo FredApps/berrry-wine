@@ -7689,10 +7689,13 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dib_wa (load.field DxObject misc1 (local.get $entry)))
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    ;; Convert WASM addr to guest addr
-    (local.set $buf_guest (i32.add
-      (i32.sub (local.get $dib_wa) (global.get $GUEST_BASE))
-      (global.get $image_base)))
+    ;; Convert WASM addr to guest addr. The ring came from $heap_alloc, which
+    ;; spills into the sparse VirtualAlloc backing once the guest heap is busy;
+    ;; the direct-window inverse (wa - GUEST_BASE + image_base) is right only
+    ;; inside that window. For a sparse ring it named unmapped guest memory, so
+    ;; the game's mixer wrote into the NULL sentinel and every refresh played
+    ;; the ring's zeros (Myth: The Fallen Lords silent in-level, 2.8M faults).
+    (local.set $buf_guest (call $w2g (local.get $dib_wa)))
     ;; ppvAudioPtr2 and pdwAudioBytes2 (args 6,7 at ESP+24,ESP+28), flags at +32
     (local.set $ppv2 (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
     (local.set $pdw2 (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))

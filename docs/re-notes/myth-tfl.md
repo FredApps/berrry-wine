@@ -127,18 +127,17 @@ After the fix "Multiplayer Game" is enabled in the main menu.
   loop at 30 ticks/s, so this is at its cap. Menu presents only on change
   (0/s idle). Headless Chrome only: no display/Xvfb on the box, so no headful
   number; treat as indicative, not as a felt frame rate.
-- Audio: one AudioContext, `running`, 22050 Hz. Intro and menu music are
-  audible on the wave bus (menu peak 0.31, every 50 ms sample non-zero over
-  3 s). **In-level: peak 0.000 over 3 s at four separate samples.** The guest
-  does drive DirectSound in-level (CLI, batches 76000-77000: 3 one-shot
-  channel plays — Stop, SetCurrentPosition, Lock/Unlock, SetVolume −8.6/−12.1 dB,
-  SetPan, Play(LOOPING) — all on the main thread), so sounds are sparse;
-  whether in-level sound is actually broken is **not yet established**. The
-  decisive test (order a unit, sample for its voice acknowledgement) has not
-  succeeded yet: a drag from the screen edge pans the camera instead of
-  selecting.
+- Audio (fixed 2026-10-06): intro and menu music always played; **in-level
+  was silent**. Myth mixes into a few looping DirectSound rings through
+  Lock/Unlock. Once its heap had spilled into the sparse VirtualAlloc backing,
+  `IDirectSoundBuffer_Lock` rebuilt the guest pointer with the direct-window
+  inverse (`wa - GUEST_BASE + image_base`), which names unmapped memory there:
+  `--fault-null` counted ~2.8M writes from the mixer (EIPs 0x476e75/0x476fbf/
+  0x476e68) to 0xa1b519c-0xa27ccb0, all landing in the NULL sentinel, so every
+  voice refresh played zeros (browser probe: 67 plays/20 s, PCM peak 0, output
+  0/400). Fixed with `$w2g`; same window now: PCM peak 0.282, output non-silent
+  400/400 samples. Regression: test/test-directsound-lock-sparse.js.
 
 ## Open
 
-- In-level audio: see above.
 - CLI and browser both need a press held across one in-game frame.
