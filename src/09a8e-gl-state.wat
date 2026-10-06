@@ -156,7 +156,9 @@
     ;; Switch first so the context-zero snapshot is restored before the dying
     ;; state is unlinked and freed.
     (if (i32.eq (global.get $gl_current_context) (local.get $context))
-      (then (call $gl_state_context_changed (i32.const 0))))
+      (then
+        (call $gl_state_context_changed (i32.const 0))
+        (global.set $gl_current_dc (i32.const 0))))
     (local.set $node (global.get $gl_state_contexts))
     (block $done
       (loop $find
