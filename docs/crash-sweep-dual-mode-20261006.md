@@ -131,3 +131,44 @@ So `--modes=coop,threads` on the CLI compares the cooperative scheduler with
 it finds is worth one page check (`web-input-probe --threads`) before it is
 treated as a game bug. Making `run.js --threads` run the guest main thread in
 a Worker would close that gap.
+
+## Result: full registry, 271 apps, build 7b6a8cc0
+
+Run on this box rather than a boat (the API key in use can `boat exec` but
+not `ssh`/`forward`, so the reverse-forwarded feed could not be attached):
+
+```sh
+node tools/crash-sweep.js --all --modes=coop,threads --seconds=15 --stuck-after=0 \
+  --jobs=1 --min-free-mb=1024 --no-build --jsonl=dual.jsonl
+node tools/crash-sweep.js --compare --jsonl=dual.jsonl --md
+```
+
+542 runs, 14:25-16:38Z, with `--min-free-mb` holding the next run whenever
+other sessions pushed available memory under 1 GB. Evidence:
+`scratch/runs/20261006T1425Z-dual-mode-full/` (`dual.jsonl`, `sweep.log`,
+`compare.md`, and the rerun below).
+
+| signature | coop | threads |
+|---|---|---|
+| ok | 249 | 248 |
+| missing-files (registry points at files not on this box) | 17 | 17 |
+| exit (installers / apps that quit by themselves) | 4 | 4 |
+| timeout (`windows_installer_20`) | 1 | 1 |
+| trap | 0 | 1 (`hype_glide_demo`, the known CLI-only case above) |
+
+**The two schedulers fail in exactly the same places.** Apart from Hype, every
+crash, exit and timeout appears in both modes. 9 of the 271 apps disagree, and
+8 of those disagree only on the final picture. Re-running those 8 once
+(`rerun.jsonl`) cleared `ut2004_demo` (noise) and reproduced the other seven:
+
+| app | coop | threads |
+|---|---|---|
+| deus_ex_demo, diablo_shareware, dungeons_of_dredmor_release, icy_tower, nfs2_demo | content | blank |
+| dungeons_of_dredmor, tworld | no capture | content |
+
+None of them crashes, exits or loses audio in either mode. Diablo is the case
+already checked in the page above (the Threads page renders it; the blank is
+the CLI's in-process main thread). The other six have not had that page check
+yet and are the follow-up list, not bugs on their own. The two "no capture vs
+content" rows go the other way: under coop the CLI found no surface to write
+at exit.
