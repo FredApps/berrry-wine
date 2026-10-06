@@ -25,6 +25,7 @@ const expected = {
   blood2_demo: ['Client.exe', 97],
   disciples_demo: ['discipdm.exe', 174],
   atlantis_demo: ['ATLANTIS.EXE', 2916],
+  dark_reign_demo: ['DKReign.exe', 255],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {

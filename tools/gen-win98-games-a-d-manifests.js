@@ -114,6 +114,13 @@ const GAMES = [
     root: 'Alpha Centauri demo-SW/programs',
     exe: 'terran.exe',
   },
+  {
+    // Activision's 1997 demo. Its InstallShield 3 setup ships the game tree
+    // uncompressed in DATA\, which runs as is.
+    id: 'dark_reign_demo',
+    root: 'Dark Reign-SWonlyProbablyMaybeD3D/DATA',
+    exe: 'DKReign.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
