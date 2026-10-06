@@ -4609,6 +4609,26 @@ class WineAssembly {
     return new D3DCommandStream.WorkerConsumer(await this._createRenderWorkerEndpoint(options));
   }
 
+  // A cooperative main thread parked on a lazy ReadFile (io_wait, yield 12):
+  // true while it must stay parked. lib/main-io-wait.js runs the fill in the
+  // background so worker threads, timers and the audio refill keep going while
+  // only the main guest thread waits (awaiting it inside the step froze the
+  // whole scheduler; Heroes III's DirectSound ring looped). When the fill lands
+  // the yield clears and the identical ReadFile re-enters for the cache hit.
+  _pollMainIo() {
+    if (!this._mainIo) {
+      const api = (typeof window !== 'undefined' && window.mainIoWait) ||
+        (typeof require === 'function' ? require('./lib/main-io-wait.js') : null);
+      if (!api) throw new Error('lib/main-io-wait.js is not loaded (index.html script list)');
+      this._mainIo = api.createMainIoWait({
+        fill: (vfs, pending) => this._fillParkedRead(vfs, pending),
+        onDone: () => this._wakeStep(),
+        onError: (e, path) => this.logToUI(`[io] ${path}: ${e && e.message}`),
+      });
+    }
+    return this._mainIo.poll(this.instance.exports, this._helpCtx && this._helpCtx.vfs);
+  }
+
   _beginD3DRenderWait(token) {
     token |= 0;
     if (token > -2) throw new Error('invalid D3D9 render wait token');
@@ -6111,7 +6131,11 @@ class WineAssembly {
           if (wait.done) { self._d3dMainWait = null; self.instance.exports.clear_yield(); }
           else renderWaiting = true;
         }
-        const mainThreadWaiting = renderWaiting || (self.threadManager &&
+        // A lazy-read park on the main thread (see _beginMainIoWait): until its
+        // fill lands only the main guest thread waits; then the yield clears
+        // and the same ReadFile re-enters.
+        const ioWaiting = self.instance.exports.get_yield_reason() === 12 && self._pollMainIo();
+        const mainThreadWaiting = renderWaiting || ioWaiting || (self.threadManager &&
           (self._isMainExecutionSuspended() || self.threadManager.checkMainYield()));
         if (mainThreadWaiting) {
           mainParked = true;
@@ -6247,16 +6271,13 @@ class WineAssembly {
           // ReadFile parked with its stdcall frame restored and EIP on the
           // thunk, so filling the chunk and clearing the yield re-enters the
           // same call — which then takes the synchronous cache hit.
-          const vfs = self._helpCtx && self._helpCtx.vfs;
-          const pending = vfs && vfs.getPendingRead(1);
-          if (pending) {
-            try { await self._fillParkedRead(vfs, pending); }
-            catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
-            // The VFS retires only this fill's pending record, never a newer one.
-          }
-          self.instance.exports.clear_yield();
-          if (self.running) { self._scheduleStep(step); }
-          return;
+          //
+          // Only the main guest thread waits for that chunk: the fill runs in
+          // the background (_beginMainIoWait) and this step falls through like
+          // a spin park, so worker threads, timers and the audio refill keep
+          // running. The yield stays set until the step head sees the fill
+          // done. (The VFS retires only this fill's pending record.)
+          if (self._pollMainIo()) mainParked = true;
         }
         if (yieldReason === 13) {
           // vblank_wait: a DirectDraw call is parked on the display. EIP is

@@ -1037,13 +1037,39 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
     ['browser worker', path.join(__dirname, '..', 'host.js'),
       'const pvfs = self._helpCtx && self._helpCtx.vfs;',
       "await self.guestWorker.callExport('clear_yield');"],
-    ['browser cooperative', path.join(__dirname, '..', 'host.js'),
-      'const vfs = self._helpCtx && self._helpCtx.vfs;\n          const pending = vfs && vfs.getPendingRead(1);',
-      'self.instance.exports.clear_yield();'],
     ['CLI', path.join(__dirname, 'run.js'),
       'const pending = ctx.vfs && ctx.vfs.getPendingRead(1);',
       'instance.exports.clear_yield();'],
   ];
+  // The cooperative browser step no longer awaits an inline block: it parks
+  // the main thread through lib/main-io-wait.js, so the same property is
+  // checked on that module (fill = the VFS's own identity-guarded
+  // fillPendingRead, which is what host.js's _fillParkedRead ends in).
+  {
+    const { createMainIoWait } = require('../lib/main-io-wait');
+    const vfs = new VirtualFS();
+    let complete;
+    vfs.setProviderFile(GUEST, { provider: {
+      size: 16, tryRead: () => null,
+      fill: () => new Promise(resolve => { complete = resolve; }),
+    } });
+    const a = vfs.createFile(GUEST, 0x80000000, 3);
+    const b = vfs.createFile(GUEST, 0x80000000, 3);
+    const pa = vfs.readFile(a, new Uint8Array(4), 4).pending;
+    const pb = vfs.readFile(b, new Uint8Array(4), 4).pending;
+    vfs.pendingRead = pa;
+    let cleared = 0;
+    const ex = { get_yield_reason: () => 12, clear_yield: () => { cleared++; } };
+    const io = createMainIoWait({ fill: (v, p) => v.fillPendingRead(p) });
+    assert.strictEqual(io.poll(ex, vfs), true, 'main-io-wait: the park starts');
+    await new Promise(resolve => setImmediate(resolve));   // the fill is now in flight
+    vfs.pendingRead = pb;
+    complete();
+    for (let i = 0; i < 5 && io.inFlight; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(vfs.pendingRead, pb, 'main-io-wait: late A completion must not clear B');
+    assert.strictEqual(io.poll(ex, vfs), false, 'main-io-wait: the park releases');
+    assert.strictEqual(cleared, 1);
+  }
   for (const [name, filename, startMarker, endMarker] of blocks) {
     const source = fs.readFileSync(filename, 'utf8');
     const start = source.indexOf(startMarker);
