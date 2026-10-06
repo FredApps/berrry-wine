@@ -24,6 +24,7 @@ const expected = {
   daytona_usa_deluxe_demo: ['DAYTONA USA Deluxe Demo WWW.exe', 702],
   blood2_demo: ['Client.exe', 97],
   disciples_demo: ['discipdm.exe', 174],
+  atlantis_demo: ['ATLANTIS.EXE', 2916],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {

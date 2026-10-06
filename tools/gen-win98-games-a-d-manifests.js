@@ -98,6 +98,15 @@ const GAMES = [
     exe: 'aow.exe',
     vfsRoot: 'c:\\program files\\triumph studios\\age of wonders beta demo\\',
   },
+  {
+    // Cryo's 1997 demo, run from its directory. HNM\ is a separate DOS
+    // trailer (DOS4GW SHOWHN5A.EXE for DEMO3.UBB, DEMO*.BAT) and DSETUP\ the
+    // DirectX installer; the Windows game reads neither.
+    id: 'atlantis_demo',
+    root: 'ATLANTIS demo SW',
+    exe: 'ATLANTIS.EXE',
+    exclude: ['HNM', 'DSETUP'],
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
@@ -115,8 +124,10 @@ function walk(directory, relative = '', output = []) {
 }
 function manifestFor(game, directory) {
   const executable = path.normalize(game.exe);
+  const excluded = (game.exclude || []).map(dir => path.normalize(dir) + path.sep);
   const files = walk(directory).filter(relative =>
-    path.normalize(relative) !== executable).map(relative => ({
+    path.normalize(relative) !== executable
+      && !excluded.some(prefix => path.normalize(relative).startsWith(prefix))).map(relative => ({
     url: relative.split(path.sep).join('/'),
     vfsPath: (game.vfsRoot || 'c:\\') + relative.split(path.sep).join('\\'),
   }));
