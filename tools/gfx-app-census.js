@@ -236,4 +236,13 @@ function main(argv) {
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { scanApp, FAMILIES };
+// Every PE module an app mounts: its exe and path-form dlls, then the MZ-headed
+// companions from `files` and its localFileManifest. Shared with
+// tools/mouse-model-census.js so both censuses see the same set.
+function appModules(app) {
+  const own = [app.exe, ...(app.dlls || [])].filter(Boolean).map(resolveRel);
+  const seen = new Set(own);
+  return [...own, ...companionFiles(app).filter(abs => !seen.has(abs) && (seen.add(abs), isMz(abs)))];
+}
+
+module.exports = { scanApp, FAMILIES, appModules, hasGuid };
