@@ -240,9 +240,12 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     const backWidth=read(out),backHeight=read(out+4);assert(backWidth>=8&&backHeight>=2);assert.strictEqual(read(out+8),22);
     ok(await invoke(e.Device9_UpdateSurface,ad,uploadSource,rect,ab,destPoint),'implicit backbuffer UpdateSurface');
     ok(await invoke(e.Device9_Present,ad),'updated implicit Present');
-    const backFrame=new Uint32Array(memory.buffer,e.back_bits(ad),backWidth*backHeight);
-    assert.deepStrictEqual([backFrame[0],backFrame[6],backFrame[7],backFrame[backWidth+6],backFrame[backWidth+7]],
-      [0xff102030,0xff203045,0xff203046,0xff203049,0xff20304a]);
+    // Present is pipelined one frame deep (52c37e18), so the raw back-buffer
+    // bits are not synchronized yet; read through GetDC, which fences.
+    ok(await invoke(e.Surface9_GetDC,ab,out),'presented backbuffer DC');const presentedDC=read(out);
+    assert.deepStrictEqual([[0,0],[6,0],[7,0],[6,1],[7,1]].map(([x,y])=>e.GetPixel(presentedDC,x,y,0)>>>0),
+      [0x302010,0x453020,0x463020,0x493020,0x4a3020]);
+    ok(await invoke(e.Surface9_ReleaseDC,ab,presentedDC),'release presented backbuffer DC');
     ok(await invoke(e.Device9_ColorFill,ad,ab,0,0xff123456),'new rendering without Present before DC');
     ok(await invoke(e.Surface9_GetDC,ab,out),'backbuffer DC');const backDC=read(out);
     assert.strictEqual(e.GetPixel(backDC,0,0,0)>>>0,0x563412,'GetDC sees completed rendering without Present');
@@ -254,7 +257,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     ok(await invoke(e.Surface9_ReleaseDC,ab,backDC),'release backbuffer DC');
     bad(await invoke(e.Surface9_ReleaseDC,ab,backDC));
     ok(await invoke(e.Device9_Present,ad),'GDI upload survives Present');
-    assert.strictEqual(new Uint32Array(memory.buffer,e.back_bits(ad),1)[0],0xffefcdab);
+    ok(await invoke(e.Surface9_GetDC,ab,out),'GDI-uploaded backbuffer DC');const gdiDC=read(out);
+    assert.strictEqual(e.GetPixel(gdiDC,0,0,0)>>>0,0xabcdef);
+    ok(await invoke(e.Surface9_ReleaseDC,ab,gdiDC),'release GDI-uploaded backbuffer DC');
     write(rect,[1,1,3,2]);
     failTransfer=0x30016;bad(await invoke(e.Surface9_LockRect,ab,lock,rect,0));failTransfer=0;
     for(const invalid of[0x2000,0x1000,0x4000])bad(await invoke(e.Surface9_LockRect,ab,lock,rect,invalid));
@@ -271,7 +276,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     bad(await invoke(e.Surface9_GetDC,ab,out));bad(await invoke(e.Surface9_LockRect,ab,lock,0,0));
     ok(await invoke(e.Surface9_UnlockRect,ab),'implicit unlock retries upload');bad(await invoke(e.Surface9_UnlockRect,ab));
     ok(await invoke(e.Device9_Present,ad));
-    assert.strictEqual(backFrame[backWidth+1],0xffa1b2c3);assert.strictEqual(backFrame[0],0xffefcdab,'surrounding pixels preserved');
+    ok(await invoke(e.Surface9_GetDC,ab,out),'re-presented backbuffer DC');const finalDC=read(out);
+    assert.strictEqual(e.GetPixel(finalDC,1,1,0)>>>0,0xc3b2a1);assert.strictEqual(e.GetPixel(finalDC,0,0,0)>>>0,0xabcdef,'surrounding pixels preserved');
+    ok(await invoke(e.Surface9_ReleaseDC,ab,finalDC),'release re-presented backbuffer DC');
     // CreateDevice8 keeps the primary device identity and replaces its vtable.
     // Backbuffer operations must still address that SAME host renderer; asking
     // for a fresh Device9 interface here used to create a second blank target.
@@ -282,7 +289,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     e.guest_write32(read(lock+4),0xff345678);
     ok(await invoke(e.Surface9_UnlockRect,ab),'D3D8 owner unlock');
     ok(await invoke(e.Device9_Present,ad),'D3D8 primary present');
-    assert.strictEqual(backFrame[0],0xff345678,'D3D8 CPU write reaches primary renderer');
+    ok(await invoke(e.Surface9_GetDC,ab,out),'D3D8 presented DC');const d3d8DC=read(out);
+    assert.strictEqual(e.GetPixel(d3d8DC,0,0,0)>>>0,0x785634,'D3D8 CPU write reaches primary renderer');
+    ok(await invoke(e.Surface9_ReleaseDC,ab,d3d8DC),'release D3D8 presented DC');
     assert.strictEqual(bridge.devices.size,devicesBefore8,'backbuffer access never creates an alias renderer');
     e.device8_identity(ad,0);
     ok(await invoke(e.Surface9_LockRect,ab,lock,0,16),'implicit readonly lock');
@@ -390,7 +399,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
         ok(e.Device9_SetRenderTarget(ad,0,ab),'sample into backbuffer');
         ok(await invoke(e.Device9_DrawPrimitiveUP,ad,4,1,tri,32),'sample rendered texture through native draw');
         ok(await invoke(e.Device9_Present,ad),'present sampled result');
-        assert.strictEqual(new Uint32Array(memory.buffer,e.back_bits(ad),64)[0],0xff2468ac,'sample backend pixels, not stale native zero bytes');
+        ok(await invoke(e.Surface9_GetDC,ab,out),'sampled backbuffer DC');const sampledDC=read(out);
+        assert.strictEqual(e.GetPixel(sampledDC,0,0,0)>>>0,0xac6824,'sample backend pixels, not stale native zero bytes');
+        ok(await invoke(e.Surface9_ReleaseDC,ab,sampledDC),'release sampled backbuffer DC');
         ok(e.Device9_SetTexture(ad,0,0),'unbind sampled texture');
         e.Surface9_Release(top);
         ok(e.Device9_SetRenderTarget(ad,0,other),'restore lifetime fixture binding');
