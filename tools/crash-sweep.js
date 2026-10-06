@@ -51,6 +51,8 @@
 //   --seconds=N      run.js --max-seconds (default 20); the external kill is N+90
 //   --modes=a,b      coop and/or threads (default coop: run.js's own default)
 //   --stuck-after=N  pass run.js --stuck-after (0: never end a run as stuck)
+//   --feed=URL       fetch each app's files from tools/app-files-feed.js serve first
+//                    (a boat fork has no test/binaries)
 //   --jobs=N         runs at once (default 1). Each run holds a 512 MB guest;
 //                    keep N small, and run long sweeps on a separate box
 //   --rerun          ignore results already in --jsonl
@@ -91,6 +93,20 @@ const MODE_ARGS = { coop: '--no-threads', threads: '--threads' };
 // whose main thread waits on worker threads sits still that long in 0.2 s,
 // so a mode comparison wants --stuck-after=0: run the full --seconds.
 const STUCK_AFTER = opt('stuck-after', null);
+// A boat fork has no test/binaries. --feed=URL fetches each app's registry
+// files from tools/app-files-feed.js serve (reverse-forwarded into the fork)
+// just before that app's first run, so the sweep needs no 30 GB copy.
+const FEED = opt('feed', null);
+const fed = new Set();
+function feedApp(id) {
+  if (!FEED || fed.has(id)) return;
+  fed.add(id);
+  const r = require('child_process').spawnSync(process.execPath,
+    [path.join(ROOT, 'tools', 'app-files-feed.js'), 'fetch', `--base=${FEED}`, `--apps=${id}`],
+    { cwd: ROOT, encoding: 'utf8' });
+  const line = (r.stdout || '').split('\n').find(l => l.startsWith('app-files-feed:'));
+  if (line) console.log(`${id} [feed]  ${line.slice('app-files-feed: '.length)}`);
+}
 
 // The last line for an id+mode wins, so a --rerun supersedes earlier results.
 // Lines written before modes existed are cooperative runs.
@@ -334,6 +350,7 @@ if (!flag('no-build')) execFileSync('bash', [path.join(ROOT, 'tools', 'build.sh'
   const worker = async () => {
     while (next < work.length) {
       const { id, mode } = work[next++];
+      feedApp(id);
       const r = await runOne(id, mode);
       fs.appendFileSync(JSONL, JSON.stringify(r) + '\n');
       console.log(`${id} [${mode}]  ${r.sig}  ${r.frame}/${r.audio}  ${r.secs}s` +
