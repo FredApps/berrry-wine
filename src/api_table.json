@@ -29210,7 +29210,8 @@
     "name": "IDirect3D8_CreateDevice",
     "nargs": 7,
     "convention": "stdcall",
-    "hash": 1561565041
+    "hash": 1561565041,
+    "ret": "HRESULT"
   },
   {
     "id": 3457,
@@ -29255,6 +29256,7 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2204512498,
+    "ret": "HRESULT",
     "handler": "IDirect3DDevice9_TestCooperativeLevel"
   },
   {
@@ -29339,7 +29341,8 @@
     "name": "IDirect3DDevice8_Reset",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3788986756
+    "hash": 3788986756,
+    "ret": "HRESULT"
   },
   {
     "id": 3474,
@@ -29347,6 +29350,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3714648088,
+    "ret": "HRESULT",
     "handler": "IDirect3DDevice9_Present"
   },
   {

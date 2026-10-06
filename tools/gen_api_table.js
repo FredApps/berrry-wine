@@ -1573,9 +1573,12 @@ for (const iface of d3d8Ifaces) {
       current.nargs = m.nargs;
       if (m.handler) current.handler = m.handler;
       else delete current.handler;
+      // A typed return lets --trace-api print the HRESULT a method gave.
+      if (m.ret) current.ret = m.ret;
     } else {
       const api = { id: existing.length, name: fullName, nargs: m.nargs, convention: 'stdcall', hash: 0 };
       if (m.handler) api.handler = m.handler;
+      if (m.ret) api.ret = m.ret;
       existing.push(api);
       seen.add(fullName);
     }
