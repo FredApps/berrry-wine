@@ -69,6 +69,7 @@ const namedApiIds = [
   ['MsgWaitForMultipleObjects', 'API_ID_MsgWaitForMultipleObjects'],
   ['PeekMessageA', 'API_ID_PeekMessageA'],
   ['PeekMessageW', 'API_ID_PeekMessageW'],
+  ['_EH_prolog', 'API_ID__EH_prolog'],
   ['IDirectDraw_QueryInterface', 'API_ID_IDirectDraw_BASE'],
   ['IAMMultiMediaStream_QueryInterface', 'API_ID_IAMMultiMediaStream_BASE'],
   ['IShellLinkA_QueryInterface', 'API_ID_IShellLinkA_BASE'],
