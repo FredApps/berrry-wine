@@ -608,6 +608,119 @@
     (i32.and (i32.eq (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 1))
              (i32.eq (i32.and (local.get $m) (i32.const 7)) (i32.const 4))))
 
+  ;; The C-locale loop of the MSVC CRT's assembly _stricmp, byte for byte:
+  ;; position-independent (relative jumps only), so one signature covers
+  ;; every static or DLL copy. Census 2026-10-06: 513 of 2791 PEs in
+  ;; test/binaries carry it. See $th_crt_stricmp_run (500) for the semantics.
+  ;; Fold bit 0x100 (--no-fold=crt-stricmp) is the A/B switch.
+  ;; Signature bytes as little-endian words (46 used, 2 of padding).
+  (func $crt_stricmp_sig_byte (param $i i32) (result i32)
+    (local $w i64)
+    (local.set $w
+      (select (select (select (i64.const 0x8a46068a2e74c00a) (i64.const 0x412cf274c4384727) (i32.lt_u (local.get $i) (i32.const 8)))
+                      (i64.const 0x0220e180c91a1a3c) (i32.lt_u (local.get $i) (i32.const 16)))
+              (select (select (i64.const 0x3c412ce0864104c1) (i64.const 0xc10220e180c91a1a) (i32.lt_u (local.get $i) (i32.const 32)))
+                      (i64.const 0x0000d274e0384104) (i32.lt_u (local.get $i) (i32.const 40)))
+              (i32.lt_u (local.get $i) (i32.const 24))))
+    (i32.wrap_i64 (i64.and (i64.shr_u (local.get $w)
+      (i64.extend_i32_u (i32.shl (i32.and (local.get $i) (i32.const 7)) (i32.const 3))))
+      (i64.const 0xFF))))
+  (global $crt_stricmp_matches (mut i32) (i32.const 0))
+  (func $try_emit_crt_stricmp_run (param $start_eip i32) (result i32)
+    (local $pc i32) (local $i i32)
+    (if (call $fold_off (i32.const 0x100)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $pc (global.get $d_pc))
+    ;; Cheap reject first: almost no block starts with `or al,al / jz +0x2e`.
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x0A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 3))) (i32.const 0x2E))
+      (then (return (i32.const 0))))
+    ;; The whole 46-byte loop, plus the two sbb's at +0x2e that the miss exit
+    ;; resumes into: anything else there and the exits would land elsewhere.
+    (block $no (loop $cmp
+      (if (i32.lt_u (local.get $i) (i32.const 46))
+        (then
+          (br_if $no (i32.ne (call $gl8 (i32.add (local.get $pc) (local.get $i)))
+                             (call $crt_stricmp_sig_byte (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $cmp))))
+      (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x2E))) (i32.const 0x1A))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x2F))) (i32.const 0xC0))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x30))) (i32.const 0x1C))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x31))) (i32.const 0xFF))
+        (then (return (i32.const 0))))
+      (global.set $crt_stricmp_matches (i32.add (global.get $crt_stricmp_matches) (i32.const 1)))
+      (call $te (i32.const 500) (i32.const 0))
+      (call $te_raw (local.get $pc))
+      ;; The block owns only `or al,al / jz`, the bytes before the loop's
+      ;; first interior entry. A block may not own an address anything else
+      ;; enters: the block decoded there overlaps it, and publishing either
+      ;; retires the other. This fold's own miss exit resumes inside the loop,
+      ;; and the uop tier, running a caller's loop with this call inside it,
+      ;; side-exits at its interior blocks (+4, +0xe) -- 7,800 retirements
+      ;; each way and 14x the decodes in Comanche Gold until this. A write to
+      ;; the rest of the loop does not retire the fold; nothing rewrites CRT
+      ;; text, so that is the cheaper risk.
+      (global.set $d_pc (i32.add (local.get $pc) (i32.const 4)))
+      (return (i32.const 1)))
+    (i32.const 0))
+
+  (func $try_emit_crt_stricmp_call (param $start_eip i32) (result i32)
+    (local $pc i32) (local $i i32) (local $t i32)
+    (if (call $fold_off (i32.const 0x100)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $pc (global.get $d_pc))
+    ;; Cheap reject: `push ebp / mov ebp,esp` opens most functions, so test
+    ;; the loop head's `or al,al / jz +0x2e` at +0x1c first.
+    (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x1C))) (i32.const 0x0A))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x1F))) (i32.const 0x2E))
+      (then (return (i32.const 0))))
+    (block $no
+      ;; 55 8b ec 57 56 53 8b 75 0c 8b 7d 08 8d 05
+      (br_if $no (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x55)))
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x01))) (i32.const 0x5657EC8B)))
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x05))) (i32.const 0x0C758B53)))
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x09))) (i32.const 0x8D087D8B)))
+      (br_if $no (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x0D))) (i32.const 0x05)))
+      ;; 83 78 08 00 75 at +0x12, b0 ff 8b at +0x18, c0|ff at +0x1b
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x12))) (i32.const 0x00087883)))
+      (br_if $no (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 0x16))) (i32.const 0x75)))
+      (br_if $no (i32.ne (i32.and (call $gl32 (i32.add (local.get $pc) (i32.const 0x18))) (i32.const 0x00FFFFFF))
+                         (i32.const 0x008BFFB0)))
+      (local.set $t (call $gl8 (i32.add (local.get $pc) (i32.const 0x1B))))
+      (br_if $no (i32.and (i32.ne (local.get $t) (i32.const 0xC0)) (i32.ne (local.get $t) (i32.const 0xFF))))
+      ;; the loop and its sbb's
+      (block $sig (loop $cmp
+        (br_if $sig (i32.ge_u (local.get $i) (i32.const 46)))
+        (br_if $no (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.add (i32.const 0x1C) (local.get $i))))
+                           (call $crt_stricmp_sig_byte (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $cmp)))
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x4A))) (i32.const 0xFF1CC01A)))
+      ;; movsx eax,al / jmp rel8, to pop ebx / pop esi / pop edi / leave / ret
+      (br_if $no (i32.ne (call $gl32 (i32.add (local.get $pc) (i32.const 0x4E))) (i32.const 0xEBC0BE0F)))
+      (local.set $t (i32.add (i32.add (local.get $pc) (i32.const 0x53))
+        (i32.extend8_s (call $gl8 (i32.add (local.get $pc) (i32.const 0x52))))))
+      (br_if $no (i32.le_u (local.get $t) (i32.add (local.get $pc) (i32.const 0x52))))
+      (br_if $no (i32.ne (call $gl32 (local.get $t)) (i32.const 0xC95F5E5B)))
+      (br_if $no (i32.ne (call $gl8 (i32.add (local.get $t) (i32.const 4))) (i32.const 0xC3)))
+      (global.set $crt_stricmp_matches (i32.add (global.get $crt_stricmp_matches) (i32.const 1)))
+      (call $te (i32.const 501) (i32.const 0))
+      (call $te_raw (local.get $pc))
+      ;; The block owns the prologue up to the jnz's fall-through (+0x18),
+      ;; the function's first interior entry, for the reason in 500's
+      ;; matcher: its own exits (the head on the cap, the jnz target under a
+      ;; set locale) and the uop tier's side exits all land past that.
+      (global.set $d_pc (i32.add (local.get $pc) (i32.const 0x18)))
+      (return (i32.const 1)))
+    (i32.const 0))
+
   (func $try_emit_implode_cmp_run (param $start_eip i32) (result i32)
     (local $pc i32) (local $head i32) (local $m i32) (local $sib i32)
     (local $b i32) (local $mod i32) (local $rm i32)
@@ -2959,6 +3072,14 @@
           ;; section 18. So were the stream-idiom folds SMK_TREE and PCX_RUN
           ;; (Quake II's PCX expander, whose `rep stos` fills uop runs as FILL).
           (if (call $try_emit_implode_cmp_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
+          (if (call $try_emit_crt_stricmp_call (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
+          (if (call $try_emit_crt_stricmp_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))
               (br $decode)))))

@@ -254,7 +254,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
   };
   const FOLD_BITS = {
-    'colorkey8': 0x08, 'xlat-stosb': 0x80,
+    'colorkey8': 0x08, 'xlat-stosb': 0x80, 'crt-stricmp': 0x100,
   };
   const NO_FOLDS = (getArg('no-fold', '') || '').split(',').filter(Boolean);
   for (const n of NO_FOLDS) {

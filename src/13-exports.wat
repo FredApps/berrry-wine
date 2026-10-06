@@ -2584,6 +2584,10 @@
   ;; Off switches for the exact folds that had none (07-decoder.wat
   ;; $fold_off_mask; docs/uop-tier-design.md section 18). Decode-time, per
   ;; instance, inherited by guest threads (lib/worker-imports.js).
+  ;; Handler 500 (the CRT _stricmp loop fold): dispatches and decode matches.
+  (func (export "get_crt_stricmp_runs") (result i32) (global.get $crt_stricmp_runs))
+  (func (export "get_crt_stricmp_matches") (result i32) (global.get $crt_stricmp_matches))
+  (func (export "get_crt_stricmp_calls") (result i32) (global.get $crt_stricmp_calls))
   (func (export "set_fold_off_mask") (param $mask i32)
     (global.set $fold_off_mask (local.get $mask)))
   (func (export "get_fold_off_mask") (result i32) (global.get $fold_off_mask))

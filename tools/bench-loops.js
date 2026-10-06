@@ -229,6 +229,79 @@ function implodeShape(a, form) {
   };
 }
 
+const CRT_STRICMP = Array.from(Buffer.from(
+  '558bec5756538b750c8b7d088d05e8754e0083780800753bb0ff8bc00ac0742e8a06468a2747' +
+  '38c474f22c413c1a1ac980e12002c1044186e02c413c1a1ac980e12002c1044138e074d21ac0' +
+  '1cff0fbec0eb34b8ff00000033db8bc00ac074278a06468a1f4738d874f25053e81f0000008b' +
+  'd883c404e81500000083c40438c374da1bc083d8ff5b5e5fc9c3', 'hex'));
+const CRT_STRICMP_PAIRS = [
+  ['Data\\Terrain.pff', 'DATA\\TERRAIN.PFF'], ['map01.vox', 'MAP07.VOX'],
+  ['sound\\explo.wav', 'SOUND\\EXPLO.WAV'], ['cgold.ini', 'CGOLD.CFG'],
+];
+function crtStricmpShape(a) {
+  const calls = Math.max(1, Math.floor(a.bufBytes / 256));
+  const lc = a.buf;                               // [lc+8] = 0: C locale
+  const strs = [];
+  let at = a.buf + 0x100;
+  for (const pair of CRT_STRICMP_PAIRS) {
+    const addrs = pair.map(s => { const p = at; at += 0x40; return p; });
+    strs.push({ pair, addrs });
+  }
+  // driver: ebx = calls/4; L: 4x (push s2; push s1; call fn; add esp,8);
+  // dec ebx; jnz L; ret. The CRT saves ebx/esi/edi and clobbers ecx.
+  const imm = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+  const outer = Math.max(1, Math.floor(calls / strs.length));
+  const body = [];
+  const callSites = [];
+  for (const { addrs } of strs) {
+    body.push(0x68, ...imm(addrs[1]), 0x68, ...imm(addrs[0]));
+    callSites.push(body.length);                  // E8 lands here
+    body.push(0xE8, 0, 0, 0, 0, 0x83, 0xC4, 0x08);
+  }
+  body.push(0x4B, 0x75, ...rel8(-(body.length + 3)));  // dec ebx; jnz L
+  const head = [0xBB, ...imm(outer)];             // mov ebx, outer
+  const driver = head.concat(body, [0xC3]);
+  const fnOff = driver.length;
+  for (const site of callSites) {
+    const s = head.length + site;
+    driver.splice(s + 1, 4, ...imm(fnOff - (s + 5)));
+  }
+  const fn = CRT_STRICMP.slice();
+  fn.splice(0x0e, 4, ...imm(lc));
+  const fold = b => (b >= 0x41 && b <= 0x5a ? b + 0x20 : b);
+  const ref = (x, y) => {
+    for (let i = 0; ; i++) {
+      const p = fold(x.charCodeAt(i) || 0), q = fold(y.charCodeAt(i) || 0);
+      if (p !== q) return p < q ? -1 : 1;
+      if (!p) return 0;
+    }
+  };
+  const last = CRT_STRICMP_PAIRS[CRT_STRICMP_PAIRS.length - 1];
+  const want = ref(last[0], last[1]);
+  return {
+    iters: outer * strs.length,
+    bytesTouched: strs.length * 0x80,
+    code: driver.concat(fn),
+    setup(e, mem, g2w) {
+      mem.fill(0, g2w(lc), g2w(lc) + 16);
+      for (const { pair, addrs } of strs) {
+        for (let k = 0; k < 2; k++) {
+          const b = Buffer.from(pair[k] + '\0', 'latin1');
+          mem.set(b, g2w(addrs[k]));
+        }
+      }
+      e.set_ebx(0); e.set_ecx(0); e.set_eax(0);
+    },
+    verify(e) {
+      if ((e.get_eax() | 0) !== want) return `eax=${e.get_eax() | 0}, expected ${want}`;
+      if (e.get_ebx() !== 0) return `ebx=${e.get_ebx()}, expected 0`;
+      return null;
+    },
+    checksum: e => [e.get_eax(), e.get_ecx(), e.get_ebx(), e.get_esi(), e.get_edi()]
+      .map(v => (v >>> 0).toString(16)).join(' '),
+  };
+}
+
 const SHAPES = {
   sparse_scatter: {
     describe: 'cyclic dword loads across independent sparse mappings (--scatter-pages)',
@@ -564,6 +637,17 @@ const SHAPES = {
     describe: 'implode match extension, register form (0x4c0f76, ~1.5 iters/entry)',
     real: 'StarCraft save compression; the 0x4c0f5b finder, 38% of save ops',
     emit: a => implodeShape(a, 'b'),
+  },
+
+  // The MSVC CRT's assembly _stricmp, byte for byte (Comanche Gold demo.exe
+  // 0x4e0be0), called on four filename-like pairs per iteration: two equal
+  // under case folding, two that differ early. Its locale word is pointed at a
+  // zero dword, so every call takes the C-locale loop that handler 500 folds.
+  // --toggle=crt_stricmp; lut is the null control.
+  crt_stricmp: {
+    describe: 'CRT _stricmp C-locale loop, 4 filename pairs per iteration (demo.exe 0x4e0be0)',
+    real: 'Comanche Gold demo pre-init: ~95k _stricmp calls, ~half of 2.76M blocks',
+    emit: a => crtStricmpShape(a),
   },
 
   nop_chain: {
@@ -2342,6 +2426,9 @@ const TOGGLES = {
   // the implode match-extension fold (466). Shapes: implode_a, implode_b.
   alu8_sib: 'set_alu8_sib',
   implode_cmp_run: 'set_implode_cmp_run',
+  // Handler 500, the CRT _stricmp C-locale fold. Decode-time, off by its
+  // --no-fold bit; shape: crt_stricmp.
+  crt_stricmp: (e, v) => e.set_fold_off_mask(v ? 0 : 0x100),
   // Round 15 block chaining (docs/block-chaining-design.md). The shape to run
   // it on is the block-entry pair: `--shapes=nop_chain,jmp_chain
   // --toggle=block_chain`. nop_chain holds dispatch count equal and has no

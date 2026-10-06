@@ -1616,6 +1616,219 @@
     (global.set $eip (local.get $exit_eip))
     (return_call $branch_end))
 
+  ;; 500 and 501: the MSVC CRT's assembly _stricmp (strcmpi.asm), C locale.
+  ;; Its compare loop, matched byte for byte at its head by
+  ;; $try_emit_crt_stricmp_run, so the registers are the CRT's own:
+  ;;   head: or al,al / jz done          (al = last byte, 0xff on entry)
+  ;;         mov al,[esi] / inc esi / mov ah,[edi] / inc edi / cmp ah,al / jz head
+  ;;         sub al,'A' / cmp al,26 / sbb cl,cl / and cl,0x20 / add al,cl / add al,'A'
+  ;;         xchg al,ah / (the same fold of al) / cmp al,ah / jz head
+  ;;   miss: sbb al,al / sbb al,-1       (the caller's -1 / +1)
+  ;;   done: movsx eax,al
+  ;; Every byte is read in the loop's order, and blocks and steps are charged
+  ;; as the unfolded code's, so the schedule does not change; only wall time
+  ;; does. Comanche Gold's startup scans its CGOLD.PFF directory with ~221,000
+  ;; calls, most of them over at the first byte, and loses a race with its own
+  ;; sound timer while it does (re-notes) -- so the per-call blocks around the
+  ;; loop cost more than the loop, and 501 folds the whole call.
+  ;;
+  ;; $crt_stricmp_loop runs the loop from the head over the $cs_* state and
+  ;; returns how it left: 0 = the per-dispatch cap (4096 bytes; resume at the
+  ;; head with the state as it is), 1 = a NUL (flags of `or al,al`), 2 = a
+  ;; mismatch (flags of `cmp al,ah`, for the two sbb's).
+  (global $crt_stricmp_runs  (mut i32) (i32.const 0))
+  (global $crt_stricmp_calls (mut i32) (i32.const 0))
+  (global $crt_stricmp_iters (mut i64) (i64.const 0))
+  (global $cs_al (mut i32) (i32.const 0))
+  (global $cs_ah (mut i32) (i32.const 0))
+  (global $cs_cl (mut i32) (i32.const 0))
+  (global $cs_esi (mut i32) (i32.const 0))
+  (global $cs_edi (mut i32) (i32.const 0))
+  (global $cs_blocks (mut i32) (i32.const 0))
+  (global $cs_cost (mut i32) (i32.const 0))
+  (func $crt_stricmp_loop (result i32)
+    (local $al i32) (local $ah i32) (local $cl i32) (local $t i32)
+    (local $esi i32) (local $edi i32)
+    (local $iters i32) (local $blocks i32) (local $cost i32) (local $kind i32)
+    (local.set $al (global.get $cs_al))
+    (local.set $ah (global.get $cs_ah))
+    (local.set $cl (global.get $cs_cl))
+    (local.set $esi (global.get $cs_esi))
+    (local.set $edi (global.get $cs_edi))
+    (block $out (loop $iter
+      ;; or al,al / jz done
+      (local.set $blocks (i32.add (local.get $blocks) (i32.const 1)))
+      (local.set $cost (i32.add (local.get $cost) (i32.const 2)))
+      (if (i32.eqz (local.get $al))
+        (then
+          (drop (call $do_alu_sized (i32.const 1) (i32.const 0) (i32.const 0)
+                  (i32.const 0xFF) (i32.const 7)))
+          (local.set $kind (i32.const 1))
+          (br $out)))
+      ;; The cap: a run this long returns to the head and picks up again there.
+      (br_if $out (i32.ge_u (local.get $iters) (i32.const 4096)))
+      (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
+      ;; mov al,[esi] / inc esi / mov ah,[edi] / inc edi / cmp ah,al / jz head
+      (local.set $al (call $gl8 (local.get $esi)))
+      (local.set $esi (i32.add (local.get $esi) (i32.const 1)))
+      (local.set $ah (call $gl8 (local.get $edi)))
+      (local.set $edi (i32.add (local.get $edi) (i32.const 1)))
+      (local.set $blocks (i32.add (local.get $blocks) (i32.const 1)))
+      (local.set $cost (i32.add (local.get $cost) (i32.const 6)))
+      (br_if $iter (i32.eq (local.get $ah) (local.get $al)))
+      ;; fold al, xchg, fold al, cmp al,ah / jz head
+      (local.set $t (i32.and (i32.sub (local.get $al) (i32.const 0x41)) (i32.const 0xFF)))
+      (local.set $cl (select (i32.const 0x20) (i32.const 0) (i32.lt_u (local.get $t) (i32.const 0x1A))))
+      (local.set $al (i32.and (i32.add (i32.add (local.get $t) (local.get $cl)) (i32.const 0x41)) (i32.const 0xFF)))
+      (local.set $t (local.get $al))
+      (local.set $al (local.get $ah))
+      (local.set $ah (local.get $t))
+      (local.set $t (i32.and (i32.sub (local.get $al) (i32.const 0x41)) (i32.const 0xFF)))
+      (local.set $cl (select (i32.const 0x20) (i32.const 0) (i32.lt_u (local.get $t) (i32.const 0x1A))))
+      (local.set $al (i32.and (i32.add (i32.add (local.get $t) (local.get $cl)) (i32.const 0x41)) (i32.const 0xFF)))
+      (local.set $blocks (i32.add (local.get $blocks) (i32.const 1)))
+      (local.set $cost (i32.add (local.get $cost) (i32.const 16)))
+      (br_if $iter (i32.eq (local.get $al) (local.get $ah)))
+      (drop (call $do_alu_sized (i32.const 7) (local.get $al) (local.get $ah)
+              (i32.const 0xFF) (i32.const 7)))
+      (local.set $kind (i32.const 2))))
+    (global.set $cs_al (local.get $al))
+    (global.set $cs_ah (local.get $ah))
+    (global.set $cs_cl (local.get $cl))
+    (global.set $cs_esi (local.get $esi))
+    (global.set $cs_edi (local.get $edi))
+    (global.set $cs_blocks (i32.add (global.get $cs_blocks) (local.get $blocks)))
+    (global.set $cs_cost (i32.add (global.get $cs_cost) (local.get $cost)))
+    (global.set $crt_stricmp_iters
+      (i64.add (global.get $crt_stricmp_iters) (i64.extend_i32_u (local.get $iters))))
+    (local.get $kind))
+
+  ;; 500: the loop alone, entered at its head (a jump back into it, or a cap
+  ;; resume). The exits hand back to the unfolded code: a NUL at done, a
+  ;; mismatch at miss, so the two sbb's run as written; the cap at the head.
+  ;; Thread word: head eip (miss = head+0x2e, done = head+0x32).
+  (func $th_crt_stricmp_run (param $op i32)
+    (local $head i32) (local $eax i32) (local $ecx i32) (local $kind i32) (local $exit i32)
+    (local.set $head (i32.load (global.get $ip)))
+    (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+    (local.set $eax (i32.load offset=0 (global.get $reg_base)))
+    (local.set $ecx (i32.load offset=4 (global.get $reg_base)))
+    (global.set $cs_al (i32.and (local.get $eax) (i32.const 0xFF)))
+    (global.set $cs_ah (i32.and (i32.shr_u (local.get $eax) (i32.const 8)) (i32.const 0xFF)))
+    (global.set $cs_cl (i32.and (local.get $ecx) (i32.const 0xFF)))
+    (global.set $cs_esi (i32.load offset=24 (global.get $reg_base)))
+    (global.set $cs_edi (i32.load offset=28 (global.get $reg_base)))
+    (global.set $cs_blocks (i32.const 0))
+    (global.set $cs_cost (i32.const 0))
+    (local.set $kind (call $crt_stricmp_loop))
+    (local.set $exit
+      (select (i32.add (local.get $head) (i32.const 0x32))
+              (select (i32.add (local.get $head) (i32.const 0x2E)) (local.get $head)
+                      (i32.eq (local.get $kind) (i32.const 2)))
+              (i32.eq (local.get $kind) (i32.const 1))))
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.or (i32.and (local.get $eax) (i32.const 0xFFFF0000))
+              (i32.or (global.get $cs_al) (i32.shl (global.get $cs_ah) (i32.const 8)))))
+    (i32.store offset=4 (global.get $reg_base)
+      (i32.or (i32.and (local.get $ecx) (i32.const 0xFFFFFF00)) (global.get $cs_cl)))
+    (i32.store offset=24 (global.get $reg_base) (global.get $cs_esi))
+    (i32.store offset=28 (global.get $reg_base) (global.get $cs_edi))
+    (global.set $block_budget (i32.sub (global.get $block_budget) (global.get $cs_blocks)))
+    (global.set $steps (i32.sub (global.get $steps) (i32.add (global.get $cs_cost) (i32.const 1))))
+    (global.set $crt_stricmp_runs (i32.add (global.get $crt_stricmp_runs) (i32.const 1)))
+    (global.set $eip (local.get $exit))
+    (return_call $branch_end))
+
+  ;; 501: a whole call, entered at the function: the prologue
+  ;;   push ebp / mov ebp,esp / push edi / push esi / push ebx
+  ;;   mov esi,[ebp+0xc] / mov edi,[ebp+8] / lea eax,[__lc_handle]
+  ;;   cmp dword [eax+8],0 / jnz locale     (LC_CTYPE: 0 = the C locale)
+  ;;   mov al,0xff / mov eax,eax (or mov edi,edi)
+  ;; then the loop, the exits, `movsx eax,al`, and the epilogue the done path
+  ;; jumps to: pop ebx / pop esi / pop edi / leave / ret. The pushes are
+  ;; written to the stack as the CPU would leave them below ESP. The locale is
+  ;; read at run time: a set LC_CTYPE runs the prologue and leaves at the
+  ;; jnz's target, the locale-aware path, which then runs unfolded; so does the
+  ;; rest of a string longer than the cap, at the head (500).
+  ;; Thread word: function entry eip.
+  (func $th_crt_stricmp_call (param $op i32)
+    (local $fn i32) (local $esp0 i32) (local $ebp0 i32) (local $esi0 i32) (local $edi0 i32)
+    (local $ecx i32) (local $lc i32) (local $v i32) (local $kind i32) (local $al i32)
+    (local $exit i32) (local $blocks i32) (local $cost i32)
+    (local.set $fn (i32.load (global.get $ip)))
+    (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+    (local.set $ecx (i32.load offset=4 (global.get $reg_base)))
+    (local.set $esp0 (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ebp0 (i32.load offset=20 (global.get $reg_base)))
+    (local.set $esi0 (i32.load offset=24 (global.get $reg_base)))
+    (local.set $edi0 (i32.load offset=28 (global.get $reg_base)))
+    (call $gs32 (i32.sub (local.get $esp0) (i32.const 4)) (local.get $ebp0))
+    (call $gs32 (i32.sub (local.get $esp0) (i32.const 8)) (local.get $edi0))
+    (call $gs32 (i32.sub (local.get $esp0) (i32.const 12)) (local.get $esi0))
+    (call $gs32 (i32.sub (local.get $esp0) (i32.const 16))
+      (i32.load offset=12 (global.get $reg_base)))
+    (global.set $cs_esi (call $gl32 (i32.add (local.get $esp0) (i32.const 8))))
+    (global.set $cs_edi (call $gl32 (i32.add (local.get $esp0) (i32.const 4))))
+    (local.set $lc (call $gl32 (i32.add (local.get $fn) (i32.const 0x0E))))
+    (local.set $v (call $gl32 (i32.add (local.get $lc) (i32.const 8))))
+    (if (local.get $v)
+      (then
+        ;; Not the C locale: the prologue's state, cmp's flags, the jnz taken.
+        (drop (call $do_alu32 (i32.const 7) (local.get $v) (i32.const 0)))
+        (i32.store offset=0 (global.get $reg_base) (local.get $lc))
+        (i32.store offset=16 (global.get $reg_base) (i32.sub (local.get $esp0) (i32.const 16)))
+        (i32.store offset=20 (global.get $reg_base) (i32.sub (local.get $esp0) (i32.const 4)))
+        (i32.store offset=24 (global.get $reg_base) (global.get $cs_esi))
+        (i32.store offset=28 (global.get $reg_base) (global.get $cs_edi))
+        (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
+        (global.set $steps (i32.sub (global.get $steps) (i32.const 11)))
+        (global.set $eip (i32.add (i32.add (local.get $fn) (i32.const 0x18))
+          (i32.extend8_s (call $gl8 (i32.add (local.get $fn) (i32.const 0x17))))))
+        (return_call $branch_end)))
+    ;; The C locale. al = 0xff, ah = the locale address's second byte.
+    (global.set $cs_al (i32.const 0xFF))
+    (global.set $cs_ah (i32.and (i32.shr_u (local.get $lc) (i32.const 8)) (i32.const 0xFF)))
+    (global.set $cs_cl (i32.and (local.get $ecx) (i32.const 0xFF)))
+    (global.set $cs_blocks (i32.const 1))
+    (global.set $cs_cost (i32.const 12))
+    (local.set $kind (call $crt_stricmp_loop))
+    (if (i32.eqz (local.get $kind))
+      (then
+        ;; The cap, mid-string: everything as the loop has it, at the head.
+        (i32.store offset=0 (global.get $reg_base)
+          (i32.or (i32.and (local.get $lc) (i32.const 0xFFFF0000))
+                  (i32.or (global.get $cs_al) (i32.shl (global.get $cs_ah) (i32.const 8)))))
+        (i32.store offset=16 (global.get $reg_base) (i32.sub (local.get $esp0) (i32.const 16)))
+        (i32.store offset=20 (global.get $reg_base) (i32.sub (local.get $esp0) (i32.const 4)))
+        (i32.store offset=24 (global.get $reg_base) (global.get $cs_esi))
+        (i32.store offset=28 (global.get $reg_base) (global.get $cs_edi))
+        (local.set $exit (i32.add (local.get $fn) (i32.const 0x1C))))
+      (else
+        (local.set $al (global.get $cs_al))
+        (if (i32.eq (local.get $kind) (i32.const 2))
+          (then
+            ;; miss: sbb al,al / sbb al,-1, against the flags of cmp al,ah
+            (local.set $al (call $do_alu_sized (i32.const 3) (local.get $al) (local.get $al)
+                             (i32.const 0xFF) (i32.const 7)))
+            (local.set $al (call $do_alu_sized (i32.const 3) (local.get $al) (i32.const 0xFF)
+                             (i32.const 0xFF) (i32.const 7)))
+            (global.set $cs_cost (i32.add (global.get $cs_cost) (i32.const 2)))))
+        ;; movsx eax,al / jmp / pop ebx,esi,edi (as pushed) / leave / ret
+        (i32.store offset=0 (global.get $reg_base) (i32.extend8_s (local.get $al)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $esp0) (i32.const 4)))
+        (i32.store offset=20 (global.get $reg_base) (local.get $ebp0))
+        (global.set $cs_blocks (i32.add (global.get $cs_blocks) (i32.const 2)))
+        (global.set $cs_cost (i32.add (global.get $cs_cost) (i32.const 7)))
+        (global.set $crt_stricmp_calls (i32.add (global.get $crt_stricmp_calls) (i32.const 1)))
+        (local.set $exit (call $gl32 (local.get $esp0)))))
+    (i32.store offset=4 (global.get $reg_base)
+      (i32.or (i32.and (local.get $ecx) (i32.const 0xFFFFFF00)) (global.get $cs_cl)))
+    (global.set $block_budget (i32.sub (global.get $block_budget) (global.get $cs_blocks)))
+    (global.set $steps (i32.sub (global.get $steps) (i32.add (global.get $cs_cost) (i32.const 1))))
+    (global.set $crt_stricmp_runs (i32.add (global.get $crt_stricmp_runs) (i32.const 1)))
+    (global.set $eip (local.get $exit))
+    (return_call $branch_end))
+
   ;; 469: a block whose entry is zero bytes (see the guard in $decode_block).
   ;; `00 00` is `add [eax],al`; with EAX unmapped that faults, so raise the
   ;; access violation at the entry exactly as the CPU would. A mapped EAX would
