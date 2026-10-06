@@ -3325,6 +3325,23 @@
     ;; Consume the request before entering the guest, exactly as BeginPaint
     ;; does, so a nested BeginPaint in the callback cannot redispatch this one.
     (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+    ;; A 16-bit window procedure cannot be entered from inside this call, so
+    ;; the send below becomes a queued message that runs after we return. A
+    ;; transient DC would be released before it is delivered: the procedure
+    ;; would erase with a dead DC, and narrowing that DC at delivery took a
+    ;; fresh Win16 handle-map slot on every WM_PAINT until the 4096-entry map
+    ;; trapped (Tetravex hands each WM_PAINT to DefWindowProc; batch ~20300).
+    ;; Name the window's synthetic client DC instead, as the Win16 pending-
+    ;; erase path does: it is rebuilt with the erase-visible region at
+    ;; delivery and its narrow handle is dropped with the window.
+    (if (call $win16_is_far_proc (call $wnd_table_get (local.get $hwnd)))
+      (then
+        (local.set $result (call $wnd_send_message (local.get $hwnd) (i32.const 0x14)
+          (i32.add (local.get $hwnd) (i32.const 0x40000)) (i32.const 0)))
+        (if (i32.and (i32.eqz (local.get $result))
+              (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+          (then (call $nc_flags_set (local.get $hwnd) (i32.const 2))))
+        (return)))
     (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
     (if (local.get $hdc)
       (then (call $host_paint_begin (local.get $hwnd))))
