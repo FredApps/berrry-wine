@@ -820,8 +820,15 @@
   ;; Park a "play ... wait" on its import thunk with the stdcall frame intact
   ;; (as $iocp_block does), but as a timed sleep until the next frame is due,
   ;; so the host lets the clock run instead of re-entering the call at once.
+  ;; A park whose cause is a lazy file chunk that is not resident yet (an
+  ;; "open" whose header read, or a "play wait" whose frame read, returned
+  ;; $AVI_PENDING) must be the IO wait instead: only that yield makes the host
+  ;; fill the chunk, and a timed sleep re-entered the call against the same
+  ;; missing bytes forever (Half-Life: Uplink's intro.avi in the page).
   (func $mciavi_park
     (local $ms i32)
+    (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+      (then (call $io_block (i32.const 0)) (return)))
     (if (global.get $current_thunk_eip)
       (then (global.set $eip (global.get $current_thunk_eip))))
     (global.set $handler_set_eip (i32.const 1))
