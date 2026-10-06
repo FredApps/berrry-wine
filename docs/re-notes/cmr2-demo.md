@@ -65,6 +65,13 @@ pressing one key at batch 490000 mid-demo (`--input=490000:keydown:K`):
   presents, and show the next demo's loading screen. Same with `tick-ms:5`
   from 491000, so this is not an attract timeout on a fast guest clock.
 
+The language screen does the same thing: with `tick-ms:5` from right after the
+Enter (batch 30300) the game opens the front-end files, writes the two `.rcf`
+files and goes straight to `Game\Tracks\AUS\AUS05lo.bfl`, with every capture
+from 32k to 90k a flat fade. So the front end is not timing out on a fast
+guest clock; something sends it straight into attract mode. The next thing to
+read is the state machine that follows the `.rcf` writes.
+
 So no front-end menu frame was ever presented. A uniform capture after a key is
 the fade or the inflate stretch, not a broken renderer: `--dx-surfaces` and
 `--trace-dx` show nothing drawn there. Untried: a mouse click and the joystick
