@@ -1155,6 +1155,25 @@ function createServer(opts) {
       return res.end();
     }
     let pathname = url.pathname;
+    // Many whole files in one response (lib/file-bundle.js): the page's eager
+    // file list in one round trip. Each name is a page-relative URL, already
+    // decoded by URLSearchParams, confined to ROOT like any static GET.
+    if (pathname === '/__bundle' && req.method === 'GET') {
+      const { bundleNames, writeBundle } = require('../lib/file-bundle');
+      const resolveName = async (name) => {
+        if (typeof name !== 'string' || !name || name.indexOf('\0') !== -1) return null;
+        const full = path.resolve(ROOT, '.' + path.posix.normalize('/' + name));
+        if (!full.startsWith(ROOT + path.sep)) return null;
+        const st = await fs.promises.stat(full).catch(() => null);
+        return st && st.isFile() ? full : null;
+      };
+      writeBundle(res, bundleNames(url.searchParams), resolveName, {
+        'Access-Control-Allow-Origin': '*',
+        ...(ISOLATE ? { 'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp' } : {}),
+      }).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
+      return;
+    }
     if (pathname === '/') pathname = '/index.html';
     else if (pathname === '/dashboard') pathname = '/dashboard.html';
     serveStatic(req, res, pathname, agentInject);

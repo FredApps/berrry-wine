@@ -161,6 +161,20 @@ function createEmulatorHandler(root) {
     const fail = (status,message,headers={}) => {res.writeHead(status,{'Content-Type':'text/plain; charset=utf-8',...headers});res.end(req.method === 'HEAD' ? undefined : message);return true;};
     if (!['GET','HEAD'].includes(req.method)) return fail(405,'Read-only emulator route',{Allow:'GET, HEAD'});
     if (raw === '/emulator') {res.writeHead(308,{Location:PREFIX+(req.url.includes('?')?'?'+req.url.split('?').slice(1).join('?'):'')});res.end();return true;}
+    // The page's eager files in one response (lib/file-bundle.js). Every name
+    // passes exactly the checks a single GET of it would: a local path, in
+    // the catalog allowlist, a real file inside the root. index.html is never
+    // bundled (it is rewritten per request below).
+    if (raw === PREFIX + '__bundle' && req.method === 'GET') {
+      const catalog = await getCatalog(root);
+      const { bundleNames, writeBundle } = require('../lib/file-bundle');
+      const resolveName = async name => (localPath(name) && name !== 'index.html' && catalog.allowed.has(name))
+        ? realFile(catalog.root, name) : null;
+      await writeBundle(res, bundleNames(new URL(req.url,'http://localhost').searchParams), resolveName, {
+        'X-Content-Type-Options':'nosniff','Cross-Origin-Opener-Policy':'same-origin',
+        'Cross-Origin-Embedder-Policy':'require-corp','Cross-Origin-Resource-Policy':'same-origin'});
+      return true;
+    }
     let relative;
     try { relative = decodeURIComponent(raw.slice(PREFIX.length)) || 'index.html'; } catch { return fail(400,'Invalid path'); }
     if (/%2f|%5c/i.test(raw) || !localPath(relative)) return fail(403,'Path not allowed');

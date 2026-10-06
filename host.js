@@ -783,6 +783,113 @@ class WineAssembly {
     throw error;
   }
 
+  // The reader for lib/file-bundle.js: "WAB1", u32 LE header length, a JSON
+  // header of {f, size} | {f, status}, then the sized files back to back.
+  // Returns Map(name -> Uint8Array) of the files that came, or null for a body
+  // that is not a well-formed bundle (a static host answering an unknown path
+  // with its index page, say).
+  static parseFileBundle(bytes) {
+    if (!bytes || bytes.length < 8 || bytes[0] !== 0x57 || bytes[1] !== 0x41 ||
+        bytes[2] !== 0x42 || bytes[3] !== 0x31) return null;
+    const headerLength = new DataView(bytes.buffer, bytes.byteOffset, 8).getUint32(4, true);
+    if (8 + headerLength > bytes.length) return null;
+    let header;
+    try { header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + headerLength))); } catch (_) { return null; }
+    if (!Array.isArray(header)) return null;
+    const out = new Map();
+    let at = 8 + headerLength;
+    for (const entry of header) {
+      if (!entry || typeof entry.f !== 'string' || !Number.isSafeInteger(entry.size)) continue;
+      if (entry.size < 0 || at + entry.size > bytes.length) return null;
+      // A view, not a copy: every file of an eager list stays mounted, so the
+      // one response buffer lives as long as its files anyway.
+      out.set(entry.f, bytes.subarray(at, at + entry.size));
+      at += entry.size;
+    }
+    return at === bytes.length ? out : null;
+  }
+
+  // The __bundle name for a file URL: the path relative to the page's own
+  // directory, which is what the server resolves. A relative URL is already
+  // that; an absolute one (browser-shell resolves manifest entries to hrefs)
+  // qualifies only on this origin and under the page directory. null = not
+  // bundleable (another origin, a data: URL, a path outside the page dir).
+  static bundleName(url, pageHref) {
+    if (typeof url !== 'string' || !url) return null;
+    if (!/^[a-z][a-z0-9+.-]*:|^\//i.test(url)) {
+      return /(?:^|\/)\.\.(?:\/|$)/.test(url) ? null : url;
+    }
+    if (!pageHref) return null;
+    let target, page;
+    try { target = new URL(url, pageHref); page = new URL('.', pageHref); } catch (_) { return null; }
+    if (target.origin !== page.origin || target.search || target.hash ||
+        !target.pathname.startsWith(page.pathname)) return null;
+    try { return decodeURIComponent(target.pathname.slice(page.pathname.length)) || null; } catch (_) { return null; }
+  }
+
+  // Fetch whole files through the host's __bundle route, a few requests for
+  // the whole list instead of one per file. Anything not returned (a static
+  // host has no such route; a file past the server's byte cap) is left to
+  // the caller's ordinary per-file fetch. The first refusal turns bundling
+  // off for the page, so a static host costs one extra request per session.
+  // `entries` is [{url, name}]; the result maps each original url to its bytes.
+  static async _prefetchBundled(entries, transferOpts = {}) {
+    const got = new Map();
+    const urlOf = new Map(entries.map(e => [e.name, e.url]));
+    const urls = [...urlOf.keys()];
+    // What each call's bundling did, for page probes and the debug log.
+    const stats = { asked: urls.length, requests: 0, files: 0, bytes: 0, stopped: null };
+    (WineAssembly._bundleStats = WineAssembly._bundleStats || []).push(stats);
+    if (WineAssembly._bundleUnsupported || typeof fetch !== 'function' || urls.length < 2) {
+      stats.stopped = WineAssembly._bundleUnsupported ? 'unsupported' : 'too few';
+      return got;
+    }
+    const groups = [];
+    let group = [], length = 0;
+    for (const url of urls) {
+      const part = 'f=' + encodeURIComponent(url);
+      if (group.length && (group.length >= 200 || length + part.length > 6000)) {
+        groups.push(group); group = []; length = 0;
+      }
+      group.push(url); length += part.length + 1;
+    }
+    if (group.length) groups.push(group);
+    // Up to three bundle requests in flight; a refusal stops the rest.
+    const fetchGroup = async (names) => {
+      if (WineAssembly._bundleUnsupported) return;
+      WineAssembly._throwIfAssetAborted(transferOpts.signal);
+      const transfer = WineAssembly._beginTransfer(`${names.length} files (bundled)`, transferOpts);
+      try {
+        const response = await fetch('__bundle?' + names.map(n => 'f=' + encodeURIComponent(n)).join('&'),
+          { signal: transferOpts.signal, cache: 'no-store' });
+        stats.requests++;
+        const bytes = response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
+        const files = bytes ? WineAssembly.parseFileBundle(bytes) : null;
+        if (!files) {
+          WineAssembly._bundleUnsupported = true;
+          stats.stopped = 'HTTP ' + response.status + (bytes ? ' (not a bundle)' : '');
+          transfer.emit('done', 0, 0, 'network');
+          return;
+        }
+        for (const [name, data] of files) if (urlOf.has(name)) got.set(urlOf.get(name), data);
+        stats.files += files.size;
+        stats.bytes += bytes.length;
+        transfer.emit('done', bytes.length, bytes.length, 'network');
+      } catch (error) {
+        if (transferOpts.signal && transferOpts.signal.aborted) throw error;
+        stats.stopped = String(error && error.message || error);
+        // A network failure here is not a verdict on the files: fetch them
+        // one by one, with that path's own retries.
+        transfer.emit('done', 0, 0, 'network');
+      }
+    };
+    const queue = groups.slice();
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+      while (queue.length) await fetchGroup(queue.shift());
+    }));
+    return got;
+  }
+
   static _beginTransfer(url, options) {
     const on = options && options.onTransfer;
     const t = {
@@ -3651,7 +3758,17 @@ class WineAssembly {
     // The launch window's listener and Cancel, passed by the launch that owns
     // this file list (lib/browser-shell.js); internal lists such as the boot
     // fonts are not the app's download and are not reported.
+    // The __bundle prefetch below runs beside the per-file workers: a file it
+    // carries waits for it, everything else is fetched at once. Each bundled
+    // file is consumed once.
+    let bundledUrls = new Set();
+    let bundled = Promise.resolve(new Map());
     const fetchWithRetry = async (url) => {
+      if (bundledUrls.has(url)) {
+        bundledUrls.delete(url);
+        const pre = (await bundled).get(url);
+        if (pre) return pre;
+      }
       // One id for every attempt, so the launch window shows one file being
       // retried rather than a failed file and a new one.
       const transferId = ++WineAssembly._transferSeq;
@@ -3845,6 +3962,26 @@ class WineAssembly {
       }
     };
 
+    // The files that will be fetched whole (no range mount, no preloaded
+    // ranges) go out first as a few __bundle requests; see _prefetchBundled.
+    // ?no-bundle is the control arm.
+    {
+      const rangeCapable = typeof window !== 'undefined' && window.byteProvider && vfs.setProviderFile;
+      const noBundle = typeof location !== 'undefined' && /[?&]no-bundle(?:[=&]|$)/.test(location.search);
+      const pageHref = typeof location !== 'undefined' ? location.href : null;
+      const whole = new Map();
+      for (const item of noBundle ? [] : urls) {
+        const url = typeof item === 'string' ? item : item && item.url;
+        const name = WineAssembly.bundleName(url, pageHref);
+        if (!name || whole.has(name)) continue;
+        const sizedRange = !!(item && ['lazy', 'background'].includes(item.loadMode));
+        const range = !!(rangeCapable && (sizedRange || (item && item.httpRange && item.loadMode !== 'required')));
+        if (!range && !(item && item.preloadRanges)) whole.set(name, url);
+      }
+      bundledUrls = new Set(whole.values());
+      bundled = WineAssembly._prefetchBundled(
+        [...whole].map(([name, url]) => ({ name, url })), transferOpts).catch(() => new Map());
+    }
     const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
       while (next < total) {
         checkCancelled();
