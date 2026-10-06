@@ -13,6 +13,14 @@
 //
 // Needs ffprobe on PATH for the analysis half; without it the .mp4 is still
 // written and the tool says so.
+//
+// --threads / --coop pick the guest backend instead of leaving it to the
+// page default (Threads, when the origin is cross-origin isolated): --threads
+// serves COOP/COEP and opts in, --coop opts out. The backend that actually
+// came up is printed, because a Worker that fails to start falls back to the
+// cooperative scheduler silently. --before-load=JS runs in every document
+// before the page's own scripts (e.g. to delay HTTP Range fetches and make
+// lazy-file reads slow, the way a real network does).
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -35,6 +43,10 @@ const TARGET = arg('target', 'screen');
 const VIEW_W = Number(arg('width', '1280'));
 const VIEW_H = Number(arg('height', '800'));
 const OUT = arg('out', path.join(os.tmpdir(), `record-probe-${APP}.mp4`));
+const THREADS = process.argv.includes('--threads');
+const COOP = process.argv.includes('--coop');
+const BEFORE_LOAD = arg('before-load', '');
+if (THREADS && COOP) { console.error('--threads and --coop are mutually exclusive'); process.exit(2); }
 
 const MIME_TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json',
@@ -48,12 +60,20 @@ function startStaticServer() {
     let pathname;
     try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
     catch (_) { response.writeHead(400); response.end(); return; }
-    const target = path.join(root, pathname === '/' ? '/index.html' : pathname);
-    const real = path.resolve(target);
-    if (!real.startsWith(root)) { response.writeHead(403); response.end(); return; }
+    // Lexical containment, not realpath: a worktree's test/binaries is a
+    // symlink to the main checkout, and resolving it 403'd every asset.
+    const real = path.normalize(path.join(root, pathname === '/' ? '/index.html' : pathname));
+    if (real !== root && !real.startsWith(root + path.sep)) { response.writeHead(403); response.end(); return; }
     fs.readFile(real, (error, data) => {
       if (error) { response.writeHead(404); response.end(); return; }
-      response.writeHead(200, { 'Content-Type': MIME_TYPES[path.extname(real)] || 'application/octet-stream' });
+      response.writeHead(200, {
+        'Content-Type': MIME_TYPES[path.extname(real)] || 'application/octet-stream',
+        // A shared WebAssembly.Memory needs a cross-origin-isolated page.
+        ...(THREADS ? {
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+        } : {}),
+      });
       response.end(data);
     });
   });
@@ -125,6 +145,16 @@ async function main() {
       'Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir }));
     const logs = [];
     page.on('console', m => logs.push(m.text()));
+    if (THREADS || COOP) {
+      await page.evaluateOnNewDocument(v => {
+        try { localStorage.setItem('wine-assembly.threads', v); } catch (_) {}
+      }, THREADS ? '1' : '0');
+    }
+    if (BEFORE_LOAD) {
+      await page.evaluateOnNewDocument(src => {
+        try { (0, eval)(src); } catch (e) { console.log('[before-load] failed: ' + e); }
+      }, BEFORE_LOAD);
+    }
     await page.goto(`${base}/index.html?record-probe=${Date.now()}`,
       { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(() => document.querySelector('.desktop-icon'), { timeout: 60000 });
@@ -141,6 +171,16 @@ async function main() {
       const entry = runningApps.find(item => item && item.name === name);
       return !!(entry && entry.wine && entry.wine.running);
     }, { timeout: 120000 }, APP);
+    const backend = await page.evaluate(name => {
+      const entry = runningApps.find(item => item && item.name === name);
+      const w = entry && entry.wine;
+      return {
+        isolated: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated,
+        backend: (w && w.threadManager && w.threadManager.backend) || 'cooperative (no thread manager yet)',
+      };
+    }, APP);
+    console.log(`guest backend: ${backend.backend} (isolated=${backend.isolated})` +
+      (THREADS ? ' (--threads requested)' : COOP ? ' (--coop requested)' : ''));
 
     // Keep the blob instead of chasing the download.
     await page.evaluate(() => {
