@@ -276,6 +276,8 @@ const gpuApis = new Map([
   ['glActiveTextureARB', 1],
   ['glClientActiveTextureARB', 1],
   ['glMultiTexCoord2fARB', 3],
+  // Descent 3's OpenGL renderer draws its client arrays unindexed.
+  ['glDrawArrays', 3],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

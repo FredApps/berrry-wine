@@ -35242,5 +35242,12 @@
     "convention": "stdcall",
     "hash": 1649100535,
     "ret": "int"
+  },
+  {
+    "id": 4171,
+    "name": "glDrawArrays",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1326080162
   }
 ]

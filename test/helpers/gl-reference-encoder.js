@@ -442,6 +442,28 @@ const stats = {
       if (vertex) this._appendResolvedVertex(vertex[0] || 0, vertex[1] || 0, vertex[2] || 0);
     }
 
+    // glDrawArrays is glArrayElement over first .. first+count-1 (the Descent
+    // demo's OpenGL renderer), with the same save/restore of current state.
+    _drawArrays(mode, first, count) {
+      if (this.immediate) throw new RangeError('glDrawArrays inside glBegin/glEnd');
+      if ((count | 0) < 1 || (first | 0) < 0) return;
+      const state = this._state();
+      if (!state.clientEnabled.has(GL.VERTEX_ARRAY) || !state.vertexPointer) return;
+      const saved = { color: state.color.slice(), texCoord: state.texCoord.slice(),
+        texCoord1: state.texCoord1.slice(), normal: state.normal.slice() };
+      this.immediate = { mode, length: 0 };
+      try {
+        for (let i = 0; i < count; i++) this._arrayElement(first + i);
+        this._finishImmediate();
+      } finally {
+        this.immediate = null;
+        for (let i = 0; i < 4; i++) state.color[i] = saved.color[i];
+        for (let i = 0; i < 2; i++) state.texCoord[i] = saved.texCoord[i];
+        for (let i = 0; i < 2; i++) state.texCoord1[i] = saved.texCoord1[i];
+        for (let i = 0; i < 3; i++) state.normal[i] = saved.normal[i];
+      }
+    }
+
     // glDrawElements is glArrayElement over an index array: Warcraft III draws
     // its whole world this way. Compile it into one immediate-mode span here so
     // the guest's client pointers are read at call time, as OpenGL promises.
@@ -650,6 +672,11 @@ const stats = {
       if (opcode === 102) { // glDrawElements(mode, count, type, indices)
         this._drawElements(u32At(memoryView, stackWa, 0), u32At(memoryView, stackWa, 1),
           u32At(memoryView, stackWa, 2), u32At(memoryView, stackWa, 3));
+        return 0;
+      }
+      if (opcode === 108) { // glDrawArrays(mode, first, count)
+        this._drawArrays(u32At(memoryView, stackWa, 0), u32At(memoryView, stackWa, 1) | 0,
+          u32At(memoryView, stackWa, 2) | 0);
         return 0;
       }
       if (opcode === 95) {

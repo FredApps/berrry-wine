@@ -329,6 +329,10 @@ async function main() {
     });
     gl.call(88, [3, 0x140A, 32, vertex]);
     gl.call(102, [0x0004, 6, 0x1403, indices]);
+    // glDrawArrays: the same arrays walked from an offset first element, as a
+    // strip, plus the degenerate forms that must draw nothing.
+    gl.call(108, [0x0005, 1, 3]);
+    gl.call(108, [0x0004, 0, 0]);
     gl.call(11);
   });
 

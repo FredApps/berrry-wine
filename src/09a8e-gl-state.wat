@@ -482,6 +482,26 @@
       (drop (call $gl_finish_immediate))
       (drop (call $gl_state_intercept (i32.const 77) (local.get $stack)))
       (return (i32.const 1))))
+    ;; glDrawArrays(mode, first, count): DrawElements with the implicit index
+    ;; sequence first .. first+count-1, under the same array preconditions.
+    (if (i32.eq (local.get $op) (i32.const 108)) (then
+      (local.set $a (i32.load offset=8 (local.get $stack)))
+      (local.set $count (i32.load offset=12 (local.get $stack)))
+      (if (i32.or (i32.lt_s (local.get $count) (i32.const 1)) (i32.lt_s (local.get $a) (i32.const 0)))
+        (then (return (i32.const 1))))
+      (if (i32.or (i32.eqz (i32.and (global.get $gl_client_bits) (i32.const 1)))
+          (i32.or (i32.eqz (i32.and (global.get $gl_state_pointer_bits) (i32.const 1)))
+            (i32.eqz (call $gl_array_type_bytes (global.get $gl_vp_type)))))
+        (then (return (i32.const 1))))
+      (drop (call $gl_state_intercept (i32.const 76) (local.get $stack)))
+      (global.set $gl_immediate_mode (i32.load offset=4 (local.get $stack)))
+      (global.set $gl_immediate_floats (i32.const 0))
+      (loop $elements (if (i32.lt_u (local.get $i) (local.get $count)) (then
+        (call $gl_state_array_element (i32.add (local.get $a) (local.get $i)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $elements))))
+      (drop (call $gl_finish_immediate))
+      (drop (call $gl_state_intercept (i32.const 77) (local.get $stack)))
+      (return (i32.const 1))))
     (i32.const 0))
 
   (func $gl_state_reset
