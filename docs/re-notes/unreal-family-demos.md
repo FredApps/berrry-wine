@@ -683,3 +683,23 @@ Next: count the crash with `--fault-null` off and the sparse translator
 toggled (flat page table vs the record walk), and dump the stack page
 through both the guest view and the backing it should map to at the batch
 before 211244.
+
+## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
+
+GlideDrv played the 3D intro on the CLI but "exited to the desktop" in the
+browser. The page actually showed Critical Error `Assertion failed: RenDev
+[File:C:\Unreal\WinDrv\Src\WinViewport.cpp] [Line: 345]`, with the software
+Glide backend (`?glide-renderer=software`) as well as WebGL, and its console
+never logged a LoadLibrary of `glidedrv.dll`. UE1 loads the device class from
+the guest's own `C:\System`; `lib/apps.js` mounted `GlideDrv.int` but not
+`GlideDrv.dll`, and the CLI hid that by finding the DLL on the host disk beside
+the exe. 7229c754 mounts the Glide, OpenGl, MeTaL and SGL driver DLLs beside
+their `.int` files; GlideDrv then plays the intro in the page on the WebGL
+Glide backend. `test/test-unreal-renderer-dll-mounts.js` checks that every
+registry app mounting a `*Drv.int` mounts the DLL too. Evidence:
+`scratch/runs/20261006T1815Z-deusex-glide-page-w6`.
+
+Repro trap on a fresh clone or boat: the gitignored `test/binaries/dlls`
+(msvcrt, comctl32) and `fonts/*.fon` are absent and there is no top-level
+`binaries -> test/binaries` link, so the page falls back to stubs and fails for
+an unrelated reason. Ship those first.
