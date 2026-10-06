@@ -31,7 +31,7 @@ const registryGroups = [
   ['shooters', 'Shooters', ['ut348_demo','blood2_demo']],
   ['graphics-demos', 'Graphics demos / screensavers', ['heaven7','cashcow','bakkslide7','ptct','wep16_idlewild','wep16_lifegen']],
   ['action-adventure', 'Action / adventure', ['hitman_glide_demo','hype_glide_demo','tomb_raider_2_demo','tomb_raider_3_demo','die_by_the_sword_demo']],
-  ['sports-simulation', 'Sports / simulation', ['mw3']],
+  ['sports-simulation', 'Sports / simulation', ['mw3','freespace_demo']],
   ['strategy', 'Strategy / tactics', ['mcm','myth_tfl']],
   // test/binaries/SOURCES.md identifies Bricks as Klotski, not a brick breaker.
   ['puzzle-board', 'Puzzle / board games', ['fourstones','pawn','runenlegen','jigssawme','empipe','marbles','bricks']],

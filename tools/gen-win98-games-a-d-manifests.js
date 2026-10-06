@@ -115,6 +115,15 @@ const GAMES = [
     exe: 'terran.exe',
   },
   {
+    // The demo's InstallShield 5 setup, run in the emulator (16-bit launcher
+    // with --tick-ms-per-batch=5, then _ins0576._mp), installed this tree to
+    // C:\Games\FreeSpaceDemo.
+    id: 'freespace_demo',
+    root: 'Descent-Freespace demo-SW/installed',
+    exe: 'fs.exe',
+    vfsRoot: 'c:\\games\\freespacedemo\\',
+  },
+  {
     // Activision's 1997 demo. Its InstallShield 3 setup ships the game tree
     // uncompressed in DATA\, which runs as is.
     id: 'dark_reign_demo',
