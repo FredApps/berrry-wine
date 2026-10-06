@@ -92,6 +92,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Disciples: Sacred Lands (demo) | [disciples-demo.md](disciples-demo.md) |
 | Commandos: Behind Enemy Lines (demo) | [commandos-demo.md](commandos-demo.md) |
 | Age of Wonders (beta demo) | [age-of-wonders-demo.md](age-of-wonders-demo.md) |
+| Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |
