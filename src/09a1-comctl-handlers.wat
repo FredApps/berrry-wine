@@ -1182,13 +1182,20 @@
         (if (i32.eqz (global.get $version_query_scratch))
           (then (global.set $version_query_scratch (call $heap_alloc (i32.const 32768)))))
         (if (i32.eqz (global.get $version_query_scratch)) (then (return (i32.const 0))))
+        ;; Each string gets its own slot at half its UTF-16 offset, so the
+        ;; slots of one block are as disjoint as the values themselves: a
+        ;; caller may hold several answers at once. Crusaders of Might and
+        ;; Magic queries FileVersion, then CompanyName, then compares the
+        ;; first, and a shared slot gave it "Info-ZIP" where "5.4" belonged.
+        (local.set $text (i32.add (global.get $version_query_scratch)
+          (i32.shr_u (local.get $off) (i32.const 1))))
         (block $copied (loop $copy
           (br_if $copied (i32.ge_u (local.get $i) (local.get $count)))
-          (call $gs8 (i32.add (global.get $version_query_scratch) (local.get $i))
+          (call $gs8 (i32.add (local.get $text) (local.get $i))
             (call $gl16 (i32.add (local.get $value) (i32.shl (local.get $i) (i32.const 1)))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $copy)))
-        (local.set $value (global.get $version_query_scratch))))
+        (local.set $value (local.get $text))))
     (call $gs32 (local.get $out) (local.get $value))
     (call $gs32 (local.get $length) (local.get $count))
     (i32.const 1))

@@ -127,6 +127,12 @@ async function main() {
   assert.strictEqual(q.count, 10, 'ANSI string length includes terminator');
   assert.strictEqual(query('\\StringFileInfo\\040904B0\\ProductName').text, 'Demo racer\0');
   assert.strictEqual(query('\\StringFileInfo\\040C04B0\\ProductName').text, 'Course\0');
+  // Answers stay valid together: Crusaders of Might and Magic keeps the
+  // FileVersion pointer, asks for CompanyName, then compares FileVersion.
+  const held = query('\\StringFileInfo\\040904B0\\FileVersion');
+  query('\\StringFileInfo\\040904B0\\ProductName');
+  assert.strictEqual(Buffer.from(u8.subarray(wa(held.ptr), wa(held.ptr) + held.count)).toString('latin1'),
+    '-1, -1.-1\0', 'a later ANSI query must not overwrite an earlier answer');
   q = query('\\VarFileInfo\\Translation');
   assert.strictEqual(q.count, 8, 'real translation array, not a canned language');
   assert.deepStrictEqual(Buffer.from(u8.subarray(wa(q.ptr), wa(q.ptr) + q.count)), Buffer.from([9, 4, 176, 4, 12, 4, 176, 4]));

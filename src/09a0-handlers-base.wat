@@ -5139,6 +5139,29 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
         (return)))
+    ;; A MEM_RESERVE at a fixed low address names guest space that is free in a
+    ;; Win98 process but is not ours to give: below the sparse arena, only the
+    ;; image's own window [image_base, image_base + GUEST_BASE size) is guest
+    ;; memory, and past it the direct window translates straight into the heap,
+    ;; the stack and emulator tables. Windows fails a reservation it cannot
+    ;; place exactly, and so do we -- it must not quietly hand out emulator
+    ;; memory, and it must not move either: Crusaders of Might and Magic
+    ;; reserves 0x04000000, 0x06000000 and 0x08000000 because its level files
+    ;; are memory images with pointers already relocated to those bases. The
+    ;; first of those used to "succeed" onto the window title table.
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.and (i32.ne (i32.and (local.get $arg2) (i32.const 0x2000)) (i32.const 0))
+            (i32.lt_u (local.get $arg0) (call $virtual_alloc_min))))
+      (then
+        (if (i32.and (i32.ge_u (local.get $arg0) (global.get $image_base))
+              (i32.gt_u
+                (i32.add (i32.sub (local.get $arg0) (global.get $image_base)) (local.get $size))
+                (i32.sub (region.end $GUEST_BASE) (global.get $GUEST_BASE))))
+          (then
+            (global.set $last_error (i32.const 487)) ;; ERROR_INVALID_ADDRESS
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+            (return)))))
     (if (local.get $arg0)
       (then
         (if (i32.ge_u (local.get $arg0) (call $virtual_alloc_min))
