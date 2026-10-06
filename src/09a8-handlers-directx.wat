@@ -4362,7 +4362,7 @@
   ;; render-target reference directly.
   (func $dx_surface_release (param $this i32) (result i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
-    (local $clipper i32)
+    (local $clipper i32) (local $attached i32) (local $owner i32) (local $child i32)
     (local.set $entry (call $dx_from_this (local.get $this)))
     ;; A nonfinal WebGL reference drop touches no pixels or resource lifetime.
     ;; Final teardown and queued software rendering retain their global fence.
@@ -4392,7 +4392,25 @@
         (call $dx_cursor_reset (local.get $entry))
         (if (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x200)))
           (then (call $dib_free_wasm (local.get $dib_wa))))
-        (call $dx_free (local.get $entry))))
+        ;; misc0 is the implicit attachment CreateSurface made: a flip
+        ;; chain's back buffer or the next mip level. The complex surface
+        ;; owns that object's initial reference, and destroying the front
+        ;; destroys the chain, so drop it here. Without this every D3DRM
+        ;; device rebuild (Organic Art savers change form by tearing the
+        ;; whole device down) leaked a 640x480 back buffer from the DIB arena.
+        ;; Same owning DirectDraw on both ends, so a recycled slot is never
+        ;; mistaken for the attachment.
+        (local.set $attached (load.field DxObject misc0 (local.get $entry)))
+        (local.set $owner (i32.load (call $dx_surf_owner_ptr (local.get $entry))))
+        (call $dx_free (local.get $entry))
+        (if (local.get $attached)
+          (then
+            (local.set $child (call $ddraw_surface_entry_checked (local.get $attached)))
+            (if (i32.and
+                  (i32.ne (local.get $child) (i32.const 0))
+                  (i32.eq (i32.load (call $dx_surf_owner_ptr (local.get $child)))
+                          (local.get $owner)))
+              (then (drop (call $dx_surface_release (local.get $attached)))))))))
     (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
 
   (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
