@@ -176,6 +176,38 @@ Evidence: scratch/runs/20261006T003007Z-myth-3dfx-inlevel-final (CLI,
 scratch/runs/20261005-myth-tfl-retail-iso-gameplay/05-gameplay.png. Software
 stays selectable in Myth's own Preferences.
 
+## Bring-your-own ISO in the page (2026-10-06)
+
+Evidence: `scratch/runs/20261006-myth-tfl-byo-iso-run6/` (reviewed). Regression:
+`test/test-myth-byo-iso-web.js` (local-only, skips without the ISO; ~4 min).
+Both were validated on e7c970ef, i.e. on Myth's software renderer: from
+8cd80d5a the game picks its 3dfx renderer, and in the browser that is the WebGL
+Glide backend, which crashed at the time of writing (claude:1863d2b5's open
+fix) -- rerun this test once it lands.
+
+1. Drop `myth-tfl.iso` on the desktop (`window.wineMedia._fileInput`): the
+   insert dialog reads label MYTH_TFL, 538 MB, 312 files and offers 13 programs;
+   the default is the autorun launcher `Startup.exe`, so pick `D:\Setup.exe`.
+2. "Insert and keep" copies the ISO into OPFS; Setup's C: writes go to that
+   media's OPFS overlay journal (`[overlay] checkpoint: persisted N change(s)`).
+   The VISE pages advance with Enter; the final "Install DirectX 5.0?" box is
+   Tab, Enter (= No); then Enter for Close.
+3. VISE makes its Start Menu group only by **Program Manager DDE**
+   (`[CreateGroup("Myth The Fallen Lords")]`, `[ShowGroup(...,1)]`,
+   `[ReplaceItem(...)]`, `[AddItem(C:\Program Files\Myth_TFL\myth_tfl.exe,
+   Myth The Fallen Lords, , 0, -1, -1, )]`, with wFmt = CF_TEXT). The virtual
+   Progman used to ACK without acting (and refused CF_TEXT), so no shortcut and
+   no icon; it now writes the .lnk (e7c970ef). The shell then shows a **kept**
+   icon "Myth The Fallen Lords" (`lnk:<media id>:c:\program files\myth_tfl\myth_tfl.exe`).
+4. That icon launches the installed exe with D: = the ISO (DRIVE_CDROM,
+   MYTH_TFL): intro, menu, New Game, Crow's Bridge, A turns the camera, F8,
+   in-level sound (54 plays/20 s, PCM peak 0.16).
+
+Driver pitfalls (not product bugs): the new icon is appended below an 800 px
+viewport -- scroll it into view; the desktop's open gesture is two `click`
+events within 500 ms (puppeteer `clickCount: 2` did not launch it); a Read Me
+window may be open over the desktop.
+
 ## Open
 
 - CLI and browser both need a press held across one in-game frame.
