@@ -2068,22 +2068,41 @@
   ;; 764: GetUserDefaultLCID — already implemented at ID 413, this is a duplicate entry
   ;; (handled by dispatch to same function)
 
-  ;; 765: wcsrchr(str, ch) — find last occurrence of wide char
+  ;; 765: wcsrchr(str, ch) — find last occurrence of wide char.
+  ;; Walks GUEST addresses, one $gl16 per character: a string on the heap or
+  ;; the stack of a large app lives in the sparse backing window, where one
+  ;; $g2w is good for one page and "wa - GUEST_BASE + image_base" is not the
+  ;; inverse of it. The terminator itself matches when ch is 0, as in the CRT.
   (func $handle_wcsrchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32) (local $last i32) (local $ch i32)
-    (local.set $ptr (call $g2w (local.get $arg0)))
-    (local.set $last (i32.const 0))
+    (local $ga i32) (local $last i32) (local $ch i32) (local $want i32)
+    (local.set $ga (local.get $arg0))
+    (local.set $want (i32.and (local.get $arg1) (i32.const 0xFFFF)))
     (block $done (loop $scan
-      (local.set $ch (i32.load16_u (local.get $ptr)))
-      (if (i32.eq (local.get $ch) (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (then (local.set $last (local.get $ptr))))
+      (local.set $ch (call $gl16 (local.get $ga)))
+      (if (i32.eq (local.get $ch) (local.get $want))
+        (then (local.set $last (local.get $ga))))
       (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
+      (local.set $ga (i32.add (local.get $ga) (i32.const 2)))
       (br $scan)))
-    ;; Convert WASM addr back to guest addr: wa - GUEST_BASE + image_base
-    (if (local.get $last)
-      (then (i32.store offset=0 (global.get $reg_base) (i32.add (i32.sub (local.get $last) (global.get $GUEST_BASE)) (global.get $image_base))))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $last))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))  ;; cdecl
+  )
+
+  ;; 4472: wcschr(str, ch) — first occurrence of a wide char, or NULL. As
+  ;; wcsrchr above: guest addresses throughout, and ch == 0 finds the
+  ;; terminator. Deus Ex's Core.dll calls it at startup through MSVCRT.
+  (func $handle_wcschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ga i32) (local $ch i32) (local $want i32) (local $found i32)
+    (local.set $ga (local.get $arg0))
+    (local.set $want (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+    (block $done (loop $scan
+      (local.set $ch (call $gl16 (local.get $ga)))
+      (if (i32.eq (local.get $ch) (local.get $want))
+        (then (local.set $found (local.get $ga)) (br $done)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $ga (i32.add (local.get $ga) (i32.const 2)))
+      (br $scan)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $found))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))  ;; cdecl
   )
 

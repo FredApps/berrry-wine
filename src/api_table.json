@@ -37626,5 +37626,12 @@
     "convention": "stdcall",
     "hash": 25254542,
     "handler": "gl_unimplemented"
+  },
+  {
+    "id": 4472,
+    "name": "wcschr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 614637455
   }
 ]
