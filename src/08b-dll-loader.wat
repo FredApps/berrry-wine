@@ -742,6 +742,27 @@
       (br $search)))
     (i32.const -1))
 
+  ;; An import descriptor without OriginalFirstThunk (Borland/Delphi linkers
+  ;; leave it 0) keeps its hint/name RVAs only in FirstThunk, and the first
+  ;; loader pass overwrote those with stub thunks for every DLL that was not
+  ;; loaded yet -- for an EXE, all of them. Each stub still records its
+  ;; name's RVA from $image_base, so recover the caller-relative RVA from it.
+  ;; 0 means "nothing to patch": the slot is already a resolved address, or
+  ;; its stub records an ordinal, a native hint override or no name at all.
+  (func $iat_slot_name_rva (param $caller_base i32) (param $slot i32) (result i32)
+    (local $off i32) (local $rec i32)
+    (call $update_thunk_end)
+    (local.set $off (i32.sub (local.get $slot) (global.get $thunk_guest_base)))
+    (if (i32.ge_u (local.get $off)
+          (i32.sub (global.get $thunk_guest_end) (global.get $thunk_guest_base)))
+      (then (return (i32.const 0))))
+    (if (i32.and (local.get $off) (i32.const 7)) (then (return (i32.const 0))))
+    (local.set $rec (i32.load (i32.add (global.get $THUNK_BASE) (local.get $off))))
+    (if (i32.or (i32.ne (i32.and (local.get $rec) (i32.const 0x80000000)) (i32.const 0))
+                (i32.eq (local.get $rec) (i32.const 0x4F524400))) ;; "ORD\0"
+      (then (return (i32.const 0))))
+    (i32.sub (i32.add (local.get $rec) (global.get $image_base)) (local.get $caller_base)))
+
   ;; Patch a caller's imports for a specific loaded DLL.
   ;; Walks the caller's import descriptor and resolves against DLL exports.
   (func $patch_caller_iat (export "patch_caller_iat")
@@ -751,11 +772,16 @@
     (local $dll_name_rva i32) (local $dll_name_ga i32)
     (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32)
     (local $resolved i32) (local $name_wa i32) (local $api_id i32) (local $thunk_addr i32)
-    (local $crt_real i32)
+    (local $crt_real i32) (local $no_ilt i32)
     (local.set $desc_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $caller_import_rva))))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
-      (br_if $id (i32.eqz (local.get $ilt_rva)))
+      (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
+      ;; FirstThunk is required for a live descriptor; OriginalFirstThunk is
+      ;; optional (the same rule as the PE loader's own import walk).
+      (br_if $id (i32.eqz (local.get $iat_rva)))
+      (local.set $no_ilt (i32.eqz (local.get $ilt_rva)))
+      (if (local.get $no_ilt) (then (local.set $ilt_rva (local.get $iat_rva))))
       ;; Check if this descriptor's DLL name matches
       (local.set $dll_name_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
       (local.set $dll_name_ga (i32.add (local.get $caller_base) (local.get $dll_name_rva)))
@@ -763,12 +789,17 @@
         (then
           ;; Found matching descriptor — patch all IAT entries
           (local.set $ilt_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $ilt_rva))))
-          (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
           (local.set $iat_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $iat_rva))))
           (block $fd (loop $fl
             (local.set $entry (i32.load (local.get $ilt_ptr)))
             (br_if $fd (i32.eqz (local.get $entry)))
-            (if (i32.and (local.get $entry) (i32.const 0x80000000))
+            (if (local.get $no_ilt)
+              (then (local.set $entry
+                (call $iat_slot_name_rva (local.get $caller_base) (local.get $entry)))))
+            (local.set $resolved (i32.const 0))
+            (if (i32.eqz (local.get $entry))
+              (then) ;; already resolved, or nothing recoverable to resolve by
+            (else (if (i32.and (local.get $entry) (i32.const 0x80000000))
               (then
                 ;; Ordinal import
                 (local.set $resolved (call $resolve_ordinal (local.get $dll_idx)
@@ -834,7 +865,7 @@
                     (local.set $resolved (i32.const 0)))
                   (else
                     (local.set $resolved
-                      (call $resolve_name_export (local.get $dll_idx) (local.get $name_wa)))))))
+                      (call $resolve_name_export (local.get $dll_idx) (local.get $name_wa)))))))))
             (if (local.get $resolved)
               (then (i32.store (local.get $iat_ptr) (local.get $resolved))))
             (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
@@ -905,23 +936,31 @@
     (result i32)
     (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
     (local $dll_name_rva i32) (local $ilt_ptr i32) (local $iat_ptr i32)
-    (local $entry i32) (local $resolved i32) (local $patched i32)
+    (local $entry i32) (local $resolved i32) (local $patched i32) (local $no_ilt i32)
     (local.set $desc_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $caller_import_rva))))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
-      (br_if $id (i32.eqz (local.get $ilt_rva)))
+      (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
+      (br_if $id (i32.eqz (local.get $iat_rva)))
+      (local.set $no_ilt (i32.eqz (local.get $ilt_rva)))
+      (if (local.get $no_ilt) (then (local.set $ilt_rva (local.get $iat_rva))))
       (local.set $dll_name_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
       (if (call $dll_name_match
             (i32.add (local.get $caller_base) (local.get $dll_name_rva))
             (call $g2w (local.get $target_dll_name_ptr)))
         (then
           (local.set $ilt_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $ilt_rva))))
-          (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
           (local.set $iat_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $iat_rva))))
           (block $fd (loop $fl
             (local.set $entry (i32.load (local.get $ilt_ptr)))
             (br_if $fd (i32.eqz (local.get $entry)))
-            (if (i32.and (local.get $entry) (i32.const 0x80000000))
+            (if (local.get $no_ilt)
+              (then (local.set $entry
+                (call $iat_slot_name_rva (local.get $caller_base) (local.get $entry)))))
+            (local.set $resolved (i32.const 0))
+            (if (i32.eqz (local.get $entry))
+              (then)
+            (else (if (i32.and (local.get $entry) (i32.const 0x80000000))
               (then
                 (local.set $resolved (call $resolve_image_export
                   (local.get $provider_base) (local.get $provider_export_rva)
@@ -930,7 +969,7 @@
                 (local.set $resolved (call $resolve_image_export
                   (local.get $provider_base) (local.get $provider_export_rva) (i32.const 0)
                   (call $g2w (i32.add (local.get $caller_base)
-                                      (i32.add (local.get $entry) (i32.const 2))))))))
+                                      (i32.add (local.get $entry) (i32.const 2))))))))))
             (if (local.get $resolved)
               (then
                 (i32.store (local.get $iat_ptr) (local.get $resolved))

@@ -22,6 +22,7 @@ const { bootRenderHarness } = require('./render-helper');
       (call $gdi_object_record (call $gdi_bitmap_create_system (local.get $id))))
     (func (export "t_rec_w") (param $r i32) (result i32) (call $gdi_bitmap_record_width (local.get $r)))
     (func (export "t_rec_h") (param $r i32) (result i32) (call $gdi_bitmap_record_height (local.get $r)))
+    (func (export "t_bits") (param $r i32) (result i32) (load.field.memarg GdiBitmap bits (local.get $r)))
     (func (export "t_is_obm") (param $id i32) (result i32) (call $obm_is_system (local.get $id)))
     (func (export "t_scratch") (result i32) (call $w2g (global.get $GUEST_STACK)))
     (func (export "t_g2w") (param $ga i32) (result i32) (call $g2w (local.get $ga)))
@@ -38,11 +39,25 @@ const { bootRenderHarness } = require('./render-helper');
     32739: [13, 13],  // OBM_MNARROW
     32738: [16, 16],  // OBM_COMBO
     32760: [13, 13],  // OBM_CHECK
+    32759: [52, 39],  // OBM_CHECKBOXES: 4x3 cells of 13x13 (Delphi's VCL sizes its boxes from it)
   };
   for (const [id, [w, h]] of Object.entries(sizes)) {
     const rec = e.t_obm(+id) >>> 0;
     assert.notStrictEqual(rec, 0, `OBM ${id} creates a bitmap`);
     assert.deepStrictEqual([e.t_rec_w(rec), e.t_rec_h(rec)], [w, h], `OBM ${id} size`);
+  }
+  {
+    // Rows check box / radio / 3-state; columns plain, checked, pushed,
+    // pushed+checked. Top-down 32bpp, stride 52*4.
+    const rec = e.t_obm(32759) >>> 0;
+    const px = (x, y) => new DataView(memory.buffer).getUint32(e.t_bits(rec) + y * 208 + x * 4, true) & 0xFFFFFF;
+    assert.strictEqual(px(5, 6), 0xFFFFFF, 'unchecked box: white face');
+    assert.strictEqual(px(13 + 5, 6), 0, 'checked box: black tick');
+    assert.strictEqual(px(26 + 5, 6), 0xC0C0C0, 'pushed box: grey face');
+    assert.strictEqual(px(0, 0), 0x808080, 'box: grey outer top-left edge');
+    assert.strictEqual(px(13 + 5, 13 + 5), 0, 'checked radio: black dot');
+    assert.strictEqual(px(5, 13 + 5), 0xFFFFFF, 'plain radio: white face');
+    assert.strictEqual(px(13 + 5, 26 + 6), 0x808080, 'checked 3-state box: grey tick');
   }
   assert.strictEqual(e.t_is_obm(32733), 0, 'below the OBM range is not a system bitmap');
   assert.strictEqual(e.t_is_obm(100), 0, 'an ordinary resource id is not a system bitmap');
