@@ -2961,29 +2961,49 @@
   ;; that later reads the shortcut -- the browser desktop putting an installed
   ;; game's icon up, or a guest resolving it -- had no target to find.
   (func $handle_IPersistFile_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $link i32) (local $written i32) (local $handle i32) (local $entry i32)
-    (local $path i32) (local $args i32) (local $work i32) (local $flags i32)
-    (local $at i32) (local $info i32) (local $desc i32) (local $icon i32)
+    (local $entry i32) (local $icon i32) (local $ok i32)
     (if (i32.eqz (local.get $arg1))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    ;; Header 76 + LinkInfo at most 0x2D+261 + four StringData at most 261 + 4.
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $icon (call $shell_link_ext_field (local.get $arg0) (i32.const 0)))
+    (local.set $ok (call $shell_link_write
+      (call $g2w (local.get $arg1)) (i32.const 1)
+      (load.field DxObject misc0 (local.get $entry))
+      (load.field DxObject misc1 (local.get $entry))
+      (load.field DxObject misc2 (local.get $entry))
+      (call $shell_link_ext_field (local.get $arg0) (i32.const 8))
+      (local.get $icon)
+      (select (call $shell_link_ext_field (local.get $arg0) (i32.const 4)) (i32.const 0)
+        (i32.ne (local.get $icon) (i32.const 0)))))
+    (if (i32.eq (local.get $ok) (i32.const 1))
+      (then
+        (store.field DxObject flags (local.get $entry) (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+      (else
+        (i32.store offset=0 (global.get $reg_base)
+          (select (i32.const 0x8007000E) (i32.const 0x80004005) (i32.eq (local.get $ok) (i32.const 2))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; Write an MS-SHLLINK shortcut at the path $lnk_wa (a WASM address, ANSI or
+  ;; wide per $lnk_wide). $path/$args/$work/$desc/$icon are guest ANSI strings
+  ;; or 0. Used by IPersistFile::Save on an IShellLink and by the virtual
+  ;; Program Manager's [AddItem]. Returns 1 written, 0 I/O failure, 2 no memory.
+  (func $shell_link_write (param $lnk_wa i32) (param $lnk_wide i32)
+      (param $path i32) (param $args i32) (param $work i32) (param $desc i32)
+      (param $icon i32) (param $icon_index i32) (result i32)
+    (local $link i32) (local $written i32) (local $handle i32)
+    (local $flags i32) (local $at i32) (local $info i32) (local $ok i32)
     (local.set $link (call $heap_alloc (i32.const 1536)))
     (local.set $written (call $heap_alloc (i32.const 4)))
     (if (i32.or (i32.eqz (local.get $link)) (i32.eqz (local.get $written)))
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+        (if (local.get $link) (then (call $heap_free (local.get $link))))
+        (if (local.get $written) (then (call $heap_free (local.get $written))))
+        (return (i32.const 2))))
     (call $zero_memory (call $g2w (local.get $link)) (i32.const 1536))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $path (load.field DxObject misc0 (local.get $entry)))
-    (local.set $args (load.field DxObject misc1 (local.get $entry)))
-    (local.set $work (load.field DxObject misc2 (local.get $entry)))
-    (local.set $desc (call $shell_link_ext_field (local.get $arg0) (i32.const 8)))
-    (local.set $icon (call $shell_link_ext_field (local.get $arg0) (i32.const 0)))
     (if (local.get $path) (then (local.set $flags (i32.const 0x02))))       ;; HasLinkInfo
     (if (local.get $desc)
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))) ;; HasName
@@ -2999,14 +3019,11 @@
     (call $gs32 (i32.add (local.get $link) (i32.const 16)) (i32.const 0x46000000))
     (call $gs32 (i32.add (local.get $link) (i32.const 20)) (local.get $flags))
     (if (local.get $icon)
-      (then (call $gs32 (i32.add (local.get $link) (i32.const 56))
-        (call $shell_link_ext_field (local.get $arg0) (i32.const 4))))) ;; IconIndex
+      (then (call $gs32 (i32.add (local.get $link) (i32.const 56)) (local.get $icon_index))))
     (call $gs32 (i32.add (local.get $link) (i32.const 60)) (i32.const 1)) ;; SW_SHOWNORMAL
     (local.set $at (i32.const 0x4C))
     (if (local.get $path)
       (then
-        ;; LinkInfo: 0x1C-byte header, a fixed-disk VolumeID with an empty
-        ;; label at +0x1C, LocalBasePath at +0x2D, an empty CommonPathSuffix.
         (local.set $info (i32.add (local.get $link) (local.get $at)))
         (call $gs32 (i32.add (local.get $info) (i32.const 4)) (i32.const 0x1C))
         (call $gs32 (i32.add (local.get $info) (i32.const 8)) (i32.const 1)) ;; VolumeIDAndLocalBasePath
@@ -3035,23 +3052,18 @@
         (local.get $link) (local.get $at) (local.get $icon) (i32.const 1)))))
     (local.set $at (i32.add (local.get $at) (i32.const 4))) ;; TerminalBlock
     (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $arg1)) (i32.const 0x40000000)
-      (i32.const 2) (i32.const 0x80) (i32.const 1)))
-    (if (i32.eq (local.get $handle) (i32.const -1))
-      (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)))
-      (else
-        (if (i32.and
-              (call $host_fs_write_file (local.get $handle) (local.get $link)
-                (local.get $at) (local.get $written))
-              (i32.eq (call $gl32 (local.get $written)) (local.get $at)))
-          (then
-            (store.field DxObject flags (local.get $entry) (i32.const 0))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
-          (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))))
+      (local.get $lnk_wa) (i32.const 0x40000000)
+      (i32.const 2) (i32.const 0x80) (local.get $lnk_wide)))
+    (if (i32.ne (local.get $handle) (i32.const -1))
+      (then
+        (local.set $ok (i32.and
+          (i32.ne (call $host_fs_write_file (local.get $handle) (local.get $link)
+            (local.get $at) (local.get $written)) (i32.const 0))
+          (i32.eq (call $gl32 (local.get $written)) (local.get $at))))
         (drop (call $host_fs_close_handle (local.get $handle)))))
     (call $heap_free (local.get $link))
     (call $heap_free (local.get $written))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+    (local.get $ok))
   (func $handle_IPersistFile_SaveCompleted (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $shell_link_mark (local.get $arg0) (i32.const 1024))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
