@@ -3659,9 +3659,21 @@ class WineAssembly {
                 };
                 // A stat-verified manifest already knows the length. Mount it
                 // synchronously without a HEAD for every asset in the tree.
+                // An httpRange entry that carries its size (lib/app-files.js
+                // default for every streamed file) mounts the same way, no
+                // HEAD -- thousands of small files would otherwise cost a
+                // HEAD each -- as long as it is not over one release part
+                // (larger files may be published as name.partNNN, which only
+                // the HEAD path discovers). Without Range support its first
+                // read takes the whole body (acceptWhole), once.
+                const sizedHttpRange = !sizedRange && item && item.httpRange === true &&
+                  Number.isSafeInteger(item.size) && item.size >= 0 &&
+                  item.size <= WineAssembly.ASSET_PART_SIZE && !item.preloadRanges;
                 const provider = sizedRange
                   ? new window.byteProvider.HttpRangeProvider(url, item.size, rangeOptions)
-                  : await WineAssembly._openRangeProvider(url, rangeOptions);
+                  : sizedHttpRange
+                    ? new window.byteProvider.HttpRangeProvider(url, item.size, { ...rangeOptions, acceptWhole: true })
+                    : await WineAssembly._openRangeProvider(url, rangeOptions);
                 checkCancelled();
                 const cache = window.byteProvider.cached(provider, sizedRange ? {chunkSize:65536, readAhead:0} : undefined);
                 if (item.loadMode === 'background') {

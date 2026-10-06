@@ -51,7 +51,9 @@ const TOP = Number(getArg('top', '0')) || Infinity;
 const FILES = Number(getArg('files', '0')) || 0;
 const ONLY = getArg('apps', '') ? new Set(getArg('apps', '').split(',')) : null;
 const PART = getArg('part', '').toUpperCase();
-const { normalizeLazyFiles, importsSyncAudio } = require(path.join(ROOT, 'lib', 'app-files.js'));
+const {
+  normalizeLazyFiles, importsSyncAudio, importsSyncImages,
+} = require(path.join(ROOT, 'lib', 'app-files.js'));
 const isNe = file => {
   try {
     const fd = fs.openSync(file, 'r'); const b = Buffer.alloc(0x40);
@@ -118,11 +120,18 @@ function census(id, app) {
     items.push({ kind: 'manifest', file: { ...rest, url: disk } });
   }
   const exePath = app.exe ? resolve(app.exe) : null;
-  let syncAudio = true;
-  try { if (exePath) syncAudio = importsSyncAudio(fs.readFileSync(exePath)); } catch (_) {}
+  // The same exe-import readings the hosts pass (lib/browser-shell.js, run.js).
+  let syncAudio = true, syncImages = true;
+  try {
+    if (exePath) {
+      const exeBytes = fs.readFileSync(exePath);
+      syncAudio = importsSyncAudio(exeBytes);
+      syncImages = importsSyncImages(exeBytes);
+    }
+  } catch (_) {}
   const policy = normalizeLazyFiles(app, items.map(x => x.file), {
     isWin16: !!exePath && isNe(exePath),
-    syncAudio,
+    syncAudio, syncImages,
   });
   for (const r of fixed) rows.push({ ...r, size: sizeOf(r.disk), lazy: false, preloaded: 0 });
   policy.files.forEach((out, i) => {
