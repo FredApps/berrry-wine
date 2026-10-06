@@ -27,6 +27,7 @@ const expected = {
   atlantis_demo: ['ATLANTIS.EXE', 2916],
   dark_reign_demo: ['DKReign.exe', 255],
   colin_mcrae_rally_demo: ['GAME.EXE', 1990],
+  avp_alien_demo: ['avp_alien_demo.exe', 29],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {

@@ -139,6 +139,16 @@ const GAMES = [
     exe: 'GAME.EXE',
     exclude: ['SETUPDIR'],
   },
+  {
+    // AvPDemo3.exe is a RAR 2.x self-extractor (7-Zip here has no RAR codec),
+    // so it was run in the emulator itself, OK pressed, and the tree saved:
+    //   node test/run.js --exe=<dir>/AvPDemo3.exe --batch-size=200000
+    //     --input=50:keydown:13,53:keyup:13 --save-vfs=<out>
+    // then every archive member (not windows\ or the SFX) copied to extracted\.
+    id: 'avp_alien_demo',
+    root: 'Alien vs Predator - Alien demo-D3D/extracted',
+    exe: 'avp_alien_demo.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
