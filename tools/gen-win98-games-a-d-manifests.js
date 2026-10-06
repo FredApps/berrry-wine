@@ -72,6 +72,15 @@ const GAMES = [
     root: 'Blood2-demoD3D/Game',
     exe: 'Client.exe',
   },
+  {
+    // The demo's own Wise installer, run in the emulator, wrote installed/ and
+    // a disciple.ini naming every data directory by absolute path, so the tree
+    // mounts back at C:\\Program Files\\Disciples Demo\\.
+    id: 'disciples_demo',
+    root: 'Disciples demo SW/installed',
+    exe: 'exe/discipdm.exe',
+    vfsRoot: 'c:\\program files\\disciples demo\\',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
@@ -92,7 +101,7 @@ function manifestFor(game, directory) {
   const files = walk(directory).filter(relative =>
     path.normalize(relative) !== executable).map(relative => ({
     url: relative.split(path.sep).join('/'),
-    vfsPath: 'c:\\' + relative.split(path.sep).join('\\'),
+    vfsPath: (game.vfsRoot || 'c:\\') + relative.split(path.sep).join('\\'),
   }));
   for (const mediaRoot of game.media || []) {
     const mediaDirectory = path.join(directory, '..', mediaRoot);

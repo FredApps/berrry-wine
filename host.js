@@ -3196,8 +3196,11 @@ class WineAssembly {
     // does. NFS II's 16-bit InstallShield is D:\SETUP\ENGLISH\SETUP.EXE and
     // looks for _SETUP.DLL beside the path it is given; a bare basename sent
     // it to D:\. A registry app's URL is a server path, not a guest one.
-    const processName = /^[a-z]:[\\/]/i.test(url)
-      ? url.slice(3).replace(/\//g, '\\') : exeName;
+    // A registry app may instead name the guest path its installed tree puts
+    // the image at (`exeGuestPath` in lib/apps.js); the CLI takes the same.
+    const guestPath = opts.guestPath || (/^[a-z]:[\\/]/i.test(url) ? url : null);
+    const processName = guestPath
+      ? guestPath.slice(3).replace(/\//g, '\\') : exeName;
     this._exeName = exeName;
     this._exeUrl = url;
     if (opts.args) this._extraArgs = opts.args;
@@ -3258,7 +3261,7 @@ class WineAssembly {
     }
 
     if (this._helpCtx && this._helpCtx.vfs) {
-      VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName);
+      VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName, opts.guestPath);
     }
     if (this.guestWorker) {
       ProcessBoot.setExeDrive(this.instance.exports, url);

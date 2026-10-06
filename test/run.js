@@ -1094,8 +1094,11 @@ const EXE_GUEST_PATH = (() => {
   // An --iso-exe launch IS a guest path on the disc: an installer that copies
   // "from its own directory" (Myth's VISE Setup: GetModuleFileName) must see
   // D:\Setup.exe, not the host temp copy reported as C:\Setup.exe.
+  // A registry app's exeGuestPath is the same thing for an installed tree
+  // (lib/apps.js), and the browser honours it too.
   const requested = getArg('exe-guest-path', null) || (ISO_LAUNCH
-    ? path.win32.join(ISO_LAUNCH.guestDir, path.basename(ISO_LAUNCH.exePath)) : null);
+    ? path.win32.join(ISO_LAUNCH.guestDir, path.basename(ISO_LAUNCH.exePath))
+    : (APP_ENTRY && !getArg('exe', null) && APP_ENTRY.exeGuestPath) || null);
   if (!requested) return null;
   const rooted = /^[a-z]:[\\/]/i.test(requested) ? requested : `c:\\${requested}`;
   const normalized = path.win32.normalize(rooted.replace(/\//g, '\\'));
