@@ -1177,7 +1177,8 @@ const SAFE_CALLS = [
   // guest ip -> arena address and holds no guest register. $jlook_edge is
   // $jlook of $gip plus a store to $ip; in a region that $ip is dead, because
   // every exit leaves through `br $out` and the epilogue re-resolves it.
-  [/^(slice_exit|jlook|jlook_edge|rpush|rpop)$/, []],
+  // $jlook_syn is the same for a jmp_syn (emit.js GO_SYN, fix J).
+  [/^(slice_exit|jlook|jlook_edge|jlook_syn|rpush|rpop)$/, []],
   [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
   // REP widening's guards and its decline counter. Two queries over a linear
   // span and one statistic; none of the three reads or writes a guest register.

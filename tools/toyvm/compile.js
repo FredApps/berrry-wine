@@ -89,6 +89,12 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
+  // Parallel to `covered`: the linear address just past the first instruction
+  // in that block that writes memory, or -1 when it writes none (-2: no
+  // per-block information, e.g. a region guard). dos-loop.js's pure uncached
+  // compile reads it: bytes from the first store on can still run in the same
+  // straight line after that store, so their code bits must stay up.
+  const coveredStore = [];
   // Word index -> guest ip of the instruction emitted there. Only a branch
   // publishes an ip into the arena, so without this a reader of the words
   // cannot say where a mid-block op sits in the guest; region-jit needs
@@ -478,7 +484,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // `regionCodeBits: false` (region-jit's --no-region-code-bits) turns it
       // off, so the two can be compared on one program.
       if (opts.regionCodeBits !== false) {
-        for (const g of guard || []) covered.push([g.lin, g.lin + g.bytes.length]);
+        for (const g of guard || []) { covered.push([g.lin, g.lin + g.bytes.length]); coveredStore.push(-2); }
       }
       continue;
     }
@@ -499,6 +505,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // decoded from memory as it is by then.
     let wrote = false;
     let bulkWrote = false;
+    let firstStoreEnd = -1;
     let refusedAt = -1;
     // The block head extendThrough() just opened inside this very block. The
     // "we already emitted this one, jump to it" test below has to skip it, or
@@ -511,6 +518,18 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // Reaching the head of a block we already emitted: jump to it rather than
       // emitting a second copy of an entire loop body.
       if (cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
+        // Fix J (emit.js GO_SYN): a jmp_syn no longer tests the budget, which
+        // is safe only because it always runs FORWARD -- `cur` is the end of a
+        // straight line from `curHead`, so any loop through it also passes a
+        // real, still-tested transfer. The one way a straight line lands at or
+        // below where it started is a 16-bit ip wrap at 0xFFFF; there a cycle
+        // made of nothing but straight lines and jmp_syn edges is possible in
+        // principle (a segment of non-transfers), so end the line with a cut
+        // that hands back instead. Never reached by any known program.
+        if (cur <= curHead && !require('./emit').JMP_SYN_BUDGET_TEST) {
+          words.push(H.end_cut, cur);
+          break;
+        }
         // The synthetic twin: a dispatch, but not a step (see emit.js).
         words.push(H.jmp_syn, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
@@ -611,6 +630,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       const base = words.length;
       words.push(...d.words);
       if (d.writesMem) wrote = true;
+      if ((d.writesMem || d.bulkWrite) && firstStoreEnd < 0) firstStoreEnd = (codeBase + d.nextIp) & mask;
       // A backward edge out of a block that wrote memory makes every FORWARD
       // edge suspect -- that is the loop-then-fall-through shape of a
       // decryptor. The backward edge itself is still resolved, so the loop
@@ -663,6 +683,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     const extent = refusedAt >= 0 ? cur + 1 : cur;
     if (extent > blockIp) {
       covered.push([(codeBase + blockIp) & mask, (codeBase + extent) & mask]);
+      coveredStore.push(firstStoreEnd);
     }
   }
 
@@ -1120,7 +1141,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   }
 
   return {
-    words, blocks, fixups, unresolved, covered, wordIp, volatileCuts, calls, cyclic,
+    words, blocks, fixups, unresolved, covered, coveredStore, wordIp, volatileCuts, calls, cyclic,
     // Guest byte ranges whose ops are inlined into ANOTHER block's tree here.
     // Their own arena words are still live (other callers enter them directly),
     // so a store into them is not repairable in place -- see repairProg.

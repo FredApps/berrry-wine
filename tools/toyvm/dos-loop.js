@@ -836,14 +836,33 @@ class CodeCache {
       // paragraphs no cached program covers: a dragged-in prologue paragraph
       // may still be held by the cached block that was cut there, and that
       // block needs its bits for as long as it stands.
-      for (const [from, to] of prog.covered) {
+      //
+      // ...but only BEHIND the program's first store. "Its stores land behind
+      // the program counter" holds for the bytes that run before the first
+      // store; everything from that store on can still run, later in this same
+      // straight line, after a store has patched it. BRW.EXE's span routine
+      // stores the immediates of the loop it runs next (8:c314 -> 8:c35d), and
+      // with those bits down the interpreter ran the previous span's
+      // immediates from 330,588,088 on. Kept up, the store raises $smc and the
+      // block ends at its next transfer, before the patched code runs.
+      // TOYVM_PURE_CLEAR_ALL=1 restores clearing everything (A/B control).
+      const clearAll = typeof process !== 'undefined' && process.env && process.env.TOYVM_PURE_CLEAR_ALL === '1';
+      let stored = false;
+      prog.covered.forEach(([from, to], i) => {
+        const s = clearAll ? -1 : (prog.coveredStore ? prog.coveredStore[i] : -2);
+        let clearTo;
+        if (stored) clearTo = from;
+        else if (s === -1) clearTo = to;
+        else if (s === -2) { clearTo = from; stored = true; }   // no information: keep all
+        else { clearTo = Math.min(to, Math.max(from, s)); stored = true; }
         // Paragraph by paragraph: one volPara/byPara test per 16 bytes.
         for (let p = from >>> 4; p <= (to - 1) >>> 4; p++) {
           if (this.volPara[p] !== 1 || this.byPara.has(p)) continue;
-          const lo = Math.max(from, p << 4), hi = Math.min(to, (p + 1) << 4);
+          const lo = Math.max(from, p << 4), hi = Math.min(clearTo, (p + 1) << 4);
           for (let b = lo; b < hi; b++) this.codeBits[b >> 3] &= ~(1 << (b & 7));
         }
-      }
+        for (let b = clearTo; b < to; b++) this.codeBits[b >> 3] |= 1 << (b & 7);
+      });
       this.armWatch();
       this.volatilePure++;
     }
@@ -1234,6 +1253,10 @@ class DosSession {
     this.vgaLines = 449;
     this.vgaFrame = 0;
     this.retraceEdge = false;
+    // The last date a handback REACHED (atStop's clockAt), and whether the last
+    // handback reached its stop: see `from` in step() and the run loops.
+    this.reachedAt = -1;
+    this.lastAtStop = true;
     this.lastKey = -1;
     this.lastWritten = 0;
     this.lastRegs = 0;
@@ -1681,10 +1704,32 @@ class DosSession {
     // caps the budget below, so a small --slice still hands back sooner; it
     // just no longer re-quantizes the audio while it does.
     const grain = Math.max(1, Math.floor(shortest / 4));
-    let stopAt = Math.floor(this.dispatched / grain) * grain + grain;
-    const due = (at) => { if (at > this.dispatched && at < stopAt) stopAt = at; };
+    // The lattice point AT the odometer, not the one after it, when the
+    // odometer sits exactly on one: only an early handback can (a budget stop
+    // ends past its date, see `atStop`), and that point has not been reached.
+    // BRW jit-sepc handed back early on 89,250,000 and the old floor+grain
+    // skipped that stop, so the arms stopped on different dates from there.
+    // The earliest date not yet reached: the odometer itself unless the last
+    // handback REACHED it (a machine cut that ended exactly on its stop).
+    const from = Math.max(this.dispatched, this.reachedAt + 1);
+    let stopAt = Math.ceil(from / grain) * grain || grain;
+    // `>=`, not `>`: a date equal to the odometer is one an EARLY handback
+    // landed on exactly (see `atStop` below), and it has not been reached yet.
+    // Cutting the next slice to it gives a budget of 1, so the guest runs on to
+    // its next block transfer and stops where an arm that never handed back
+    // early stops. The one handback that REACHED a date equal to the odometer
+    // is a machine cut ending exactly on its stop; `from` skips that date.
+    const due = (at) => { if (at >= from && at < stopAt) stopAt = at; };
     // The Sound Blaster block's last sample (already a date, not a rate).
-    if (sbInterval !== Infinity) due(this.audioAt + sbInterval);
+    // OVERDUE is clamped to the odometer: a block can overshoot a date by
+    // thousands of dispatches (BRW.EXE: 16,398 at 160,191,298, in every arm),
+    // and a block end that fell inside that overshoot used to be skipped by
+    // `due()` and then rendered at whichever handback came next -- the
+    // interpreter's next stop, or a region's early exit 3.5k dispatches
+    // sooner. Cut to the odometer, the next slice has a budget of 1 and both
+    // arms render it at the same transfer. Only this date: a timer nobody
+    // hooked stays overdue forever, and clamping it would make every slice 1.
+    if (sbInterval !== Infinity) due(this.irqSchedule ? Math.max(this.audioAt + sbInterval, from) : this.audioAt + sbInterval);
     // The timer, the keyboard and the vertical retrace, each on the cadence its
     // own rung below tests -- written once here and once there would drift, so
     // these read the same expressions.
@@ -1706,7 +1751,7 @@ class DosSession {
     // phase advanced at every handback the two arms read different counts and
     // ran their timers at different rates from there on.
     const tickUnit = this.dispatchesPerTick / (this.tickScale || 1);
-    due(Math.round(Math.ceil((this.dispatched + 1) / tickUnit) * tickUnit));
+    due(Math.round(Math.ceil(from / tickUnit) * tickUnit));
     const budget = this.irqSchedule
       ? Math.max(1, Math.min(this.slice, stopAt - this.dispatched))
       : (this.latticeClock
@@ -1780,7 +1825,16 @@ class DosSession {
     // dependence into what the guest hears. It is billed, it is counted, and
     // then the next slice is cut to the same date again -- so the two arms meet
     // at that date whatever either did in between.
-    const atStop = !this.irqSchedule || this.dispatched >= stopAt;
+    // STRICTLY PAST THE DATE. The budget is tested as `$steps < 0` at a block
+    // transfer, so a slice that spent it always ends at least one dispatch
+    // beyond the date; landing exactly ON it is an early handback that happened
+    // to coincide. BRW.EXE's region 0x423a did that at a side exit (8:4299,
+    // `left` 0) and the timer went in there, three ops before the interpreter's
+    // loop head -- 116 interrupts on different instructions by 330.6M and a
+    // different frame at 500M. A slice the machine cut (a port write) is the
+    // guest's own instant and keeps the old test.
+    const atStop = !this.irqSchedule || this.dispatched > stopAt
+      || (cut >= 0 && this.dispatched >= stopAt);
     // THE CLOCK READS THE DATE, NOT THE ODOMETER. A slice cut to a date still
     // overshoots it: a block only tests its budget at its transfer, so the
     // handback is a few ops past, and how few is a property of the block that
@@ -1793,12 +1847,16 @@ class DosSession {
     // overshoot where it belongs -- billed to the window it ran in, which is
     // the next one -- and every later date is the same number in every arm.
     const clockAt = atStop && this.irqSchedule ? stopAt : this.dispatched;
+    if (atStop && this.irqSchedule) this.reachedAt = stopAt;
+    this.lastAtStop = atStop;
     // The retrace IRQ is the rising edge of the bit the port reports, so it is
     // armed when the dispatch count crosses into a new frame -- the interrupt
     // and the status the guest polls come from ONE clock. It is delivered at
     // the next handback (interrupts only go in at instruction boundaries) and
     // stays armed until the rung below fires it or finds nobody listening.
-    if (this.vgaPeriod) {
+    // Only at a stop: an early handback ON a frame edge has not reached it,
+    // and arming the edge there consumes the date `due()` would keep.
+    if (this.vgaPeriod && atStop) {
       const frame = Math.floor(clockAt / this.vgaPeriod);
       if (frame !== this.vgaFrame) { this.vgaFrame = frame; this.retraceEdge = true; }
     }
@@ -1838,7 +1896,7 @@ class DosSession {
       : endCs === STUB_SEG
         ? `int ${(vm.get('gip') & 0xFF).toString(16).padStart(2, '0')}:${(vm.get('ax') >> 8).toString(16).padStart(2, '0')}`
         : cut >= 0 ? 'cut'
-          : left <= 0 ? (atStop ? 'date' : 'budget')
+          : left < 0 ? (atStop ? 'date' : 'budget')
             : `early ${WHY_NAME[vm.raw('exitwhy')] || '?'}`;
     vm.set('exitwhy', 0);
     if (vm.raw('smc')) {
@@ -1940,12 +1998,24 @@ class DosSession {
     // render, so `dispatched - audioAt >= sbInterval` means the block's last
     // sample is behind us. That is a function of the transfer and the guest
     // clock, and of nothing about the cut.
-    const sbDueNow = sbInterval !== Infinity && this.dispatched - this.audioAt >= sbInterval;
+    // Under the schedule, STRICTLY past the block's end, for the same reason
+    // `atStop` is strict: an early handback that lands exactly on the block's
+    // last sample has not reached it. Rendering there consumed the date (audioAt
+    // := it) while the interrupt waited for the next real stop, so BRW.EXE's
+    // interpreter-only run took its Sound Blaster interrupts hundreds of
+    // dispatches late once `atStop` stopped counting such handbacks. Left
+    // alone, `due()` keeps the date and the next slice reaches it.
+    const sbDueNow = sbInterval !== Infinity && (this.irqSchedule
+      ? this.dispatched - this.audioAt > sbInterval
+      : this.dispatched - this.audioAt >= sbInterval);
     // Under the schedule this is simply "did we reach a stop": the render
     // lattice is one of the dates the slice is cut to, and the block's end is
-    // another, so both of the old clauses are already in `stopAt`.
+    // another -- overdue ones included, see `due` -- so both of the old
+    // clauses are already in `stopAt`. `sbDueNow` no longer renders here: at
+    // an early handback it stamped audioAt with the ODOMETER, which is where
+    // the code cache happened to hand back, not a date.
     if (machine.audioAdvance && (this.irqSchedule
-      ? (atStop || sbDueNow)
+      ? atStop
       : (!this.latticeClock
         || Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
         || sbDueNow))) {
@@ -2157,12 +2227,18 @@ class DosSession {
     }
   }
 
+  // An early handback landing exactly ON the run's end date has not reached
+  // it (see atStop); one more slice, of budget 1, takes the run past it.
+  owesEnd(budget) {
+    return this.irqSchedule && !this.lastAtStop && this.dispatched === budget;
+  }
+
   // Run until the budget is spent or the program is finished. The headless
   // driver's whole loop; the browser one calls step() instead so it can hand
   // the thread back between chunks.
   runUntil(budget) {
     this.endAt = budget;
-    while (this.dispatched < budget && !this.done) this.step();
+    while ((this.dispatched < budget || this.owesEnd(budget)) && !this.done) this.step();
     return this;
   }
 
