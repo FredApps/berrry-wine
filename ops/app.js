@@ -432,13 +432,47 @@ function activityView() {
   return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+(cs?`<p class="source-note">Commit state: ${cs.available?escape(cs.note)+(cs.mainRef?' Merged means reachable from '+escape(cs.mainRef)+'.':' No remote default branch found.')+(cs.fetchedAt?' Last fetch '+escape(when(cs.fetchedAt))+'.':' Last fetch time unknown.'):escape(cs.note)}</p>`:'')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
 }
 function matchingActivity() { return (state.activity || []).filter(row=>matches(row) && (activityFilter==='all' || (row.type==='commit'?'commit':'message')===activityFilter)); }
+// The 5s poll re-renders the whole view. Assigning innerHTML would rebuild
+// every node, so screenshots reload (blink), the focused search box loses its
+// caret and opened <details> collapse. Patch the live tree instead: nodes that
+// did not change are left alone, and user-owned state (an open <details>, the
+// value of the field being typed in) survives the refresh.
+let lastMainHtml=null;
+function morphHtml(target, html) {
+  if (html === lastMainHtml && target.childNodes.length) return;
+  lastMainHtml = html;
+  const next = document.createElement(target.tagName); next.innerHTML = html;
+  morphChildren(target, next);
+}
+function morphChildren(live, next) {
+  const a = [...live.childNodes], b = [...next.childNodes];
+  for (let i = 0; i < b.length; i++) {
+    const have = a[i], want = b[i];
+    if (!have) { live.appendChild(want); continue; }
+    if (have.nodeType !== want.nodeType || have.nodeName !== want.nodeName) { live.replaceChild(want, have); continue; }
+    if (have.nodeType !== 1) { if (have.nodeValue !== want.nodeValue) have.nodeValue = want.nodeValue; continue; }
+    morphAttributes(have, want);
+    morphChildren(have, want);
+  }
+  for (let i = b.length; i < a.length; i++) a[i].remove();
+}
+function morphAttributes(have, want) {
+  for (const {name, value} of [...want.attributes]) if (have.getAttribute(name) !== value) have.setAttribute(name, value);
+  for (const {name} of [...have.attributes]) {
+    if (want.hasAttribute(name)) continue;
+    if (name === 'open' && have.tagName === 'DETAILS') continue;
+    have.removeAttribute(name);
+  }
+  if ((have.tagName === 'INPUT' || have.tagName === 'TEXTAREA') && have !== document.activeElement && have.value !== (want.getAttribute('value') ?? '')) have.value = want.getAttribute('value') ?? '';
+  if (have.tagName === 'SELECT') { const sel = want.querySelector('option[selected]'); if (sel && have.value !== sel.value && have !== document.activeElement) have.value = sel.value; }
+}
 function render() {
   if (!state) return;
   renderApprovals();
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length; $('#dos-count').textContent = state.dosCorpus?.rows?.length || '';
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, dos: dosView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)();
+  morphHtml($('#main'), stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, dos: dosView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)());
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
