@@ -800,6 +800,36 @@ lib/thread-manager.js and src/03-registers.wat, never committed):
   from -- DirectSound play/write cursors (GetCurrentPosition), buffer sizes,
   or a 16-bit op in the mixer setup (`mov sp,[m16]`, `adc esi,ebp`).
 
+ROOT CAUSE, and a correction to the Galaxy attribution above (same day,
+boat bx_k5x5vqk5): the writer is our own software GL, not Galaxy and not the
+guest.
+
+- The thread-3 attribution was an artifact: a check after each T3 slice
+  compares with the value from T3's previous slice, so anything main wrote
+  in between was charged to T3. A value check in the `dispatch-next` macro
+  and at `$branch_end_at`, in every instance, fired in MAIN at the landing
+  of opengldrv `call [0x10014fe0]` (0x10009232 -> 0x10009238), which is
+  `glTexImage2D(GL_TEXTURE_2D, level, internal, w, h, 0, GL_RGBA,
+  GL_UNSIGNED_BYTE, pixels)`.
+- A guard in `$gl_sw_tex_store_to` (trap when a texel's wasm destination is
+  inside the direct window) logged `dib=0xF0`: the texture's surface was
+  created over the NULL sentinel. `$d3d9_create_surface` takes
+  `$dib_alloc`'s guest address and `$g2w`s it; the arena had 16384 pages
+  (64MB) while `$g2w` maps only `$DIB_GUEST_CAPACITY` = 63MB, so once
+  OpenGlDrv's texture uploads after Escape filled the arena past 63MB every
+  new surface translated to 0xF0. The surface was zeroed from 0xF0 and its
+  texels stored from there, through the emulator's low memory and the guest
+  image at 0x12000 -- e.g. texel (3,226) of a 256x256 level is wasm
+  0x3880c, deusex.exe's reader vtable slot 10, written opaque magenta
+  0xffff00ff.
+- Fix: `$DIB_PAGE_COUNT` = 16128 (= capacity / 4096), with
+  `test/test-dib-arena-translates.js` filling the arena and checking every
+  block translates (fails on 16384).
+- The Galaxy mixer's repurposed ESP/EBP and thread 3's "garbage ESP" are
+  legitimate. The OpenGlDrv conversion buffer at 0x7ce3xxxx that no
+  mapping covered (above) is not the cause of this crash; whether it is a
+  separate mapping bug is still open.
+
 ## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
 
 GlideDrv played the 3D intro on the CLI but "exited to the desktop" in the

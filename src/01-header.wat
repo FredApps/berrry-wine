@@ -2532,7 +2532,15 @@
   (global $DIB_PAGE_USED_SIZE i32 (region.size $DIB_PAGE_USED))
   (global $DIB_PAGE_RUNS i32 (region.addr $DIB_PAGE_RUNS 0))
   (global $DIB_PAGE_RUNS_SIZE i32 (region.size $DIB_PAGE_RUNS))
-  (global $DIB_PAGE_COUNT i32 (i32.const 16384))
+  ;; The arena hands out exactly the pages $g2w translates: $DIB_GUEST_CAPACITY
+  ;; / 4096. It stayed at 16384 (64MB) when the capacity above dropped to 63MB,
+  ;; so the arena's top megabyte was allocatable but untranslatable: $g2w
+  ;; answered the NULL sentinel, $d3d9_create_surface zeroed `size` bytes from
+  ;; wasm 0xF0 and the software GL texture store wrote its texels there --
+  ;; through the guest image. Deus Ex on OpenGlDrv filled the arena that far
+  ;; after Escape and overwrote deusex.exe's own vtables with magenta.
+  ;; test/test-dib-arena-translates.js holds the two together.
+  (global $DIB_PAGE_COUNT i32 (i32.const 16128))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $WNDPROC_CONSOLE_NATIVE i32 (i32.const 0xFFFF0003))  ;; WAT-native console window
