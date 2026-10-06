@@ -643,7 +643,10 @@
       position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
       z-index: 5000;
       width: min(400px, calc(100vw - 20px));
-      max-height: calc(100dvh - 16px); overflow: auto;
+      /* Never a scrollbar: every line below is capped (ellipsis, clamped
+         heading, a fixed number of Details rows), so the window fits a
+         landscape phone; anything still taller is clipped, not scrolled. */
+      max-height: calc(100dvh - 16px); overflow: hidden;
       background: #c0c0c0; color: #000;
       border: 1px solid; border-color: #dfdfdf #000 #000 #dfdfdf;
       box-shadow: inset 1px 1px #fff, inset -1px -1px #808080, 2px 2px 0 rgba(0,0,0,.35);
@@ -681,7 +684,10 @@
       font: bold 20px/32px Arial, sans-serif; text-align: center;
     }
     .wa-launch-err.wa-launch-noicon .wa-launch-erricon { display: none; }
-    .wa-launch-heading { font-weight: bold; padding-top: 2px; }
+    .wa-launch-heading {
+      font-weight: bold; padding-top: 2px; overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+    }
     .wa-launch-saving div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
     .wa-launch-bar {
       position: relative; height: 18px; margin: 6px 0 2px; padding: 2px; overflow: hidden;
@@ -697,9 +703,9 @@
     }
     @keyframes wa-launch-slide { from { left: -42px; } to { left: 100%; } }
     .wa-launch-status { margin-top: 6px; }
-    .wa-launch-status div { margin-bottom: 2px; }
-    .wa-launch-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin-top: 8px; }
-    .wa-launch-grid span:nth-child(even) { overflow-wrap: anywhere; }
+    .wa-launch-status div { margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wa-launch-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin-top: 8px; }
+    .wa-launch-grid span:nth-child(even) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wa-launch-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
     .wa-launch-btn {
       min-width: 75px; height: 23px; padding: 0 8px; background: #c0c0c0; color: #000;
@@ -710,13 +716,17 @@
     .wa-launch-btn:active { border-color: #000 #fff #fff #000; box-shadow: inset 1px 1px #808080; }
     .wa-launch-default { box-shadow: inset -1px -1px #808080, 0 0 0 1px #000; }
     .wa-launch-btn:focus-visible, .wa-launch-tb:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
-    .wa-launch-details { margin-top: 8px; max-height: 140px; overflow: auto; background: #fff; border: 2px inset #dfdfdf; }
-    .wa-launch-details table { width: 100%; border-collapse: collapse; }
+    /* A fixed number of rows (DETAILS_MAX_ROWS in lib/launch-progress.js,
+       with a summary row for the rest), so it never needs to scroll. */
+    .wa-launch-details { margin-top: 8px; overflow: hidden; background: #fff; border: 2px inset #dfdfdf; }
+    .wa-launch-details table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .wa-launch-details th:nth-child(2), .wa-launch-details td:nth-child(2) { width: 64px; }
+    .wa-launch-details th:nth-child(3), .wa-launch-details td:nth-child(3) { width: 72px; }
     .wa-launch-details th {
       position: sticky; top: 0; text-align: left; font-weight: normal; padding: 1px 4px;
       background: #c0c0c0; border: 1px solid; border-color: #fff #808080 #808080 #fff;
     }
-    .wa-launch-details td { padding: 1px 4px; white-space: nowrap; }
+    .wa-launch-details td { padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wa-launch-live {
       position: absolute; width: 1px; height: 1px; overflow: hidden;
       clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
