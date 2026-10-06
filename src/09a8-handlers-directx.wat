@@ -12051,16 +12051,19 @@
   ;; IDirectDrawFactory methods (from ddrawex.dll)
   ;; ════════════════════════════════════════════════════════════
   ;; CLSID_DirectDrawFactory = {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}
-  ;; IID_IDirectDrawFactory  = {4FD2A823-86C8-11D0-8FCA-00C04FD9189D}
+  ;; IID_IDirectDrawFactory  = {4FD2A833-86C8-11D0-8FCA-00C04FD9189D} (ddrawex.h;
+  ;; one above the CLSID. It was spelled ...823 here until 2026-10-06, and the
+  ;; strict QueryInterface then refused every real caller: the four MFC theme
+  ;; savers (CORBIS, FASHION, HORROR, WOTRAVEL) ask for ...833 and quit idle.)
   ;; The factory is a thin shim over DirectDrawCreate; CreateDirectDraw returns
   ;; the same IDirectDraw object DirectDrawCreate would, so reuses VTBL_DDRAW.
 
   ;; QueryInterface(this, riid, ppv) — 3 args
   (func $handle_IDirectDrawFactory_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; IID_IDirectDrawFactory {4FD2A823-86C8-11D0-8FCA-00C04FD9189D}.
+    ;; IID_IDirectDrawFactory {4FD2A833-86C8-11D0-8FCA-00C04FD9189D}.
     (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+      (i32.const 0x4FD2A833) (i32.const 0x11D086C8)
       (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 

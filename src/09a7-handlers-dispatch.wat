@@ -3226,7 +3226,7 @@
       (if (i32.eq (local.get $local_class) (i32.const 8))
         (then (local.set $hr (call $dx_query_interface_single_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
-          (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+          (i32.const 0x4FD2A833) (i32.const 0x11D086C8)
           (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))))
       (if (i32.eq (local.get $local_class) (i32.const 9))
         (then (local.set $hr (call $ddraw_cocreate_query_wa
