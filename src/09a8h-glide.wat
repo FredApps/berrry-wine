@@ -425,10 +425,16 @@
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $p i32) (local $r i32) (local $hwnd i32)
-    (local $w i32) (local $h i32) (call $lock_acquire (global.get $GLIDE_STATE))
+    (local $w i32) (local $h i32) (local $cbuf i32) (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_init) (call $glide_flush)
     (if (i32.load offset=12 (global.get $GLIDE_STATE)) (then (call $glide_fail)))
-    (if (i32.or (i32.gt_u (local.get $arg3) (i32.const 3)) (i32.or (i32.gt_u (local.get $arg4) (i32.const 1)) (i32.or (i32.ne (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))) (i32.const 2)) (i32.gt_u (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (i32.const 1))))) (then (call $glide_fail)))
+    ;; nColBuffers (stack +24) and nAuxBuffers (+28). The release 3dfx Glide
+    ;; 2.4 driver (Voodoo Graphics, Win95, from Myth's disc) checks only their
+    ;; sum against frame-buffer memory, and skips that check above 2 MB; this
+    ;; board reports 4 MB. Myth opens with one color buffer and two aux
+    ;; buffers. Triple buffering (3) has no backend surface yet and still fails.
+    (local.set $cbuf (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+    (if (i32.or (i32.gt_u (local.get $arg3) (i32.const 3)) (i32.or (i32.gt_u (local.get $arg4) (i32.const 1)) (i32.or (i32.or (i32.lt_s (local.get $cbuf) (i32.const 1)) (i32.gt_s (local.get $cbuf) (i32.const 2))) (i32.gt_u (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (i32.const 2))))) (then (call $glide_fail)))
     (if (i32.eq (local.get $arg1) (i32.const 0)) (then (local.set $w (i32.const 320)) (local.set $h (i32.const 200))))
     (if (i32.eq (local.get $arg1) (i32.const 1)) (then (local.set $w (i32.const 320)) (local.set $h (i32.const 240))))
     (if (i32.eq (local.get $arg1) (i32.const 2)) (then (local.set $w (i32.const 400)) (local.set $h (i32.const 256))))
@@ -470,7 +476,10 @@
     (i32.store offset=8 (local.get $p) (local.get $h))
     (i32.store offset=12 (local.get $p) (local.get $arg3))
     (i32.store offset=16 (local.get $p) (local.get $arg4))
-    (local.set $r (call $host_glide_submit (i32.const 1) (local.get $p) (i32.const 20)))
+    ;; +20: color buffer count (1 = single-buffered: rendering lands on the
+    ;; displayed surface and a swap only presents it).
+    (i32.store offset=20 (local.get $p) (local.get $cbuf))
+    (local.set $r (call $host_glide_submit (i32.const 1) (local.get $p) (i32.const 24)))
     (i32.store offset=12 (global.get $GLIDE_STATE) (local.get $r))(i32.store offset=24 (global.get $GLIDE_STATE) (local.get $w))(i32.store offset=28 (global.get $GLIDE_STATE) (local.get $h))
     (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
       (i32.store offset=216 (call $glide_state) (i32.const 2))
@@ -928,6 +937,32 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; grDrawPolygonVertexList(int nVertices, const GrVertex vlist[]): Glide 2
+  ;; draws a convex polygon as a triangle fan from vlist[0]; fewer than three
+  ;; vertices draw nothing. The array stride is the SDK's 60-byte GrVertex
+  ;; (myth_tfl.exe fills its list with `add eax, 0x3c`). Myth's 3dfx renderer
+  ;; resolves this by name and abandons Glide entirely when it is missing.
+  (func $handle_grDrawPolygonVertexList
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32)
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (if (i32.ge_s (local.get $arg0) (i32.const 3)) (then
+      ;; The whole list must be addressable: no wrap past 4 GiB.
+      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $arg0)) (i64.const 60)) (i64.const 0xFFFFFFFF))
+        (then (call $glide_fail)))
+      (call $glide_check_guest (local.get $arg1) (i32.mul (local.get $arg0) (i32.const 60)))
+      (local.set $i (i32.const 1))
+      (loop $fan
+        (call $glide_triangle (local.get $arg1)
+          (i32.add (local.get $arg1) (i32.mul (local.get $i) (i32.const 60)))
+          (i32.add (local.get $arg1) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 60))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $fan (i32.lt_s (i32.add (local.get $i) (i32.const 1)) (local.get $arg0))))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_grBufferClear
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)

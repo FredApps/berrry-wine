@@ -34664,5 +34664,20 @@
       }
     ],
     "ret": "MMRESULT"
+  },
+  {
+    "id": 4096,
+    "name": "grDrawPolygonVertexList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3644333370
+  },
+  {
+    "id": 4097,
+    "name": "_grDrawPolygonVertexList@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3776656871,
+    "handler": "grDrawPolygonVertexList"
   }
 ]

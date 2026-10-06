@@ -46,7 +46,9 @@ one `tags/tags.gor` (51,594,033 B). Retail "Small" install is 31 MB
 ## Modules and API profile
 
 - `myth_tfl.exe` (demo 713,216 B; retail 714,752 B), image base 0x400000. DirectDraw
-  8bpp software renderer (glide 2.4.3 on the disc is not used here), DirectSound,
+  8bpp software renderer, or its own 3dfx renderer through our built-in glide2x
+  (the default since 2026-10-06; see "3dfx (Glide 2) renderer" below; the disc's
+  real glide 2.4.3 driver is never loaded), DirectSound,
   DirectInput keyboard device (acquired, state never read in-game — keys arrive
   as WM_KEYDOWN), WSOCK32.
 - `uber.dll` — Bungie protocol switch (`GetIndexedProtocol`, `Protocol*`),
@@ -137,6 +139,42 @@ After the fix "Multiplayer Game" is enabled in the main menu.
   voice refresh played zeros (browser probe: 67 plays/20 s, PCM peak 0, output
   0/400). Fixed with `$w2g`; same window now: PCM peak 0.282, output non-silent
   400/400 samples. Regression: test/test-directsound-lock-sparse.js.
+
+## 3dfx (Glide 2) renderer (2026-10-06)
+
+Myth has its own 3dfx renderer (`C:\myth\render\render_3dfx.c`) and picks it by
+itself. `0x419a80` loads `glide2x.dll` (our built-in module) through `0x419db0`,
+which resolves 33 entry points by name and **returns failure on the first NULL**
+(`test eax,eax / jnz` after each store, e.g. `[0x4b63f0]` =
+`_grDrawPolygonVertexList@8`); it then calls `grSstQueryBoards` and sets
+`[0x4ab950]=1` ("3dfx available") when a board is reported. `0x46d1f0(type)` is
+"renderer usable": 0 = software always, 1 = 3dfx if available and the memory
+tier `[0x4ac13c]` >= 1 (`0x42a710`: `GlobalMemoryStatus.dwAvailPageFile` - 8 MB,
+capped at 32 MB, against tiers at `0x4a0910`: 7 MB, then 12 + 1.5 MB). The
+graphics prefs record (validated by `0x46d2e0`) holds the renderer at `+0x1c`;
+the defaults routine `0x46d380` takes the **highest usable** renderer, so a fresh
+preference file uses 3dfx whenever Glide is complete.
+
+What it needed from us:
+
+- `grDrawPolygonVertexList` (convex fan from vlist[0], 60-byte `GrVertex`; Myth
+  fills its list with `add eax,0x3c`). It is most of Myth's terrain: 2814 calls
+  vs 280 `grDrawTriangle` per 1000 in-level batches.
+- `grSstWinOpen(0, 7=640x480, 0, 0, 0, nColBuffers=1, nAuxBuffers=2)` (`esi=1`
+  is a constant at `0x46027e`). The release Glide 2.4 driver on the disc
+  (`glide 2.4.3/grtvgr.exe` -> `Glide/Drivers/Voodoo/Win95/glide2x.dll`,
+  `_grSstWinOpen@28` at `0x100094d0`) only checks nCol+nAux against frame-buffer
+  memory for 800x600/856x480/960x720 on <= 2 MB boards; ours reports 4 MB. We
+  now accept 1-2 colour buffers (1 = single-buffered: front and back are one
+  surface in both backends) and up to 2 aux buffers.
+- Sampling TMU RAM that was never downloaded: Myth draws from 0x0..0x13fff
+  before (and without) any download there; the hardware samples whatever the RAM
+  holds, so both backends now do too (zero-initialised) instead of failing.
+
+Evidence: scratch/runs/20261006T003007Z-myth-3dfx-inlevel-final (CLI,
+`--glide-renderer=software`); compare the 8bpp software frame in
+scratch/runs/20261005-myth-tfl-retail-iso-gameplay/05-gameplay.png. Software
+stays selectable in Myth's own Preferences.
 
 ## Open
 

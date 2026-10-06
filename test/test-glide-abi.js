@@ -272,6 +272,39 @@ const missingMoveCount = moves.length;
 call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]);
 assert.strictEqual(a.get_dx_exclusive_hwnd(), 0, 'headless context does not claim a missing HWND');
 assert.strictEqual(moves.length, missingMoveCount);
+// The open packet carries nColBuffers as word 5 (backends: 1 = single-buffered).
+assert.strictEqual(submissions.at(-1).op, 1);
+assert.strictEqual(submissions.at(-1).bytes.length, 24, 'open packet carries the color buffer count');
+assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(20), 2);
+// grDrawPolygonVertexList: a convex polygon is a fan from vlist[0], stepping
+// the SDK's 60-byte GrVertex (Myth TFL's terrain path; it abandons Glide
+// entirely when this export is missing). Each vertex's x names it.
+const poly = 0x4150f0;
+for (let v = 0; v < 5; ++v) for (let f = 0; f < 15; ++f)
+  view.setFloat32(wa(poly + v * 60 + f * 4), f === 0 ? 100 + v : 0.5, true);
+const beforePoly = submissions.length;
+call('_grDrawPolygonVertexList@8', [5, poly]);
+call('_grDrawPolygonVertexList@8', [2, poly]);   // fewer than three vertices draws nothing
+call('_grBufferSwap@4', [1]);
+const polyBatch = submissions.slice(beforePoly).find(s => s.op === 0).bytes;
+const fans = [];
+for (let at = 0; at < polyBatch.length; at += 8 + polyBatch.readUInt32LE(at + 4)) {
+  if (polyBatch.readUInt32LE(at) !== 5) continue;
+  fans.push([256, 316, 376].map(o => polyBatch.readFloatLE(at + 8 + o)));
+}
+assert.deepStrictEqual(fans, [[100, 101, 102], [100, 102, 103], [100, 103, 104]],
+  'five vertices draw exactly three fan triangles; a two-vertex list draws none');
+// Myth opens single-buffered with two aux buffers, which the release Glide 2.4
+// driver accepts on a 4 MiB board; triple buffering has no surface and fails.
+call('_grSstWinClose@0');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 1, 2]), 1, 'single-buffered open accepted');
+assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(20), 1, 'backend is told there is one color buffer');
+call('_grSstWinClose@0');
+assert.throws(() => call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 3, 0]), WebAssembly.RuntimeError,
+  'triple buffering is refused, not silently double-buffered');
+call('_grGlideShutdown@0');
+call('_grGlideInit@0');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1);
 call('_grBufferClear@12', [0, 255, 65535]);
 rejectBatch = true;
 assert.throws(() => call('_grBufferSwap@4', [0]), WebAssembly.RuntimeError,
