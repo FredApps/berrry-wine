@@ -963,10 +963,10 @@
             (call $gs32 (i32.add (local.get $program) (i32.const 21760)) (call $gl32 (i32.add (local.get $pp) (i32.const 40))))
             (call $gs32 (i32.add (local.get $program) (i32.const 21764)) (i32.const 1))))))
         (call $gs32 (i32.add (local.get $program) (i32.const 1684)) (local.get $hwnd))
+        ;; $d3dim_create_device already retained the creator (27979740); the
+        ;; device's Release drops that one reference through +20628. A second
+        ;; AddRef here leaked one IDirect3D9 reference per device.
         (call $gs32 (i32.add (local.get $program) (i32.const 20628)) (local.get $arg0))
-        (if (local.get $arg0) (then
-          (store.field DxObject refcount (call $dx_from_this (local.get $arg0))
-            (i32.add (load.field DxObject refcount (call $dx_from_this (local.get $arg0))) (i32.const 1)))))
         (call $gs32 (i32.add (local.get $program) (i32.const 20632)) (local.get $arg1))
         (call $gs32 (i32.add (local.get $program) (i32.const 20636)) (local.get $arg2))
         (call $gs32 (i32.add (local.get $program) (i32.const 20640)) (local.get $arg3))
