@@ -763,6 +763,43 @@ to `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
   path failed to record a mapping for 0x7ce3xxxx or the guest overruns its
   buffer; check after the thread lead.
 
+Thread 3 (same day, boat bx_tdvuwpfj, main 1945acdd; boat-local probes in
+lib/thread-manager.js and src/03-registers.wat, never committed):
+
+- Thread 3 is Galaxy's audio mixer (its slices start in galaxy.dll at
+  0x11f43xxx-0x11f47xxx) calling runtime-generated MMX mixing code at
+  0x1224ed00-0x1224f4xx (no module covers it). That code saves ESP to a
+  galaxy global (`mov [0x11f7c224], esp`), loads `mov sp,[ebp+0x20]`,
+  `shl esp,0x10` and uses ESP as a fixed-point step (`add edx,esp`) and EBP
+  as `sar ebp,0x10` -- so the "garbage ESP" (0x80000000, 0x72060000,
+  0x1f560000, 0x40000000 at slice ends) is legitimate, and it makes no
+  push/call while ESP is repurposed.
+- It IS the writer. A slot guard that reads guest 0x1092680c after every
+  guest-thread slice fired twice, both times in a T3 slice: 0x10901131 ->
+  0xffff00ff (two 16-bit samples). Once mid-mixer (EDI 0x1227dfc8, EAX
+  0x12280048, EBX 0x122820c8), once in a slice that began at the mixer's
+  second path (eipBefore 0x1224f143) and ended back in galaxy.
+- Not an instance mismatch: T3's `get_image_base()` = main's = 0x10900000.
+  Not the uop tier (same overwrite with `--no-uop`). Not `$gs32`/`$gs64`: a
+  trap on any store within 8 bytes of the slot in both never fired, so the
+  store goes through an inline `g2w-fast` path, which for a direct-window
+  address is a correct translation -- i.e. the guest store's own address is
+  0x1092680c.
+- The mixer's stores are only `movd/movq [edi|eax|ebx](+8), mmN`, with
+  EDI/EAX/EBX loaded from its arguments `[ebp+8]`, `[ebp+0xc]`,
+  `[ebp+0x10]`. So in the writing slice galaxy passed an output pointer of
+  ~0x10926804 -- inside deusex.exe -- for one mix call. DirectSound
+  Lock/Unlock is not per-call (4 calls on T3 in batches 211150-211282), so
+  the pointer comes from galaxy's own buffer bookkeeping, not straight from
+  our IDirectSoundBuffer_Lock.
+- Next (boat): log the mixer's three output arguments at its entry
+  (0x1224ed20, T3) per call in the batch before the overwrite to catch the
+  call with ~0x109268xx, then trace where galaxy computes that pointer
+  (its globals near 0x11f7c2xx and the table at 0x11fbd914 are the leads);
+  suspects in our emulation are the inputs galaxy derives buffer positions
+  from -- DirectSound play/write cursors (GetCurrentPosition), buffer sizes,
+  or a 16-bit op in the mixer setup (`mov sp,[m16]`, `adc esi,ebp`).
+
 ## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
 
 GlideDrv played the 3D intro on the CLI but "exited to the desktop" in the
