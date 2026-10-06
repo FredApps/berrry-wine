@@ -493,6 +493,10 @@ const VLAN_WIRE = hasFlag('vlan-wire');
 // vlan wire to the parent, installed as std handle WHICH before the entry
 // point runs. Not meant to be typed by hand.
 const PIPE_STD = getArg('pipe-std', null);
+// --pipe-child-args="--trace-api=ReadFile --trace-from=N": extra flags for a
+// child started by process_spawn, space separated -- the only way to trace
+// the child's side. Keep them bounded: the child's output is relayed here.
+const PIPE_CHILD_ARGS = (getArg('pipe-child-args', '') || '').split(' ').filter(Boolean);
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
@@ -3784,6 +3788,7 @@ async function main() {
       // The child's side of a wire question is half the answer.
       // (never --verbose: its per-batch output, relayed here, is unbounded)
       ...(TRACE_NET ? ['--trace-net'] : []),
+      ...PIPE_CHILD_ARGS,
     ];
     const { fork } = require('child_process');
     const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });

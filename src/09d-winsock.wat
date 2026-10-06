@@ -1151,11 +1151,19 @@
   ;; Drain the wire into this process's sockets. Safe to call on every
   ;; socket entry point: an empty wire costs one host call.
   (func $vsock_pump
-    (local $wa i32) (local $n i32) (local $guard i32)
     (if (i32.and (i32.eqz (global.get $wsa_started))
           (i32.and (i32.eqz (global.get $win16_dde_users))
                    (i32.eqz (global.get $dp_net_users))))
       (then (return)))
+    (call $vsock_pump_now))
+
+  ;; The pump without the "does this process use the wire at all" gate. An
+  ;; anonymous pipe whose other end is in another process (09d7-pipes.wat)
+  ;; calls this directly: a redirected console child such as GNUChess never
+  ;; calls WSAStartup, and gating its stdin on Winsock left every byte its
+  ;; parent wrote sitting in the wire inbox while ReadFile waited.
+  (func $vsock_pump_now
+    (local $wa i32) (local $n i32) (local $guard i32)
     (call $vsock_expire_connects)
     (local.set $wa (call $vsock_frame_wa))
     (if (i32.eqz (local.get $wa)) (then (return)))

@@ -196,7 +196,7 @@
     (local.set $sock (call $pipe_h_sock (local.get $h)))
     ;; A writer in another instance delivers through the wire.
     (if (i32.eq (load.field VSock peer (call $vsock_rec (local.get $sock))) (i32.const -2))
-      (then (call $vsock_pump)))
+      (then (call $vsock_pump_now)))
     (if (i32.gt_u (load.field VSock rx_len (call $vsock_rec (local.get $sock))) (i32.const 0))
       (then
         ;; Any available prefix satisfies the read: pipe reads are partial.
@@ -252,7 +252,7 @@
         ;; The reader is in another instance: DATA frames within the send
         ;; window, as many as fit now; a WINDOW credit from the reader's
         ;; reads re-opens it for the parked remainder.
-        (call $vsock_pump)
+        (call $vsock_pump_now)
         (local.set $rec (call $vsock_rec (local.get $sock)))
         (block $full (loop $send
           (br_if $full (i32.ge_u (local.get $done) (local.get $n)))
@@ -364,7 +364,7 @@
       (then (call $pipe_ret (i32.const 0) (i32.const 5) (i32.const 28)) (return))) ;; ERROR_ACCESS_DENIED
     (local.set $sock (call $pipe_h_sock (local.get $arg0)))
     (if (i32.eq (load.field VSock peer (call $vsock_rec (local.get $sock))) (i32.const -2))
-      (then (call $vsock_pump)))
+      (then (call $vsock_pump_now)))
     (local.set $avail (load.field VSock rx_len (call $vsock_rec (local.get $sock))))
     (if (i32.and (i32.eqz (local.get $avail))
                  (i32.eqz (call $pipe_writer_alive (local.get $sock))))
