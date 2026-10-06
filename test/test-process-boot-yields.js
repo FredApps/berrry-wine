@@ -81,6 +81,9 @@ function fakeGuest(name, { nameGetter }) {
     set_esp: (v) => { state.esp = v; },
     set_eax: (v) => { state.eax = v >>> 0; },
     clear_yield: () => { state.yield = 0; state.cleared++; },
+    // Guest addresses are linear offsets into this small memory.
+    guest_read32: (ga) => new DataView(memory).getUint32(ga, true),
+    guest_write32: (ga, v) => new DataView(memory).setUint32(ga, v >>> 0, true),
   };
   exports[nameGetter] = () => at;
   return { memory, exports, state, mem, at };
@@ -306,6 +309,12 @@ function fakeGuest(name, { nameGetter }) {
   console.log('PASS  LoadLibrary yield maps the static imports of the requested DLL first');
 
   const c = fakeGuest('shdocvw.dll', { nameGetter: 'get_com_dll_name' });
+  // The parked CoCreateInstance frame: return address, then rclsid,
+  // pUnkOuter, dwClsContext, riid, ppv -- and *ppv holding stale garbage.
+  const comFrame = new DataView(c.memory);
+  comFrame.setUint32(0x2000, 0x00401234, true);
+  comFrame.setUint32(0x2000 + 20, 0x3000, true);
+  comFrame.setUint32(0x3000, 0xdeadbeef, true);
   const comMissing = await handleComDllYield({
     exports: c.exports,
     memoryBuffer: c.memory,
@@ -314,6 +323,9 @@ function fakeGuest(name, { nameGetter }) {
   assert.strictEqual(comMissing, null);
   assert.strictEqual(c.state.eax, 0x80040154, 'CoCreateInstance reports REGDB_E_CLASSNOTREG');
   assert.strictEqual(c.state.esp, 0x2000 + 24, 'the failure path drops the return address and five stdcall args');
+  assert.strictEqual(c.state.eip, 0x00401234,
+    'and resumes the caller: left on the thunk, it re-ran CoCreateInstance on the caller stack');
+  assert.strictEqual(comFrame.getUint32(0x3000, true), 0, 'CoCreateInstance clears *ppv on failure');
   assert.strictEqual(c.state.yield, 0);
   console.log('PASS  COM DLL yield: a missing in-proc server fails the call and unwinds its args');
 
