@@ -104,6 +104,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Crusaders of Might and Magic (demo, parked) | [crusaders-mm-demo.md](crusaders-mm-demo.md) |
 | Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
 | Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
+| Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
 | Aliens versus Predator (Alien demo) | [avp-alien-demo.md](avp-alien-demo.md) |
 | Aliens versus Predator (Marine demo) | [avp-marine-demo.md](avp-marine-demo.md) |

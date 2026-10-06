@@ -22,7 +22,7 @@ const proprietaryLocalIds = [
   'baldurs_gate_noninteractive_demo', 'baldurs_gate_interactive_demo',
   'baldurs_gate_chapters_1_2_demo',
   'civ2_win16', 'civ2_mge', 'tomb_raider_3_demo',
-  'tomb_raider_2_demo',
+  'tomb_raider_2_demo', 'populous_tb_demo',
 ];
 
 for (const id of proprietaryLocalIds) {
