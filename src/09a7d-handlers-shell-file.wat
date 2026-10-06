@@ -487,11 +487,21 @@
   ;; debounces. A successful peek does not call this, and leaves the sequence
   ;; number two behind, so it resets the run on its own.
   (func $peek_spin_step (result i32)
-    (local $ret i32)
+    (local $ret i32) (local $blk i32) (local $idle i32)
     (local.set $ret (call $spin_call_site))
+    ;; The guest-work condition the clock detector has: a loader that pumps
+    ;; PeekMessage between chunks of real work (Delta Force decodes its PCX
+    ;; art that way) is not spinning, and parking each pump cost it ~20x.
+    (local.set $blk (call $blocks_now))
+    (local.set $idle
+      (i32.or (i32.eqz (global.get $spin_work_max))
+        (i32.le_u (i32.sub (local.get $blk) (global.get $peek_spin_blk))
+                  (global.get $spin_work_max))))
+    (global.set $peek_spin_blk (local.get $blk))
     (if (i32.and
-          (i32.eq (global.get $spin_dispatch_seq)
-                  (i32.add (global.get $peek_spin_seq) (i32.const 1)))
+          (i32.and (local.get $idle)
+            (i32.eq (global.get $spin_dispatch_seq)
+                    (i32.add (global.get $peek_spin_seq) (i32.const 1))))
           (i32.and
             (i32.eq (local.get $ret) (global.get $peek_spin_ret))
             (i32.eq (i32.load offset=16 (global.get $reg_base)) (global.get $peek_spin_esp))))

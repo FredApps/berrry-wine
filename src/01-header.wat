@@ -3271,6 +3271,7 @@
   (global $peek_spin_ret (mut i32) (i32.const 0))
   (global $peek_spin_esp (mut i32) (i32.const 0))
   (global $peek_spin_parks (mut i32) (i32.const 0))
+  (global $peek_spin_blk (mut i32) (i32.const 0))     ;; $blocks_now at the last empty peek
   ;; Parameters published when SendMessage parks on an HWND owned by another
   ;; guest thread.  They are per-instance because only that sender consumes
   ;; them; the scheduler carries them to the target instance.
