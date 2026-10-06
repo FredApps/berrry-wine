@@ -97,7 +97,7 @@ async function buildCatalog(inputRoot) {
     const missingPaths = [];
     for (const name of dependencies) if (!await realFile(root, name)) missingPaths.push(name);
     const available = !!localPath(fileUrl(app.exe)) && !missingPaths.length && !invalid.length;
-    routes.push({appId,label:labels.get(appId) || appId,available,url:available ? PREFIX + '?app=' + encodeURIComponent(appId) : null,
+    routes.push({appId,label:labels.get(appId) || appId,available,url:available ? PREFIX + '?debug&app=' + encodeURIComponent(appId) : null,
       reason:available ? 'Registered local files are present; launch does not certify compatibility.' : invalid[0] || 'Registered files are missing.',missingPaths});
   }
   return {root,allowed,routes};
@@ -208,7 +208,7 @@ function launchFor(candidate,catalog,production,build) {
   const pin = build?.wasmSha256 && /^[0-9a-f]{64}$/.test(build.wasmSha256) ? '&build=' + build.wasmSha256 : '';
   const ids = candidate.appIds || [], routes=ids.map(id=>catalog.routes.find(route=>route.appId===id)).filter(Boolean).map(route=>route.available && route.url && pin ? {...route,url:route.url+pin} : route);
   const deployed = new Set(production?.status === 'verified' ? production.appIds : []);
-  const productionRoutes = production?.status === 'verified' ? ids.filter(id=>deployed.has(id)).map(appId=>({appId,label:routes.find(r=>r.appId===appId)?.label || appId,url:new URL('/?app='+encodeURIComponent(appId),production.url).href})) : [];
+  const productionRoutes = production?.status === 'verified' ? ids.filter(id=>deployed.has(id)).map(appId=>({appId,label:routes.find(r=>r.appId===appId)?.label || appId,url:new URL('/?debug&app='+encodeURIComponent(appId),production.url).href})) : [];
   return {routes,productionRoutes,reason:routes.length ? '' : 'No registered emulator launch route is associated with this corpus entry.'};
 }
 module.exports={createEmulatorHandler,getCatalog,buildCatalog,getBuildIdentity,readBuildIdentity,privateIndex,rangeFor,launchFor,LOCAL_DESKTOP};

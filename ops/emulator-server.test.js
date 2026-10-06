@@ -31,7 +31,7 @@ test('registered closure, private entry, GET/HEAD ranges, isolation and denied p
 test('index anchor, suffix ranges and production link provenance fail closed',()=>{
  assert.throws(()=>privateIndex(Buffer.from('no anchor')),/anchor/);assert.throws(()=>privateIndex(Buffer.from(LOCAL_DESKTOP+LOCAL_DESKTOP)),/anchor/);
  assert.equal(rangeFor('bytes=1-2,4-5',10),false);assert.equal(rangeFor('bytes=-0',10),false);assert.deepEqual(rangeFor('bytes=-99',10),{start:0,end:9});
- const c={appIds:['game']},catalog={routes:[{appId:'game',label:'Game',available:true,url:'/emulator/?app=game'}]};assert.equal(launchFor(c,catalog,{status:'unknown',appIds:['game']}).productionRoutes.length,0);assert.equal(launchFor(c,catalog,{status:'verified',appIds:['game'],url:'https://example.test/lib/apps.js'}).productionRoutes[0].url,'https://example.test/?app=game');
+ const c={appIds:['game']},catalog={routes:[{appId:'game',label:'Game',available:true,url:'/emulator/?debug&app=game'}]};assert.equal(launchFor(c,catalog,{status:'unknown',appIds:['game']}).productionRoutes.length,0);assert.equal(launchFor(c,catalog,{status:'verified',appIds:['game'],url:'https://example.test/lib/apps.js'}).productionRoutes[0].url,'https://example.test/?debug&app=game');
 });
 
 test('declared sibling assets are launchable without allowing manifest escape into private files',async()=>{
@@ -140,8 +140,8 @@ test('launch links pin the served wasm; a changed module or missing files refuse
   id=await readBuildIdentity(root);assert.match(id.commit,/^[0-9a-f]{40}$/);assert.equal(id.dirty,false);assert.equal(id.dirtyFiles,0);
   await fs.writeFile(path.join(root,'host.js'),'changed');id=await readBuildIdentity(root);assert.equal(id.dirty,true);assert.equal(id.dirtyFiles,1);
   const route=launchFor({appIds:['game','missing']},await buildCatalog(root),null,id).routes;
-  assert.equal(route[0].url,'/emulator/?app=game&build='+sha);assert.equal(route[1].url,null,'unavailable routes get no link');
-  assert.equal(launchFor({appIds:['game']},await buildCatalog(root),null,{wasmSha256:null}).routes[0].url,'/emulator/?app=game');
+  assert.equal(route[0].url,'/emulator/?debug&app=game&build='+sha);assert.equal(route[1].url,null,'unavailable routes get no link');
+  assert.equal(launchFor({appIds:['game']},await buildCatalog(root),null,{wasmSha256:null}).routes[0].url,'/emulator/?debug&app=game');
   assert.equal((await request(port,route[0].url)).status,200);
   const missing=await request(port,'/emulator/?app=missing');assert.equal(missing.status,409);assert.match(missing.body,/missing test\/binaries\/no\.exe/);
   await new Promise(r=>setTimeout(r,20));await fs.writeFile(path.join(root,'build/wine-assembly.wasm'),'rebuilt');
