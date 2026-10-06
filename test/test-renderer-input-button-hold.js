@@ -110,6 +110,27 @@ const drainTimer = () => { const t = timers.shift(); if (t) t.fn(); return t; };
   delete window.__waMinButtonHoldMs;
 }
 
+{
+  // A headless host runs the guest on its own clock (test/run.js: 200ms of
+  // guest time per batch, in microseconds of wall time while the guest is
+  // parked). With _inputNowMs set the hold is measured there: a frozen wall
+  // clock must not keep a click's release -- and every drag event queued
+  // behind it -- from ever being delivered (Bricks' block drag).
+  const r = renderer();
+  let guestMs = 5000;
+  r._inputNowMs = () => guestMs;
+  r.inputQueue.push(down(), up(), move());
+  r.takeInput(null);
+  check('host clock: release withheld in the press pump', r.takeInput(null) === null);
+  r.takeInput(null);  // the pump's empty-ish poll leaves it polled
+  guestMs += 200;     // one headless batch of guest time; the wall clock does not move
+  const rel = r.takeInput(null);
+  check('host clock: release delivered once guest time passes the floor, wall clock frozen',
+    rel && rel.msg === 0x0202);
+  const mv = r.takeInput(null);
+  check('host clock: the queued move follows it', mv && mv.msg === 0x0200);
+}
+
 performance.now = realNow;
 global.setTimeout = realSetTimeout;
 delete global.window;

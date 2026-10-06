@@ -4187,6 +4187,10 @@ async function main() {
   // driven by a fixed --input script is only reproducible when the box is
   // idle: the age the guest sees is real time spent between batches.
   if (renderer) renderer._guestNowMs = h.get_ticks;
+  // The input queue's button-release hold (renderer-input.js takeInput) is
+  // also time on the guest's clock, read without spending a step, so polling
+  // the queue cannot move the time the guest sees.
+  if (renderer) renderer._inputNowMs = () => ctx.guestPeekMs();
   // --wall-clock-ms pins the calendar's ORIGIN; the calendar then advances
   // with GUEST time. Freezing it outright was deterministic but not a clock:
   // GetSystemTime returned one instant for the whole run, so anything that
