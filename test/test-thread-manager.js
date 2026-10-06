@@ -422,6 +422,28 @@ assert.strictEqual(mainSleepTm.checkMainYield(), false,
   'main-thread Sleep resumes when the full timeout has elapsed');
 assert.strictEqual(mainSleepTm._mainSleepUntil, 0);
 
+// The CLI re-runs main between cooperative thread slices and asks
+// isMainSleeping() first. A Sleep main made earlier in the same batch has not
+// been through checkMainYield yet, so noteMainSleep() must record it on its
+// own; otherwise Red Alert's Sleep(1000) after starting its timer thread
+// returned on the next slice and the game reported a timer error.
+let midBatchNow = 500, midBatchPending = 1;
+const midBatchTm = makeThreadManager({ now: () => midBatchNow });
+midBatchTm.mainInstance.exports = {
+  get_sleep_yielded: () => { const v = midBatchPending; midBatchPending = 0; return v; },
+  get_sleep_timeout: () => 1000,
+  get_yield_reason: () => 0,
+};
+assert.strictEqual(midBatchTm.isMainSleeping(), false, 'no deadline before the flag is read');
+midBatchTm.noteMainSleep();
+assert.strictEqual(midBatchTm.isMainSleeping(), true,
+  'a mid-batch Sleep parks main before the end-of-batch checkMainYield');
+assert.strictEqual(midBatchTm._mainSleepUntil, 1500);
+midBatchTm.noteMainSleep();
+assert.strictEqual(midBatchTm._mainSleepUntil, 1500, 'a consumed flag leaves the deadline alone');
+midBatchNow = 1500;
+assert.strictEqual(midBatchTm.checkMainYield(), false, 'the same deadline still expires normally');
+
 let waitClock = 100, wallClock = 9000, splitSleepPending = 1;
 const splitClockTm = makeThreadManager({ now: () => wallClock, waitNow: () => waitClock });
 splitClockTm.mainInstance.exports = {

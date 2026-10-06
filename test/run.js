@@ -5965,6 +5965,9 @@ async function main() {
     // Under --real-ticks the guest clock is the wall clock and pausedMs does
     // not move it; the batch loop waits the remainder out in wall time
     // instead (see mainSleepWallWait).
+    // A Sleep main made earlier in this batch (between thread slices) has not
+    // been through checkMainYield yet; record its deadline now.
+    threadManager.noteMainSleep();
     if (!REAL_TICK_SLEEPS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
       tickState.pausedMs += threadManager.mainSleepRemaining();
     }
