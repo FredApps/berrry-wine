@@ -12,7 +12,7 @@
 // runs the files through lib/app-files.js normalizeLazyFiles() exactly as
 // test/run.js and the page do: sizes only from the entries themselves (the
 // local manifest's, and lib/apps.js's stamp from app-file-sizes.generated.js),
-// isWin16 from the exe header, syncAudio from the exe's imports. Disk sizes
+// isWin16 from the exe header, syncImages from the exe's imports. Disk sizes
 // only fill the total/eager columns. --data-root=PATH reads the files under a
 // checkout that has the full gitignored corpus. WA_APP_FILE_SIZES_OFF=1 shows
 // the registry without the generated sizes (the before arm). `eager` is what loads before the first guest
@@ -52,7 +52,7 @@ const FILES = Number(getArg('files', '0')) || 0;
 const ONLY = getArg('apps', '') ? new Set(getArg('apps', '').split(',')) : null;
 const PART = getArg('part', '').toUpperCase();
 const {
-  normalizeLazyFiles, importsSyncAudio, importsSyncImages,
+  normalizeLazyFiles, importsSyncImages,
 } = require(path.join(ROOT, 'lib', 'app-files.js'));
 const isNe = file => {
   try {
@@ -121,17 +121,16 @@ function census(id, app) {
   }
   const exePath = app.exe ? resolve(app.exe) : null;
   // The same exe-import readings the hosts pass (lib/browser-shell.js, run.js).
-  let syncAudio = true, syncImages = true;
+  let syncImages = true;
   try {
     if (exePath) {
       const exeBytes = fs.readFileSync(exePath);
-      syncAudio = importsSyncAudio(exeBytes);
       syncImages = importsSyncImages(exeBytes);
     }
   } catch (_) {}
   const policy = normalizeLazyFiles(app, items.map(x => x.file), {
     isWin16: !!exePath && isNe(exePath),
-    syncAudio, syncImages,
+    syncImages,
   });
   for (const r of fixed) rows.push({ ...r, size: sizeOf(r.disk), lazy: false, preloaded: 0 });
   policy.files.forEach((out, i) => {

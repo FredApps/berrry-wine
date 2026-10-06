@@ -10,7 +10,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const {
-  normalizeLazyFiles, APP_EAGER_BYTES, importsSyncAudio, importsSyncImages,
+  normalizeLazyFiles, APP_EAGER_BYTES, importsSyncImages,
 } = require('../lib/app-files');
 
 const MB = 1024 * 1024;
@@ -37,27 +37,20 @@ assert.strictEqual(byUrl.get('game/data/levels.pak').loadMode, undefined,
 assert.strictEqual(byUrl.get('game/movies/intro.smk').httpRange, true);
 assert.deepStrictEqual(byUrl.get('game/small.dat'), { ...files[5], httpRange: true, size: 1000 },
   'a small file streams too: there is no size rule, only file classes');
-for (const url of ['game/plugin.dll', 'game/music.wav', 'game/game.ini', 'game/save/slot1.sav', 'game/pinned.bin']) {
+assert.strictEqual(byUrl.get('game/music.wav').httpRange, true,
+  'audio streams: every reader of a sound file parks or attaches late');
+for (const url of ['game/plugin.dll', 'game/game.ini', 'game/save/slot1.sav', 'game/pinned.bin']) {
   assert.strictEqual(byUrl.get(url), files.find(f => f.url === url), `${url} stays eager and untouched`);
 }
 assert.strictEqual(byUrl.get('game/ranged.mpq'), files[7], 'an explicit httpRange/preloadRanges entry is left as written');
-assert.strictEqual(summary.lazyFiles, 4, 'three defaults plus the explicit ranged archive');
+assert.strictEqual(summary.lazyFiles, 5, 'four defaults plus the explicit ranged archive');
 
-// Audio streams only when the exe hands no file to a synchronous WINMM call.
 const bytesWith = s => Uint8Array.from([0x4d, 0x5a, 0, ...Buffer.from(s, 'latin1'), 0, 7]);
-assert.strictEqual(importsSyncAudio(bytesWith('PlaySoundA')), true, 'PlaySoundA import');
-assert.strictEqual(importsSyncAudio(bytesWith('mciSendStringA')), true);
-assert.strictEqual(importsSyncAudio(bytesWith('AIL_open_digital_driver')), false, 'Miles only');
-assert.strictEqual(importsSyncAudio(bytesWith('mmioOpenA')), false, 'mmio refills park');
-assert.strictEqual(importsSyncAudio(bytesWith('PlaySoundAEx')), false, 'a longer identifier is not the import');
-assert.strictEqual(importsSyncAudio(null), true, 'unknown bytes: conservative');
 assert.strictEqual(normalizeLazyFiles({}, [{ url: 'game/intro.avi', size: 30 * MB }]).files[0].httpRange, true,
   'the AVI reader parks, so a movie streams');
 const wav = [{ url: 'game/sfx.wav', size: 3 * MB }, { url: 'game/data.pak', size: 20 * MB }];
-assert.strictEqual(normalizeLazyFiles({}, wav).files[0], wav[0], 'audio eager by default');
-assert.strictEqual(normalizeLazyFiles({}, wav, { syncAudio: true }).files[0], wav[0]);
-assert.strictEqual(normalizeLazyFiles({}, wav, { syncAudio: false }).files[0].httpRange, true,
-  'audio streams when nothing synchronous reads it');
+assert.strictEqual(normalizeLazyFiles({}, wav).files[0].httpRange, true,
+  'audio streams even for an app that names PlaySound/MCI');
 
 // Images stream unless the exe can load one from a file synchronously.
 assert.strictEqual(importsSyncImages(bytesWith('LoadImageA')), true);

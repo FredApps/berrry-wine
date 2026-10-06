@@ -1394,12 +1394,16 @@ class WineAssembly {
       'c:\\' + lowerName.replace(/^\\+/, ''),
       'c:\\' + lowerBase,
     ];
+    // A streamed entry's `data` getter throws until it is materialized.
+    const resident = entry => { try { return entry && entry.data; } catch (_) { return null; } };
     for (const p of candidates) {
-      const entry = vfs.files.get(p);
-      if (entry && entry.data) return entry.data;
+      const data = resident(vfs.files.get(p));
+      if (data) return data;
     }
     for (const [p, entry] of vfs.files) {
-      if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
+      if (String(p).split('\\').pop() !== lowerBase) continue;
+      const data = resident(entry);
+      if (data) return data;
     }
     return null;
   }
@@ -1408,6 +1412,27 @@ class WineAssembly {
   // so every later read is a plain VFS hit. Both outcomes are remembered:
   // an app that probes the same missing name in a loop costs one request, not
   // one per probe, and a 404 is remembered as a 404.
+  // The async read behind ctx.readFileAsync (MCI open, wallpaper). A streamed
+  // (lazy) entry has no `data` until it is materialized, so _vfsLookup misses
+  // it and _fetchMissingFile would fetch exeDir + basename -- the wrong URL
+  // for c:\game\sounds\crowd\crowd.wav. Resolve the guest path in this
+  // instance's VFS first and materialize what is mounted there; only a file
+  // nobody mounted falls back to the by-name fetch.
+  _readFileAsync(name, instanceVfs) {
+    const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
+    if (vfs && vfs.files && typeof vfs._resolvePath === 'function' &&
+        typeof vfs.materialize === 'function') {
+      let resolved = '';
+      try { resolved = vfs._resolvePath(name); } catch (_) {}
+      if (resolved && vfs.files.has(resolved)) {
+        return Promise.resolve(vfs.materialize(resolved)).catch(() => null);
+      }
+    }
+    const have = this._vfsLookup(name, vfs);
+    if (have) return Promise.resolve(have);
+    return this._fetchMissingFile(name, vfs);
+  }
+
   _fetchMissingFile(name, instanceVfs) {
     const baseName = String(name).replace(/^.*[\\\/]/, '');
     if (!this._missingFetches) this._missingFetches = new Map();
@@ -1666,11 +1691,7 @@ class WineAssembly {
       // wallpaper set and an MCI open, and MCI is allowed to still be
       // spinning a device up when open returns. So the miss now starts an
       // async fetch and the caller applies the bytes when they land.
-      readFileAsync: (name) => {
-        const have = self._vfsLookup(name, ctx.vfs);
-        if (have) return Promise.resolve(have);
-        return self._fetchMissingFile(name, ctx.vfs);
-      },
+      readFileAsync: (name) => self._readFileAsync(name, ctx.vfs),
       onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
         const lo = self._hwndBase;

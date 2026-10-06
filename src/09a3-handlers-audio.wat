@@ -3223,7 +3223,7 @@
     (local $max i32) (local $flags i32) (local $handle i32) (local $file_size i32)
     (local $size i32) (local $blk i32) (local $data_guest i32) (local $data i32)
     (local $ok i32) (local $parse i32) (local $out i32) (local $i i32)
-    (local $record i32) (local $sample_handle i32)
+    (local $record i32) (local $sample_handle i32) (local $parked i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (local.set $max (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
     (local.set $flags (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
@@ -3269,7 +3269,18 @@
       (i32.store (call $g2w (local.get $blk)) (i32.const 0))
       (local.set $ok (call $host_fs_read_file
         (local.get $handle) (local.get $data_guest) (local.get $size) (local.get $blk)))
+      ;; A streamed sample file not resident yet: park on IO_WAIT and rerun
+      ;; once the host has the bytes, as _lread and PlaySound do. Ask before
+      ;; the close, which clears the pending-read state.
+      (if (i32.eqz (local.get $ok))
+        (then
+          (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+            (then (local.set $parked (i32.const 1))))))
       (drop (call $host_fs_close_handle (local.get $handle)))
+      (if (local.get $parked)
+        (then
+          (call $heap_free (local.get $blk))
+          (br $done)))
       (if (i32.or (i32.eqz (local.get $ok))
                   (i32.ne (i32.load (call $g2w (local.get $blk))) (local.get $size)))
         (then
@@ -3311,7 +3322,8 @@
       (i32.store offset=36 (local.get $record) (local.get $flags))
       (call $bass_set_error (i32.const 0))
       (i32.store offset=0 (global.get $reg_base) (local.get $sample_handle)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (local.get $parked) (then (call $io_block (i32.const 32)))))
 
   (func $handle_BASS_SampleGetChannel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sample i32) (local $i i32) (local $channel i32) (local $free i32)

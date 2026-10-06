@@ -60,7 +60,7 @@ assert(stringsStamped + objectsStamped > 0, 'some inline entries are stamped');
 
 // The worked example: Caesar III's large archives stream once sized and did
 // not before (every file unsized -> eager).
-const policyOf = apps => normalizeLazyFiles(apps.caesar3_demo, apps.caesar3_demo.files, { syncAudio: false }).summary;
+const policyOf = apps => normalizeLazyFiles(apps.caesar3_demo, apps.caesar3_demo.files).summary;
 if (stamped.caesar3_demo && Object.keys(sizes).some(url => url.includes('caesar'))) {
   assert.strictEqual(policyOf(raw).lazyFiles, 0, 'unsized, Caesar III streamed nothing');
   assert(policyOf(stamped).lazyFiles > 0, 'sized, Caesar III streams its archives');
