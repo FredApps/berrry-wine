@@ -8,7 +8,7 @@ const { inputEventHwnd } = require('../lib/host-window');
 const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
   stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
   setEnvironmentVariable, handleLoadLibraryYield, serviceLoadLibraryYieldSync,
-  handleComDllYield } = require('../lib/process-boot');
+  handleComDllYield, findVfsDllBytes } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
   applyLaunchPreferences: applyProfileLaunchPrefs,
@@ -1551,26 +1551,8 @@ async function main() {
   // plugin sitting in the VFS was "not found" for CoCreateInstance and present
   // for LoadLibrary.
   const findRuntimeDllBytes = (fileName, fullName) => {
-    if (ctx.vfs) {
-      // Resolve the name the way the guest filesystem does first, as the
-      // browser's _findDllBytes does: a bare LoadLibraryA("lang.dll") is
-      // relative to the current directory, and VFS keys are case-folded. The
-      // host-path scan below is case-sensitive on Linux, so without this MCM's
-      // LANG.DLL was found on macOS only.
-      let resolved = '';
-      try { resolved = ctx.vfs._resolvePath(fullName); } catch (_) {}
-      const own = resolved && ctx.vfs.files.get(resolved);
-      if (own && own.data) return own.data;
-      for (const p of [
-        String(fullName).toLowerCase(),
-        'c:\\' + fileName,
-        'c:\\plugins\\' + fileName,
-        'c:\\windows\\system\\' + fileName,
-      ]) {
-        const entry = ctx.vfs.files.get(p);
-        if (entry && entry.data) return entry.data;
-      }
-    }
+    const fromVfs = findVfsDllBytes(ctx.vfs, fileName, fullName);
+    if (fromVfs) return fromVfs;
     for (const dir of [
       path.join(__dirname, 'binaries/dlls'),
       path.dirname(EXE_PATH),
