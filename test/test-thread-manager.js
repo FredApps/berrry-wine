@@ -741,6 +741,20 @@ assert.strictEqual(
 );
 assert.strictEqual(finiteRuns, 0, 'finite waits should not synchronously pump workers');
 
+// Worker backend: the other threads already run on their own host threads,
+// so a nested INFINITE wait has nothing to pump inline and must answer as the
+// ordinary wait does. run.js --threads used to reach the cooperative-only
+// runSlice() here and throw (Diablo's Storm loader waits inside WM_INITDIALOG).
+const workerBackendNestedTm = makeThreadManager({ workerBackend: {} });
+let workerBackendNestedRuns = 0;
+workerBackendNestedTm.threads.set(0xe1015, makeRunnableThread(1, () => { workerBackendNestedRuns++; }));
+assert.strictEqual(workerBackendNestedTm.waitSingleCooperative(0xe1015, 0xFFFFFFFF), 0xFFFF,
+  'worker backend: a nested single wait keeps the ordinary pending answer');
+new DataView(workerBackendNestedTm.memory.buffer).setUint32(0x200, 0xe1015, true);
+assert.strictEqual(workerBackendNestedTm.waitMultipleCooperative(1, 0x200, 0, 0xFFFFFFFF), 0xFFFF,
+  'worker backend: a nested multiple wait keeps the ordinary pending answer');
+assert.strictEqual(workerBackendNestedRuns, 0, 'worker backend: nothing is run inline');
+
 // The browser's isolated-Worker main thread uses resolveMainWorkerWait rather
 // than checkMainYield. Keep a short guest-clock timeout from winning after only
 // one worker slice while another runnable guest thread can still signal it.
