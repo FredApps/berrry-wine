@@ -2257,6 +2257,16 @@
       (then
         (local.set $w (call $dx_display_w_get))
         (local.set $h (call $dx_display_h_get))
+        ;; A windowed (non-exclusive) primary with no display mode selected
+        ;; is the desktop itself, so it is as large as the screen metrics say.
+        ;; Sized 640x480 on a larger desktop, a windowed D3D app's Blt to its
+        ;; client rect in screen coordinates was cut at x=640/y=480 (Deus Ex
+        ;; D3DDrv: grey strips along the right and bottom of the viewport).
+        (if (i32.and (i32.eqz (call $dx_display_mode_get))
+                     (i32.eqz (call $dx_exclusive_get)))
+          (then
+            (local.set $w (call $screen_metric_w))
+            (local.set $h (call $screen_metric_h))))
         (local.set $bpp (call $dx_display_bpp_get))
         (local.set $flags (i32.const 1))) ;; flag=primary
       (else
