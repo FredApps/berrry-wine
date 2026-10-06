@@ -5365,7 +5365,12 @@
       (return)))
     (local.set $y (local.get $y0))
     (block $done (loop $lp
-      (br_if $done (i32.gt_s (local.get $y) (local.get $y2)))
+      ;; Top-left fill rule: a triangle owns its top scanline but not its bottom
+      ;; one; the next triangle down owns that row. Drawing y2 too painted shared
+      ;; horizontal edges twice: NFS III's 256x256 cockpit tiles meet at y=256 and
+      ;; the upper tile's extra row sampled tv=1.001, wrapped to its texture's
+      ;; opaque first row and drew a black line across the race view.
+      (br_if $done (i32.ge_s (local.get $y) (local.get $y2)))
       ;; Long edge: x0→x2 parameterized by dy_tot.
       (local.set $xb (i32.add (local.get $x0)
         (i32.div_s (i32.mul (i32.sub (local.get $x2) (local.get $x0))
@@ -5494,7 +5499,12 @@
       (return)))
     (local.set $y (local.get $y0))
     (block $done (loop $lp
-      (br_if $done (i32.gt_s (local.get $y) (local.get $y2)))
+      ;; Top-left fill rule: a triangle owns its top scanline but not its bottom
+      ;; one; the next triangle down owns that row. Drawing y2 too painted shared
+      ;; horizontal edges twice: NFS III's 256x256 cockpit tiles meet at y=256 and
+      ;; the upper tile's extra row sampled tv=1.001, wrapped to its texture's
+      ;; opaque first row and drew a black line across the race view.
+      (br_if $done (i32.ge_s (local.get $y) (local.get $y2)))
       (local.set $t (f32.div
         (f32.convert_i32_s (i32.sub (local.get $y) (local.get $y0)))
         (f32.convert_i32_s (local.get $dy_tot))))
