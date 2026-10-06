@@ -303,6 +303,24 @@ function makeShell(opts = {}) {
     /resolveDllGraph\(\{[\s\S]*?isLoadable: name => inheritedDlls\.has\(/,
     'the browser launch hands the inherited names to the DLL graph');
   console.log('ok: a VFS child loads the app-private DLLs its caller ran');
+
+  // A system DLL the host cannot serve (a fresh worktree has no gitignored
+  // test/binaries/dlls) is named, not dropped: Deus Ex's page run looked like
+  // a regression for an hour because msvcrt.dll 404'd silently and the crash
+  // surfaced later in a built-in wcschr stub.
+  const missing = [];
+  const got = await resolveDllGraph({
+    exeBytes: new Uint8Array(1),
+    detectRequiredDlls: () => ['msvcrt.dll'],
+    isLoadable: () => true,
+    loadSpec: async () => null,
+    onMissing: (name, spec) => missing.push([name, spec]),
+  });
+  assert.deepStrictEqual(got, [], 'nothing loads');
+  assert.deepStrictEqual(missing, [['msvcrt.dll', 'msvcrt.dll']], 'the missing DLL is reported');
+  assert.match(shellSource, /resolveDllGraph\(\{[\s\S]*?onMissing: \(name, spec\) => \{[\s\S]*?log\.textContent \+=/,
+    'the browser launch writes a missing DLL into the page log');
+  console.log('ok: a DLL the host cannot serve is named in the launch log');
 })().catch(e => { console.error(e); process.exit(1); });
 
 {
