@@ -193,16 +193,39 @@ function startStaticServer() {
     if (pathname === '/') pathname = '/index.html';
     const file = path.normalize(path.join(root, pathname));
     if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); res.end('forbidden'); return; }
-    fs.readFile(file, (error, data) => {
-      if (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end(error.code || 'read error'); return; }
-      const isolationHeaders = THREADS ? {
+    fs.stat(file, (error, st) => {
+      if (error || !st.isFile()) {
+        res.writeHead(error && error.code !== 'ENOENT' ? 500 : 404);
+        res.end((error && error.code) || 'not a file');
+        return;
+      }
+      const headers = Object.assign({
+        'Content-Type': mimeType(file), 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
+      }, THREADS ? {
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Embedder-Policy': 'require-corp',
-      } : {};
-      res.writeHead(200, Object.assign({
-        'Content-Type': mimeType(file), 'Cache-Control': 'no-store',
-      }, isolationHeaders));
-      res.end(data);
+      } : {});
+      // One byte range, as tools/dev-server.js serves it. The page's lazy file
+      // loader (HttpRangeProvider) refuses a 200 to its Range request, so
+      // without this an app with on-demand data -- Dungeons of Dredmor's
+      // tweakdb.xml -- stopped on "the server answered HTTP 200" here only.
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? +m[1] : Math.max(0, st.size - +m[2]);
+        let end = m[1] && m[2] ? Math.min(+m[2], st.size - 1) : st.size - 1;
+        if (start >= st.size || start > end) {
+          res.writeHead(416, Object.assign(headers, { 'Content-Range': `bytes */${st.size}` }));
+          res.end();
+          return;
+        }
+        res.writeHead(206, Object.assign(headers, {
+          'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1,
+        }));
+        fs.createReadStream(file, { start, end }).pipe(res);
+        return;
+      }
+      res.writeHead(200, Object.assign(headers, { 'Content-Length': st.size }));
+      fs.createReadStream(file).pipe(res);
     });
   });
   return new Promise((resolve, reject) => {
@@ -658,4 +681,5 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { startStaticServer };
