@@ -740,3 +740,14 @@ process heap and selects its Win9x path when GetLastError() is 120. The new
 GetProcessHeaps (api id 4100) delegates to the same body, so it is not counted.
 Same precedent as OpenSCManagerA. Covered by test/test-heapwalk-win9x.js.
 Pin241/abd31896744c7b3ecd3f88552ee0bc23760f7ab9f0f43d922a645f2fddb6bcc2.
+
+### 2026-10-06: acmGetVersion reports MSACM32 4.00.1998
+
+241 -> 242: handle_acmGetVersion (new API, id 4165) is straight-line because
+the version of the Audio Compression Manager is a constant fact of the machine
+being emulated: Windows 98 ships msacm32.dll 4.00.1998, answered as
+0x040007CE (major, minor, build). Descent: FreeSpace's demo asks for it before
+it opens any stream; the ACM behaviour itself (drivers, streams, the PCM-only
+converter) lives in the other acm* handlers. Covered by
+test/test-acm-get-version.js.
+Pin242/e1c4e029d81a700a65690174bb49c78361b1476bc261b7a91a97fad4f8bc8b0f.

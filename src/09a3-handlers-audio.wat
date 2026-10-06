@@ -443,6 +443,13 @@
     (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 92) (i32.const 0x00726574))
     (i32.const 0))
 
+  ;; acmGetVersion() -> 0xAABBCCCC: major, minor, build of MSACM32. Windows 98
+  ;; ships ACM 4.00 (msacm32.dll 4.00.1998); FreeSpace asks before it opens
+  ;; any stream. No arguments, so only the return address is popped.
+  (func $handle_acmGetVersion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0x040007CE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
   (func $handle_acmDriverDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $acm_driver_details
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
