@@ -54,7 +54,9 @@ const extraWat = String.raw`
   const DD_OK = 0;
   const DDERR_INVALIDPARAMS = 0x80070057 | 0;
   const DDERR_INVALIDOBJECT = 0x88760082 | 0;
-  const DDERR_NOCLIPPERATTACHED = 0x887600ff | 0;
+  // MAKE_DDHRESULT(568). AoE tests GetClipper for exactly this code and skips
+  // drawing its cursor on any other failure.
+  const DDERR_NOCLIPPERATTACHED = 0x88760238 | 0;
   const DESKTOP_HWND = 0x10000;
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
   e.test_init_dx();

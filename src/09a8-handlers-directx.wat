@@ -5635,7 +5635,7 @@
     (local.set $clipper (call $dx_surface_clipper_get (local.get $entry)))
     (if (i32.eqz (local.get $clipper))
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0x887600FF)) ;; DDERR_NOCLIPPERATTACHED
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x88760238)) ;; DDERR_NOCLIPPERATTACHED = MAKE_DDHRESULT(568)
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
     (drop (call $dx_com_addref (local.get $clipper)))
@@ -5921,7 +5921,7 @@
       (then
         (if (i32.eqz (local.get $old_clipper))
           (then
-            (i32.store offset=0 (global.get $reg_base) (i32.const 0x887600FF)) ;; DDERR_NOCLIPPERATTACHED
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0x88760238)) ;; DDERR_NOCLIPPERATTACHED = MAKE_DDHRESULT(568)
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
             (return)))
         (i32.store (call $dx_surface_clipper_ptr (local.get $entry)) (i32.const 0))

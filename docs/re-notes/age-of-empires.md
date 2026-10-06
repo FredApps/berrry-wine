@@ -73,6 +73,27 @@ Roughly, by API call index:
 
 No DirectDraw call fails anywhere in this sequence.
 
+## Invisible in-game cursor: wrong DDERR_NOCLIPPERATTACHED (fixed 2026-10-06)
+
+On the menus AoE uses the system arrow (`SetCursor(IDC_ARROW)`). In
+gameplay it switches to a software cursor: `SetCursor(NULL)`, a NULL class
+cursor, and a 64x48 colour-keyed sprite surface. Each frame it saves the
+render surface under the pointer (`Blt save <- render`, at `0x44def8`), then
+calls `IDirectDrawSurface::GetClipper` (`0x44df71`) and treats exactly
+`DDERR_NOCLIPPERATTACHED` (0x88760238) as "no clipper". Any other failure
+stores the HRESULT and returns **without drawing the cursor**. Our
+`GetClipper` (and `SetClipper(NULL)` with no clipper) answered 0x887600FF,
+which is DDERR_NOTFOUND (255), so the pointer never reached the render
+surface. Only the WM_MOUSEMOVE path's direct `BltFast` onto the primary
+showed it, and the next present erased that. The fix is the constant;
+`test/test-directdraw-surface-clipper.js` now pins 0x88760238.
+
+How it was found: `--trace-dx` over a gameplay window shows the per-frame
+`save -> present -> restore` with nothing drawn between, and the code after
+the save `Blt` names the HRESULT it accepts. `--dx-slot=4 --png=` captures the
+primary; the default `--png` of this app is not the surface the cursor lands
+on.
+
 ## Ruled out
 
 - **VFS / `MapViewOfFile`.** Every `.drs` opens (`CreateFileA` → `h:0x700000xx`)
