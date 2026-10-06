@@ -39,8 +39,10 @@ Before it, every texture in the game was static noise.
 
 ## Running it
 
-- Boot: language screen; **Enter** picks English. The game then loops attract
-  demos (Australia stage 5, Sweden stage 4) with "demo mode - press any key".
+- Boot: language screen; **Enter** picks English, then the main menu. At the
+  default clock the menu times out at once and the game loops attract demos
+  (Australia stage 5, Sweden stage 4, ...) with "demo mode - press any key";
+  see the route below for reaching the menu.
 - Input is DirectInput `GetDeviceState` (polled 5x per frame); the key buffer is
   at `0x596128`. Default controls from `Controller.rcf`: arrows (DIK C8/D0/CB/CD),
   Space (39) and `1B 1A 2E 13`. `0x49f9e0` folds the buffer into menu flags:
@@ -49,46 +51,50 @@ Before it, every texture in the game was static noise.
   the character (`0x4b7620` -> `0x6e1dc8`); the drain at `0x49f370` (ToAscii)
   is text entry. The "any key" scan at `0x49f3b0` is never called in the demo.
 
-## Attract loop: what the keys do (2026-10-06, boat)
+## The menus time out into the attract demo
 
-Language screen, Enter, then demos run back to back (Australia 5, Sweden 4,
-UK 3...), each behind a "loading rally <country> stage N" screen on a flat
-`0x9ab4a8` background that fades in from and out to that colour. Measured by
-pressing one key at batch 490000 mid-demo (`--input=490000:keydown:K`):
+The front end works. Its main menu (rally | arcade | options | quit) has an
+idle timer that drops into an attract demo, and at the default 200 ms/batch it
+fires within ~200 batches of the language-screen Enter, so a capture never
+catches the menu. Slow the clock **before** the Enter: `29000:tick-ms:5`.
+(Switching at 30300 is already too late: the timer has run out by then.)
 
-- **Enter**: no effect at all; the frames match a no-key run byte for byte.
-- **Space, Esc, Up**: freeze the demo frame, fade to the flat colour, open the
-  front-end files (`Common.bfl`, `Res640.bfl`, `FERes640E.bfl`, the five
-  language texts, `credits_english.txt`; it also writes `GameInfo.rcf` and
-  `Controller.rcf`), then spend ~85k batches in zlib `inflate_fast`
-  (`0x4c3ac8`; its `cmp ecx,0x102` is MAX_MATCH) with no API calls and no
-  presents, and show the next demo's loading screen. Same with `tick-ms:5`
-  from 491000, so this is not an attract timeout on a fast guest clock.
+- Game mode lives in bits 3..9 of `[0x526b8c]` (read by `0x405c80`, set by
+  `0x4e8680`). The main-menu page object is `0x80f110`, built at `0x4f3060`
+  (items: text ids 0x50/0x51/0x53/0x56, 20-byte records from +0x18) and its
+  select callback is `0x4f0010`: item 0 (rally) sets mode 2. When the item
+  word at `+0x1c` is 0 (the timeout path) it also sets the demo flag
+  `[0x80b94c]` = 1, which is what shows "demo mode - press any key".
+- In the attract demo, Enter does nothing; Space, Esc and Up end it, re-open
+  the front-end files and fall straight back into the next demo because the
+  menu times out again. Between a stage and the next menu the game spends
+  ~85k batches in zlib `inflate_fast` (`0x4c3ac8`) with no presents, and the
+  loading screen fades in from flat `0x9ab4a8`, so a single-colour capture
+  there is a fade, not a renderer bug.
 
-The language screen does the same thing: with `tick-ms:5` from right after the
-Enter (batch 30300) the game opens the front-end files, writes the two `.rcf`
-files and goes straight to `Game\Tracks\AUS\AUS05lo.bfl`, with every capture
-from 32k to 90k a flat fade. So the front end is not timing out on a fast
-guest clock; something sends it straight into attract mode. The next thing to
-read is the state machine that follows the `.rcf` writes.
+## Route to gameplay (2026-10-06, local CLI, ~45 s)
 
-Ruled out as well: a stale key. Picking the language with a DirectInput-only
-press (`30000:di-keydown:13`, so no WM_KEYDOWN is queued) takes the same path.
-The 3D frames drawn between the front-end file opens and the stage load are
-the **loading screen** itself, not a menu: an untextured white trianglelist
-(`SetTexture(NULL)`), then ARGB4444 text strips tinted `0xd7ebda` ("loading |
-rally | ..." and "Stage Record") and sixteen 16x16 progress squares with
-alpha ramping 0x11..0xff, all `SRCALPHA/INVSRCALPHA`. It fades in from flat
-`0x9ab4a8`.
+```sh
+node test/run.js --app=cmr2_demo --quiet-api --max-batches=421000 --max-seconds=120 \
+  --watch=0x80b94c --watch-log --input=29000:tick-ms:5,30000:di-keydown:13,30003:di-keyup:13,\
+32000:keydown:13,32020:keyup:13,165000:keydown:38,181000:keyup:38,\
+182000:keydown:39,182020:keyup:39,186000:keydown:39,186020:keyup:39,190000:keydown:39,190020:keyup:39,\
+195000:keydown:13,195020:keyup:13,340000:di-keydown:38
+```
 
-So no front-end menu frame was ever presented. A uniform capture after a key is
-the fade or the inflate stretch, not a broken renderer: `--dx-surfaces` and
-`--trace-dx` show nothing drawn there. Untried: a mouse click and the joystick
-path, and pressing keys on the language screen itself.
+Language Enter, main menu Enter (rally), the rally hub (Information | Set Up |
+Repair | Race | Quit, Australia stage 5), Right x3 to Race, Return, the stage
+loads and the start lights go green by ~330k. Holding Up (DirectInput)
+accelerates: off the line, 50 mph by 360k. Without it the car sits on the line.
+Menu presses need ~2000+ batches between them or they land during a page
+transition and are lost. The route was captured with that `--watch` on; it
+changes block granularity, and without it the same inputs were seen to land in
+the attract demo, so keep it until the route is re-timed without it.
+Evidence: `scratch/runs/20261006T1650Z-cmr2_demo-gameplay-w6`.
 
 ## Open
 
-- **No player-controlled gameplay yet**: the front end has to be reached first.
-- Cars render solid black in the demos.
+- The player car body renders solid black in the stage (it is fully textured
+  on the Set Up page), and so do the AI cars in the demos.
 - The inflate page `0x4c3000` is rewritten while it runs: 6927 page
   invalidations, 4435 of which retired a block (a cost, not a correctness issue).
