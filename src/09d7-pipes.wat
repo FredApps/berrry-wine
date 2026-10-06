@@ -577,3 +577,9 @@
     (if (result i32) (i32.eq (i32.and (local.get $h) (i32.const 0xFFFF0000)) (i32.const 0x00E40000))
       (then (i32.and (local.get $h) (i32.const 0xFFFF)))
       (else (i32.const 0))))
+
+  ;; Child side: a DETACHED_PROCESS-style child has no console, so its CUI
+  ;; image must not open a console window on first output (09a2's
+  ;; attachment word, 2 = detached). Its std handles are pipes anyway.
+  (func (export "pipe_detach_console")
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xC10) (i32.const 2)))

@@ -2010,6 +2010,93 @@ class WineAssembly {
     // Resolve the exe against the app registry and boot it as a second
     // guest; anything that is not a registered exe keeps the base behaviour
     // (open http links in a tab, otherwise report success).
+    // CreateProcess with redirected std handles (src/09d7-pipes.wat): the
+    // child is a second in-page instance launched from this process's VFS,
+    // on a private LoopbackSegment shared with this one, its std handles
+    // attached before its first slice. Synchronous: the launch is
+    // fire-and-forget, and frames sent before the child runs wait in its
+    // wire's inbox. 0 = "cannot", and the guest falls back to its old path.
+    h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
+      const shell = window.wineShell;
+      const Vlan = window.VlanWire;
+      if (!shell || !shell.launchVfsExe || !Vlan || !Vlan.LoopbackSegment) return 0;
+      if (self.vlanWire && !self._childSegment) {
+        console.log('[process_spawn] this process is already in a room; nested children are not supported');
+        return 0;
+      }
+      const cmd = cmdWa ? self.readString(cmdWa) : '';
+      const parsed = parseShellLaunchCommand(cmd, '', 'open');
+      const vfs = self._helpCtx && self._helpCtx.vfs;
+      let file = resolveShellLaunchPath(parsed.file.trim(), vfs, false);
+      if (vfs && !/\.[a-z0-9]+$/i.test(file)) file += '.exe';
+      const dir = dirWa ? self.readString(dirWa) : (vfs && vfs.getCurrentDirectory ? vfs.getCurrentDirectory() : '');
+      const parentIp = (self.vlanLocalIp || 0x0A000001) >>> 0;
+      const view = new DataView(self.memory.buffer);
+      const spec = [];
+      for (let i = 0; i < count; i++) {
+        const at = specWa + i * 16;
+        spec.push({ which: view.getInt32(at, true), end: view.getInt32(at + 4, true),
+          lport: view.getInt32(at + 8, true), rport: view.getInt32(at + 12, true) });
+      }
+      if (!self._childSegment) {
+        self._childSegment = new Vlan.LoopbackSegment();
+        self.vlanWire = self._childSegment.attach();
+        self._children = new Map();
+        // A parent that ends takes its children with it.
+        self._stopChildren = () => { for (const c of self._children.values()) if (c.wine && c.exitCode === 259) c.wine.stop(); };
+      }
+      // Waits on the child's hProcess are answered by the thread manager.
+      if (self.threadManager) self.threadManager.processCtl = (op, p, arg) => h.process_ctl(op, p, arg);
+      const ip = childIp >>> 0;
+      const ipText = [ip >>> 24, (ip >>> 16) & 255, (ip >>> 8) & 255, ip & 255].join('.');
+      const pid = (0x4000 + (self._children.size + 1) * 4) & 0xFFFF;
+      const rec = { wine: null, exitCode: 259, ip };
+      self._children.set(pid, rec);
+      const beforeRun = async (child) => {
+        rec.wine = child;
+        await child.callGuest('set_vlan_local_ip', ip | 0);
+        await child.callGuest('pipe_detach_console');
+        const byPort = new Map();
+        for (const e of spec) {
+          const known = byPort.get(e.lport);
+          if (known) { await child.callGuest('pipe_set_std', e.which | 0, known | 0); continue; }
+          const hnd = (await child.callGuest('pipe_attach_std', e.which | 0, e.end | 0,
+            e.lport | 0, parentIp | 0, e.rport | 0)) >>> 0;
+          if (!hnd) throw new Error(`process_spawn: could not attach std ${e.which}`);
+          byPort.set(e.lport, hnd);
+        }
+        console.log(`[process_spawn] ${file} at ${ipText}: std handles attached`);
+      };
+      const onExit = (child) => {
+        if (rec.exitCode !== 259) return;
+        rec.exitCode = (child && child._exitCode != null) ? (child._exitCode >>> 0) : (child ? 0 : 1);
+        // EOF for the parent's ends of the child's pipes.
+        if (self.vlanWire && self.vlanWire.peerGone) self.vlanWire.peerGone(ip);
+      };
+      const ok = shell.launchVfsExe(file, self, dir, parsed.params.trim(), {
+        lanLink: { wire: self._childSegment.attach(), address: ipText, local: true },
+        bypassSingleApp: true, hidden: true, beforeRun, onExit,
+      });
+      if (!ok) { self._children.delete(pid); return 0; }
+      console.log(`[process_spawn] CreateProcess "${cmd}" -> ${file} at ${ipText}, pid ${pid}`);
+      return pid;
+    };
+    // op 0: a child's exit code (259 while it runs); op 1: terminate it.
+    h.process_ctl = (op, pid, arg) => {
+      const rec = self._children && self._children.get(pid & 0xFFFF);
+      if (!rec) return -1;
+      if (op === 0) return rec.exitCode >>> 0;
+      if (op === 1) {
+        if (rec.exitCode === 259) {
+          const child = rec.wine;
+          rec.exitCode = arg >>> 0;
+          if (self.vlanWire && self.vlanWire.peerGone) self.vlanWire.peerGone(rec.ip);
+          if (child) child.stop();
+        }
+        return 1;
+      }
+      return -1;
+    };
     h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
       const rawFile = fileWa ? self.readString(fileWa) : '';
       const op = opWa ? self.readString(opWa) : 'open';
@@ -2080,6 +2167,8 @@ class WineAssembly {
     };
     h.exit = (code) => {
       console.log('[ExitProcess] code:', code);
+      // A parent's GetExitCodeProcess on this process reads it (process_spawn).
+      self._exitCode = code >>> 0;
       if (!self._inDllInit) {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
@@ -4215,6 +4304,8 @@ class WineAssembly {
   // repaint had the opposite fault: a crash left the dead app's last frame on
   // screen. Repainting last, once, fixes both.
   stop(options = {}) {
+    // Child processes this guest started (process_spawn) end with it.
+    if (this._stopChildren) { const stopKids = this._stopChildren; this._stopChildren = null; stopKids(); }
     if (this._manifestAssetAbort) this._manifestAssetAbort.abort();
     if (this._backgroundAssetJobs) this._backgroundAssetJobs.length = 0;
     // Put the final frame on the canvas before stepping ends, then drop the
