@@ -272,3 +272,18 @@ race, Worker threads: GAME 10.7/s with the verifier agreeing.
 CLI route to the race: `--threads --real-ticks`, then mousedown/mouseup on
 RACE (130,310) a few times (batch rate varies 50-155/s, and an early click
 opens Game Setup instead). Cooperative mode runs NFS II at ~1 batch/s.
+
+## NFS III D3D horizon line (2026-10-06)
+
+On the Direct3D driver (`nfs3_demo`, registry `Thrash Driver=d3d`) a black
+1-px line crossed the race view at y=256; Glide was clean. The cockpit/HUD
+overlay is drawn as 256x256 pretransformed (TL) tiles meeting at y=256 with
+`TEXTUREADDRESS=WRAP` and tv running 0.002..1.002. Both rasterizers gave row
+256 to the upper tile as well, whose extra row sampled tv=1.001, wrapped to its
+texture's opaque first row, and painted black. Found with a per-pixel writer
+trace at (600,256). Fixed for the software rasterizer in ce4256db (the scanline
+walker stops before `y2`) and for WebGL in e273d87c (a -1/16 px bias on both
+vertex mappings, so an integer edge owns a GL pixel centre only as a top/left
+edge; 1/128 px was snapped away on SwiftShader). Evidence:
+`scratch/runs/20261006-nfs3-d3d-horizon-line`. Right/left-edge (x) spans
+in the software rasterizer are being audited separately.
