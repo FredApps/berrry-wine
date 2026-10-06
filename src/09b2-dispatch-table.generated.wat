@@ -3733,7 +3733,7 @@
       (then
         (call $dispatch_api_table_page_15 (i32.sub (local.get $api_id) (i32.const 3840)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 4185))
+    (if (i32.lt_u (local.get $api_id) (i32.const 4205))
       (then
         (call $dispatch_api_table_page_16 (i32.sub (local.get $api_id) (i32.const 4096)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -20253,8 +20253,28 @@
   )
 
   (func $dispatch_api_table_page_16 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 4096..4184
+    ;; api ids 4096..4204
     (block $fallback
+    (block $api_108
+    (block $api_107
+    (block $api_106
+    (block $api_105
+    (block $api_104
+    (block $api_103
+    (block $api_102
+    (block $api_101
+    (block $api_100
+    (block $api_99
+    (block $api_98
+    (block $api_97
+    (block $api_96
+    (block $api_95
+    (block $api_94
+    (block $api_93
+    (block $api_92
+    (block $api_91
+    (block $api_90
+    (block $api_89
     (block $api_88
     (block $api_87
     (block $api_86
@@ -20344,7 +20364,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $fallback (local.get $api_id))
     ) ;; 4096: grDrawPolygonVertexList
       (call $handle_grDrawPolygonVertexList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -20612,6 +20632,66 @@
     ) ;; 4184: _grTexDownloadMipMapLevelPartial@40
       (call $handle_grTexDownloadMipMapLevelPartial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 4185: timeGetSystemTime
+      (call $handle_timeGetSystemTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4186: IDirectPlayLobby3W_QueryInterface
+      (call $handle_IDirectPlayLobby2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4187: IDirectPlayLobby3W_AddRef
+      (call $handle_dx_com_addref (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4188: IDirectPlayLobby3W_Release
+      (call $handle_dx_com_release_basic (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4189: IDirectPlayLobby3W_Connect
+      (call $handle_IDirectPlayLobby3W_Connect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4190: IDirectPlayLobby3W_CreateAddress
+      (call $handle_IDirectPlayLobby2_CreateAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4191: IDirectPlayLobby3W_EnumAddress
+      (call $handle_IDirectPlayLobby2_EnumAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4192: IDirectPlayLobby3W_EnumAddressTypes
+      (call $handle_IDirectPlayLobby2_EnumAddressTypes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4193: IDirectPlayLobby3W_EnumLocalApplications
+      (call $handle_IDirectPlayLobby2_EnumLocalApplications (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4194: IDirectPlayLobby3W_GetConnectionSettings
+      (call $handle_IDirectPlayLobby2_GetConnectionSettings (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4195: IDirectPlayLobby3W_ReceiveLobbyMessage
+      (call $handle_IDirectPlayLobby2_ReceiveLobbyMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4196: IDirectPlayLobby3W_RunApplication
+      (call $handle_IDirectPlayLobby2_RunApplication (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4197: IDirectPlayLobby3W_SendLobbyMessage
+      (call $handle_IDirectPlayLobby2_SendLobbyMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4198: IDirectPlayLobby3W_SetConnectionSettings
+      (call $handle_IDirectPlayLobby2_SetConnectionSettings (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4199: IDirectPlayLobby3W_SetLobbyMessageEvent
+      (call $handle_IDirectPlayLobby2_SetLobbyMessageEvent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4200: IDirectPlayLobby3W_CreateCompoundAddress
+      (call $handle_IDirectPlayLobby2_CreateCompoundAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4201: IDirectPlayLobby3W_ConnectEx
+      (call $handle_IDirectPlayLobby3_ConnectEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4202: IDirectPlayLobby3W_RegisterApplication
+      (call $handle_dplobby3_application_unsupported (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4203: IDirectPlayLobby3W_UnregisterApplication
+      (call $handle_dplobby3_application_unsupported (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 4204: IDirectPlayLobby3W_WaitForConnectionSettings
+      (call $handle_IDirectPlayLobby3_WaitForConnectionSettings (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 4096)))
   )
@@ -20620,7 +20700,7 @@
   ;; COM VTABLE INIT — GENERATED, do not edit
   ;; Generated by tools/gen_dispatch.js from api_table.json
   ;; ============================================================
-  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 74))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 75))
   ;; Restore only a complete registry, in the same order as initialization.
   (func $dx_sync_thread_vtables
     (if (i32.lt_u (i32.load (global.get $DX_VTBL_REGISTRY))
@@ -20700,6 +20780,7 @@
     (global.set $DX_VTBL_DIDEV7 (i32.load offset=288 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_DSOUND8 (i32.load offset=292 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_VBIMAGE7 (i32.load offset=296 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DPLAYLOBBY3W (i32.load offset=300 (global.get $DX_VTBL_REGISTRY)))
   )
   (func $init_dx_com_thunks (export "init_dx_com_thunks")
     ;; IDirectDraw: 23 methods starting at api_id 978
@@ -20889,4 +20970,6 @@
       (global.get $DX_VTBL_DSOUND) (i32.const 11) (i32.const 3887) (i32.const 12)))
     ;; IVBImageSurface7: 71 methods starting at api_id 3956
     (global.set $DX_VTBL_VBIMAGE7 (call $init_com_vtable (i32.const 3956) (i32.const 71)))
+    ;; IDirectPlayLobby3W: 19 methods starting at api_id 4186
+    (global.set $DX_VTBL_DPLAYLOBBY3W (call $init_com_vtable (i32.const 4186) (i32.const 19)))
   )

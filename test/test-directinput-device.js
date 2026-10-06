@@ -243,6 +243,14 @@ const extraWat = `
     0x80070006, 'SetCooperativeLevel rejects an invalid top-level HWND');
   assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0x10000, 0) >>> 0,
     0x80070057, 'cooperative flags require one choice from each pair');
+  assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0, 6) >>> 0,
+    0x80070006, 'a NULL HWND is refused for foreground access');
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0x80070057,
+    'a refused NULL HWND sets no cooperative level');
+  // NULL with exactly DISCL_NONEXCLUSIVE|DISCL_BACKGROUND binds the desktop
+  // (Populous: The Beginning's input threads; Wine does the same).
+  assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0, 0x0A) >>> 0, 0,
+    'background nonexclusive access accepts a NULL HWND');
   assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0x10000, 6) >>> 0, 0,
     'foreground nonexclusive access is accepted for the desktop window');
   assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0);

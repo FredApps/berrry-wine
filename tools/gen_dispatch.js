@@ -470,6 +470,9 @@ comInterfaces.push({ prefix: 'IDirectSound8', global: 'DX_VTBL_DSOUND8', extends
 const byName = new Map(apiTable.map(a => [a.name, a]));
 // Preserve all existing shared vtable registry offsets.
 comInterfaces.push({prefix:'IVBImageSurface7',global:'DX_VTBL_VBIMAGE7'});
+// Unicode IDirectPlayLobby/2/3 (one 19-slot vtable serves all three as a
+// prefix). Tail, so every established registry offset stays where it was.
+comInterfaces.push({ prefix: 'IDirectPlayLobby3W', global: 'DX_VTBL_DPLAYLOBBY3W' });
 
 const ifaceInfo = new Map();
 for (const iface of comInterfaces) {

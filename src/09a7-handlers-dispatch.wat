@@ -4828,6 +4828,19 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; timeGetSystemTime(pmmt, cbmmt) — the system time as an MMTIME in
+  ;; milliseconds: wType = TIME_MS (1), u.ms = the timeGetTime clock. A buffer
+  ;; smaller than the 12-byte MMTIME is TIMERR_STRUCT (129), as on Win98.
+  (func $handle_timeGetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.lt_u (local.get $arg1) (i32.const 12))
+      (then (i32.store offset=0 (global.get $reg_base) (i32.const 129)))
+      (else
+        (global.set $tick_count (call $host_get_ticks))
+        (i32.store (call $g2w (local.get $arg0)) (i32.const 1))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4))) (global.get $tick_count))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
   ;; timeBeginPeriod(uPeriod) — browser scheduling has no host timer quantum
   ;; to change, but the request must still be inside the range advertised by
   ;; timeGetDevCaps. DirectX-era games normally request the 1 ms minimum.

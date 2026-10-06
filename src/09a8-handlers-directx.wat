@@ -215,6 +215,7 @@
   (global $DX_VTBL_DPLAY4     (mut i32) (i32.const 0))
   (global $DX_VTBL_DPLAYLOBBY3 (mut i32) (i32.const 0))
   (global $DX_VTBL_DPLAYLOBBY2 (mut i32) (i32.const 0))
+  (global $DX_VTBL_DPLAYLOBBY3W (mut i32) (i32.const 0))
   (global $DX_VTBL_D3D        (mut i32) (i32.const 0))
   (global $DX_VTBL_D3D3       (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DDEV3    (mut i32) (i32.const 0))
@@ -10040,9 +10041,15 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; SetCooperativeLevel requires a process-owned top-level HWND and exactly
-  ;; one foreground/background plus one exclusive/nonexclusive choice.
+  ;; one foreground/background plus one exclusive/nonexclusive choice. The one
+  ;; exception is hwnd NULL with exactly DISCL_NONEXCLUSIVE|DISCL_BACKGROUND,
+  ;; which DirectInput binds to the desktop window (Wine does the same).
+  ;; Populous: The Beginning's input threads pass exactly that; refusing it
+  ;; left the mouse unacquired, so GetDeviceData said NOTACQUIRED forever.
   (func $handle_IDirectInputDevice_SetCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $flags i32)
+    (if (i32.and (i32.eqz (local.get $arg1)) (i32.eq (local.get $arg2) (i32.const 0x0A)))
+      (then (local.set $arg1 (i32.const 0x10000)))) ;; GetDesktopWindow's HWND
     (if (i32.or
           (i32.eqz (call $window_handle_valid (local.get $arg1)))
           (i32.ne (call $wnd_top_level (local.get $arg1)) (local.get $arg1)))
@@ -11105,17 +11112,32 @@
 
   ;; Query the two bounded ANSI DirectPlay families that this runtime exposes.
   ;; family 0: IDirectPlay2A/3A/4A (upgraded to 53 slots for 4A); family 1:
-  ;; IDirectPlayLobbyA/Lobby2A/Lobby3A (15/19 slots). Unicode and later generations
-  ;; need different string semantics or additional slots, so fail honestly.
+  ;; IDirectPlayLobbyA/Lobby2A/Lobby3A (15/19 slots). Unicode IDirectPlay2/3/4
+  ;; go to the IDirectPlay4W wrapper; Unicode Lobby/2/3 get the Lobby3W vtable,
+  ;; whose methods here carry no strings (opaque address blobs, GUIDs, honest
+  ;; NOTLOBBIED/unsupported results) except Connect, which returns a W object.
+  ;; Anything else fails honestly.
   (func $dplay_query_interface_wa (param $obj i32) (param $iid_wa i32)
         (param $out i32) (param $family i32) (result i32)
     (local $supported i32)
     (if (i32.eqz (local.get $out))
       (then (return (i32.const 0x80004003)))) ;; E_POINTER
     (if (i32.and (i32.eqz (local.get $family)) (i32.ne (local.get $iid_wa) (i32.const 0)))
-      (then (if (call $guid_words_equal (local.get $iid_wa)
-        (i32.const 0x0AB1C530) (i32.const 0x11D14745) (i32.const 0x0000A1A7) (i32.const 0xFCAB03F8))
-        (then (return (call $dpw_query (local.get $obj) (local.get $out)))))))
+      (then
+        (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x0AB1C530) (i32.const 0x11D14745) (i32.const 0x0000A1A7) (i32.const 0xFCAB03F8))
+          (then (return (call $dpw_query (local.get $obj) (local.get $out)))))
+        ;; IID_IDirectPlay2 {2B74F7C0-9154-11CF-A9CD-00AA006886E3} and
+        ;; IID_IDirectPlay3 {133EFE40-32DC-11D0-9CFB-00A0C90A43CB} are the
+        ;; Unicode interfaces IDirectPlay4W extends slot for slot, so the 4W
+        ;; wrapper serves them as a prefix (Populous TB's weanetr.dll asks
+        ;; for IDirectPlay3).
+        (if (i32.or
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x2B74F7C0) (i32.const 0x11CF9154) (i32.const 0xAA00CDA9) (i32.const 0xE3866800))
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x133EFE40) (i32.const 0x11D032DC) (i32.const 0xA000FB9C) (i32.const 0xCB430AC9)))
+          (then (return (call $dpw_query (local.get $obj) (local.get $out)))))))
     (if (local.get $iid_wa)
       (then
         (local.set $supported
@@ -11148,16 +11170,39 @@
               (then
                 (call $gs32 (local.get $obj) (global.get $DX_VTBL_DPLAYLOBBY3))
                 (local.set $supported (i32.const 1))))
-            ;; IID_IDirectPlayLobbyA {26C66A70-B367-11CF-A024-00AA006157AC}.
-            (local.set $supported (i32.or (local.get $supported)
-              (call $guid_words_equal (local.get $iid_wa)
-                (i32.const 0x26C66A70) (i32.const 0x11CFB367)
-                (i32.const 0xAA0024A0) (i32.const 0xAC576100))))
-            ;; IID_IDirectPlayLobby2A {1BB4AF80-A303-11D0-9C4F-00A0C905425E}.
-            (local.set $supported (i32.or (local.get $supported)
-              (call $guid_words_equal (local.get $iid_wa)
-                (i32.const 0x1BB4AF80) (i32.const 0x11D0A303)
-                (i32.const 0xA0004F9C) (i32.const 0x5E4205C9))))))))
+            ;; IID_IDirectPlayLobbyA {26C66A70-B367-11CF-A024-00AA006157AC}
+            ;; and IID_IDirectPlayLobby2A {1BB4AF80-A303-11D0-9C4F-00A0C905425E}.
+            ;; Both are prefixes of the Lobby3A vtable; pinning it here keeps
+            ;; an object that was queried for a Unicode lobby earlier from
+            ;; handing its W slots to an ANSI caller.
+            (if (i32.or
+                  (call $guid_words_equal (local.get $iid_wa)
+                    (i32.const 0x26C66A70) (i32.const 0x11CFB367)
+                    (i32.const 0xAA0024A0) (i32.const 0xAC576100))
+                  (call $guid_words_equal (local.get $iid_wa)
+                    (i32.const 0x1BB4AF80) (i32.const 0x11D0A303)
+                    (i32.const 0xA0004F9C) (i32.const 0x5E4205C9)))
+              (then
+                (call $gs32 (local.get $obj) (global.get $DX_VTBL_DPLAYLOBBY3))
+                (local.set $supported (i32.const 1))))
+            ;; Unicode IID_IDirectPlayLobby {AF465C71-9588-11CF-A020-00AA006157AC},
+            ;; IID_IDirectPlayLobby2 {0194C220-A303-11D0-9C4F-00A0C905425E} and
+            ;; IID_IDirectPlayLobby3 {2DB72490-652C-11D1-A7A8-0000F803ABFC}:
+            ;; one 19-slot W vtable, a prefix of each.
+            (if (i32.or
+                  (call $guid_words_equal (local.get $iid_wa)
+                    (i32.const 0xAF465C71) (i32.const 0x11CF9588)
+                    (i32.const 0xAA0020A0) (i32.const 0xAC576100))
+                  (i32.or
+                    (call $guid_words_equal (local.get $iid_wa)
+                      (i32.const 0x0194C220) (i32.const 0x11D0A303)
+                      (i32.const 0xA0004F9C) (i32.const 0x5E4205C9))
+                    (call $guid_words_equal (local.get $iid_wa)
+                      (i32.const 0x2DB72490) (i32.const 0x11D1652C)
+                      (i32.const 0x0000A8A7) (i32.const 0xFCAB03F8))))
+              (then
+                (call $gs32 (local.get $obj) (global.get $DX_VTBL_DPLAYLOBBY3W))
+                (local.set $supported (i32.const 1))))))))
     (call $dx_query_interface_result
       (local.get $obj) (local.get $out) (local.get $supported)))
 
@@ -11721,6 +11766,25 @@
           (i32.eqz (local.get $obj_guest)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)))
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+
+  ;; Unicode lobby Connect hands back an IDirectPlay2 (W): the same fresh
+  ;; DirectPlay object as the ANSI path, seen through its IDirectPlay4W
+  ;; wrapper, which serves IDirectPlay2/3 W as a prefix. The creation reference
+  ;; is released after the query, as CoCreateInstance does.
+  (func $handle_IDirectPlayLobby3W_Connect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj_guest i32) (local $hr i32)
+    (local.set $hr (i32.const 0x80004003)) ;; E_POINTER
+    (if (local.get $arg2)
+      (then
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
+        (if (local.get $obj_guest)
+          (then
+            (local.set $hr (call $dpw_query (local.get $obj_guest) (local.get $arg2)))
+            (drop (call $dx_com_release_basic (local.get $obj_guest))))
+          (else (local.set $hr (i32.const 0x80004005))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   (func $handle_IDirectPlayLobby2_CreateAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

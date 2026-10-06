@@ -35348,5 +35348,163 @@
     "convention": "stdcall",
     "hash": 1143815817,
     "handler": "grTexDownloadMipMapLevelPartial"
+  },
+  {
+    "id": 4185,
+    "name": "timeGetSystemTime",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1653245560
+  },
+  {
+    "id": 4186,
+    "name": "IDirectPlayLobby3W_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 655769907,
+    "handler": "IDirectPlayLobby2_QueryInterface"
+  },
+  {
+    "id": 4187,
+    "name": "IDirectPlayLobby3W_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 485171328,
+    "handler": "dx_com_addref"
+  },
+  {
+    "id": 4188,
+    "name": "IDirectPlayLobby3W_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 623936649,
+    "handler": "dx_com_release_basic"
+  },
+  {
+    "id": 4189,
+    "name": "IDirectPlayLobby3W_Connect",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1548391082
+  },
+  {
+    "id": 4190,
+    "name": "IDirectPlayLobby3W_CreateAddress",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3743209472,
+    "handler": "IDirectPlayLobby2_CreateAddress"
+  },
+  {
+    "id": 4191,
+    "name": "IDirectPlayLobby3W_EnumAddress",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2195588847,
+    "handler": "IDirectPlayLobby2_EnumAddress"
+  },
+  {
+    "id": 4192,
+    "name": "IDirectPlayLobby3W_EnumAddressTypes",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2303496844,
+    "handler": "IDirectPlayLobby2_EnumAddressTypes"
+  },
+  {
+    "id": 4193,
+    "name": "IDirectPlayLobby3W_EnumLocalApplications",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3849648731,
+    "handler": "IDirectPlayLobby2_EnumLocalApplications"
+  },
+  {
+    "id": 4194,
+    "name": "IDirectPlayLobby3W_GetConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 713423925,
+    "handler": "IDirectPlayLobby2_GetConnectionSettings"
+  },
+  {
+    "id": 4195,
+    "name": "IDirectPlayLobby3W_ReceiveLobbyMessage",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2063356254,
+    "handler": "IDirectPlayLobby2_ReceiveLobbyMessage"
+  },
+  {
+    "id": 4196,
+    "name": "IDirectPlayLobby3W_RunApplication",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3546508057,
+    "handler": "IDirectPlayLobby2_RunApplication"
+  },
+  {
+    "id": 4197,
+    "name": "IDirectPlayLobby3W_SendLobbyMessage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2072153793,
+    "handler": "IDirectPlayLobby2_SendLobbyMessage"
+  },
+  {
+    "id": 4198,
+    "name": "IDirectPlayLobby3W_SetConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 184823153,
+    "handler": "IDirectPlayLobby2_SetConnectionSettings"
+  },
+  {
+    "id": 4199,
+    "name": "IDirectPlayLobby3W_SetLobbyMessageEvent",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1962688105,
+    "handler": "IDirectPlayLobby2_SetLobbyMessageEvent"
+  },
+  {
+    "id": 4200,
+    "name": "IDirectPlayLobby3W_CreateCompoundAddress",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1645668251,
+    "handler": "IDirectPlayLobby2_CreateCompoundAddress"
+  },
+  {
+    "id": 4201,
+    "name": "IDirectPlayLobby3W_ConnectEx",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 209335967,
+    "handler": "IDirectPlayLobby3_ConnectEx"
+  },
+  {
+    "id": 4202,
+    "name": "IDirectPlayLobby3W_RegisterApplication",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4134921693,
+    "handler": "dplobby3_application_unsupported"
+  },
+  {
+    "id": 4203,
+    "name": "IDirectPlayLobby3W_UnregisterApplication",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3803468376,
+    "handler": "dplobby3_application_unsupported"
+  },
+  {
+    "id": 4204,
+    "name": "IDirectPlayLobby3W_WaitForConnectionSettings",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 300648885,
+    "handler": "IDirectPlayLobby3_WaitForConnectionSettings"
   }
 ]
