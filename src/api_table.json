@@ -282,6 +282,7 @@
     "id": 32,
     "name": "CloseHandle",
     "nargs": 1,
+    "test_call": true,
     "convention": "stdcall",
     "hash": 4206493797
   },
@@ -848,6 +849,7 @@
     "id": 84,
     "name": "CreatePipe",
     "nargs": 4,
+    "test_call": true,
     "convention": "stdcall",
     "hash": 1980612961
   },
@@ -4488,6 +4490,7 @@
     "id": 492,
     "name": "PeekNamedPipe",
     "nargs": 6,
+    "test_call": true,
     "convention": "stdcall",
     "hash": 826275607
   },
@@ -4700,6 +4703,7 @@
     "id": 516,
     "name": "ReadFile",
     "nargs": 5,
+    "test_call": true,
     "convention": "stdcall",
     "hash": 1425852739
   },
@@ -6657,6 +6661,7 @@
     "id": 737,
     "name": "WriteFile",
     "nargs": 5,
+    "test_call": true,
     "convention": "stdcall",
     "hash": 2131215434
   },

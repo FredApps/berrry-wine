@@ -25,17 +25,18 @@
   (global $PIPE_HANDLE_TAG i32 (i32.const 0x00330000))
   ;; VSock.proto of a record that is a pipe end, never a real protocol number.
   (global $PIPE_PROTO i32 (i32.const 0x45504950))  ;; 'PIPE'
-  ;; Open handles per end: one per VSock.acc_queue element.
-  (global $PIPE_HANDLES_PER_END i32 (i32.const 13))
+  ;; Open handles per end: acc_queue[0..9]; [10..12] hold a parked write.
+  (global $PIPE_HANDLES_PER_END i32 (i32.const 10))
 
   ;; No region of its own — the map below 0x08000000 is at its shake ceiling
   ;; (tools/region-alloc.js --shake-all). A pipe record has no address and is
   ;; never a listener, so fields a socket needs are free here:
   ;;   proto        $PIPE_PROTO, so a reused socket record is never misread
   ;;   backlog      which end: 0 read, 1 write
-  ;;   acc_queue[k] handle k's flags: bit0 open, bit1 HANDLE_FLAG_INHERIT
-  ;;   remote_ip / remote_port / local_port   a parked WriteFile's
-  ;;                (buffer, length, bytes already in the pipe)
+  ;;   acc_queue[k] handle k's flags (k < 10): bit0 open, bit1 inherit
+  ;;   acc_queue[10..12]  a parked WriteFile's (buffer, length, bytes done)
+  ;;   local_ip/port, remote_ip/port  only for an end whose peer is in
+  ;;                another instance (phase 2): the wire addresses
   ;; A handle value is TAG | sock << 4 | k.
 
   ;; A parked WriteFile's progress, kept in its write record. One writer per
@@ -44,16 +45,16 @@
     (local $rec i32)
     (local.set $rec (call $vsock_rec (local.get $sock)))
     (if (result i32)
-        (i32.and (i32.eq (load.field VSock remote_ip (local.get $rec)) (local.get $buf))
-                 (i32.eq (load.field VSock remote_port (local.get $rec)) (local.get $n)))
-      (then (load.field VSock local_port (local.get $rec)))
+        (i32.and (i32.eq (load.field-elem VSock acc_queue (local.get $rec) (i32.const 10)) (local.get $buf))
+                 (i32.eq (load.field-elem VSock acc_queue (local.get $rec) (i32.const 11)) (local.get $n)))
+      (then (load.field-elem VSock acc_queue (local.get $rec) (i32.const 12)))
       (else (i32.const 0))))
   (func $pipe_wprog_set (param $sock i32) (param $buf i32) (param $n i32) (param $done i32)
     (local $rec i32)
     (local.set $rec (call $vsock_rec (local.get $sock)))
-    (store.field VSock remote_ip (local.get $rec) (local.get $buf))
-    (store.field VSock remote_port (local.get $rec) (local.get $n))
-    (store.field VSock local_port (local.get $rec) (local.get $done)))
+    (store.field-elem VSock acc_queue (local.get $rec) (i32.const 10) (local.get $buf))
+    (store.field-elem VSock acc_queue (local.get $rec) (i32.const 11) (local.get $n))
+    (store.field-elem VSock acc_queue (local.get $rec) (i32.const 12) (local.get $done)))
 
   (func $pipe_h_sock (param $h i32) (result i32)
     (i32.and (i32.shr_u (local.get $h) (i32.const 4)) (i32.const 0xFFF)))
@@ -193,10 +194,16 @@
         (call $pipe_ret (i32.const 0) (i32.const 5) (i32.const 24)) ;; ERROR_ACCESS_DENIED
         (return (i32.const 1))))
     (local.set $sock (call $pipe_h_sock (local.get $h)))
+    ;; A writer in another instance delivers through the wire.
+    (if (i32.eq (load.field VSock peer (call $vsock_rec (local.get $sock))) (i32.const -2))
+      (then (call $vsock_pump)))
     (if (i32.gt_u (load.field VSock rx_len (call $vsock_rec (local.get $sock))) (i32.const 0))
       (then
         ;; Any available prefix satisfies the read: pipe reads are partial.
         (local.set $got (call $vsock_ring_read (local.get $sock) (local.get $buf) (local.get $n)))
+        ;; Ring space read is window the remote writer may use again.
+        (if (i32.eq (load.field VSock peer (call $vsock_rec (local.get $sock))) (i32.const -2))
+          (then (call $vsock_owe_credit (local.get $sock) (local.get $got) (i32.const 1))))
         (if (local.get $pread) (then (call $gs32 (local.get $pread) (local.get $got))))
         (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 24))
         (return (i32.const 1))))
@@ -221,7 +228,7 @@
   (func $pipe_write_file (param $h i32) (param $buf i32) (param $n i32) (param $pwritten i32)
                          (result i32)
     (local $slot i32) (local $sock i32) (local $peer i32) (local $done i32)
-    (local $space i32) (local $chunk i32)
+    (local $space i32) (local $chunk i32) (local $rec i32)
     (local.set $slot (call $pipe_slot (local.get $h)))
     (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
     (if (i32.eqz (call $pipe_end (local.get $h)))
@@ -234,10 +241,43 @@
     ;; A re-entry of the same parked call picks up its progress.
     (local.set $done (call $pipe_wprog_get (local.get $sock) (local.get $buf) (local.get $n)))
     (call $pipe_wprog_set (local.get $sock) (i32.const 0) (i32.const 0) (i32.const 0))
-    (if (i32.lt_s (local.get $peer) (i32.const 0))
+    ;; -1: the reader is gone. (-2 is a reader in another instance.)
+    (if (i32.eq (local.get $peer) (i32.const -1))
       (then
         (if (local.get $pwritten) (then (call $gs32 (local.get $pwritten) (local.get $done))))
         (call $pipe_ret (i32.const 0) (i32.const 232) (i32.const 24)) ;; ERROR_NO_DATA
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $peer) (i32.const -2))
+      (then
+        ;; The reader is in another instance: DATA frames within the send
+        ;; window, as many as fit now; a WINDOW credit from the reader's
+        ;; reads re-opens it for the parked remainder.
+        (call $vsock_pump)
+        (local.set $rec (call $vsock_rec (local.get $sock)))
+        (block $full (loop $send
+          (br_if $full (i32.ge_u (local.get $done) (local.get $n)))
+          (local.set $space (i32.sub (global.get $VSOCK_WINDOW)
+            (load.field VSock tx_inflight (local.get $rec))))
+          (br_if $full (i32.le_s (local.get $space) (i32.const 0)))
+          (local.set $chunk (i32.sub (local.get $n) (local.get $done)))
+          (if (i32.gt_u (local.get $chunk) (global.get $VLN_MAX_PAYLOAD))
+            (then (local.set $chunk (global.get $VLN_MAX_PAYLOAD))))
+          (if (i32.gt_u (local.get $chunk) (local.get $space))
+            (then (local.set $chunk (local.get $space))))
+          (br_if $full (i32.eqz (call $vsock_emit_from (local.get $sock) (i32.const 3)
+            (i32.add (local.get $buf) (local.get $done)) (local.get $chunk))))
+          (store.field VSock tx_inflight (local.get $rec)
+            (i32.add (load.field VSock tx_inflight (local.get $rec))
+                     (call $vsock_frame_charge (local.get $chunk))))
+          (local.set $done (i32.add (local.get $done) (local.get $chunk)))
+          (br $send)))
+        (if (i32.lt_u (local.get $done) (local.get $n))
+          (then
+            (call $pipe_wprog_set (local.get $sock) (local.get $buf) (local.get $n) (local.get $done))
+            (call $vsock_block (i32.const 0))
+            (return (i32.const 1))))
+        (if (local.get $pwritten) (then (call $gs32 (local.get $pwritten) (local.get $n))))
+        (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 24))
         (return (i32.const 1))))
     (if (i32.eqz (call $vsock_alloc_ring (local.get $peer)))
       (then
@@ -323,6 +363,8 @@
     (if (call $pipe_end (local.get $arg0))
       (then (call $pipe_ret (i32.const 0) (i32.const 5) (i32.const 28)) (return))) ;; ERROR_ACCESS_DENIED
     (local.set $sock (call $pipe_h_sock (local.get $arg0)))
+    (if (i32.eq (load.field VSock peer (call $vsock_rec (local.get $sock))) (i32.const -2))
+      (then (call $vsock_pump)))
     (local.set $avail (load.field VSock rx_len (call $vsock_rec (local.get $sock))))
     (if (i32.and (i32.eqz (local.get $avail))
                  (i32.eqz (call $pipe_writer_alive (local.get $sock))))
@@ -333,3 +375,63 @@
     (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (local.get $avail))))
     (if (local.get $left_ga) (then (call $gs32 (local.get $left_ga) (i32.const 0))))
     (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 28)))
+
+  ;; ---- phase 2: ends whose peer is in another instance -------------------
+  ;;
+  ;; A child process is a separate instance with its own memory, so the two
+  ;; ends of an inherited pipe live in two record tables and meet over the
+  ;; virtual-LAN wire as one pre-connected stream (no SYN: both sides are
+  ;; created connected, at addresses the parent chose). DATA, WINDOW and FIN
+  ;; frames then move bytes, credit and EOF exactly as for a socket.
+
+  ;; Child side: a new pipe end ($end 0 read, 1 write) at local port $lport,
+  ;; connected to $rip:$rport. Returns its handle, 0 when out of records.
+  (func $pipe_open_remote (export "pipe_open_remote")
+        (param $end i32) (param $lport i32) (param $rip i32) (param $rport i32) (result i32)
+    (local $x i32) (local $rec i32) (local $h i32)
+    (local.set $x (call $vsock_alloc))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $rec (call $vsock_rec (local.get $x)))
+    (if (i32.eqz (local.get $end))
+      (then (if (i32.eqz (call $vsock_alloc_ring (local.get $x)))
+        (then (call $vsock_destroy (local.get $x) (i32.const 1)) (return (i32.const 0))))))
+    (store.field VSock family (local.get $rec) (i32.const 2))
+    (store.field VSock type (local.get $rec) (i32.const 1))
+    (store.field VSock proto (local.get $rec) (global.get $PIPE_PROTO))
+    (store.field VSock backlog (local.get $rec) (local.get $end))
+    (store.field VSock local_ip (local.get $rec) (global.get $vsock_local_ip))
+    (store.field VSock local_port (local.get $rec) (local.get $lport))
+    (store.field VSock remote_ip (local.get $rec) (local.get $rip))
+    (store.field VSock remote_port (local.get $rec) (local.get $rport))
+    (store.field VSock peer (local.get $rec) (i32.const -2))
+    (store.field VSock state (local.get $rec) (i32.const 4))
+    (local.set $h (call $pipe_handle_new (local.get $x) (i32.const 0)))
+    (if (i32.eqz (local.get $h))
+      (then (call $vsock_destroy (local.get $x) (i32.const 1))))
+    (local.get $h))
+
+  ;; Parent side, at CreateProcess: handle $h's end goes to the child, which
+  ;; will open it with $pipe_open_remote(end, $child_port, parent ip,
+  ;; $parent_port). The end that stays here becomes remote-facing at
+  ;; $parent_port; $h's own record is detached, so closing the parent's copy
+  ;; (which every redirecting parent does next) no longer touches the pipe.
+  ;; Returns the moved end (0 read, 1 write), or -1 when $h cannot move.
+  ;; Bytes already queued in a moved read end stay behind: a parent writes to
+  ;; a child's stdin after starting it, not before.
+  (func $pipe_move_to_child (export "pipe_move_to_child")
+        (param $h i32) (param $child_ip i32) (param $child_port i32) (param $parent_port i32)
+        (result i32)
+    (local $x i32) (local $y i32) (local $xrec i32) (local $yrec i32)
+    (if (i32.eqz (call $pipe_slot (local.get $h))) (then (return (i32.const -1))))
+    (local.set $x (call $pipe_h_sock (local.get $h)))
+    (local.set $xrec (call $vsock_rec (local.get $x)))
+    (local.set $y (load.field VSock peer (local.get $xrec)))
+    (if (i32.lt_s (local.get $y) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $yrec (call $vsock_rec (local.get $y)))
+    (store.field VSock local_ip (local.get $yrec) (global.get $vsock_local_ip))
+    (store.field VSock local_port (local.get $yrec) (local.get $parent_port))
+    (store.field VSock remote_ip (local.get $yrec) (local.get $child_ip))
+    (store.field VSock remote_port (local.get $yrec) (local.get $child_port))
+    (store.field VSock peer (local.get $yrec) (i32.const -2))
+    (store.field VSock peer (local.get $xrec) (i32.const -1))
+    (load.field VSock backlog (local.get $xrec)))
