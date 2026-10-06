@@ -13,8 +13,9 @@
 //
 // `node test/test-abedemo-gameplay.js <dir>` skips the long run and re-scores
 // existing loading/before/moving/after captures while thresholds are tuned.
-// --frozen-route uses the verified smaller-batch stdio sequence. The default
-// retains the historical larger-batch route, which currently fails at the menu.
+// The default (also --frozen-route) is the verified smaller-batch stdio
+// sequence. --legacy-route runs the historical larger-batch route, which
+// currently fails at the menu.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -28,7 +29,9 @@ const INSTALLED_DIR = process.env.ABE_INSTALLED_DIR;
 const EXE = INSTALLED_DIR ? path.join(path.resolve(INSTALLED_DIR), 'abedemo.exe')
   : path.join(ROOT, 'test/binaries/shareware/abe/installed/abedemo.exe');
 const RUN = path.join(__dirname, 'run.js');
-const FROZEN_ROUTE = process.argv.includes('--frozen-route');
+// The frozen route is the canonical check (docs/re-notes/abes-oddysee-demo.md);
+// --legacy-route keeps the historical larger-batch schedule reproducible.
+const FROZEN_ROUTE = !process.argv.includes('--legacy-route');
 const RUN_NAME = FROZEN_ROUTE ? 'abedemo-frozen-gameplay' : 'abedemo-gameplay';
 const OUTDIR = path.join(ROOT, 'build', RUN_NAME);
 const LOG = path.join(ROOT, 'build', `${RUN_NAME}.log`);
@@ -69,7 +72,12 @@ async function runFrozen() {
     await session.send('keydown:13'); await step(1, 205);
     await session.send('keyup:13'); await step(100, 305);
     await session.send('keydown:27'); await step(2, 307);
-    await session.send('keyup:27'); await step(30, 337);
+    await session.send('keyup:27'); await step(13, 320);
+    // A second Escape: since uop trace heads went on by default (e0d20e11) a
+    // batch covers more guest work, and the first press can land before the
+    // RuptureFarms intro movie is listening for it.
+    await session.send('keydown:27'); await step(2, 322);
+    await session.send('keyup:27'); await step(15, 337);
     await capture('before');
     await session.send('keydown:39'); await step(3, 340);
     await capture('moving');
