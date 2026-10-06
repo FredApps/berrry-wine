@@ -160,6 +160,17 @@ const GAMES = [
     root: 'Alien vs Predator - Alien demo-D3D/extracted',
     exe: 'avp_alien_demo.exe',
   },
+  {
+    // Installed tree beside its InstallShield media: ship what the game
+    // opens, not the installer, its cabinets or the logs a run writes.
+    id: 'avp_marine_demo',
+    root: 'Alien vs Predator-MarineDemo-D3D',
+    exe: 'AvP_Marine_Demo.exe',
+    exclude: ['data1.cab', '_sys1.cab', '_user1.cab', '_INST32I.EX_', '_ISDEL.EXE',
+      '_SETUP.DLL', 'SETUP.EXE', 'SETUP.INI', 'setup.ins', 'setup.lid', 'setup.bmp',
+      'DSETUP.DLL', 'DSETUP16.DLL', 'DSETUP32.DLL', 'layout.bin', 'os.dat', 'lang.dat',
+      'DATA.TAG', 'LOGFILE.TXT', 'dx_error.log', 'ConsoleLog.txt', 'Marine Instructions'],
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
@@ -177,10 +188,12 @@ function walk(directory, relative = '', output = []) {
 }
 function manifestFor(game, directory) {
   const executable = path.normalize(game.exe);
-  const excluded = (game.exclude || []).map(dir => path.normalize(dir) + path.sep);
+  // An exclude entry names a directory (everything under it) or one file.
+  const excluded = (game.exclude || []).map(entry => path.normalize(entry));
   const files = walk(directory).filter(relative =>
     path.normalize(relative) !== executable
-      && !excluded.some(prefix => path.normalize(relative).startsWith(prefix))).map(relative => ({
+      && !excluded.some(entry => path.normalize(relative) === entry
+        || path.normalize(relative).startsWith(entry + path.sep))).map(relative => ({
     url: relative.split(path.sep).join('/'),
     vfsPath: (game.vfsRoot || 'c:\\') + relative.split(path.sep).join('\\'),
   }));
