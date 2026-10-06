@@ -23,7 +23,8 @@ const { bootRenderHarness } = require('./render-helper');
   const a = e.new_device(), b = e.new_device(), input = 0x00405000, output = 0x00406000;
   for (let i = 0; i < 32; ++i) e.guest_write32(input + i * 4, 0x3f000000 + i);
   for (const pixel of [0,1]) {
-    const last = pixel ? 7 : 95;
+    // vs_2_0+ exposes 256 float constants (f09d1629); the pixel bank is 8.
+    const last = pixel ? 7 : 255;
     assert.strictEqual(e.constants(a, last, input, 1, pixel, 0), 0);
     e.guest_write32(output - 4, 0xdeadbeef); e.guest_write32(output + 16, 0xdeadbeef);
     assert.strictEqual(e.constants(a, last, output, 1, pixel, 1), 0);
