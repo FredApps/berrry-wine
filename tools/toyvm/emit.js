@@ -698,6 +698,76 @@ const GO = (arena, guest) => `
     (then (global.set $ip ${arena}))
     (else (if (i32.eqz (call $jlook_edge)) (then ${EXIT('edge')}))))`;
 
+// FIX J: THE COMPILER'S OWN TRANSFER IS NOT A BUDGET TEST POINT.
+//
+// `jmp_syn` (below, and compile.js where it is emitted) is not a guest
+// transfer: it exists only because the decode reached a head this compile
+// already holds. Testing the budget there made the slice's STOP POINTS -- not
+// its charge, which jmp_syn already refunds -- a function of decode order.
+// Installing a region marks its head before anything is decoded, so code that
+// falls into the head is recompiled ending in `jmp_syn head`, and a slice can
+// then end AT the head where the interpreter, which had the first iteration
+// inlined into the setup block, ran on to the next real transfer.
+//
+// Measured on the BRW regression program
+// (scratch/claude-toyvm-brw-billing-20261005, run-20261005a/report.json):
+// equal dispatch totals (15927679 both), but the region arm delivered 811 of
+// 7951 timer IRQs in front of a different instruction, the first at
+// at=6003001 `from 100:140` (the region head) against the interpreter's
+// at=6003007 `from 100:14e` (its traced jz). The call-target control, where
+// the head is a block in both arms, was clean. That is BRW.EXE's 115.06M
+// signature: same cs:ip, one loop iteration early.
+//
+// So a jmp_syn keeps everything GO does except the `$steps < 0` test: it still
+// publishes $gip, still refuses a resolved arena address once code was
+// patched ($smc), and still asks the jump table on the cold arm -- through
+// $jlook_syn, which applies the same $smc-only test. The residual: a target the
+// jump table does not hold (never compiled, dropped, or a µop-held head) still
+// hands back through $slice_exit, and if the budget happens to be spent at that
+// moment the host sees an ordinary expired slice there. A cycle cannot consist
+// of jmp_syn edges alone (compile.js only emits one for a straight line that
+// runs forward into a head, and refuses a 16-bit wrap), so every loop still
+// passes a real transfer that tests the budget, and the overrun stays bounded.
+//
+// `--jmp-syn-budget-test` (or TOYVM_JMP_SYN_BUDGET_TEST=1) restores the old
+// test in every arm, exactly: the handler body, the absence of $jlook_syn and
+// every lowering in region-jit.js / uop-ir.js read this one switch. It is read
+// once per process because the handler table is built once per process
+// (prepareTables / TABLES_READY). Passing the flag also exports the env form so
+// a node worker thread or child process -- which do not see this argv -- builds
+// the same arm.
+const JMP_SYN_BUDGET_TEST = (() => {
+  if (typeof process === 'undefined') return false;
+  const argv = Array.isArray(process.argv) && process.argv.includes('--jmp-syn-budget-test');
+  const env = !!(process.env && process.env.TOYVM_JMP_SYN_BUDGET_TEST === '1');
+  if (argv && process.env) process.env.TOYVM_JMP_SYN_BUDGET_TEST = '1';
+  return argv || env;
+})();
+// CONT without the budget: refuse the arena only for a patched-code slice.
+const CONT_SYN = (arena) => `(select (i32.const 0) ${arena}
+    (global.get $smc))`;
+const GO_SYN = (arena, guest) => `
+  (global.set $gip ${guest})
+  (if ${CONT_SYN(arena)}
+    (then (global.set $ip ${arena}))
+    (else (if (i32.eqz (call $jlook_syn)) (then ${EXIT('edge')}))))`;
+// $jlook_edge's twin for GO_SYN: the same lookup and the same $edgelook A/B
+// switch, with the self-patch test and NOT the budget test. Named apart so the
+// flag analysis (it is event X, like $jlook_edge), handler-effects.js and
+// trace-jit.js classify it as the block transfer it is. Emitted only in the J
+// build, so a `--jmp-syn-budget-test` module is HEAD's module text exactly.
+const JLOOK_SYN_FN = `
+;; The cold arm of a compiler-synthesized edge (jmp_syn, emit.js GO_SYN):
+;; resume at $gip's block if the jump table has one and no code was patched,
+;; setting $ip; 0 to hand back. No budget test -- see FIX J above GO_SYN.
+(func $jlook_syn (result i32) (local $a i32)
+  (if (i32.eqz (global.get $edgelook)) (then (return (i32.const 0))))
+  (local.set $a ${CONT_SYN('(call $jlook (global.get $gip))')})
+  (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
+  (global.set $ip (local.get $a))
+  (i32.const 1))
+`;
+
 // A Jcc's body is its condition and nothing else, so it is built from the
 // condition rather than written out. genFusedBranches() rebuilds it with a
 // condition specialized to the compare it is fused with -- same operands, same
@@ -817,10 +887,16 @@ function genBranches() {
   // steps ahead of the interpreter at the same budget -- a "wrong frame"
   // from a region that computed nothing wrong. So this twin gives the step
   // back: the transfer stays a dispatch, the budget no longer sees it.
+  //
+  // ...and since fix J it does not TEST the budget either (see GO_SYN): the
+  // refund made the charge layout-independent, but a test here still made the
+  // stop points layout-dependent, which is the BRW 115.06M split and the
+  // 811-of-7951 IRQ misplacements of the regression program. The $smc test
+  // stays. `--jmp-syn-budget-test` puts the old GO back.
   const jmpSyn = h('jmp_syn', 2, `
   ${ops(2)}
   (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
-  ${GO('(local.get $t0)', '(local.get $t1)')}
+  ${JMP_SYN_BUDGET_TEST ? GO('(local.get $t0)', '(local.get $t1)') : GO_SYN('(local.get $t0)', '(local.get $t1)')}
 `);
   TAKEN_AT.set(jmpSyn, 1);
   // `jmp $` is the purest spin there is, and the one a demo parks on when it
@@ -3676,7 +3752,7 @@ function analyzeFlags(bodies) {
       const at = close[o] >= 0 ? close[o] : m.index;
       const sure = depthAt[m.index] <= 2 && !bails;
       if (m[1]) {
-        if (m[1] === 'slice_exit' || m[1] === 'jlook_edge') { ev.push({ t: 'X', at }); continue; }
+        if (m[1] === 'slice_exit' || m[1] === 'jlook_edge' || m[1] === 'jlook_syn') { ev.push({ t: 'X', at }); continue; }
         if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
         if (!bodies.has(m[1])) continue;              // import, or $next
         if (FLAG_KILLERS.test(m[1])) ev.push({ t: sure ? 'CK' : 'C?', n: m[1], at });
@@ -5654,7 +5730,7 @@ ${memAccessors()}
   (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
   (global.set $ip (local.get $a))
   (i32.const 1))
-${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
+${JMP_SYN_BUDGET_TEST ? '' : JLOOK_SYN_FN}${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
   return s;
 }
 
@@ -6639,6 +6715,10 @@ module.exports = {
   // before emit() lowers it.
   lowerRegs, useBuild,
   EXTRA_GLOBALS,
+  // Fix J's A/B switch (see GO_SYN): true = the old behaviour, a jmp_syn tests
+  // the budget. region-jit.js, uop-ir.js and compile.js read it from here so
+  // every arm agrees with the handler body this process built.
+  JMP_SYN_BUDGET_TEST,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.
   ARITY, prepareTables,

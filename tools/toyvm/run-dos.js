@@ -822,7 +822,7 @@ async function runDos(o) {
   // The budget is a date on the schedule, so the run ends at the same guest
   // instant whatever handed back on the way there (dos-loop.js `endAt`).
   session.endAt = budget;
-  while (session.dispatched < budget && !session.done) {
+  while ((session.dispatched < budget || session.owesEnd(budget)) && !session.done) {
     session.step();
     // Between slices, never inside one: installing swaps the wasm instance.
     // Headless, the pipeline is simply awaited -- a one-second pause between
