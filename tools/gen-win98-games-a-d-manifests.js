@@ -135,6 +135,18 @@ const GAMES = [
     vfsRoot: 'c:\\darkdemo\\',
   },
   {
+    // The demo's InstallShield 5 setup, run in the emulator (SETUP.EXE with
+    // --capture-launch, then its _ins5176._mp), wrote this tree to
+    // C:\Games\Descent3Demo. Its opengl32.dll is Microsoft's NT software GL
+    // client; mounted, it would replace the emulator's own OpenGL, so it
+    // stays out of the manifest.
+    id: 'descent3_demo',
+    root: 'Descent3 demo10-installed/installed/games/descent3demo',
+    exe: 'main.exe',
+    vfsRoot: 'c:\\games\\descent3demo\\',
+    exclude: ['opengl32.dll'],
+  },
+  {
     // Activision's 1997 demo. Its InstallShield 3 setup ships the game tree
     // uncompressed in DATA\, which runs as is.
     id: 'dark_reign_demo',
