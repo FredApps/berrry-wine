@@ -36,8 +36,26 @@ briefing: one 880K-batch scripted run takes ~80 s of wall clock.
 
 Evidence: `scratch/runs/20261006-commandos-demo-move`.
 
-## Open
+## Audio (CLI, data level)
 
-Audio (Miles mss32 over waveOut/DirectSound), FPS and the browser route are
-not yet checked. `--trace-api` would be large: ~10K API calls per 1K batches
-in the mission.
+Two DirectSound users, and the first one is a trap when measuring:
+
+- MSS32 (Miles) opens DirectSound in write-primary mode: `CreateSoundBuffer`
+  with `DSBCAPS_PRIMARYBUFFER` (flags 0x1), 22050 Hz stereo 16-bit, Play
+  looping. Its ring stays all zeros through menu and briefing; dumping it
+  says nothing about whether the game has sound. Its service thread
+  (`mss32+0x12b0`) is a `WaitForSingleObject(event, 5)` loop that services
+  timers on each WAIT_TIMEOUT; it runs (~73K passes in 300K batches).
+- The game itself (`exe+0x44a332` Lock, `exe+0x449e00` Play) streams
+  `DATOS\BRIEFING\WAVE\MUS_BR01.wav` (11025 Hz mono 8-bit) into a 32 KB
+  looping secondary buffer (flags 0x180e0), refilled from guest thread tid 3
+  (`ReadFile` 4 KB chunks). Two more 11025 Hz voices carry the voice-over.
+
+A guest thread's API calls only reach the log with `--trace-api=NAMES`
+(`[API T1]` lines); `--trace-api` without names prints none of them, so a
+census from the default log undercounts every streaming mixer.
+
+Measured 2026-10-06: `--trace-host=voice_play_ring` shows the music voice
+refreshed 75,849 times by batch 760K; a dump of its ring at 750K has peak
+1.0 and 91% non-silent samples. Real browser output, FPS and the browser
+route are not yet checked.
