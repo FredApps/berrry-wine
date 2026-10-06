@@ -105,6 +105,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
 | Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
 | Aliens versus Predator (Alien demo) | [avp-alien-demo.md](avp-alien-demo.md) |
+| Aliens versus Predator (Marine demo) | [avp-marine-demo.md](avp-marine-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |
