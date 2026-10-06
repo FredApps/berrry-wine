@@ -64,6 +64,17 @@ assert.deepStrictEqual([renderer._mouseX, renderer._mouseY], [440, 280],
 assert.deepStrictEqual([diWords[diMouseState], diWords[diMouseState + 1]], [40, -20],
   'successive physical movement should accumulate until DirectInput consumes it');
 
+// Pointer Lock delivers mouse COUNTS. A real 640x480 fullscreen game gets one
+// pixel of its own mode per count, so 40 counts are 40 guest pixels (80 canvas
+// pixels at this 2x presentation), not the 20 a picture-relative scale gives.
+renderer.setMousePosition(420, 290);
+diWords[diMouseState] = 0; diWords[diMouseState + 1] = 0;
+renderer.handleRelativeMouseMove(40, -20, { guestCounts: true });
+assert.deepStrictEqual([renderer._mouseX, renderer._mouseY], [460, 270],
+  'mouse counts move the guest cursor one guest pixel per count');
+assert.deepStrictEqual([diWords[diMouseState], diWords[diMouseState + 1]], [40, -20],
+  'mouse counts reach DirectInput unscaled by the presentation stretch');
+
 // FPS engines capture the mouse for aiming without holding any button.
 // Capture changes the recipient, never the physical button mask.
 guestExports.get_capture_hwnd = () => 7;
@@ -85,7 +96,7 @@ assert.strictEqual(renderer.wantsRelativeMouse(640, 480), false,
 const browserSource = fs.readFileSync(path.join(__dirname, '..', 'lib/browser-input.js'), 'utf8');
 assert(browserSource.includes('canvas.requestPointerLock()'),
   'the trusted canvas mousedown path should request browser pointer lock');
-assert(browserSource.includes('renderer.handleRelativeMouseMove(delta.x, delta.y)'),
-  'locked movementX/Y should enter the renderer relative-mouse path');
+assert(/handleRelativeMouseMove\(Number\(e\.movementX\)[^]*?guestCounts: true/.test(browserSource),
+  'locked movementX/Y should enter the renderer relative-mouse path as mouse counts');
 
 console.log('PASS  ClipCursor-gated pointer lock preserves relative guest mouse motion');
