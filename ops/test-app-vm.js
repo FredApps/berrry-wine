@@ -15,7 +15,7 @@ function browserApp(snapshot) {
   });
   ctx.globalThis = ctx;
   // Same order as index.html (terminal.js needs xterm and is not rendered here).
-  for (const file of ['task-ui.js', 'approval-ui.js', 'blocker-model.js', 'release-model.js', 'dos-view.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), ctx, {filename: file});
+  for (const file of ['task-ui.js', 'approval-ui.js', 'blocker-model.js', 'release-model.js', 'dos-view.js', 'views.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), ctx, {filename: file});
   ctx.__snapshot = snapshot;
   vm.runInContext('state = __snapshot;', ctx);
   return ctx;

@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Wine / Ops</title>
+  <title>Wine Ops</title>
+  <meta name="theme-color" content="#120d24">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a58bff'/%3E%3Cstop offset='1' stop-color='%23ff70c8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='17' font-weight='800' text-anchor='middle' fill='%23170f30'%3EW%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/vendor/xterm.css">
   <script src="/vendor/xterm.js" defer></script>
@@ -13,40 +15,51 @@
   <script src="/blocker-model.js" defer></script>
   <script src="/release-model.js" defer></script>
   <script src="/dos-view.js" defer></script>
+  <script src="/views.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <aside>
-    <a class="brand" href="#overview"><span class="brand-mark">W_</span><span>WINE <b>/ OPS</b></span></a>
-    <div class="nav-label">// COMMAND DIRECTORY</div>
-    <nav aria-label="Main navigation">
-      <a href="#overview" data-view="overview"><span>01</span> Overview</a>
-      <a href="#tasks" data-view="tasks"><span>02</span> Tasks <small id="task-count"></small></a>
-      <a href="#blockers" data-view="blockers"><span>!</span> Blockers <small id="blocker-count"></small></a>
-      <a href="#corpus" data-view="corpus"><span>03</span> EXE corpus <small id="corpus-count"></small></a>
-      <a href="#dos" data-view="dos"><span>DOS</span> DOS / ToyVM corpus <small id="dos-count"></small></a>
-      <a href="#release" data-view="release"><span>✓</span> Ready for desktop</a>
-      <a href="#agents" data-view="agents"><span>04</span> Agents</a>
-      <a href="#analytics" data-view="analytics"><span>◷</span> Agent analytics</a>
-      <a href="#activity" data-view="activity"><span>05</span> Activity</a>
+  <aside class="side">
+    <a class="brand" href="#home"><span class="brand-mark" aria-hidden="true">W</span><span>Wine <b>Ops</b></span></a>
+    <nav class="nav-main" aria-label="Main navigation">
+      <a href="#home" data-view="home"><span class="nav-ic" data-icon="home"></span>Home</a>
+      <a href="#games" data-view="games"><span class="nav-ic" data-icon="games"></span>Games <small id="games-count" class="count"></small></a>
+      <a href="#tasks" data-view="tasks"><span class="nav-ic" data-icon="tasks"></span>Tasks <small id="needs-count" class="count alert"></small></a>
+      <a href="#agents" data-view="agents"><span class="nav-ic" data-icon="agents"></span>Agents <small id="agents-count" class="count"></small></a>
+      <a href="#activity" data-view="activity"><span class="nav-ic" data-icon="activity"></span>Activity</a>
     </nav>
-    <div class="side-schematic" aria-hidden="true"><div class="schematic-title">FILE SYSTEM / TOPOLOGY</div><pre>┌─ REPOSITORY
-│  ├─ tasks
-│  ├─ corpus
-│  └─ evidence
-│
-├─ CODEX ───┐
-├─ CLAUDE ──┤
-│          ↓
-└─ OBSERVER / OPS</pre><div class="signal-bars">▂ ▃ ▆ ▄ ▂ ▅ ▇ ▃ ▄ ▆ ▂ ▃</div></div>
-    <div class="aside-foot"><span class="file-dot"></span> LOCAL FILE OBSERVER<br><small>FILE BACKED / NO DATABASE</small></div>
+    <div class="nav-label">More</div>
+    <nav class="nav-more" aria-label="More views">
+      <a href="#overview" data-view="overview">Classic overview</a>
+      <a href="#tasklist" data-view="tasklist">Task list <small id="task-count" class="count"></small></a>
+      <a href="#agentlist" data-view="agentlist">Agent sessions</a>
+      <a href="#blockers" data-view="blockers">Blockers <small id="blocker-count" class="count"></small></a>
+      <a href="#corpus" data-view="corpus">EXE corpus <small id="corpus-count" class="count"></small></a>
+      <a href="#release" data-view="release">Release checklist</a>
+      <a href="#dos" data-view="dos">DOS / ToyVM <small id="dos-count" class="count"></small></a>
+      <a href="#analytics" data-view="analytics">Usage &amp; cost</a>
+    </nav>
+    <div class="aside-foot"><span id="connection" role="status">Connecting…</span><small id="build-line"></small><small id="updated">Waiting for sources</small></div>
   </aside>
   <div class="workspace">
-    <header><div class="breadcrumb">wine-assembly <span>/</span> <b>OPS CONSOLE</b></div><label class="search"><span>&gt;_</span><input id="search" type="search" placeholder="Search this view…" aria-label="Search this view"></label><span id="connection" role="status">Connecting…</span><button id="refresh" title="Refresh data">↻</button></header>
+    <header class="top">
+      <h1 id="page-title">Home</h1>
+      <div id="health" class="health" aria-label="Project health"></div>
+      <label class="search"><span class="search-ic" data-icon="search" aria-hidden="true"></span><input id="search" type="search" placeholder="Search this view…" aria-label="Search this view"></label>
+      <button id="search-toggle" class="icon-btn only-phone" aria-label="Search" aria-expanded="false"><span data-icon="search" aria-hidden="true"></span></button>
+      <button id="refresh" class="icon-btn" title="Refresh data" aria-label="Refresh data"><span data-icon="refresh" aria-hidden="true"></span></button>
+    </header>
     <section id="urgent-approvals" aria-label="Live approval requests" aria-live="polite" hidden></section>
     <main id="main" tabindex="-1"><div class="empty">Reading project files…</div></main>
-    <footer><span id="updated">Waiting for sources</span><span>Tasks and discussion stay in your text files.</span></footer>
   </div>
+  <nav class="tabbar" aria-label="Sections">
+    <a href="#home" data-view="home"><span data-icon="home"></span>Home</a>
+    <a href="#games" data-view="games"><span data-icon="games"></span>Games</a>
+    <a href="#tasks" data-view="tasks"><span data-icon="tasks"></span>Tasks<b id="tab-needs-count" class="n" hidden></b></a>
+    <a href="#agents" data-view="agents"><span data-icon="agents"></span>Agents</a>
+    <a href="#activity" data-view="activity"><span data-icon="activity"></span>Activity</a>
+    <a href="#more" data-view="more"><span data-icon="more"></span>More</a>
+  </nav>
   <dialog id="detail"><div class="dialog-top"><span id="detail-label">Details</span><button id="close-detail" aria-label="Close details">✕</button></div><div id="detail-body"></div></dialog>
   <dialog id="approval-review" aria-labelledby="approval-title"><div class="dialog-top"><strong id="approval-title">Review live command approval</strong><button id="approval-close" aria-label="Close approval review">✕</button></div><div id="approval-body"></div></dialog>
   <dialog id="task-editor" aria-labelledby="task-editor-title">

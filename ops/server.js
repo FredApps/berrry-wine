@@ -114,6 +114,7 @@ function createServer(options = {}) {
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],
+        '/views.js':['views.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.js':['node_modules/@xterm/xterm/lib/xterm.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.css':['node_modules/@xterm/xterm/css/xterm.css','text/css; charset=utf-8'],
         };
