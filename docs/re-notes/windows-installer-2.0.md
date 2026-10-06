@@ -75,15 +75,40 @@ reading "Err": FormatMessageA has no FORMAT_MESSAGE_FROM_SYSTEM text, so a
 system message comes back as the generic "Error" (clipped). Not an install
 problem; a Win98 system message table is its own piece of work.
 
+## Browser
+
+Registry id `windows_installer_20`, `spawnProcesses: true`: host.js starts
+each CreateProcess as a visible in-page instance on a copy of C:\ and merges
+its files back on exit (`VirtualFS.mergeChildFrom`; the registry store is
+page-wide already).
+
+msiexec /i used to end on "unexpected error ... 2761" (cannot begin
+transaction: global mutex) at InstallInitialize. msi's own log comes out of
+the page with IExpress args `/c:"msiinst.exe /i instmsi.msi MSIEXECREG=1 /m
+/qb+! /L*v c:\msi.log"` (set from a `--before-load` probe on
+`window.wineApps`) and a `--report-eval` that reads `c:\msi.log` from each
+running app's `wine._helpCtx.vfs`. The engine thread (msi.dll `0x4c94d0`,
+Win9x branch on `[0x547838]`) does `CreateMutexA(0, 0, "_MSIExecute")`,
+`WaitForSingleObject(h, 3000)`, and later `OpenMutexA("_MSIExecute")`.
+Wrapping `ThreadManager.prototype` from a probe showed the name arriving as
+`""`: `readSyncObjectName` in `lib/mem-utils.js` accepted the buffer only if
+it was `instanceof SharedArrayBuffer`, and a page that is not cross-origin
+isolated has no such global while its shared wasm memory still hands one
+out. Every named event/mutex/semaphore in such a page was anonymous. Fixed
+by testing the type tag; `test/test-sync-object-name.js` covers it.
+
+With that, msiexec /i finishes (InstallFinalize returns 1) and shows
+"Windows Installer Setup completed successfully." (headless Chrome on a
+boat, `?no-threads`).
+
 ## Open
 
-- Browser (registry id `windows_installer_20`, `spawnProcesses: true`):
-  host.js starts each CreateProcess as a visible in-page instance on a copy
-  of C:\ and merges its files back on exit (`VirtualFS.mergeChildFrom`; the
-  registry store is page-wide already). msiinst and msiexec /regserver run
-  and merge (run `20261006T1410Z-instmsi-web`), but msiexec /i ends on
-  "unexpected error ... 2761" (cannot begin transaction: global mutex). The
-  CLI does not hit it, so suspect what the browser shares that the CLI
-  snapshots: the live registry (msi's InProgress key) or named objects.
-  Next step: get msi's own `/L*v` log out of the page.
+- Browser: the RegExtension (`msiexec /D`) and RegDllServer (`msiexec /Y
+  msi.dll`) custom actions each log Info 1722, and msi starts `/Y` before
+  `/D` has exited. The engine thread waits for its custom-action EXE with
+  MsgWaitForMultipleObjects; `$handle_MsgWaitForMultipleObjects` returns
+  WAIT_TIMEOUT whenever nothing is ready at that instant and then yields,
+  even for an INFINITE wait, so msi sees its EXE "not finish". The CLI does
+  not show 1722; why it escapes is not yet established (a message is more
+  often pending there?). `/Y` itself exits 0x80040200 in the page.
 - An MSI-based corpus installer as acceptance (The Movies demo is deferred).

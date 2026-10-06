@@ -39,6 +39,25 @@ if (typeof SharedArrayBuffer !== 'undefined') {
   assert.strictEqual(readSyncObjectName(shared, 8, 0), 'Shared');
 }
 
+// A page that is not cross-origin isolated has no SharedArrayBuffer global, but
+// its shared wasm memory still hands one out. The name must decode there too:
+// reading '' made every named mutex anonymous, and Windows Installer could not
+// reopen _MSIExecute (Error 2761) in the browser.
+{
+  const sharedMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  new Uint8Array(sharedMemory.buffer).set(Buffer.from('_MSIExecute\0', 'ascii'), 40);
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'SharedArrayBuffer');
+  delete globalThis.SharedArrayBuffer;
+  try {
+    assert.strictEqual(typeof SharedArrayBuffer, 'undefined');
+    assert.strictEqual(readSyncObjectName(sharedMemory, 40, 2), '_MSIExecute',
+      'a shared memory decodes without the SharedArrayBuffer global');
+    assert.strictEqual(readSyncObjectName(sharedMemory.buffer, 40, 0), '_MSIExecute');
+  } finally {
+    Object.defineProperty(globalThis, 'SharedArrayBuffer', saved);
+  }
+}
+
 const ROOT = path.join(__dirname, '..');
 const sources = ['lib/mem-utils.js', 'host.js', 'test/run.js']
   .map(file => fs.readFileSync(path.join(ROOT, file), 'utf8'));
