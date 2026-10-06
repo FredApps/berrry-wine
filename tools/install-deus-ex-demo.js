@@ -199,7 +199,10 @@ async function main() {
         `--exe=${installer}`,
         '--screen=800x600',
         '--batch-size=200000',
-        '--max-batches=2000',
+        // The WinZip SFX takes ~11,250 batches at this batch size before it
+        // ShellExecutes System\Setup.exe (measured 2026-10-06 on main); the
+        // old 2000 stopped it mid-extract on a fresh fetch.
+        '--max-batches=30000',
         '--max-seconds=300',
         '--input=1:wait-dlg-control:1:2000,2:dlg-click:1',
         '--quiet-api',
