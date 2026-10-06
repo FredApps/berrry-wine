@@ -92,3 +92,35 @@ per-app guest-clock dilation. The browser has not been tried: its clock is
 real time, so it should behave like `--real-ticks` and lose by a hair.
 
 Status 2026-10-06: parked again (claude:202b4b39) with the root cause above; TODOS NEW-GAME-COMANCHE-GOLD-DEMO-20261006.
+
+## The `_stricmp` fold, tried (claude:202b4b39, 2026-10-06 evening)
+
+Built and measured on branch `claude/crt-stricmp-fold` (051a901e): handler
+501 folds a whole C-locale `_stricmp` call at `0x4e0be0`, handler 500 its
+loop. It is exact (unit test: every register, flag and stack slot) and 18x
+faster per call in bench-loops (61 vs 1094 ns). **It does not win this race.**
+
+- The pre-init is ~200,000 `_stricmp` calls (`--count=0x4e0be0`), most of
+  them ending at the first byte -- so the loop is not where the time goes;
+  the per-call blocks and the caller's scan at `0x4d8678` are.
+- The margin is not "a hair". Under `--real-ticks`, both arms keep T1 alive
+  at `--time-scale=0.5` and lose it at 1 (0.7 is noise, either way). With
+  browser-sized slices (`--batch-size=100000 --real-ticks`) T1 is dead by
+  batch 5 and the patch lands at batch 14 (19 unfolded): main needs ~3x less
+  work before its 4th timer tick, not a few percent.
+- `--tick-ms-per-batch=1` alone does NOT survive at the default 1000-block
+  batch (dies by batch 119, patch at 2435); the earlier survival was with
+  `--batch-size=200000`.
+- How to mount it on the CLI: every installed file with
+  `--vfs-mount=<installed>/<f>=C:\Program Files\NovaLogic\Comanche Gold Demo\<f>`,
+  `--exe-guest-path` to the same dir and `--cwd` there. `--vfs-include='*'`
+  does not put them under the install directory, and the game then fails to
+  open CGOLD.PFF and idles after 159 API calls.
+- Under the default batch clock, once T1 has died, a run without
+  `--real-ticks` stops returning from a batch (the 100 s harness kill hit at
+  under 150 batches). Not chased.
+
+What is left: make the game's timer wait for main (a per-app guest-clock
+dilation for startup, or start the mm timer thread's clock at the first
+`timeGetTime`/mixer call instead of `timeSetEvent`), which is a design call,
+not a fold.
