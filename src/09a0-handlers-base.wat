@@ -273,6 +273,23 @@
                     (i32.store offset=16 (global.get $reg_base)
                       (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
                     (return)))))))))
+    ;; COM self-registration exports belong to a real server image, and the
+    ;; EXE above did not export one. The image base also stands in for a bare
+    ;; DLL name nothing on disk provides (LoadLibrary's last fallback), so
+    ;; without this the API-by-name path below handed out our fail-fast
+    ;; DllRegisterServer: Explorer loads ACTXPRXY.DLL, which a stock box need
+    ;; not have, and registers whatever comes back (crash sweep, 15 s in).
+    ;; Answer as Windows does for a module without the export.
+    (if (i32.and (i32.eq (local.get $arg0) (global.get $image_base))
+          (i32.ne (local.get $name_wa) (i32.const 0)))
+      (then
+        (if (i32.or (call $str_eq (local.get $name_wa) "DllRegisterServer")
+                    (call $str_eq (local.get $name_wa) "DllUnregisterServer"))
+          (then
+            (global.set $last_error (i32.const 127)) ;; ERROR_PROC_NOT_FOUND
+            (i32.store offset=16 (global.get $reg_base)
+              (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+            (return)))))
     ;; Preserve the existing fallback below: native KERNEL32 currently shares
     ;; this image-base handle, so a missing EXE name can still be a Win32 API.
     ;; `_acmdln` is an exported data cell, not a callable CRT function. Old

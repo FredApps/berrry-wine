@@ -28,7 +28,7 @@ was waiting for input), which is the normal state of a GUI app at rest.
 | 3 | `trap:unreachable` | wep16_tetravex → **fixed**, nfs3_glide_demo, diablo2_glide_demo |
 | 2 | `missing-files` (fixtures not on this box) | nfs2se_glide_demo, baldurs_gate_interactive_demo |
 | 1 | `unimpl:CreatePipe` | winboard |
-| 1 | `unimpl:DllRegisterServer` | explorer98 |
+| 1 | `unimpl:DllRegisterServer` → **fixed** | explorer98 |
 | 1 | `unimpl:PathAppendA` → **fixed** | dungeons_of_dredmor |
 
 ## Fixed
@@ -62,13 +62,19 @@ was waiting for input), which is the normal state of a GUI app at rest.
   clean: `scratch/runs/20261006T0400Z-wep16-tetravex-handle-map`;
   `test/test-win16-defwndproc-paint-dc.js`.
 
+- **explorer98**: Explorer does LoadLibraryA("ACTXPRXY.DLL"), which no file
+  provides, so LoadLibrary's last fallback returned the image base, and
+  GetProcAddress(DllRegisterServer) on it fell through to the API-by-name
+  thunk, our fail-fast handler. GetProcAddress now answers NULL /
+  ERROR_PROC_NOT_FOUND for DllRegisterServer/DllUnregisterServer on that
+  pseudo-module (the EXE's own export table is still searched first). 30 s
+  clean with the desktop and taskbar: `scratch/runs/20261006T0405Z-explorer98-dllregisterserver`;
+  `test/test-getprocaddress-sparse-name.js`.
+
 ## Open, with what is known
 
 - **winboard** — `CreatePipe`: no pipe object exists in the emulator; WinBoard
   wants anonymous pipes to a chess-engine child. Needs a real pipe handle type
   with ReadFile/WriteFile/PeekNamedPipe, not a stub.
-- **explorer98** — `DllRegisterServer` reached our fail-fast handler after
-  15 s; which module's export resolved to the thunk is not yet known
-  (`--trace-stack` on it next).
 - `exit:0` rows were not reviewed; installers exiting 0 at startup may be
   legitimate (already-installed checks).
