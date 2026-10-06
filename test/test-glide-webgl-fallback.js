@@ -46,6 +46,18 @@ const GlideRenderWorker = require('../lib/glide-render-worker');
     assert.strictEqual(reply.result, 1, 'worker open succeeds without WebGL');
     assert(warned.some(m => /software backend/.test(m)));
     await endpoint.execute({ t: 'glide-command', op: 2, bytes: new Uint8Array() });
+    // The 24-byte open grSstWinOpen sends (word 5 = nColBuffers). With Threads
+    // the guest's Glide goes through this endpoint, and a 20-byte-only check
+    // here trapped Myth TFL's single-buffered 3Dfx open at EIP 0x4602f6.
+    const single = GlideRenderWorker.create({ instance: { exports: e }, memory, backend: 'software', sendFrame() {} });
+    const open24 = new Uint8Array(new Uint32Array([0, 64, 48, 0, 0, 1]).buffer);
+    assert.strictEqual((await single.execute({ t: 'glide-command', op: 1, bytes: open24 })).result, 1,
+      'render worker accepts the single-buffered 24-byte open');
+    await single.execute({ t: 'glide-command', op: 2, bytes: new Uint8Array() });
+    const bad = GlideRenderWorker.create({ instance: { exports: e }, memory, backend: 'software', sendFrame() {} });
+    assert.throws(() => bad.execute({ t: 'glide-command', op: 1,
+      bytes: new Uint8Array(new Uint32Array([0, 64, 48, 0, 0, 3]).buffer) }), /Invalid Glide open packet/,
+      'a colour-buffer count other than 1 or 2 is still refused');
   } finally { console.warn = warn; }
   console.log('PASS Glide without WebGL falls back to software on the page and in the render Worker');
 })().catch(error => { console.error(error); process.exitCode = 1; });

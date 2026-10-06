@@ -112,6 +112,10 @@ const LAN_ANSWER = opt('lan', 'solo');
 // paths instead, so bugs that only exist there (a viewport crop the shaders
 // ignore) are invisible without --gpu, which swaps in SwiftShader.
 const GPU = argv.includes('--gpu');
+// --auto-launch: the page starts the app itself from ?app= (the private ops
+// route /emulator/?app=ID, or index.html?app=ID), so there is no Launch button
+// or desktop icon to press; skip straight to waiting for the running app.
+const AUTO_LAUNCH = argv.includes('--auto-launch');
 // --headful opens a visible Chrome window on the real GPU. Headless Chrome has
 // no compositor or display refresh, so any duration quoted from a run (how
 // long a save takes, how fast a screen advances) needs this.
@@ -397,6 +401,7 @@ async function main() {
     if (BEFORE_LAUNCH) {
       await page.evaluate(js => (0, eval)(js), BEFORE_LAUNCH);
     }
+    if (!AUTO_LAUNCH) {
     await page.evaluate(app => {
       const sel = document.getElementById('app-select');
       if (typeof apps === 'undefined' || !apps[app]) throw new Error(`index.html has no app named ${app}`);
@@ -460,6 +465,7 @@ async function main() {
     if (launchPoint.icon) {
       await wait(80);
       await page.mouse.click(launchPoint.x, launchPoint.y);
+    }
     }
     // The lobby appears asynchronously (it is awaited inside launchApp), so
     // poll for it rather than assuming it is up on the next tick.
