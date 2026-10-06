@@ -1009,6 +1009,7 @@
       (else (local.get $after_dll))))
 
   (func (export "get_exe_size_of_image") (result i32) (global.get $exe_size_of_image))
+  (func (export "get_exe_stack_reserve") (result i32) (global.get $exe_stack_reserve))
   (func (export "get_exe_export_rva") (result i32) (global.get $exe_export_rva))
   (func (export "get_dll_count") (result i32) (global.get $dll_count))
   (func (export "get_dll_capacity") (result i32) (global.get $DLL_TABLE_CAPACITY))

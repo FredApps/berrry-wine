@@ -2843,6 +2843,9 @@
   (global $rsrc_ctx_base (mut i32) (i32.const 0))
   (global $rsrc_ctx_rva  (mut i32) (i32.const 0))
   (global $exe_size_of_image (mut i32) (i32.const 0))
+  ;; The EXE's SizeOfStackReserve. Windows gives CreateThread(dwStackSize=0)
+  ;; this much stack, not a fixed default, and code is compiled against it.
+  (global $exe_stack_reserve (mut i32) (i32.const 0))
   ;; The EXE's own export directory RVA (data directory 0), 0 when it exports
   ;; nothing. An EXE that exports is the provider for its companion DLLs'
   ;; imports — Warcraft III's Game.dll imports 460 ordinals from War3Demo.exe.

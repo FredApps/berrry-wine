@@ -39,6 +39,9 @@
 
     ;; Store SizeOfImage for DLL loader
     (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
+    ;; SizeOfStackReserve (optional header +72) sizes every thread stack the
+    ;; guest does not size itself; lib/thread-manager.js reads it.
+    (global.set $exe_stack_reserve (i32.load (i32.add (local.get $pe_off) (i32.const 96))))
     ;; Set heap to be above the image. Publishes to HEAP_SHARED so guest threads,
     ;; which are separate instances and get their own copy of every global, start
     ;; from the same process heap instead of a private replica of this cursor.
