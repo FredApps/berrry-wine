@@ -96,6 +96,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Betrayal in Antara (demo, parked) | [betrayal-in-antara-demo.md](betrayal-in-antara-demo.md) |
 | Comanche Gold (demo, parked) | [comanche-gold-demo.md](comanche-gold-demo.md) |
 | Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
+| Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |
