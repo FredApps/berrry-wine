@@ -1530,6 +1530,40 @@
         (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $length) (i32.const 4))) (i32.const 0))))
     (global.get $loadlib_normalized_name))
 
+  ;; True when guest path $name lives directly in $dir (a WAT string with no
+  ;; trailing separator), compared case-insensitively with '/' read as '\'.
+  (func $loadlib_path_in_dir (param $name i32) (param $dir i32) (result i32)
+    (local $i i32) (local $sep i32) (local $c i32) (local $d i32)
+    (local.set $sep (i32.const -1))
+    (block $end (loop $scan
+      (local.set $c (call $gl8 (i32.add (local.get $name) (local.get $i))))
+      (br_if $end (i32.eqz (local.get $c)))
+      (if (i32.or (i32.eq (local.get $c) (i32.const 92)) (i32.eq (local.get $c) (i32.const 47)))
+        (then (local.set $sep (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $end (i32.ge_u (local.get $i) (i32.const 260)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $sep) (i32.const 1)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $cmp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $sep)))
+      (local.set $c (call $tolower (call $gl8 (i32.add (local.get $name) (local.get $i)))))
+      (if (i32.eq (local.get $c) (i32.const 47)) (then (local.set $c (i32.const 92))))
+      (local.set $d (call $tolower (i32.load8_u (i32.add (local.get $dir) (local.get $i)))))
+      (if (i32.ne (local.get $c) (local.get $d)) (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    (i32.eqz (i32.load8_u (i32.add (local.get $dir) (local.get $sep)))))
+
+  ;; A path into the system or Windows directory names the module installed
+  ;; there, which for a built-in DLL is the one we dispatch: Win98's loader
+  ;; finds C:\WINDOWS\SYSTEM\kernel32.dll already mapped. Wise installer
+  ;; scripts (Die Hard: Nakatomi Plaza) load kernel32 by exactly that path to
+  ;; call it, and abort setup when the answer is NULL.
+  (func $loadlib_path_in_system_dirs (param $name i32) (result i32)
+    (i32.or (call $loadlib_path_in_dir (local.get $name) "c:\\windows\\system")
+            (call $loadlib_path_in_dir (local.get $name) "c:\\windows")))
+
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32) (local $name_wa i32)
     (local.set $arg0 (call $loadlib_normalize_name (local.get $arg0)))
@@ -1610,6 +1644,11 @@
             (then (local.set $dst (i32.const 1)) (br $end)))
           (local.set $src (i32.add (local.get $src) (i32.const 1)))
           (br $scan)))))
+    ;; ...except a path into the system/Windows directory, which stands for the
+    ;; bare name there exactly as a stem does.
+    (if (i32.and (i32.eq (local.get $dst) (i32.const 1))
+                 (call $loadlib_path_in_system_dirs (local.get $arg0)))
+      (then (local.set $dst (i32.const 0))))
     (if (i32.and (i32.eqz (local.get $tmp))
                  (i32.or (i32.eq (local.get $dst) (i32.const 1))
                          (i32.eqz (call $guest_name_has_dll_ext (local.get $arg0)))))
