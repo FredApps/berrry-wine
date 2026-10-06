@@ -42,6 +42,31 @@ const session = startControlSession([
     }), { point, buttons: 0, async: 0 },
     'DirectInput release moved the cursor or left button 1 held');
 
+    await session.send({
+      action: 'eval',
+      code: `renderer.__testDiMouseEdges=[];
+        renderer.__testQueueDiMouseButton=renderer._queueDirectInputMouseButton;
+        renderer._queueDirectInputMouseButton=function(memory,mask,down){
+          this.__testDiMouseEdges.push([mask,down]);
+          return this.__testQueueDiMouseButton.call(this,memory,mask,down);
+        }; true`,
+    });
+    assert.strictEqual((await session.send('di-mousedown:1')).queued, true);
+    await session.step(1);
+    assert.strictEqual((await session.send('di-mouseup:1')).queued, true);
+    // A recovery/reset command can clear host state while the frozen input
+    // action is still queued. The release must nevertheless reach the guest's
+    // buffered DirectInput device or games retain the preceding press forever.
+    await session.send({
+      action: 'eval',
+      code: 'renderer._mouseButtonsMask&=~1; true',
+    });
+    await session.step(1);
+    assert.deepStrictEqual(await session.send({
+      action: 'eval', code: 'renderer.__testDiMouseEdges',
+    }), [[1, true], [1, false]],
+    'a queued DirectInput release was suppressed by host-state cleanup');
+
     const code = await session.quit();
     assert.strictEqual(code, 0, session.output().slice(-3000));
     assert.match(session.output(), /\[input\] di-mousedown button=1/);

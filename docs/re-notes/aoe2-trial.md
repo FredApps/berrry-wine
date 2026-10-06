@@ -1,5 +1,16 @@
 # Age of Empires II Trial
 
+## Frozen lazy-sync coverage attempt (2026-09-30)
+
+`tools/bench-lazy-games.js --app=aoe2 --shipped-default` on box8 with
+`build/lazy-fence-after.wasm` stops after the EULA at "requires DirectX 6.1a
+or higher". The URL opt-out produces the same error. This frozen runtime
+therefore does not validate the GDI EDIT/gameplay route described below;
+it is not evidence of a lazy-sync regression. Investigate the static-DLL
+version chain covered by `test/test-static-dx-version.js` before retrying.
+The new browser helper's post-EULA route is unverified. Artifacts and limits:
+[lazy-sync-game-results.md](../lazy-sync-game-results.md).
+
 ## Verified state (2026-08-26)
 
 `binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE` now reaches live Random Map

@@ -5478,7 +5478,9 @@
       (return)))
     (local.set $y (local.get $y0))
     (block $done (loop $lp
-      (br_if $done (i32.gt_s (local.get $y) (local.get $y2)))
+      ;; Horizontal bottom edges are excluded by D3D's top-left fill rule.
+      ;; Including y2 wraps a tiled sprite's v=1 back to its first texel row.
+      (br_if $done (i32.ge_s (local.get $y) (local.get $y2)))
       (local.set $t (f32.div
         (f32.convert_i32_s (i32.sub (local.get $y) (local.get $y0)))
         (f32.convert_i32_s (local.get $dy_tot))))

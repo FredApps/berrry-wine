@@ -355,3 +355,31 @@ reports `105 passed, 0 failed`; the normal build and WAT structural check also
 pass. These results remove the reported logo stripe without disabling MMX.
 The later NONCLIENTMETRICS correction and Worker browser acceptance close the
 separate direct-level gameplay gap described above.
+
+## 2026-10-01: frozen headless DarnRatz gameplay route
+
+A plain Node controlled run of the frozen module
+`65985dbecf428a305951d3ca1fe55fa951ae979907a791d437911ec79a8f4ff5`
+reached Single Player → Jazz → Medium → DarnRatz with normal MMX enabled.
+The [reviewed evidence bundle](../../scratch/runs/20261001T225744Z-jazz-jackrabbit-2-demo-installer-headless-gameplay/result.json)
+preserves the original log, launch command, input sequence, asset hashes and
+screenshots. Build commit is unknown; this is not a claim about current HEAD.
+
+Use `jazz.json` in that bundle for the exact 24 scheduled key edges. The route
+uses `--app=jazz2_demo` (registered `Share1.j2l -nonetwork`), `--no-threads`,
+`--batch-size=10000`, `--tick-ms-per-batch=10`, `--repaint-every=10`,
+`--wall-clock-ms=1790673326000`, and `--png-canvas`. Composite canvas captures
+matter because early GDI cinematics can leave a raw DirectDraw capture black.
+The main menu is visible at batch 10100; loading screens at 13370 and 14870
+are not gameplay. Batch 17370 shows the actual level with HUD, platforms,
+player and enemy. Right, then Right+Space, changes the player's position and
+animation; the enemy also moves. The gameplay checkpoints are 17370, 17970,
+18370 and 19370, with normal shutdown at 19371 and 199820 API calls.
+
+The gameplay window 17370:19370 increases the interpreter MMX counter from
+20050682 to 34447125, a delta of 14396443. This counter excludes arithmetic
+executed by micro-ops and is not a total MMX count. The controlled run's logged
+313.472 seconds includes parked controller think time and is not a benchmark.
+The subsequent remote baseline/candidate scheduled-route pilot matched all five
+PNG hashes and the final API count, confirming replay of this gameplay route;
+performance comparisons require their own balanced runs and state checks.

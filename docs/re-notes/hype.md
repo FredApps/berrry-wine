@@ -312,3 +312,196 @@ present counts agree; the run ends without errors. World visibility between
 actual publications was about 32–38 ms, versus 36–47 ms in the unpaced sample.
 These are diagnostic observations, not controlled performance measurements.
 Pacing alone did not fix stable presentation and was not promoted to production.
+
+## 2026-10-04 user menu report: current source-only audit
+
+Registered closure is restored:59 manifest entries/60 unique required files,
+38,074,960bytes, all regular/present (stat-only inventory). The old20261003 task's
+missing-asset verdict is stale. Exact source/module/EXE identities and missing
+historical build capture paths are in scratch/hype-menu-20261004/asset-source-audit.json.
+Raw historical world/UI captures are not present locally; their conclusions above
+are documented history, not a new review.
+
+Current DIDC_ATTACHED keyboard/mouse fix remains in source. Current Glide swap
+still preserves both front/back flips; no interval/drop-empty workaround has been
+added. Thus first reproduction must distinguish failed New Game input from the
+known world/UI alternation. Use Up/Down to select menu, short Enter to activate;
+in world arrows move/turn, Shift runs, Ctrl jumps, Space acts, Enter uses magic.
+A menu screenshot never qualifies gameplay. New bounded route and optional passive
+adjacent-presentation capture proposal: scratch/hype-menu-20261004/PLAN.md.
+No runtime yet; Claude HeroesII profiling has exclusive resource ownership.
+
+## 2026-10-04 ordinary menu reproduction
+
+Run scratch/runs/20261004-hype-menu-enter-stall1 (24 hashed artifacts) uses
+canonical f40 WASM, current unmodified host/Worker, actual Intel UHD620 WebGL
+renderer. The menu has New Game highlighted. Enter150ms is followed in the log
+by window title "Chargement de la map", then Hype The Time Quest. The menu
+image remains. This contradicts a blanket claim that Enter is not delivered.
+
+Before Enter:1700 swaps. After Enter:2057 swaps/presents,143990 triangles/draws,
+2077 LFB reads/writes. These values remain exact through later focused Down and
+visible New Game click and final snapshot. Thread1 cached worker-slice count
+advances22079 ->72166 ->89451 with sampled lastEIP496635/49413c/493243, yield0;
+no critical-section waits/steals reported. Thread2 audio lastEIP4409d42/yield7.
+No guest exception reported, no world frame observed. HWND10001 remains640x480
+with636x476 viewport descendants.
+
+Unlike historical world/UI alternation, current reproduction stops publishing
+Glide frames while guest execution continues after the map-load title. This is
+not evidence that dropping an empty swap would fix anything. The exact phase
+and root cause remain unresolved: cached host PCs are not stopped owner stacks,
+and render publication stopping does not alone prove unfinished map loading.
+Menu-only screenshots do not count as gameplay; performance null.
+
+Next focused diagnostic: capture owning renderer-thread registers/stack at a
+bounded set of actual execution boundaries after Enter, plus current game frame
+callbacks43f180/43f610 and swap boundary467180 entry counts. Verify exact live
+EXE mapping and source identity, no BP/guest-state changes or shadow execution.
+Distinguish never reaching rendering, semaphore/frame-callback wait, and repeated
+guest interpreter/input loop. Only observe actual presentation pairs if swaps
+resume; do not assume historical alternation. Scope/helper review and a new serial
+grant are required. Ordinary browser66050 closed11:27:02.507Z, bothclosed/PIDgone.
+
+### Source follow-up: possible Action-key wait
+
+The sampled PCs are input evaluation:493243 is inside exported IPT_fn_vReadInput
+(entry4930e0),49413c returns from an input-command dispatch in IPT_Kwan.c, and
+496635 updates six-byte input records. A direct caller4208e0 has a no-render
+loop420925..42097d that looks up literal Action_Key and polls IPT_fn_vReadInput
+until its command state becomes positive. Readme maps Action to Space, matching
+the older Enter-then-Space route. Other input callers exist, so this is a specific
+hypothesis rather than an identified active frame. It may be waiting for a hidden
+Action prompt, not a loading failure.
+
+Next proof proposal scratch/hype-menu-20261004/OWNING-PHASE-PROPOSAL.md uses the
+existing owning get_key_down_state import with bounded passive stack/global reads,
+then ordinary Space. No trace flags/BP/guest mutation or swap suppression needed.
+No follow-up runtime or engine edit has run.
+
+### 2026-10-04 ordinary Space continuation: rendering resumes, menu remains
+
+Run `scratch/runs/20261004-hype-enter-space-menu2` uses actual served canonical f40d4ca3, no observer or engine modification. New Game highlighted→Enter150ms logs map-loading title; swaps6126 remain unchanged until ordinary Space300ms. Eight seconds later swaps6421 (+295), draws488471 (+59651), shader variants1→6; LFB reads/writes stay6146. Cached owner PC changes493243→482912. Nevertheless personally/root-reviewed1/3/8-second images all retain the menu. Space is therefore not a demonstrated visible fix, and failure to reach the owning input state is not established either. Exact wait caller/presentation ownership remain unproven. No gameplay screenshot or FPS claim. Browser/server closed cleanly17:59:30.414Z.
+
+### 2026-10-04 passive source capture rules out page-compositor-only explanation
+
+`20261004-hype-space-presentation3` observes actual owner VK_SPACE returns0→32768→0; raw down stack includes42097d (candidate return, not an unwind). Space reaches owning input. Publications1735→1775→1859→2029, but all12 sequential bridge/selected-layer/final PNGs across four phases hash b81ef4efd2344280d59180e8b43777177eb5dbd1fb8b4616816ad7bb74f8b824 and show menu. GPU layer on10001 is unmerged and sequence advances beyond oldGDIseq1742. This sample's retained menu is already in bridge source; pure page-child occlusion is insufficient. Investigate render-worker front/back/default drawable and bitmap transfer next, rather than blind input retries. Private passive Worker only; canonical f40 module/host, no gameplay claim. Clean release18:14:07.522Z.
+
+### 2026-10-04 current upstream capture confirms world/menu alternation
+
+`20261004-hype-upstream-alternation4` captures four consecutive swaps1408..1411: world/menu/world/menu. Naturalentry/front/returned pixels match within each group. Resource3/variant4 hasworld, resource1/variant2 menu;405newdraws betweenworldgroups versus3perinterveningmenu. Thus selection-to-presentationcopy preserves observed frames; do not patchcompositor or suppress swaps on this evidence. Actualpage space-1s showsworld, space-8s menu; capturessequential, notatomic. Need current owningcaller/three-menu-command purpose beforefix. No movement/control/FPS qualification. Private diagnostic only; canonicalf40, released18:32:21.719Z.
+
+## 2026-10-05 owning Glide emission diagnostic
+
+Run `scratch/runs/20261005-hype-owning-glide-emission` preserves ordinary Enter/Space and actual Worker import evidence. All40 bounded emissions came from slot1; five observed swaps retain the known return4671d4 with higher world43f631 versus UI42252b callers. The4f1626 path is grGet(3,8,...), which flushes then submits finish opcode19; it is not an individual draw caller. UI batches contain a depth-only clear (RGB/alpha masks0,0) then three opcode15 draws with masks1,1; only256-byte state prefixes were captured, so primitive coverage and exact caller remain unresolved. No page capture reached stable visible world, hence no movement or gameplay qualification. Root-approved pure-JS g2w mapping observes bytes without invoking potentially mutating guest mapper. Original imports forwarded unchanged; browser80962 exited0 and closed server/browser07:49:20Z. Next narrow proof is actual API-entry caller and full tiny UI draw payload, not swap suppression or another generic flush capture. No FPS claim.
+
+### 2026-10-05 UI draw caller follow-up
+
+Immutable `scratch/runs/20261005-hype-ui-draw-caller`: existing host.log entry (no tracing setter) captured18 actual `_grDrawTriangle@12` entries. UI return4828ec is independently authenticated by original EXE CALL4828e7→4f166e; world return4826c7 differs. UI linked triangle buffer begins5eed10. Two full three-triangle batches each reproduce fiveNaN X out of nine vertices, otherfourX0 (canonical NaN bitsffc00000); this confirms the historical malformed geometry above, not a newly established CPU cause. Raw state/336+3×60-byte packets and exact source hashes retained. Browser63960 exit0/serverclosed; menu-only screenshots, no gameplay/FPS. Remaining proof is original clipper483bf0 input/context/preclip835ae0 plus arithmetic output. Do not repeat generic flush capture or suppress swaps.
+
+### Corrected bounded clipper proof (2026-10-05)
+
+Private attempt4 failed observer timer binding before any trace pair; exact owned trace was disabled. Corrected default timer receiver passes12tests and before-control. Immutable `scratch/runs/20261005-hype-world-clipper-diagnostic` captures four actual483bf0/483c35 pairs with source/owner/EIP/ESP checks, no errors, trace disabled at4pair cap. Captured finite early-world inputs have nonzero denominators; resultingX267.1875,635,61.9375,0 exactly match the recorded f32-rounding model with786432bias. This does not establish a universal x87 result or malformed UI cause: the cap filled before UI. Proposed next phase gate is the authenticated successful world swap4671d4/higher43f631 before nestedUI422260, retaining4pairs/3sec. No current stable gameplay/FPS claim.
+
+## 2026-10-05: authenticated UI clipping starts with nonfinite inputs
+
+The corrected owning-Worker trace armed only after the successful world swap (EIP4f1644, returns4671d4/43f631), before nested UI422260. It retained four entry483bf0/post483c35 pairs, zero observer errors, then disabled its exact owned trace at the cap. Original EXE spans and actual served module/source are pinned in the immutable run.
+
+The first UI pair already has yA=NaN (`ffc00000`), yB=0; its A vertex is (635,NaN). The second enters with yA=+Infinity (`7f800000`), yB=NaN. Later pairs also contain infinity. Therefore this observation does not establish Y interpolation as the first corruption and does not justify patching its arithmetic. Next trace the incoming quad and earlier X clipping to locate the first nonfinite value. Preserve raw float bits; JSON null is not a sufficient numeric description.
+
+Evidence: `scratch/runs/20261005-hype-ui-clipper-nonfinite-input` (207 artifact hashes rechecked); raw clipper SHA256 `c0ecfa49e04bc0a296f5f7d68696aa4d21665802e9788f66cf276e9ad87a45ee`. Session74195 exited0, browser/server closed10:33:12.696Z. `after-trace.png` shows the knight/street world, but this intermittent scene is not stable gameplay or input qualification. No FPS or normal-timing claim under trace.
+
+### UI polygon before X clipping (attempt7)
+
+The first authenticated UI polygon is already `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)` at483670. Its raw caller return4870c9 identifies the quad path486d20. Two X entry/post pairs are captured, with no observer errors; the next swap matches the expected UI caller and ends the phase. NaN X/Y interpolation results follow the already-infinite input rather than establishing an emulator clipping defect.
+
+Source486d51..486d71 copies XY from four16-byte input records to four60-byte staging vertices at835ae0. The input pointer is original ESP+0xc; context is original ESP+0x1c. The next minimal capture is function entry486d20 (actual caller/input64bytes) and post-copy486d73 (same pointer/staging240bytes), followed by the polygon entry to detect any intervening change. Do not assume the original source coordinates are infinite without this observation.
+
+Immutable evidence: `scratch/runs/20261005-hype-original-ui-quad-infinite`,207 artifact hashes verified; rawSHA256 `fa676bf6bc64403017f60ac961765e984dccee3c14f76e1bb3e8b80b59cb4ac7`. Session35108 exited0, browser/server closed10:42:22.298Z. The image remains menu-only; gameplay and FPS remain unqualified.
+
+### Incoming rectangle confirmed infinite (attempt8)
+
+The ordinary UI-phase probe captures the complete486d20 entry →486d73 copy →483670 polygon chain with zero observer errors. Actual caller469a5b authenticates the rectangle constructor469710. Incoming quad0420f988 already has `(0,0),(+Infinity,0),(+Infinity,+Infinity),(0,+Infinity)`; all XY bits match both copied staging and later polygon. Neither copying nor clipping introduces the first infinity in this capture.
+
+Immutable run `scratch/runs/20261005-hype-incoming-quad-infinite` has207 rechecked artifact hashes; rawSHA256 `da1af7a6181198834030fa7630b500c529e1adeb330a555c5d2d4cbd545fbe2c`. Browser7356 exited0, closed11:11:54.802Z. Menu-only image; no gameplay/FPS qualification. Next inspect actual469710 incoming rectangle, descriptor dimensions, live reciprocal table entries, and post-scaling arguments before its quad construction. Do not assume which size/angle branch executes.
+
+### Actual rectangle caller and smallest missing divisor evidence (attempt9)
+
+Observed caller is41f17c, correcting the earlier static candidate41f352. The original rectangle arguments already contain `(0,+Infinity,0,+Infinity)`. Live descriptor dimensions are636x476, reciprocal table words are004ccccd/00088889, and the post-scale width factor is finite0.9937500357627869. Therefore469710 size scaling is not the first infinity producer in this capture.
+
+Original caller41f0e4 divides1 by71cdd0 (descriptor71cd74+5c), and41f125 divides1 by71cdd4 (+60), then multiplies actual dimensions and submits at41f177. Initializer4678ed/4678fa stores width/640 and height/480 in these fields after466cc0. Later466cc0 updates dimensions but does not write+5c/+60. This identifies a precise dependency, not proof that initialization was skipped or the fields are zero. Previous84-byte descriptor capture ended before them; the next approved extension reads exactly these8raw bytes at the same authenticated rectangle entry. Zero/denormal inputs can produce nonfinite results under correct arithmetic; finite-normal inputs still require exact x87 operands/precision proof before blaming CPU execution. No guest-state repair or clipping patch is justified yet.
+
+Immutable evidence `scratch/runs/20261005-hype-rectangle-caller-divisors` has207 verified artifact hashes; rawSHA256 `406e004704de98fa44f56bfb424cf0905944ddd4d557bf46927345754fc30624`. Browser78398 exited0, closed11:24:11.451Z. Intermittent world image is not stable gameplay qualification; no FPS claim.
+
+### Zero descriptor scales observed (attempt10)
+
+The exact eight bytes at71cdd0/71cdd4 are `0000000000000000`: both descriptor scale divisors are positive zero at authenticated rectangle entry from41f17c. This directly explains the positive infinities through the original1/+0 arithmetic, without establishing a CPU division bug. The observation does not yet explain why initialization or later lifetime handling left those fields zero. Do not replace guest values or suppress swaps.
+
+Immutable `scratch/runs/20261005-hype-zero-descriptor-scales` has207 verified artifact hashes; rawSHA256 `471da24aff6154699b09aafcc796cf6330fb68fc482d3f3bdb9e901b312020a0`. Session27505 exited0; browser/server closed11:33:01.065Z. One complete rectangle/quad chain, zero observer errors, exact trace disabled. Image remains menu; no gameplay/FPS claim.
+
+Static lifetime distinction:404c80 registers the UI descriptor71cd74 via466de0, which allocates a separate104-byte heap surface record, copies100bytes into it, updates dimensions with466cc0, copies100bytes back and stores the heap pointer in the device surface table.467730 later initializes+5c/+60 on the **heap surface**, not necessarily the static UI descriptor;467010 copies100bytes from heap to caller. Thus static-versus-heap identity must be checked before calling this skipped initialization. A bounded read of the live UI surface ID71cd70 and its device/surface-table pointer at use can distinguish a stale static descriptor from zero scales in both records. No broad renderer trace is needed.
+
+### Refined next observation: authenticated acquisition copy, no pointer walk
+
+The proposed ID/device-table lookup is superseded by the exact live copy path:4222b3 calls467070, which resolves the actual heap surface and copies100bytes to static71cd74 at4670ce on every UI acquisition. Read actual EAX source and EBX destination at4670c3, verify caller4222b8 at original stack+24, then record both100-byte records after the copy. Use known branch-entry checkpoints4670e1/467105, not an assumed post-REP block at4670d0; require same TID, ESP+8, ESI=source+100, EDI=0, ECX=0 and retained EDX/EBX identity. Compare dimensions and scales with the later authenticated rectangle-use snapshot. One acquisition/rectangle chain, three seconds or next swap, no guest mutation.29 focused tests pass.
+
+Source ordering within467730 is dimensions-update466cc0 before scale stores4678ed/4678fa for each heap surface. Surface creation itself466de0 updates dimensions and copies descriptor fields but does not compute scales. Actual ordering between initial creation, mode changes, scale initialization and later copying is not yet observed. A zero heap source would shift diagnosis to that lifecycle; different source/postcopy/use values require their own provenance before any repair.
+
+### Heap source is already zero; descriptor copy is faithful (attempt11)
+
+Authenticated acquisition resolves heap surface042fef50 and static UI descriptor71cd74. Before copy, heap+5c/+60 are zero; static destination is the expectedcccccccc prefill. After the100-byte copy, destination matches source exactly, including zero scales, and the rectangle-use snapshot retains those zeros. No copy defect or intervening scale overwrite is shown. One complete identity-checked chain, zero observer errors, owned trace disabled.
+
+Immutable run `scratch/runs/20261005-hype-heap-zero-scale-copy`,207 artifact hashes verified, rawSHA256 `92009c5b634ab403eb58e9e4dc64a46edde0c5b8e599bbe03a3bbbb3cf09ade6`. Session2554 exited0 and closed11:49:16.362Z. Menu screenshot only; no gameplay/FPS qualification. Evidence files were hardlinked after closure to avoid redundant disk use; contents and paths are preserved.
+
+Next examine creation/mode lifecycle, not rendering: source466f60/466c77/4674a5/4678c3 calls dimensions-only466cc0; only the467730 mode/reset loop then stores scale fields at4678ed/4678fa. UI surface creation466de0 can therefore leave scales copied from zero static storage until such a loop includes the new heap. Caller49977e invokes467730 conditionally when frame+54 is zero;499921 invokes it after466460. Their actual order relative to UI surface creation remains unobserved. Do not infer skipped initialization from use-time zeros alone.
+
+### 2026-10-05: bounded startup census ties zero scales to creation and resize
+
+Attempt12 (`scratch/hype-route-prep-20261005/attempt12/analysis.json`) captured actual Worker startup, before any Enter or Space input. Slot1/TID2 created static UI descriptor71cd74 into heap042fef50: both scale fields+5c/+60 were zero in the incoming descriptor and remained zero after dimensions helper466cc0 produced388x268. Slot0/TID1 subsequently updated the **same heap** to636x476 through caller466c77/return466c7c; scales remained zero. This narrows the observed lifetime without asserting that initialization never occurred outside the captured intervals.
+
+All three origins emitted coverage start/end and disabled their owned trace. Slot1 rejected an unexpected UI-acquisition caller after about5.6seconds; the old helper unfortunately rejected before emitting its stack, so the actual caller is unknown (expected4222b8). Slots0/2 reached their30-second deadlines. No mode467730 or scale-store completion was observed in those bounded windows. The new source-only observer records the exact32-byte stack, expected/actual caller and heap before retaining the same failclosed rejection;16 pure-JS tests pass, including both real Worker run callsites. No repeat or game patch follows from the missing field alone.
+
+Static event distinction: the original MFC message-map entry for message5 points to499250 (record at file offset18fda0; handler pointer18fdb4). That WM_SIZE path calls466c20 at499281 when frame+54 is zero, subject to477a70 and frame+58 gates.466c20 obtains GetClientRect through IAT5906a4, updates device dimensions, and invokes dimensions-only466cc0 for existing surfaces; it does **not** call the scale initializer467730. Thus the observed resize path is not itself evidence of a lost scale-initialization call.
+
+Both467730 callsites49977e and499921 belong to499710, a mode/window-state toggle routine: on one branch it calls467730 only when frame+54 is zero and then sets that flag; the other branch reconfigures via466460 and calls467730 before toggling the flag. Its callers include the WM_SYSCOMMAND handler499e20 (message112 in map at file offset1900c0) and WM_ACTIVATEAPP handler49a160 (message1c in map at190090), plus a CallNextHookEx-based hook497fb0 that recognizes a structure's message400/wParam69. These paths are distinct from ordinary WM_SIZE. Their exact runtime conditions/order relative to UI creation remain unobserved; do not invent a required display-change notification or force one. Next useful evidence is the actual mode/frame state and dispatch cause around creation, not another renderer/clipping trace.
+
+### 2026-10-05: original build selector narrows activation path
+
+Further source correction: original477a70 is33c0c3 (`xor eax,eax; ret`), so unmodified499710 takes49988b and initializer499921, not the conditional49977e branch discussed above. WM_ACTIVATEAPP handler49a160 likewise selects49a37a. Activation TRUE reaches the mode toggle only with app+e0 nonzero and frame+54 zero, protected by recursion guard6ac514; initial activation need not initialize scales. The emulator source has both explicit first-ShowWindow and implicit-WS_VISIBLE activation chains (09a5-handlers-window.wat and09b-dispatch.wat), but execution on Hype's historical f40 module is not thereby proven. No missing-message claim or patch is justified.
+
+A separate source-only transition observer now authenticates original selector bytes and captures named activation/frame/device/heap provenance, armed once before normal Enter/Space rather than rearming startup evidence. Bounds remain32records/30seconds per origin; unknown callers and late code/owner mismatch stop capture with cleanup. Ten pure-JS tests cover app lookup, frame/device/heap pairing, original forwarding, foreign instrumentation and late failures. Browser integration remains pending; no new runtime or timing claim. Source details: scratch/hype-route-prep-20261005/activation-source-analysis.md and transition-observer.js.
+
+### 2026-10-05: ordinary control check still alternates menu and world
+
+Immutable `scratch/runs/20261005-hype-ordinary-control-interleaving` uses202 pinned canonical app/source identities, actual f40 module, no private Worker or trace. After ordinary Enter/Space, a personally reviewed world gate shows knight/street. The finite Up600ms/Down600ms batch captured menu already at its before image, world after Up, then menu after Down and after2seconds settlement. Root independently reviewed after-Up and settled images. Stable player-controlled gameplay remains unqualified; the gate did not remain valid through the batch. No FPS, reversal, sound-quality or level-completion claim. Browser/server closed12:28:23.927Z, exit0/errorsnone.
+
+Historical upstream front/back evidence locates world/menu alternation in the same GPU presentation chain, before page composition, with distinct world/UI guest presenter callers. That does not prove simulation state toggles. Invalid UI geometry leaving an old menu color buffer is a hypothesis only; do not suppress swaps.
+
+Static dispatch resolution now identifies46ef70:46ed90 returns table7c4360; initializer482960 writes offset10c at482c0e to4823e0, hence7c446c→4823e0 for that table setup.4823e0 increments render counters, calls4825a0, drains queued geometry and grGet-based completion checks. It is not justified to call this pointer merely a context/window activation. Both presenter paths subsequently reach common467180→grBufferSwap4f1644 when77728c is zero. Actual table contents/flags at the problematic call still require existing captured evidence or bounded passive authentication; no engine fix follows yet. Next source focus is queued UI geometry/clear and buffer selection, not another wide instruction trace.
+
+
+### 2026-10-05: bounded attachment comparison supports stale menu color
+
+Immutable `scratch/runs/20261005-hype-attachment-stale-menu` preserves64 hashed artifacts and raw receipt SHA25620a734491ba801f880dfd0927907a8d52ce05f6ddb719eca6778dc179a0cc2c4. The observer now wraps actual Device.execute recursion: the earlier Device.submit wrapper missed commands inside opcode0 batches. An actual-source regression reproduces that failure and verifies the corrected boundary. Attempts15/16 remain unqualified; no missing-receipt inference is carried forward.
+
+Attempt17 captured four swaps/eight readbacks, with owned hooks restored and no observer errors. In pairs1/3, the same attachment retains identical coherent menu pixels before its clear and after three executed draw commands. The clear's original mask includes COLOR_BUFFER_BIT and DEPTH_BUFFER_BIT, but all color-write channels are disabled and depth writes enabled. World pairs2/4 use the other attachment, execute403/405 draw commands, and change pixels. Readbacks changed their initial sentinel, framebuffer status was complete, and context-loss checks were false. GL error state was deliberately not consumed, so equality remains conditional evidence supporting stale menu color exposure, not an unconditional readback proof or a demonstrated new menu repaint. Counts describe executed commands; batch merging can combine primitives. No stable gameplay, physical FPS, sound or performance claim follows.
+
+The automatic route completed in48.122seconds and cleanup at13:10:44.368Z closed browser/server without errors. Its post-Space limit was30 screenshot iterations, not30 elapsed seconds; screenshot overhead could exceed that inner limit. The source helper is now corrected to an elapsed deadline, rejecting late screenshots, with a timing-overhead regression. The historical record is unchanged. The90second route and180second session limits were retained in the actual run.
+
+Next causal target remains scale initialization of the same UI heap. Original467730 can fail after467600 or466810 before any scale stores, and only iterates sixteen restored surface pointers after both succeed. Its original constants are1/640 and1/480, producing nonzero scales for636x476 dimensions if that exact heap reaches the stores. Initializer entry alone, or a call before UIheap creation, does not establish initialization. A cold mode-entry/return and membership proposal distinguishes these cases without another wide render trace or a swap workaround.
+
+
+### 2026-10-05: cold mode probe found no post-title invocation
+
+Immutable `scratch/runs/20261005-hype-cold-post-title-nonobservation` preserves attempt18. Raw cold receipt SHA256ce8319e69bcff70e18007d370dcb94ed1930fa6568518efb8bbaf081fcb7b141 records actual owning slots0/1/2 (TIDs1/2/3) starting before the ordinary Enter/Space input. Each observed zero callbacks in the cold499710–499a85 range during this declared post-title interval. Consequently no initializer return or same-heap scale result was captured. This does not establish absent startup initialization or a missing activation message.
+
+The automatic route completed in20.057seconds with two world-template matches; its last image shows the knight/street. There were no movement inputs and no stable gameplay qualification. Explicit host diagnostic close produced all three owning trace-disabled end receipts; browser/server closed13:34:43.641Z, exit0, no cleanup errors. Next bounded observation belongs before title, after mapped-code authentication and immediately before the first actual guest run, not another repetition of this post-title interval. Historical startup receipts place surface creation about1.1–1.3seconds after the first observed guest run; whether the relevant initializer runs in that window remains unobserved.
+
+
+### 2026-10-05: bounded startup mode non-observation and actual UI constructor
+
+Immutable `scratch/runs/20261005-hype-cold-startup-nonobservation` preserves42 hashed artifacts from attempt19 (raw SHA2565a2c721d5700461c76160c9e031e4c17c24937e7f0ca19638b67290f3e2c9bf2). All three actual-first-run origins authenticated mapped code and enabled the cold outer-mode range; each recorded zero callbacks over22.145–23.479seconds through title and ordinary Enter/Space/world images. Route completion closed the interval before its30second maximum. All three trace-disabled end receipts and browser/server cleanup were retained; exit0,13:44:58.268Z, errorsnone. This captures no initializer or same-heap outcome and does not establish that mode467730 must execute. No stable gameplay or FPS claim.
+
+The earlier attempt12 evidence identifies the actual UI constructor more directly: slot1/TID2 enters466de0 with return404cb8, deviceID0, descriptor71cd74 and outputID71cd70. Descriptor scale fields+5c/+60 are already positive-zero bytes before allocation/copy; the paired heap042fef50 retains them after466f65 calculates388x268 dimensions. Original404c80 initializes only percentage rectangle fields0/100/0/100, and complete dimension helper466cc0–466da4 does not write the scales. Later registration functions49c910/589620 only store descriptor pointers. These observations support initially missing scale values, not a demonstrated later overwrite.
+
+Alternate bulk descriptor updater467450 clears/copies104/100bytes and recalculates dimensions; UI wrapper404e8f changes percentage fields but supplies the existing descriptor scale bytes. That can propagate zero values without proving where nonzero values were expected to originate. Source investigation now concerns the normal constructor/backend view contract and alternate writers, not repeated mode probes or forced scale/swap workarounds.

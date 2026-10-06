@@ -163,6 +163,36 @@ async function run() {
   assert.strictEqual(attempts, 2);
   assert.deepStrictEqual(Array.from(wine._helpCtx.vfs.files.get('c:\\dropped.bin').data), [9]);
 
+  // Cached derived assets must retain the source's exact FILETIME across
+  // repeated browser mounts; bytes alone are not sufficient cache identity.
+  const { VirtualFS } = require('../lib/filesystem');
+  wine._helpCtx.vfs = new VirtualFS();
+  const stamp = { lo: 265692960, hi: 31281240 };
+  await wine.loadFiles([{ url: 'cache.bin', vfsPaths: ['c:\\cache.bin', 'd:\\cache.bin'],
+    lastWriteTime: stamp, creationTime: { lo: 1, hi: 2 } }], { required: true });
+  for (const path of ['c:\\cache.bin', 'd:\\cache.bin']) {
+    const entry = wine._helpCtx.vfs.files.get(path);
+    assert.deepStrictEqual(entry.lastWriteTime, stamp);
+    assert.notStrictEqual(entry.lastWriteTime, stamp, 'metadata must be cloned');
+    assert.deepStrictEqual(entry.creationTime, { lo: 1, hi: 2 });
+  }
+  let materializations = 0;
+  const vfs = wine._helpCtx.vfs;
+  vfs.setLazyFile('c:\\source.dat', { size: 1, load: () => {
+    materializations++;
+    return Uint8Array.of(1);
+  } });
+  vfs.applyFileMetadata('c:\\source.dat', { lastWriteTime: stamp });
+  const sourceHandle = vfs.createFile('c:\\source.dat', 0x80000000, 3);
+  const cacheHandle = vfs.createFile('c:\\cache.bin', 0x80000000, 3);
+  assert.deepStrictEqual(vfs.getFileTimes(sourceHandle).lastWriteTime,
+    vfs.getFileTimes(cacheHandle).lastWriteTime, 'source/cache equality survives remount');
+  assert.strictEqual(materializations, 0, 'metadata reads must not load archive bytes');
+  assert.throws(() => wine._helpCtx.vfs.applyFileMetadata('c:\\cache.bin', {
+    lastWriteTime: { lo: -1, hi: 0 },
+  }), /invalid lastWriteTime/);
+  assert.deepStrictEqual(wine._helpCtx.vfs.files.get('c:\\cache.bin').lastWriteTime, stamp);
+
   attempts = 0;
   context.WineAssembly.fetchAssetBytes = async () => {
     attempts++;

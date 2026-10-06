@@ -2,7 +2,7 @@
 'use strict';
 
 const assert = require('assert');
-const { callDllMain } = require('../lib/dll-loader');
+const { callDllMain, callDllMainAsync } = require('../lib/dll-loader');
 // $GUEST_BASE, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
 
@@ -101,3 +101,49 @@ assert.deepStrictEqual(captureSleepResume(),
   'DllMain must advance guest time and resume a cooperative Sleep before restoring caller state');
 
 console.log('PASS  DllMain receives the Windows static/dynamic load context');
+
+(async () => {
+  const memory = new WebAssembly.Memory({ initial: 128 });
+  let eip = 0x401000, esp = 0x420000, halt = 0, reason = 0;
+  const seen = [];
+  const e = {
+    memory, get_image_base: () => 0x400000, get_fs_base: () => 0,
+    get_eip: () => eip, set_eip: v => { eip = v; },
+    get_esp: () => esp, set_esp: v => { esp = v; },
+    get_eax: () => 1, get_last_run_halt: () => halt,
+    get_yield_reason: () => reason,
+    run() {
+      seen.push(eip);
+      if (eip === 0x600000) {
+        eip = 0x600100; halt = 4; reason = 5;
+      } else {
+        assert.ok(eip === 0x700000 || eip === 0x600100);
+        eip = 0; halt = 2; reason = 0;
+      }
+    },
+  };
+  await callDllMainAsync(e, 0x600000, 0x600000, null, {
+    async handleLoadLibraryYield() {
+      assert.strictEqual(eip, 0x600100, 'outer initializer stays at the load continuation');
+      assert.strictEqual(esp, 0x41fff0, 'outer initializer stack remains live across await');
+      await Promise.resolve();
+      await callDllMainAsync(e, 0x700000, 0x700000, null);
+      assert.strictEqual(eip, 0x600100, 'nested initializer restores outer continuation');
+      assert.strictEqual(esp, 0x41fff0, 'nested initializer restores outer stack');
+    },
+  });
+  assert.deepStrictEqual(seen, [0x600000, 0x700000, 0x600100]);
+  assert.strictEqual(eip, 0x401000);
+  assert.strictEqual(esp, 0x420000);
+  console.log('PASS  nested dynamic DLL initialization resumes before restoring caller state');
+  seen.length = 0;
+  const logs = [];
+  await callDllMainAsync(e, 0x600000, 0x600000, line => logs.push(line), {
+    async handleLoadLibraryYield() { throw new Error('nested load failed'); },
+  });
+  assert.deepStrictEqual(seen, [0x600000]);
+  assert.strictEqual(eip, 0x401000, 'nested load rejection restores caller EIP');
+  assert.strictEqual(esp, 0x420000, 'nested load rejection restores caller ESP');
+  assert.ok(logs.some(line => line.includes('nested load failed')), 'nested failure remains visible');
+  console.log('PASS  nested loader rejection restores the caller without running an incomplete initializer');
+})().catch(error => { console.error(error); process.exitCode = 1; });

@@ -36,7 +36,7 @@ const extraWat = `
     (call $win16_dlg_pump))
   (func (export "test_peek_thunk") (result i32)
     (call $win16_thunk_for (i32.const 2) (i32.const 109) (i32.const 0)))
-  (func (export "test_modal_mouse") (param $h i32) (result i32)
+  (func $test_modal_mouse (export "test_modal_mouse") (param $h i32) (result i32)
     (local $dirty i32)
     (call $post_queue_reset)
     (call $test_modal_clear_nc)
@@ -53,6 +53,12 @@ const extraWat = `
     (call $gs16 (i32.const 0x110800) (call $win16_h16 (local.get $h)))
     (call $win16_dlg_pump)
     (i32.add (i32.const 0x120000) (global.get $WIN16_DLG_PUMP)))
+  (func (export "test_modeless_pending") (result i32) (global.get $win16_dlg_modeless_pending))
+  (func (export "test_modeless_boundary") (param $h i32) (param $pending i32) (result i32)
+    (global.set $win16_dlg_modeless_pending (local.get $pending))
+    (call $gs16 (i32.const 0x110802) (i32.const 0x90))
+    (call $gs16 (i32.const 0x110804) (i32.const 0x000f))
+    (call $test_modal_mouse (local.get $h)))
   (func (export "test_modal_step") (call $win16_dlg_pump))
   (func (export "test_mouse_pump") (param $peek i32) (param $remove i32) (param $min i32) (param $max i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x110800))
@@ -1197,5 +1203,24 @@ const pack = (x, y) => ((x & 0xffff) | (y << 16)) >>> 0;
       assert.strictEqual(e.test_alive(e.test_widen(nested)), 0, 'nested dialog also retired');
     }
   }
+  // No pending modeless invocation must not consume a null modal frame as
+  // a successful CreateDialog return. A real matching invocation still must.
+  const modeless = e.test_window(0x5000);
+  mouseInput.length = 0;
+  for (const [handle, pending] of [[0, 0], [modeless, 0], [0, modeless]]) {
+    const parked = e.test_modeless_boundary(handle, pending);
+    e.set_bp(parked);
+    for (let i = 0; e.get_eip() !== parked && i < 100; i++) e.run(1);
+    e.set_bp(0);
+    assert.strictEqual(e.get_esp(), 0x110800, 'nonmatching/no pending return preserves modal frame');
+    assert.strictEqual(e.get_eip(), parked, 'nonmatching/no pending return parks the modal pump');
+    assert.strictEqual(e.test_modeless_pending(), pending, 'unmatched pending invocation survives');
+    assert.strictEqual(e.guest_read32(0x110802), 0x000f0090, 'far return remains intact');
+  }
+  e.test_modeless_boundary(modeless, modeless);
+  assert.strictEqual(e.get_esp(), 0x110806, 'matching modeless invocation consumes its own frame');
+  assert.strictEqual(e.get_eip(), 0x100090, 'matching modeless invocation restores far caller');
+  assert.strictEqual(e.test_long_result(), e.test_narrow(modeless), 'modeless call returns its HWND');
+  assert.strictEqual(e.test_modeless_pending(), 0, 'completed modeless invocation clears pending handle');
   console.log('PASS Win16 WINDOWPOS/focus, task/modal mouse and modal completion callbacks');
 })().catch(error => { console.error(error); process.exit(1); });

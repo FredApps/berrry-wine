@@ -44,7 +44,11 @@ async function arm(file,label){
   assert.deepStrictEqual(b.state(),a.state());
   const census={A:a.census(),B:b.census()};
   if(a.sha256===b.sha256)assert.deepStrictEqual(census.B,census.A,'same-artifact control census');
-  else{
+  else if(process.env.MIXED_CONTROL==='1'){
+    assert.equal(census.A[3],0,'mixed control must already absorb pointer ADDs');
+    assert.equal(census.A[65],0,'mixed control must already absorb DEC');
+    assert.deepStrictEqual(census.B,census.A,'predecode must preserve dispatched handler counts');
+  }else{
     assert(census.A[3]>0&&census.B[3]===0,'candidate must absorb projection pointer ADDs');
     assert(census.A[65]>0&&census.B[65]===0,'candidate must absorb projection DEC');
   }

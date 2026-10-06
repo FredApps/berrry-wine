@@ -73,6 +73,38 @@ its SHA-256 is
 `1a04201bd45329d62ab65513f768fdfd8396f55b443db471a2f7c459406a21b2`.
 These results are CLI gameplay acceptance, not a speed measurement.
 
+## Fixed-route EMMS benchmark acceptance (2026-09-30)
+
+The fallback host `fast-near-9tb-1` (i9-9900K, Node 20.11.1) runs the frozen
+EMMS before/after WASMs without extra V8 flags. Use the registered app, prepared
+local cache, `--no-threads --branch-clock --batch-size=200000`,
+`--tick-ms-per-batch=200 --wall-clock-ms=1790673326000 --max-batches=5500`.
+The main menu is visible at batch 2400. Move/down/up at batches B/B+1/B+100
+for Play Game `(445,55)` at B=2500, Anonymous Guest `(320,234)` at B=3000,
+Round 1-1 `(75,170)` at B=3500, and ball launch `(320,450)` at B=4400.
+Then relative movement -150 at 4700, +250 at 4900, and another held click
+at B=5000. The earlier ten-batch holds left the game in round selection;
+the hundred-batch holds reach the complete round and score 3.
+
+A separate diagnostic module counted 36,270 executions of compiled EMMS,
+including 16,331 over the measured 4500..5500 gameplay window. This is
+coverage, not a speedup measurement. Captures at 2400/2900/3400/4200/4600/5400
+and the end prove the menu sequence, level, launched ball, and changed bricks.
+Local evidence: `/private/tmp/reflexive-probe/fast-near-emms-results/ricochet-census-0/`.
+The isolated remote harness is `/home/vg/emms-app-bench`; both timing arms
+must run there, rather than comparing this host's CPU times with BOX2.
+
+The uninstrumented before/after/after/before comparison completed all four
+5500-batch runs. Total process user CPU was 100.18/99.35s before versus
+99.67/99.11s after: means 99.765 versus 99.390s (-0.38%). The gameplay
+window was 21.142/20.892s before versus 21.127/20.987s after: means 21.017
+versus 21.057s (+0.19%). Both changes are smaller than the same-build spread;
+there is no measured meaningful speedup or regression. All seven screenshot
+checkpoints are pixel-identical across all four timed runs. Summary and raw
+logs: `/private/tmp/reflexive-probe/fast-near-emms-results/summary.json`.
+These are the frozen EMMS-only comparison builds, preceding the subsequent
+main-branch micro-op trace changes and IR-kind renumbering.
+
 ## Preparing the local cache
 
 The cache remained at 351 files / 15,316,024 bytes after entering and playing
@@ -128,3 +160,31 @@ Browser evidence in `/private/tmp/reflexive-probe/`:
   movement changes the shield's position during active play.
 - `ricochet-browser3.log` and `ricochet-browser3-console.log`: input route and
   browser log; no guest API traps or JavaScript runtime failures.
+
+## Cache timestamps on remount (2026-09-29 follow-up)
+
+The loading screen can recur even with all 351 decoded cache files present.
+Guest cache validation compares exact 64-bit last-write times: calls to
+`0x452330` at `0x45ea4f` and `0x45ea6b`, then low/high comparisons at
+`0x45ea73` / `0x45ea77`. A mismatch branches to regeneration at `0x45eade`.
+After generation, `0x45ec0b` / `0x45ec23` copy source time onto the cache.
+The disk helper `0x454fc0` calls GetFileTime through IAT `0x51d1dc` at
+`0x45500e`.
+
+Copying bundle bytes into the fixture discarded those timestamps. VFS mounts
+then initialized times from the current host clock, invalidating the cache.
+The original menu bundle retains exact FILETIME metadata: 347 cache files use
+`{lo:265692960, hi:31281240}`; four Round 5 add-on caches use
+`{lo:2090469120, hi:29475155}`. The former is the original archive mount time,
+not the host timestamp of the later extracted cache file.
+
+Local inventories now carry optional creationTime / lastAccessTime /
+lastWriteTime fields through both browser and CLI mounts. Preparation merges
+an ignored `.wine-assembly-file-metadata.json` sidecar keyed by fixture-relative
+URL. This Ricochet fixture restores all 351 cache records from the original
+bundle and the original common last-write time on DATA.dat and the three RED
+archives. Re-running `--prepare` retains this metadata. `test-asset-parts.js`
+verifies alias mounts, cloned metadata, invalid-value rejection, and exact
+source/cache GetFileTimes equality without reading lazy archive bytes.
+Runtime cache-hit acceptance after this change is recorded separately by the
+root investigation; the metadata unit test alone is not gameplay evidence.

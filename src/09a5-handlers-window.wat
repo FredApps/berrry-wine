@@ -2645,6 +2645,13 @@
           (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x7FF0))
           (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 0)))
     (then
+    ;; Nested pumping cannot overwrite an active callback's TLS/SEH save slot.
+    (if (i32.eqz (call $mm_timer_context_enter))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $tmp (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
     ;; A real multimedia timer calls from a system-owned thread. Our
@@ -3349,6 +3356,12 @@
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $text_wa i32) (local $text_len i32)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0046))
+      (then
+        (call $windowpos_defproc_minmax (local.get $arg0) (local.get $arg3))
+        (i32.store (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
     ;; Win98 checks the actual iconic state, not HIWORD(wParam). A direct
     ;; default call can reactivate this window through SetFocus.
     (if (i32.eq (local.get $arg1) (i32.const 6))

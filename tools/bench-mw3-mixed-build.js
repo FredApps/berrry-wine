@@ -75,10 +75,16 @@ if(require.main===module){
   const compile=(named=false)=>{const r=compileClosure(closure,{tailCalls:true,nameSection:named});assert(r.success,r.error);const b=appendSection(Buffer.from(r.wasmBinary),layoutHash(r.regions.regions));assert(WebAssembly.validate(b));return b;};
   const base=compile();assert(base.equals(fs.readFileSync(baseline)),'frozen source must reproduce measured baseline');
   fs.writeFileSync(out+'/baseline.wasm',base);fs.writeFileSync(out+'/baseline.named.wasm',compile(true));
-  for(const [name,t]of vfs)vfs.set(name,transform(path.basename(name),t));
+  const candidateTransform=process.argv.includes('--fp-combos')?require('./bench-fp-combos').transform:
+    process.argv.includes('--fp-predecode')?require('./bench-fp-predecode').transform:
+    process.argv.includes('--split-pure')?require('./bench-mixed-split').transform:transform;
+  for(const [name,t]of vfs)vfs.set(name,candidateTransform(path.basename(name),t));
   fs.writeFileSync(out+'/mixed-loop-match.wat',vfs.get('07b-loop-match.wat'));
   const candidate=compile();fs.writeFileSync(out+'/candidate.wasm',candidate);fs.writeFileSync(out+'/candidate.named.wasm',compile(true));
   const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
-  const result={revision,baseline:sha(base),candidate:sha(candidate),bytes:[base.length,candidate.length]};
+  const result={revision,baseline:sha(base),candidate:sha(candidate),bytes:[base.length,candidate.length],
+    variant:process.argv.includes('--fp-combos')?'combo-'+(process.env.FP_COMBO||'pcd'):
+      process.argv.includes('--fp-predecode')?'fp-'+(process.env.FP_PREDECODE||'p'):
+      process.argv.includes('--split-pure')?'split-pure':'mixed'};
   fs.writeFileSync(out+'/build.json',JSON.stringify(result,null,2));console.log(result);
 }

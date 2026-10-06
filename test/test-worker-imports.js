@@ -105,6 +105,9 @@ check('every declared thread primitive is adopted', () => {
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('set_thread_locale'));
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_initialize_thread'));
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_uninitialize_thread'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('queue_user_apc'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('dequeue_user_apc'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('set_apc_alertable'));
   const main = {};
   for (const name of THREAD_PRIMITIVE_IMPORTS) main[name] = () => name;
   const worker = { wait_single: () => 0 };  // the stub host-imports installs

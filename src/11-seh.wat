@@ -133,8 +133,13 @@
             (call $gl32 (global.get $fs_base)))
           ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord,
           ;; DispatcherContext) under a dispatcher node: the node takes the
-          ;; 12 bytes above the argument frame, and 0xCACA000E pops both.
-          (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+          ;; 12 bytes above the argument frame. Keep the dispatch's remaining
+          ;; state above the node: a handler can raise and catch another
+          ;; exception before returning to this dispatch (MSVC rethrow does).
+          (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+          (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)) (global.get $delphi_seh_head_before))
+          (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)) (global.get $delphi_resume_eip))
+          (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)) (global.get $delphi_resume_esp))
           (call $seh_push_dispatch_node
             (i32.load offset=16 (global.get $reg_base)) (global.get $delphi_seh_rec))
           (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
@@ -198,6 +203,12 @@
   ;; recurse until the wasm stack gives out, so the walk runs bracketed by a
   ;; guard that $g2w_miss checks before it raises.
   (func $raise_exception (param $code i32)
+    (call $raise_exception_access (local.get $code) (i32.const 0) (global.get $fault_address)))
+
+  ;; Explicit access metadata stays on this call's stack until it is copied
+  ;; into the guest record. Generic callers retain their read-fault default;
+  ;; a later/nested fault cannot inherit a previous REP's write kind.
+  (func $raise_exception_access (param $code i32) (param $access i32) (param $address i32)
     ;; A CPU fault is rare and, once a guest __except has swallowed it, leaves
     ;; no other trace: name the code and the faulting block.
     (if (call $raise_storm_note (local.get $code))
@@ -206,7 +217,8 @@
         (call $host_log_i32 (local.get $code))
         (call $host_log_i32 (global.get $eip))))
     (global.set $fault_raising (i32.const 1))
-    (call $raise_exception_walk (local.get $code))
+    (call $seh_walk_from_access (local.get $code) (call $gl32 (global.get $fs_base))
+      (local.get $access) (local.get $address))
     (global.set $fault_raising (i32.const 0)))
 
   (func $raise_exception_walk (param $code i32)
@@ -235,6 +247,11 @@
   ;; handler(ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext)
   ;; returning to a thunk that acts on the disposition ($seh_raw_continue).
   (func $seh_call_raw_handler (param $code i32) (param $seh_rec i32) (param $handler i32)
+    (call $seh_call_raw_handler_access (local.get $code) (local.get $seh_rec)
+      (local.get $handler) (i32.const 0) (global.get $fault_address)))
+
+  (func $seh_call_raw_handler_access (param $code i32) (param $seh_rec i32)
+      (param $handler i32) (param $access i32) (param $address i32)
     (local $esp i32) (local $ctx i32) (local $rec i32) (local $sp i32)
     (if (i32.eqz (global.get $seh_raw_thunk))
       (then (global.set $seh_raw_thunk (call $com_cont_thunk (i32.const 0xCACA0037)))))
@@ -248,7 +265,8 @@
     (if (i32.eq (local.get $code) (i32.const 0xC0000005))
       (then
         (call $gs32 (i32.add (local.get $rec) (i32.const 16)) (i32.const 2))
-        (call $gs32 (i32.add (local.get $rec) (i32.const 24)) (global.get $fault_address))))
+        (call $gs32 (i32.add (local.get $rec) (i32.const 20)) (local.get $access))
+        (call $gs32 (i32.add (local.get $rec) (i32.const 24)) (local.get $address))))
     ;; CONTEXT (x86): CONTEXT_FULL, segments, integer registers, control.
     (call $gs32 (local.get $ctx) (i32.const 0x10007))
     (call $gs32 (i32.add (local.get $ctx) (i32.const 0x90)) (i32.const 0x3b))   ;; SegFs
@@ -310,7 +328,9 @@
     (if (i32.eq (local.get $disp) (i32.const 1))
       (then
         (global.set $fault_raising (i32.const 1))
-        (call $seh_walk_from (call $gl32 (local.get $rec)) (call $gl32 (local.get $frame)))
+        (call $seh_walk_from_access (call $gl32 (local.get $rec)) (call $gl32 (local.get $frame))
+          (call $gl32 (i32.add (local.get $rec) (i32.const 20)))
+          (call $gl32 (i32.add (local.get $rec) (i32.const 24))))
         (global.set $fault_raising (i32.const 0))
         (return)))
     (call $seh_terminate_unhandled (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
@@ -533,6 +553,11 @@
     (call $rtl_unwind_step (local.get $s)))
 
   (func $seh_walk_from (param $code i32) (param $start i32)
+    (call $seh_walk_from_access (local.get $code) (local.get $start)
+      (i32.const 0) (global.get $fault_address)))
+
+  (func $seh_walk_from_access (param $code i32) (param $start i32)
+      (param $access i32) (param $address i32)
     (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
     (local $trylevel i32) (local $scopetable i32) (local $entry i32)
     (local $filter i32) (local $filter_wa i32) (local $except_body i32)
@@ -609,7 +634,8 @@
       ;; A frame with no MSVC scope table gets its handler called for real.
       (if (i32.eqz (call $seh_frame_is_msvc (local.get $seh_rec)))
         (then
-          (call $seh_call_raw_handler (local.get $code) (local.get $seh_rec) (local.get $handler))
+          (call $seh_call_raw_handler_access (local.get $code) (local.get $seh_rec)
+            (local.get $handler) (local.get $access) (local.get $address))
           (return)))
       ;; Non-C++ handler: assume __except_handler3 frame layout.
       ;; Read scopetable and trylevel from the stack frame.

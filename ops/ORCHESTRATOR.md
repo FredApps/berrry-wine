@@ -4,7 +4,10 @@ The user requested a transition from independent long-running agents to one
 Codex coordinator with bounded parallel workers, launched in tmux session
 `wine-orchestrator`. This is an explicit request to use subagents. Use at most
 three active workers, subject to the actual tool/runtime limit. Inherit the
-configured model. Keep normal sandbox and approval protections.
+configured model. Keep normal sandbox and approval protections except on the
+dedicated migration box `bx_69aem736`: on 2026-10-02 the user explicitly requested
+full access with no permission prompts there (`--sandbox danger-full-access
+--ask-for-approval never`). This exception does not change other hosts' settings.
 
 ## Start here
 
@@ -24,8 +27,9 @@ configured model. Keep normal sandbox and approval protections.
    Missing owner acknowledgment alone must not require the user to resume an
    old agent. Retain specific unverified jobs or conflicting file claims as
    explicit unknowns; do not infer that reconstruction stopped a process.
-   User scope update, 2026-10-01: skip Claude migration for now. Defer its five
-   remaining roots without taking their files/jobs or blocking Codex work.
+   User scope update, 2026-10-02: include Claude migration. All five project
+   sessions supplied `claude-migration-*.md` handoffs and released their work;
+   the local sessions have exited. Read those handoffs before resuming a lane.
 5. Build a current coordinated task section in `TODOS.md`, preserving historical
    sections and concurrent changes. Give every task a stable ID, owner, desired
    result/done criteria, next step, and evidence/handoff references. Explicitly
@@ -33,6 +37,16 @@ configured model. Keep normal sandbox and approval protections.
    blocker fields documented in `ops/README.md`.
 
 ## Execute the queue
+
+- Migration is a per-task input dependency, not a global execution hold once
+  ownership is released. The 2026-10-03 core release is recorded in
+  `ops/handoffs/migration-core-ready-20261003.md`. Continue ready tasks while
+  historical archives upload. For a task missing files, name the exact paths
+  and continue another ready task; do not ask the user for a migration phrase.
+  Check `scratch/migration-core-verified.json` and
+  `scratch/migration-transfer.json` for verification and transfer receipts.
+  Preserve existing correctness/review blockers. A copied archive is not an
+  installed fixture, and old task owners/statuses are not evidence of live work.
 
 - Maintain `ops/STATUS.md` as the short user-facing TLDR shown above Overview
   and Tasks. Keep it around 150 words: the actual outcome, what needs the user's
@@ -115,3 +129,20 @@ Never terminate old agent roots automatically. They should checkpoint and stop
 accepting new tasks; only their owners may safely stop their own jobs. Keep their
 transcripts and handoffs as references. Subagents are new workers, not reparented
 old processes.
+
+
+## Standing priority: two new games
+
+User instruction, 2026-10-03: continuously maintain at least TWO distinct new-game lanes owned by Codex/workers, moving toward an actual launch route, player-controlled gameplay and a reviewed gameplay screenshot. This is a rolling pipeline, not a one-off pair. Refill a slot as soon as a game qualifies or becomes blocked; record blocked work honestly and select another actionable candidate. Verify the current public DESKTOP_APPS list before selection: existing public games and alternate renderer variants do not count as new titles. Prefer recognizable freeware/shareware/demos with locally available assets. Do not count already-qualified screenshots as new work.
+
+Each lane must name its candidate, exact next action and owner in TODOS.md and STATUS. Done requires a working launch route, reviewed visible gameplay (not installer/menu/intro/black frame), ordinary input response, and linked screenshot + run/source identity. Record FPS separately when measured; never invent performance or release approval. Launchability does not authorize public distribution or deployment. Maintain two active investigation lanes while serializing browser/benchmark resources on the shared host.
+
+At each task completion, queue check, and user interaction, replenish the two lanes. Do not stop solely because an unrelated dashboard/UX task completed. If fewer than two candidates are actionable, document the concrete pool-wide blocker and what input resolves it; do not create fake active tasks or retry automated-review rejections. Keep the recurring NEW-GAMES-PIPELINE task active until the user pauses or changes this policy.
+
+## Task completion and main integration
+
+User instruction, 2026-10-04: completed changes must have a reviewed, tested commit integrated into the remote main branch. A working-tree edit, checkpoint branch, or local dashboard activation alone is not final completion. Record the task commit and verified main integration commit in its evidence. Keep implemented changes in review while integration is pending; state the concrete blocker if they cannot safely merge. Investigation/design tasks should commit their reviewable findings and handoffs, without committing private fixtures, credentials or bulk scratch artifacts.
+
+User workflow update, 2026-10-05: ordinary work should happen on main by default. Use small scoped commits with relevant validation and prompt publishing; do not create a separate branch/review queue for routine UI, corpus, documentation or straightforward fixes. Keep performance optimizations isolated until correctness and benchmark evidence justify integration. Coordinate overlapping file ownership and serialize commits; never reset the shared dirty worktree or include unrelated experiments. The current shared checkout is behind remote main and contains mixed pending work: reconcile it safely before using it for direct-main commits, without blindly pulling or staging everything.
+
+User reiterated on 2026-10-05 that ops work should go straight to main. The coordinator may integrate validated ordinary ops changes directly; the former exclusive ops-dashboard integration queue is superseded for this work. Repo SSH publishing is configured. Verify that each change is present in remote main before marking it done. Main integration does not itself authorize a separate public game deployment.

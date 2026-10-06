@@ -145,6 +145,7 @@
   ;; sub is 06c's $mmx_opcode_subop numbering and every arm is $mmx_binop /
   ;; $mmx_shift inlined, so the two tiers compute the same bits.
   ;;   78 STRSTEP4 src dst                    advance both pointers by DF ? -4 : 4
+  ;;   79 EMMS                               empty the x87 tag word
   ;; Bulk memory (07e kind 30, --no-uop-rep): REP MOVS / REP STOS as one op.
   ;;   82 COPY d s n w wd ws x                n elements of w bytes from [s] to
   ;;                                          [d] in DF order; d/s/n are slots
@@ -1088,7 +1089,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c85 (block $c84 (block $c83 (block $c82 (block $c81 (block $c78
+      (block $c85 (block $c84 (block $c83 (block $c82 (block $c81 (block $c79 (block $c78
       (block $c77 (block $c76 (block $mxcore (block $c75 (block $c74 (block $c73 (block $c72
       (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
@@ -1109,8 +1110,7 @@
                   $c64 $c65 $c66 $c67 $c68 $c69 $c70 $c71
                   $c72 $c73 $c74 $c75 $c76 $c77
                   $c78
-                  ;; 79-80 are not emitted
-                  $c0 $c0
+                  $c79 $c0 ;; 80 is not emitted
                   $c81 $c82 $c83 $c84 $c85
                   $c0
                   (i32.load (local.get $pc))))
@@ -1874,6 +1874,10 @@
         (i32.store (i32.load offset=8 (local.get $pc))
           (i32.add (i32.load (i32.load offset=8 (local.get $pc))) (local.get $v)))
         (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L))
+        ;; 79 EMMS: same state change as $th_emms. MMX cells, x87 TOP,
+        ;; status and the integer lazy flags are deliberately untouched.
+        (global.set $fpu_tag (i32.const 0))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 4))) (br $L))
         ;; 81 JTBL i n x -- a switch's table jump (07e $uc_emit_jtbl): an
         ;; index below n takes the index-th of the n GOTOs that follow, and
         ;; the arm there checks the entry it loaded; any other index goes to

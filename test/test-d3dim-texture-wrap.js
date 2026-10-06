@@ -145,6 +145,21 @@ async function software() {
   wat.test_wrap_set_rs(device, 5, 1);
   wat.test_wrap_set_rs(device, 6, 1);
   assert.strictEqual(describe(), 3, 'describe: WRAPU + WRAPV');
+
+  // A flat-bottom triangle includes its top, but not the bottom row. NFS
+  // cockpit tiles wrap the roof texture into a black seam if y2 is covered.
+  [[0,0], [W-1,W-1], [0,W-1]].forEach(([x,y],i) => {
+    const p = vertices + i * 32;
+    float(p,x); float(p+4,y); float(p+8,0.5); float(p+12,1);
+    wat.guest_write32(p+16,0xffffffff);
+    float(p+24,0.875); float(p+28,0.5);
+  });
+  new Uint8Array(memory.buffer, rtDib, W*W*2).fill(0);
+  wat.test_wrap_draw(device, rt, vertices);
+  assert.notStrictEqual(mem.getUint16(rtDib+(W*(W-2)+2)*2,true),0,
+    'triangle still covers its interior');
+  assert.strictEqual(mem.getUint16(rtDib+(W*(W-1)+2)*2,true),0,
+    'textured triangle excludes the bottom row');
 }
 
 // The GPU executor with a recording device: the vertices it hands over.

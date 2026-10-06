@@ -1,6 +1,6 @@
-updated: 2026-10-02T23:23:51.028480+00:00
-author: codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0
+updated: 2026-10-05T22:35:22.000Z
+author: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
 
-Migration checkpoint collection is complete. Jazz’s last local package job finished successfully, and all three workers released their work and resources. GTA2 never transferred or launched; its pending preflight was canceled. Unreal remains unlaunched. No conditional job will start.
+Two new games reached real gameplay tonight, both headless so far. Myth: The Fallen Lords (top priority) plays from the retail ISO: units select and move on Crow's Bridge; fixes are on main (c1d22ecf). Its worker is now adding the desktop entry and testing in the browser. Tomb Raider III demo: Lara runs through the Jungle level on input; merged to main (1a90c1c3). Sound, a title texture and the browser are still open. That worker is picking the next new game from local files.
 
-The migration handoff records exact artifacts, unfinished Ricochet and Collapse validation, NFS3’s backend-identity failure, and preserved ownership. This coordinator is now idle under the freeze. The migration owner handles Git reconciliation and private project/memory transfer; that transfer is not yet claimed complete. Foreign services, historical watchers and dirty files remain preserved. The five-game baseline and three-renderer comparison objectives remain unfinished.
+The DOS corpus dashboard is in its browser check. Disk is tight (~450 MB free), and Codex's old scratch folders still need a decision. Nothing is deployed publicly.

@@ -135,6 +135,19 @@
                  (i32.ne (local.get $delta) (i32.const 0)))
       (then (call $process_relocations (local.get $load_addr) (local.get $reloc_rva) (local.get $reloc_size) (local.get $delta))))
 
+    ;; Static TLS allocation must occur after moving the process heap beyond
+    ;; this image, and before publishing its DLL_TABLE entry or calling DllMain.
+    (local.set $dst (i32.and
+      (i32.add (i32.add (local.get $load_addr) (local.get $image_size)) (i32.const 0xFFF))
+      (i32.const 0xFFFFF000)))
+    (if (i32.eqz (local.get $sparse))
+      (then (call $heap_reserve_below (local.get $dst))))
+    (if (i32.eqz (call $tls_static_register
+          (local.get $load_addr) (local.get $image_size) (local.get $tls_rva)))
+      (then
+        (if (local.get $sparse) (then (drop (call $virtual_map_release (local.get $load_addr)))))
+        (return (i32.const 0))))
+
     ;; Store DLL metadata in DLL_TABLE
     (local.set $dll_idx (global.get $dll_count))
     (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $dll_idx) (i32.const 32))))
@@ -159,19 +172,6 @@
       (then (call $process_dll_imports (local.get $load_addr) (local.get $import_rva))))
 
     (global.set $dll_count (i32.add (global.get $dll_count) (i32.const 1)))
-
-    ;; Push the low heap past this DLL image so allocations don't land on its
-    ;; code. This has to move the PROCESS cursor in shared memory, not $heap_ptr:
-    ;; that global now bounds one instance's private arena, so raising it here
-    ;; would leave every other instance still reserving over the image.
-    (local.set $dst (i32.and
-      (i32.add (i32.add (local.get $load_addr)
-        (i32.load (i32.add (local.get $pe_off) (i32.const 80)))) ;; SizeOfImage
-        (i32.const 0xFFF))
-      (i32.const 0xFFFFF000)))
-    ;; A rebased image owns its own reservation and is nowhere near the low heap.
-    (if (i32.eqz (local.get $sparse))
-      (then (call $heap_reserve_below (local.get $dst))))
 
     ;; Return DllMain entry point
     (if (result i32) (i32.ne (local.get $entry_rva) (i32.const 0))

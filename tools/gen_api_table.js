@@ -1459,6 +1459,7 @@ const extra = [
   { name: 'fputc', nargs: 2, convention: 'cdecl' },
   { name: 'DirectSoundCreate8', nargs: 3 },
   { name: 'IDirectSound8_VerifyCertification', nargs: 2 },
+  { name: 'QueueUserAPC', nargs: 3 },
 ];
 for (const api of extra) {
   const ownsHandler = Object.prototype.hasOwnProperty.call(api, 'handler');
@@ -1578,6 +1579,24 @@ for (const entry of require('./glide3-methods').entries) {
   if (!seen.has(entry.name)) {
     existing.push({id: existing.length, ...entry, convention: 'stdcall', hash: 0});
     seen.add(entry.name);
+  }
+}
+
+// Full separate Unicode DirectPlay4 ABI, appended after established interfaces.
+for (const api of existing.filter(a => /^IDirectPlay[34]_/.test(a.name))) {
+  const name = 'IDirectPlay4W_' + api.name.split('_')[1];
+  if (!seen.has(name)) {
+    existing.push({ id: existing.length, name, nargs: api.nargs, convention: 'stdcall', hash: 0 });
+    seen.add(name);
+  }
+}
+
+// Unsupported Unicode network/capability operations are constant, explicit failures.
+// Existing generated stub convention preserves each stdcall cleanup exactly.
+const directPlay4WUnsupported = new Set(["EnumSessions","GetCaps","GetPlayerAddress","GetPlayerCaps","GetSessionDesc","Initialize","Open","Receive","SetSessionDesc","GetGroupConnectionSettings","InitializeConnection","SecureOpen","SendChatMessage","SetGroupConnectionSettings","StartSession","GetPlayerAccount"]);
+for (const api of existing) {
+  if (api.name.startsWith('IDirectPlay4W_') && directPlay4WUnsupported.has(api.name.slice(14))) {
+    api.stub = { pop: 4 * (api.nargs + 1), ret: 0x80004001 };
   }
 }
 

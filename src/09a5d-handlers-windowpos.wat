@@ -98,6 +98,86 @@
   (global $WINDOWPOS_SLOT i32 (i32.const 32))   ;; 28-byte struct, padded
   (global $WINDOWPOS_DEPTH_MAX i32 (i32.const 8))
 
+  ;; DefWindowProc's sizing negotiation owns one MINMAXINFO per synchronous
+  ;; invocation. Never lend a singleton struct to a reentrant guest wndproc.
+  (global $windowpos_minmax_depth (mut i32) (i32.const 0))
+  (func $windowpos_guest_span_valid (param $p i32) (param $n i32) (result i32)
+    (local $i i32)
+    (if (i32.or (i32.eqz (local.get $p))
+          (i32.gt_u (local.get $p) (i32.sub (i32.const -1) (i32.sub (local.get $n) (i32.const 1)))))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.eq (call $g2w (i32.add (local.get $p) (local.get $i))) (global.get $NULL_SENTINEL))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  (func $windowpos_defproc_minmax (param $hwnd i32) (param $pos i32)
+    (local $style i32) (local $info i32) (local $i i32)
+    (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
+    (local $cx i32) (local $cy i32)
+    (if (i32.or (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+          (i32.eqz (call $windowpos_guest_span_valid (local.get $pos) (i32.const 28))))
+      (then (return)))
+    (if (i32.or (i32.ne (call $gl32 (local.get $pos)) (local.get $hwnd))
+          (i32.and (call $gl32 (i32.add (local.get $pos) (i32.const 24))) (i32.const 1)))
+      (then (return))) ;; SWP_NOSIZE
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    ;; Overlapped windows, sizing frames, and captioned popup/child windows
+    ;; receive the default minimum-size query; borderless controls do not.
+    (if (i32.eqz (i32.or
+          (i32.eqz (i32.and (local.get $style) (i32.const 0xC0000000)))
+          (i32.or (i32.and (local.get $style) (i32.const 0x00040000))
+            (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000)) (i32.const 0x00C00000)))))
+      (then (return)))
+    ;; This sender posts far Win16 procedures asynchronously. Do not hand it
+    ;; temporary storage whose lifetime ends when this near call returns.
+    (if (i32.and (global.get $code16) (call $win16_is_far_proc (call $wnd_table_get (local.get $hwnd))))
+      (then (return)))
+    (if (i32.ge_u (global.get $windowpos_minmax_depth) (global.get $WINDOWPOS_DEPTH_MAX))
+      (then (return)))
+    (local.set $info (call $heap_alloc (i32.const 40)))
+    (if (i32.eqz (local.get $info)) (then (return)))
+    (global.set $windowpos_minmax_depth (i32.add (global.get $windowpos_minmax_depth) (i32.const 1)))
+    (loop $clear
+      (call $gs32 (i32.add (local.get $info) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br_if $clear (i32.lt_u (local.get $i) (i32.const 40))))
+    (call $gs32 (i32.add (local.get $info) (i32.const 8)) (call $screen_metric_w))
+    (call $gs32 (i32.add (local.get $info) (i32.const 12)) (call $screen_work_bottom))
+    (call $gs32 (i32.add (local.get $info) (i32.const 24)) (call $system_metric (i32.const 34)))
+    (call $gs32 (i32.add (local.get $info) (i32.const 28)) (call $system_metric (i32.const 35)))
+    (call $gs32 (i32.add (local.get $info) (i32.const 32)) (call $system_metric (i32.const 59)))
+    (call $gs32 (i32.add (local.get $info) (i32.const 36)) (call $system_metric (i32.const 60)))
+    (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0024) (i32.const 0) (local.get $info)))
+    (block $release
+      ;; An incomplete bounded callback is not a valid MINMAXINFO response.
+      (br_if $release (i32.eqz (global.get $wnd_send_completed)))
+      (br_if $release (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+      (br_if $release (i32.eqz (call $windowpos_guest_span_valid (local.get $pos) (i32.const 28))))
+      (br_if $release (i32.eqz (call $windowpos_guest_span_valid (local.get $info) (i32.const 40))))
+      (br_if $release (i32.ne (call $gl32 (local.get $pos)) (local.get $hwnd)))
+      (br_if $release (i32.and (call $gl32 (i32.add (local.get $pos) (i32.const 24))) (i32.const 1)))
+      (local.set $min_x (call $gl32 (i32.add (local.get $info) (i32.const 24))))
+      (local.set $min_y (call $gl32 (i32.add (local.get $info) (i32.const 28))))
+      (local.set $max_x (call $gl32 (i32.add (local.get $info) (i32.const 32))))
+      (local.set $max_y (call $gl32 (i32.add (local.get $info) (i32.const 36))))
+      ;; Malformed limits are not dimensions: leave the proposal untouched.
+      (br_if $release (i32.or (i32.lt_s (local.get $min_x) (i32.const 0)) (i32.lt_s (local.get $min_y) (i32.const 0))))
+      (br_if $release (i32.or (i32.lt_s (local.get $max_x) (local.get $min_x)) (i32.lt_s (local.get $max_y) (local.get $min_y))))
+      (local.set $cx (call $gl32 (i32.add (local.get $pos) (i32.const 16))))
+      (local.set $cy (call $gl32 (i32.add (local.get $pos) (i32.const 20))))
+      (local.set $cx (select (local.get $min_x) (local.get $cx) (i32.lt_s (local.get $cx) (local.get $min_x))))
+      (local.set $cy (select (local.get $min_y) (local.get $cy) (i32.lt_s (local.get $cy) (local.get $min_y))))
+      (call $gs32 (i32.add (local.get $pos) (i32.const 16))
+        (select (local.get $max_x) (local.get $cx) (i32.gt_s (local.get $cx) (local.get $max_x))))
+      (call $gs32 (i32.add (local.get $pos) (i32.const 20))
+        (select (local.get $max_y) (local.get $cy) (i32.gt_s (local.get $cy) (local.get $max_y)))))
+    (call $heap_free (local.get $info))
+    (global.set $windowpos_minmax_depth (i32.sub (global.get $windowpos_minmax_depth) (i32.const 1))))
+
   ;; Allocate one reentrant guest-visible WINDOWPOS and send the mutable
   ;; WM_WINDOWPOSCHANGING half of USER's positioning transaction. The same
   ;; slot remains live until $windowpos_message_end sends WM_WINDOWPOSCHANGED,

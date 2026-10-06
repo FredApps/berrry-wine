@@ -12,6 +12,13 @@ const apiTable = require('../src/api_table.json');
 
 async function main() {
   const extraWat = `
+  (func (export "test_wgl_call") (param $id i32) (param $a i32) (param $b i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x074ff004) (local.get $a))
+    (call $gs32 (i32.const 0x074ff008) (local.get $b))
+    (call $dispatch_api_table (local.get $id) (local.get $a) (local.get $b)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_call_legacy_wglSwapBuffers") (param $stack i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (local.get $stack))
     (call $handle_gpu_api
@@ -117,6 +124,27 @@ async function main() {
   gpuResult = 0;
   assert.strictEqual(instance.exports.test_call_SwapBuffers(0x1234), 0,
     'without a GL context, an unknown DC retains the legacy GDI failure');
+
+  const wgl = (name, a = 0, b = 0) =>
+    instance.exports.test_wgl_call(apiTable.find(api => api.name === name).id, a, b);
+  assert.strictEqual(wgl('wglGetCurrentContext'), 0);
+  assert.strictEqual(wgl('wglGetCurrentDC'), 0);
+  gpuResult = 1;
+  assert.strictEqual(wgl('wglMakeCurrent', 0x1234, 0xC001), 1);
+  assert.strictEqual(wgl('wglGetCurrentContext'), 0xC001);
+  assert.strictEqual(wgl('wglGetCurrentDC'), 0x1234);
+  assert.strictEqual(instance.exports.get_esp(), 0x074ff004,
+    'zero-argument WGL queries pop just the return address');
+  gpuResult = 0;
+  assert.strictEqual(wgl('wglMakeCurrent', 0x5678, 0xC002), 0);
+  assert.strictEqual(wgl('wglGetCurrentContext'), 0xC001,
+    'a failed binding preserves the frontend context');
+  assert.strictEqual(wgl('wglGetCurrentDC'), 0x1234,
+    'a failed binding preserves its corresponding DC');
+  gpuResult = 1;
+  assert.strictEqual(wgl('wglMakeCurrent', 0, 0), 1);
+  assert.strictEqual(wgl('wglGetCurrentContext'), 0);
+  assert.strictEqual(wgl('wglGetCurrentDC'), 0);
 
   console.log('PASS GDI32/legacy WGL SwapBuffers share GPU present and preserve GDI fallback');
 }

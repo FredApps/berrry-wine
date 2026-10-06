@@ -36,7 +36,7 @@ class FakeSource extends FakeNode {
     this.starts = [];
     this.stops = [];
   }
-  start(time) { this.starts.push(time); this.owner.started.push(this); }
+  start(time, offset) { this.starts.push({ time, offset }); this.owner.started.push(this); }
   stop(time) { this.stops.push(time); if (this.onended) this.onended(); }
 }
 
@@ -82,14 +82,19 @@ try {
   pcm.set([128, 255, 0, 64], ptr);
   host.voice_play_ring(voice, ptr, 4, 0, 2);
 
-  assert.strictEqual(ac.started.length, 1,
-    'Unlock refresh must not create or restart a WebAudio source');
-  assert.strictEqual(ctx._voices._map[voice].currentSrc, source,
-    'Unlock refresh must preserve the live ring play cursor');
+  assert.strictEqual(ac.started.length, 2,
+    'Unlock refresh must hand playback to a source that acquired the new ring');
+  const refreshed = ctx._voices._map[voice].currentSrc;
+  assert.notStrictEqual(refreshed, source,
+    'Unlock refresh replaces the WebAudio source without resetting DirectSound time');
+  assert.strictEqual(source.stops[0], refreshed.starts[0].time,
+    'old and refreshed sources meet at one audio-clock boundary');
+  assert(refreshed.starts[0].offset >= 0 && refreshed.starts[0].offset < refreshed.buffer.duration,
+    'the refreshed source starts at the current wrapped ring offset');
   assert.deepStrictEqual(
-    Array.from(source.buffer.getChannelData(0)),
+    Array.from(refreshed.buffer.getChannelData(0)),
     [0, 127 / 128, -1, -0.5],
-    'Unlock refresh must replace the samples heard by the looping source');
+    'Unlock refresh must publish the newly mixed samples');
 
   const silentTailPtr = 0x1100;
   pcm.set([0, 32, 64, 96, 128, 128, 128, 128], silentTailPtr);

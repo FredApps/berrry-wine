@@ -13,6 +13,29 @@ const assert=require('assert'),path=require('path'),puppeteer=require('puppeteer
     const mixed=D3D9LightingCases.draw();mixed.pixelShader=new Uint32Array([0xffff0101,1,0x800f0000,0x90e40000,0xffff]);
     mixed.fixedFunction.material.diffuse=new Float32Array([.25,.5,.75,.5]);
     cases.push({name:'mixed programmed PS v0 reads lit material, not vertex COLOR1',draw:mixed,expected:[64,128,191,128]});
+    const specular=(name,edit,expected)=>{
+      const draw=D3D9LightingCases.draw(),s=draw.fixedFunction;
+      s.specular=true;s.localViewer=false;s.specularMaterialSource=0;
+      s.material.diffuse.fill(0);s.material.diffuse[3]=.75;
+      s.material.specular=new Float32Array([.5,.25,.125,1]);s.material.power=8;
+      s.lights[0].specular=new Float32Array([1,1,1,1]);
+      edit(draw,s);cases.push({name,draw,expected});
+    };
+    specular('lit material specular',()=>{},[128,64,32,191]);
+    specular('specular COLOR1 source',(d,s)=>s.specularMaterialSource=1,[128,64,32,191]);
+    specular('specular COLOR2 source',(d,s)=>s.specularMaterialSource=2,[64,128,191,191]);
+    specular('specular missing COLOR2 fallback',(d,s)=>{s.specularMaterialSource=2;d.attributes=d.attributes.filter(a=>a.register!==6);},[128,64,32,191]);
+    specular('specular COLORVERTEX off',(d,s)=>{s.colorVertex=false;s.specularMaterialSource=2;},[128,64,32,191]);
+    specular('specular back face',(d,s)=>s.lights[0].direction[2]=1,[0,0,0,191]);
+    specular('specular zero normal power zero',(d,s)=>{s.material.power=0;d.attributes=d.attributes.filter(a=>a.usage!==3);},[0,0,0,191]);
+    // N.H=cos(30deg); power 8 gives (3/4)^4=81/256.
+    specular('specular power',(d,s)=>s.lights[0].direction=new Float32Array([-Math.sqrt(3)/2,0,-.5]),[40,20,10,191]);
+    specular('specular local viewer',(d,s)=>{s.localViewer=true;s.world[14]=-10000;s.projection[10]=0;s.projection[14]=.5;},[128,64,32,191]);
+    specular('specular local viewer away',(d,s)=>{s.localViewer=true;s.world[14]=10000;s.projection[10]=0;s.projection[14]=.5;},[0,0,0,191]);
+    for(const type of[1,2])specular('specular attenuated light '+type,(d,s)=>{
+      s.lights=[{...s.lights[0],type,position:new Float32Array([0,0,10000]),range:20000,
+        attenuation0:2,attenuation1:0,attenuation2:0,falloff:1,theta:.2,phi:.6}];
+    },[64,32,16,191]);
     for(const type of[1,2]){
       const local=D3D9LightingCases.draw(),f=a=>new Float32Array(a);
       local.fixedFunction.lights=[{type,diffuse:f([1,1,1,0]),ambient:f([0,0,0,0]),

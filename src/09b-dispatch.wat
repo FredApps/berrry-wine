@@ -192,10 +192,18 @@
     ;; clean the handler's cdecl arguments and invoke the next registration.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000E))
       (then
+        ;; Restore this call's dispatch state, not a nested exception's globals.
+        ;; ESP points at the four cdecl arguments, followed by the node and
+        ;; three saved values from $dispatch_delphi_exception_handler.
+        (global.set $delphi_exception_record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+        (global.set $delphi_seh_rec (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+        (global.set $delphi_seh_head_before (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+        (global.set $delphi_resume_eip (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+        (global.set $delphi_resume_esp (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         ;; Then the dispatcher node $dispatch_delphi_exception_handler linked.
         (call $seh_pop_dispatch_node (i32.load offset=16 (global.get $reg_base)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 1))
           (then
             (call $delphi_seh_continue_search)
@@ -1396,6 +1404,7 @@
         ;; This dedicated continuation is the authoritative completion event.
         ;; Inferring completion later from ESP fails when the interrupted code
         ;; returns from the callback and immediately enters a deeper call.
+        (call $mm_timer_context_leave)
         (global.set $mm_timer_in_cb (i32.const 0))
         (call $restore_caller_regs)
         (if (global.get $mm_timer_resume_yield)

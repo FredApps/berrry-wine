@@ -12,6 +12,7 @@ screenshots/v86-reference/generated/
 !screenshots/v86-reference/reviewed/*.json
 !screenshots/v86-reference/reviewed/README.md
 MARKETING.md
+BERRRY-TODO.md
 test/output/
 *-opcodes.log
 apps/*.log

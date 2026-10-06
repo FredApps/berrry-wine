@@ -784,7 +784,7 @@
   ;; relations as inequalities for that reason; that is where they belong.
   (region.declare $COM_WRAPPERS_AUX (size 0x00010004) (align 0x00001000)
     (owner "09a8-handlers-directx.wat:$dx_get_wrapper_for_vtbl_locked"))
-  (region.declare $DX_VTBL_REGISTRY (size 0x00000124)
+  (region.declare $DX_VTBL_REGISTRY (size 0x00000128)
     (owner "09a8-handlers-directx.wat:$dx_vtable_registry_reset"))
   (region.declare $VSOCK_TABLE (size 0x00004000) (align 0x00001000)
     (stride $VSOCK_REC_SIZE (count $VSOCK_MAX))
@@ -914,3 +914,7 @@
   ;; Lazy surface barriers shared by guest instances, never initialized by data.
   (region.declare $D3DIM_LAZY_SHARED (size 0x00000020) (align 0x00000010)
     (owner "09ab-handlers-d3dim-core.wat:$D3DIM_LAZY_SHARED"))
+  ;; Physical client hit publication plus one leave tracker per USER queue.
+  ;; Append-only: do not move any existing browser-visible region.
+  (region.declare $MOUSE_TRACKING (size 0x00000110) (align 0x00000010)
+    (owner "09a-handlers.wat:$mouse_track_record"))

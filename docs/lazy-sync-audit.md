@@ -1,13 +1,14 @@
 # Lazy DirectDraw Lock synchronization audit
 
-2026-09-29, main `f3ec3a2f` plus the shared working tree. The experiment is
-disabled by default. **Do not enable it globally yet.** This audit adds a
-diagnostic reproducer; it does not change runtime behavior.
+Original audit: 2026-09-29, main `f3ec3a2f` plus the shared working tree.
+The experiment was disabled by default at that revision. The subsequent
+corrections and validation enabled shared-WebGL lazy synchronization by
+default on 2026-09-30; see [current rollout status](lazy-sync-game-results.md).
 
 Follow-up: wide/x87 reads and SetSurfaceDesc backing replacement now have
 runtime fixes and focused regressions. See the matched before/after results
 in [lazy-sync-synthetic-results.md](lazy-sync-synthetic-results.md). The
-retained-GDI finding remains an unsupported limitation; default stays off.
+retained-GDI finding remains an accepted unsupported limitation with an opt-out.
 The cross-instance correction is described below.
 The findings below describe the original audited revision.
 

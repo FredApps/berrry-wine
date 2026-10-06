@@ -26,7 +26,7 @@ assert.strictEqual(Buffer.from(bytes.subarray(0, 4)).toString('ascii'), 'MSFT',
 const vfs = { files: new Map() };
 // The count also takes in the emulator's own system-module stubs.
 assert.strictEqual(mountSystemDataFiles(vfs, [{ ...stdole, bytes }]),
-  1 + WIN16_SYSTEM_MODULE_FILES.length + DIRECTX_SYSTEM_MODULE_FILES.length);
+  2 + WIN16_SYSTEM_MODULE_FILES.length + DIRECTX_SYSTEM_MODULE_FILES.length); // stdole2 + OpenGL
 assert.strictEqual(vfs.files.get('c:\\windows\\system\\stdole2.tlb').data, bytes);
 
 clearStore();

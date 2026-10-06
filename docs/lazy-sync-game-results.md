@@ -30,6 +30,69 @@ readbacks/frame. All three runs report zero GPU errors. These 10-second windows
 validate the setting, not an FPS improvement. Artifacts:
 `build/lazy-games/default-{mw3,gta2_demo,mw3-optout}/`.
 
+## Additional coverage and transfer profile (2026-09-30)
+
+The frozen `lazy-fence-after.wasm` (SHA256
+`2c3477ace32507c4f24c252eafd49ae24ce0e6bfda872ee391f05c7aae4d7878`)
+was reused on box8. Shipping runtime sources were not changed.
+
+**NFS3:** default-on and URL opt-out both reach the cockpit using native
+`d3da.dll`, hardware WebGL, six guest workers, and zero GPU errors. Reviewed
+captures contain the world, mirrors and HUD in both modes. Both record zero
+lazy arms/touches, zero framebuffer uploads and roughly one readback per
+guest Flip trace event. This is compatibility coverage, not first-touch coverage.
+The two 15-second windows record 33.53–34.29 trace events/s ON and
+25.52–33.29 OFF. Do not infer a speedup: race weather/opponents differ and
+the OFF run's load rose to 4.53. The trace surface pair is `16:17`; the encoder's
+`flips` counter counts only queued GPU flips and is about half the guest Flip
+trace count. These counters must not be interchanged or presented as browser
+display FPS. Artifacts: `build/lazy-games/coverage-nfs3-{on1,off1}/`.
+
+**AoE2:** the intended CPU DirectDraw plus GDI EDIT control is blocked in this
+frozen runtime by the game's DirectX version startup check after accepting
+the EULA, in both default-on and URL opt-out arms (`coverage-aoe2-on2` and
+`coverage-aoe2-off1`). No player-name or gameplay acceptance is claimed. The first route
+attempt also missed the EULA button; the corrected route captures startup
+errors and now fails immediately instead of continuing clicks on the error.
+The post-EULA gameplay route remains unverified. No per-app lazy exception
+was added on the strength of an unrelated startup failure.
+
+**MW3 diagnostic transfer profile:** `--transfer-profile` serves an instrumented
+copy of `d3dim-gpu.js`; it never edits or installs the shipping renderer.
+Across 593 cockpit presents (two approximately 15-second windows):
+
+| Stage | Wall time per guest present |
+|---|---:|
+| GL `readPixels` call, including any GPU wait | 5.964 ms |
+| Readback pixel conversion | 0.402 ms |
+| Readback shadow/page maintenance | 0.034 ms |
+| Upload pixel conversion | 0.542 ms |
+| GL color-resource update | 3.240 ms |
+| Upload shadow maintenance | 0.029 ms |
+
+The enclosing readback and upload totals are 6.401 and 3.811 ms/present;
+small residuals include setup and timer overhead. There are 1.008 readbacks
+and uploads/present, with 479.8 uploaded rows/present: the remaining traffic
+is effectively a full-height framebuffer round trip. Lazy arms remain 4.010,
+touched 2.003, untouched 2.007 per present. GPU errors remain zero, although
+the second window includes 1.2 fallback operations/present.
+
+These are CPU wall times around renderer stages, not GPU timestamp queries.
+Do not add transport waits or renderer replay totals to them: those overlap.
+The diagnostic run observes 18.47–19.98 presents/s and varying geometry/load;
+it is not a clean throughput comparison with earlier runs. The useful next
+optimization target is eliminating or narrowing framebuffer transfers;
+shadow/page bookkeeping is only about 0.063 ms/present here. Artifacts:
+`build/lazy-games/coverage-mw3-transfer/`.
+
+The subsequent [whole-frame profile](mw3-whole-frame-profile.md) establishes
+that guest execution is the largest aggregate category: 29–30 ms/present,
+versus 13–14 ms of waits and about 2.4 ms outside run/wait. More than 99% of
+transfer-call spans overlap those waits. The earlier transfer recommendation
+is therefore a renderer-specific opportunity, not a claim that transfers are
+the largest overall MW3 bottleneck. The upload call also includes expensive
+`getError` synchronization; its time is not pure upload bandwidth cost.
+
 2026-09-29 session, shared synchronization commit `1730589d`. All runs use one
 frozen runtime and host source set in `/home/user/mw3-watch-ab` on box8, Ryzen
 9950X with hardware ANGLE / Intel UHD 620. The frozen renderer includes the

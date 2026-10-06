@@ -95,6 +95,243 @@
   ;; what separates them, and it is a claim about the SDK prototype.
   ;; =====================================================================
 
+  ;; ---- TrackMouseEvent: client LEAVE only ----
+  ;; Tracking needs physical hit semantics, not dialog click routing (whose
+  ;; generic helper deliberately skips dialog comboboxes). Clip at EVERY
+  ;; ancestor's client before descending, keep dialog combos, and honor the
+  ;; visible sibling z order. Built-in static/groupbox controls are transparent.
+  (func $mouse_track_client_at (param $hwnd i32) (param $sx i32) (param $sy i32) (param $depth i32) (result i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    (local $slot i32) (local $child i32) (local $style i32) (local $class i32)
+    (local $best i32) (local $rank i32) (local $best_rank i32)
+    (if (i32.or (i32.eqz (local.get $hwnd)) (i32.ge_u (local.get $depth) (i32.const 32)))
+      (then (return (i32.const 0))))
+    (local.set $x (i32.sub (local.get $sx) (call $wnd_client_screen_x (local.get $hwnd))))
+    (local.set $y (i32.sub (local.get $sy) (call $wnd_client_screen_y (local.get $hwnd))))
+    (if (i32.or (i32.ge_u (local.get $x) (call $wnd_client_w_for_clip (local.get $hwnd)))
+          (i32.ge_u (local.get $y) (call $wnd_client_h_for_clip (local.get $hwnd))))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $child)))
+      (local.set $class (call $ctrl_table_get_class (local.get $child)))
+      (block $skip
+        (br_if $skip (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
+        (br_if $skip (i32.eqz (call $wnd_is_effectively_visible (local.get $child))))
+        (br_if $skip (call $ctrl_style_disabled (local.get $style)))
+        (br_if $skip (i32.eq (local.get $class) (i32.const 3)))
+        (br_if $skip (i32.and (i32.eq (local.get $class) (i32.const 1))
+          (i32.eq (i32.and (local.get $style) (i32.const 15)) (i32.const 7))))
+        (local.set $x (i32.sub (local.get $sx) (call $wnd_window_screen_x (local.get $child))))
+        (local.set $y (i32.sub (local.get $sy) (call $wnd_window_screen_y (local.get $child))))
+        (local.set $w (call $wnd_screen_w (local.get $child)))
+        (local.set $h (call $wnd_screen_h (local.get $child)))
+        (if (i32.eq (local.get $class) (i32.const 5))
+          (then (local.set $h (call $combobox_hit_h (local.get $child) (local.get $h)))))
+        (br_if $skip (i32.or (i32.ge_u (local.get $x) (local.get $w))
+          (i32.ge_u (local.get $y) (local.get $h))))
+        (local.set $rank (call $wnd_z_get (local.get $child)))
+        (if (i32.or (i32.eqz (local.get $best)) (i32.gt_s (local.get $rank) (local.get $best_rank)))
+          (then (local.set $best (local.get $child)) (local.set $best_rank (local.get $rank)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (if (local.get $best)
+      (then (return (call $mouse_track_client_at (local.get $best) (local.get $sx) (local.get $sy)
+        (i32.add (local.get $depth) (i32.const 1))))))
+    (local.get $hwnd))
+
+  ;; MOUSE_TRACKING: +0 physical client HWND, +4 publication-valid, +8/+12
+  ;; reserved; then sixteen {hwnd,state,serial,reserved} records. Capacity is
+  ;; validated against thread_msg_queue_addr, not a separate thread limit.
+  ;; state: 2 armed, 4 generated/pending enqueue, 8 claimed by a producer.
+  ;; All publication/claim operations use LOCK_WND. No host calls, allocation
+  ;; or message callbacks are made while that lock is held.
+  (func $mouse_track_record (param $tid i32) (result i32)
+    (if (i32.eqz (call $thread_msg_queue_addr (local.get $tid)))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $MOUSE_TRACKING)
+      (i32.mul (local.get $tid) (i32.const 16))))
+
+  (func $mouse_track_reset_thread (param $tid i32)
+    (local $r i32)
+    (local.set $r (call $mouse_track_record (local.get $tid)))
+    (if (i32.eqz (local.get $r)) (then (return)))
+    (call $lock_wnd_acquire)
+    (i32.store (local.get $r) (i32.const 0))
+    (i32.store offset=4 (local.get $r) (i32.const 0))
+    (i32.store offset=8 (local.get $r)
+      (i32.add (i32.load offset=8 (local.get $r)) (i32.const 1)))
+    (call $lock_wnd_release))
+
+  ;; Caller already holds LOCK_WND during HWND unpublication. Handles are
+  ;; monotonic (never reissued); serial also protects an in-flight producer.
+  (func $mouse_track_forget_locked (param $hwnd i32)
+    (local $tid i32) (local $r i32)
+    (local.set $tid (i32.const 1))
+    (block $done (loop $scan
+      (local.set $r (call $mouse_track_record (local.get $tid)))
+      (br_if $done (i32.eqz (local.get $r)))
+      (if (i32.eq (i32.load (local.get $r)) (local.get $hwnd))
+        (then
+          (i32.store (local.get $r) (i32.const 0))
+          (i32.store offset=4 (local.get $r) (i32.const 0))
+          (i32.store offset=8 (local.get $r)
+            (i32.add (i32.load offset=8 (local.get $r)) (i32.const 1)))))
+      (local.set $tid (i32.add (local.get $tid) (i32.const 1)))
+      (br $scan))))
+
+  ;; A queue allocation failure retains the generated notification for retry;
+  ;; it does not silently rearm or lose an out-and-back transition.
+  (func $mouse_track_flush (param $r i32) (result i32)
+    (local $hwnd i32) (local $serial i32) (local $ok i32)
+    ;; Empty/armed is by far the common path during input and queue polling.
+    ;; This is only a hint; pending/claimed goes through the locked recheck.
+    (if (i32.lt_u (i32.atomic.load offset=4 (local.get $r)) (i32.const 4))
+      (then (return (i32.const 1))))
+    (call $lock_wnd_acquire)
+    (if (i32.ne (i32.load offset=4 (local.get $r)) (i32.const 4))
+      (then
+        (local.set $ok (i32.ne (i32.load offset=4 (local.get $r)) (i32.const 8)))
+        (call $lock_wnd_release)
+        (return (local.get $ok))))
+    (local.set $hwnd (i32.load (local.get $r)))
+    (local.set $serial (i32.load offset=8 (local.get $r)))
+    (i32.store offset=4 (local.get $r) (i32.const 8))
+    (call $lock_wnd_release)
+    (local.set $ok (call $shared_post_queue_enqueue
+      (local.get $hwnd) (i32.const 0x2A3) (i32.const 0) (i32.const 0)))
+    (call $lock_wnd_acquire)
+    (if (i32.and (i32.eq (i32.load offset=8 (local.get $r)) (local.get $serial))
+          (i32.eq (i32.load offset=4 (local.get $r)) (i32.const 8)))
+      (then
+        (i32.store offset=4 (local.get $r)
+          (select (i32.const 0) (i32.const 4) (local.get $ok)))))
+    (call $lock_wnd_release)
+    (local.get $ok))
+
+  ;; The host supplies the *physical* client hit, not the mouse-capture
+  ;; recipient. All instances sharing this memory see the same publication.
+  ;; Safe from a page/shadow instance: only state and queued messages, never
+  ;; send_message or guest execution. Zero denotes outside this process.
+  (func $mouse_track_observe (param $client_hwnd i32) (result i32)
+    (local $tid i32) (local $r i32) (local $wake i32)
+    (call $lock_wnd_acquire)
+    (i32.store (global.get $MOUSE_TRACKING) (local.get $client_hwnd))
+    (i32.store offset=4 (global.get $MOUSE_TRACKING) (i32.const 1))
+    (local.set $tid (i32.const 1))
+    (block $done (loop $scan
+      (local.set $r (call $mouse_track_record (local.get $tid)))
+      (br_if $done (i32.eqz (local.get $r)))
+      (if (i32.and (i32.eq (i32.load offset=4 (local.get $r)) (i32.const 2))
+            (i32.ne (i32.load (local.get $r)) (local.get $client_hwnd)))
+        (then (i32.store offset=4 (local.get $r) (i32.const 4))))
+      (if (i32.eq (i32.load offset=4 (local.get $r)) (i32.const 4))
+        (then (local.set $wake (i32.const 1))))
+      (local.set $tid (i32.add (local.get $tid) (i32.const 1)))
+      (br $scan)))
+    (call $lock_wnd_release)
+    (local.set $tid (i32.const 1))
+    (block $flushed (loop $flush
+      (local.set $r (call $mouse_track_record (local.get $tid)))
+      (br_if $flushed (i32.eqz (local.get $r)))
+      (drop (call $mouse_track_flush (local.get $r)))
+      (local.set $tid (i32.add (local.get $tid) (i32.const 1)))
+      (br $flush)))
+    (local.get $wake))
+
+  (func $mouse_track_request (param $p i32) (param $name i32) (result i32)
+    (local $flags i32) (local $hwnd i32) (local $r i32)
+    (local $state i32) (local $tracked i32)
+    (if (i32.eqz (local.get $p))
+      (then (global.set $last_error (i32.const 87)) (return (i32.const 0))))
+    (if (call $ptr_range_access_bad (local.get $p) (i32.const 16) (i32.const 0))
+      (then (global.set $last_error (i32.const 998)) (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (local.get $p)) (i32.const 16))
+      (then (global.set $last_error (i32.const 87)) (return (i32.const 0))))
+    (local.set $flags (call $gl32 (i32.add (local.get $p) (i32.const 4))))
+    (local.set $hwnd (call $gl32 (i32.add (local.get $p) (i32.const 8))))
+    (local.set $r (call $mouse_track_record (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $r))
+      (then (global.set $last_error (i32.const 87)) (return (i32.const 0))))
+    ;; QUERY is introspection, not a request for the other supplied flags.
+    (if (i32.and (local.get $flags) (i32.const 0x40000000))
+      (then
+        (if (call $ptr_range_access_bad (local.get $p) (i32.const 16) (i32.const 1))
+          (then (global.set $last_error (i32.const 998)) (return (i32.const 0))))
+        (call $lock_wnd_acquire)
+        (local.set $state (i32.load offset=4 (local.get $r)))
+        (local.set $tracked (i32.load (local.get $r)))
+        (call $lock_wnd_release)
+        (call $gs32 (i32.add (local.get $p) (i32.const 4))
+          (select (i32.const 2) (i32.const 0) (i32.eq (local.get $state) (i32.const 2))))
+        (call $gs32 (i32.add (local.get $p) (i32.const 8))
+          (select (local.get $tracked) (i32.const 0) (i32.eq (local.get $state) (i32.const 2))))
+        ;; Resolved default is observable even for a LEAVE-only request.
+        ;; No configurable hover settings are implemented yet (HOVER fails).
+        (call $gs32 (i32.add (local.get $p) (i32.const 12))
+          (select (i32.const 400) (i32.const 0) (i32.eq (local.get $state) (i32.const 2))))
+        (return (i32.const 1))))
+    ;; Do not claim HOVER/NONCLIENT/unknown modes work. Their API name remains
+    ;; visible in the existing fail-fast diagnostic, rather than a fake BOOL.
+    (if (i32.and (local.get $flags) (i32.const 0x7FFFFFFD))
+      (then (call $crash_unimplemented (local.get $name)) (unreachable)))
+    ;; A cross-thread request belongs to the HWND owner's tracking record;
+    ;; it needs no callback or CPU transfer for this shared-state service.
+    (local.set $r (call $mouse_track_record (call $wnd_get_thread (local.get $hwnd))))
+    (if (i32.eqz (local.get $r))
+      (then (global.set $last_error (i32.const 1400)) (return (i32.const 0))))
+    (if (i32.and (local.get $flags) (i32.const 0x80000000))
+      (then
+        (call $lock_wnd_acquire)
+        (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))
+              (i32.and (i32.eq (i32.load (local.get $r)) (local.get $hwnd))
+                (i32.eq (i32.load offset=4 (local.get $r)) (i32.const 2))))
+          (then (i32.store offset=4 (local.get $r) (i32.const 0))))
+        (call $lock_wnd_release)
+        (return (i32.const 1))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 2)))
+      (then
+        ;; A zero-flags request replaces active tracking with no services.
+        ;; Already generated notifications are not withdrawn.
+        (call $lock_wnd_acquire)
+        (if (i32.eq (i32.load offset=4 (local.get $r)) (i32.const 2))
+          (then (i32.store offset=4 (local.get $r) (i32.const 0))))
+        (call $lock_wnd_release)
+        (return (i32.const 1))))
+    (if (i32.eqz (call $mouse_track_flush (local.get $r)))
+      (then (global.set $last_error (i32.const 8)) (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    ;; Unwired hosts must be diagnosed, not report a fictional armed tracker.
+    (if (i32.eqz (i32.load offset=4 (global.get $MOUSE_TRACKING)))
+      (then (call $lock_wnd_release)
+        (call $crash_unimplemented (local.get $name)) (unreachable)))
+    ;; An observer may have claimed this record between the flush and lock.
+    ;; Do not overwrite a generated notification which has not been queued.
+    (if (i32.ge_u (i32.load offset=4 (local.get $r)) (i32.const 4))
+      (then (call $lock_wnd_release)
+        (global.set $last_error (i32.const 170)) (return (i32.const 0))))
+    (if (i32.ne (call $mouse_track_record (call $wnd_get_thread (local.get $hwnd))) (local.get $r))
+      (then (call $lock_wnd_release)
+        (global.set $last_error (i32.const 1400)) (return (i32.const 0))))
+    ;; An outside request generates its own leave but must not overwrite an
+    ;; existing tracker for another window on the same owning thread.
+    (if (i32.ne (i32.load (global.get $MOUSE_TRACKING)) (local.get $hwnd))
+      (then
+        (call $lock_wnd_release)
+        (local.set $state (call $shared_post_queue_enqueue
+          (local.get $hwnd) (i32.const 0x2A3) (i32.const 0) (i32.const 0)))
+        (if (i32.eqz (local.get $state))
+          (then (global.set $last_error (i32.const 8))))
+        (return (local.get $state))))
+    (i32.store (local.get $r) (local.get $hwnd))
+    (i32.store offset=8 (local.get $r)
+      (i32.add (i32.load offset=8 (local.get $r)) (i32.const 1)))
+    (i32.store offset=4 (local.get $r) (i32.const 2))
+    (call $lock_wnd_release)
+    (call $mouse_track_flush (local.get $r)))
+
   ;; ---- Timer table helpers ----
   ;; Timer table at 0x24C0: 16 entries × 20 bytes
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
@@ -288,7 +525,7 @@
   ;; First slot whose period has elapsed, or 0. Refreshes $tick_count, so the
   ;; caller does not have to.
   (func $mm_timer_due_slot (result i32)
-    (local $i i32) (local $slot i32)
+    (local $i i32) (local $slot i32) (local $mode i32) (local $event i32)
     (global.set $tick_count (call $host_get_ticks))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
@@ -298,7 +535,20 @@
           (if (i32.ge_u
                 (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
                 (i32.load offset=4 (local.get $slot)))
-            (then (return (local.get $slot))))))
+            (then
+              (local.set $mode (i32.and (i32.load offset=20 (local.get $slot)) (i32.const 0x30)))
+              (if (i32.or (i32.eq (local.get $mode) (i32.const 0x10))
+                          (i32.eq (local.get $mode) (i32.const 0x20)))
+                (then
+                  ;; Event timers signal kernel objects, never guest code or
+                  ;; the message queue. Consume even during PM_NOREMOVE: the
+                  ;; signal is independent of message removal.
+                  (local.set $event (i32.load offset=8 (local.get $slot)))
+                  (call $mm_timer_consume_slot (local.get $slot))
+                  (drop (call $host_set_event (local.get $event)))
+                  (if (i32.eq (local.get $mode) (i32.const 0x20))
+                    (then (drop (call $host_reset_event (local.get $event))))))
+                (else (return (local.get $slot))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -306,7 +556,7 @@
   ;; Charge one period to a due slot, retiring it if it was a one-shot.
   (func $mm_timer_consume_slot (param $slot i32)
     (call $mm_timer_consume_due_tick (local.get $slot))
-    (if (i32.load offset=20 (local.get $slot))
+    (if (i32.and (i32.load offset=20 (local.get $slot)) (i32.const 1))
       (then (i32.store (local.get $slot) (i32.const 0)))))
 
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
@@ -598,6 +848,11 @@
         (param $tid i32) (param $msg_ptr i32) (param $hwnd_filter i32)
         (param $msg_min i32) (param $msg_max i32) (param $remove i32)
         (result i32)
+    (local $tracking i32)
+    ;; Retry a generated leave after queue pressure subsides even if there is
+    ;; no further pointer movement. No window lock is held at this boundary.
+    (local.set $tracking (call $mouse_track_record (local.get $tid)))
+    (if (local.get $tracking) (then (drop (call $mouse_track_flush (local.get $tracking)))))
     (loop $retry
       (if (i32.eqz (call $shared_post_queue_peek_tid_raw
             (local.get $tid) (local.get $msg_ptr) (local.get $hwnd_filter)

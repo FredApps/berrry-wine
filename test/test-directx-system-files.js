@@ -21,9 +21,12 @@ async function main() {
   const shippedVfs = { files: new Map() };
   const shipped = { data: new Uint8Array([1, 2, 3]), attrs: 0x20 };
   shippedVfs.files.set('c:\\windows\\system\\ddraw.dll', shipped);
+  shippedVfs.files.set('c:\\windows\\system\\opengl32.dll', shipped);
   boot.mountSystemDataFiles(shippedVfs, []);
   assert.strictEqual(shippedVfs.files.get('c:\\windows\\system\\ddraw.dll'), shipped,
     'a file already at the path is not replaced');
+  assert.strictEqual(shippedVfs.files.get('c:\\windows\\system\\opengl32.dll'), shipped,
+    'an existing OpenGL driver is not replaced');
 
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
@@ -77,6 +80,18 @@ async function main() {
     assert.deepStrictEqual([dv.getUint32(fixed + 8, true), dv.getUint32(fixed + 12, true)],
       [0x00040006, 0x00030206], `${file} is 4.6.3.518, the same as the by-name answer`);
   }
+  const glName = writeStr('OPENGL32.DLL', false);
+  const glPath = e.guest_alloc(260);
+  const glPart = e.guest_alloc(4);
+  const glFull = 'C:\\windows\\system\\opengl32.dll';
+  assert.strictEqual(imports.host.fs_search_path(0, wa(glName), 0, 260, glPath, glPart, 0),
+    glFull.length, 'SearchPath finds the statically emulated OpenGL driver');
+  assert.strictEqual(Buffer.from(u8.subarray(wa(glPath), wa(glPath) + glFull.length)).toString(),
+    glFull, 'OpenGL resolves to the system directory');
+  assert.strictEqual(imports.host.has_dll_file(wa(glPath)), 0,
+    'the OpenGL discovery file stays on the static API dispatch path');
+  assert.strictEqual(dv.getUint32(wa(glPart), true), glPath + glFull.lastIndexOf('\\') + 1,
+    'SearchPath returns the OpenGL filename component');
   console.log('PASS  DirectX system modules exist as versioned files in C:\\WINDOWS\\SYSTEM');
 }
 

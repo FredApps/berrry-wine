@@ -6,6 +6,21 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_event_timer_create") (param $flags i32) (result i32)
+    (call $test_clear_slots)
+    (global.set $image_base (i32.const 0x00400000))
+    (global.set $eip (i32.const 0x00401234))
+    (global.set $mm_timer_in_cb (i32.const 0))
+    (global.set $yield_reason (i32.const 1))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
+    (call $handle_timeSetEvent (i32.const 10) (i32.const 1)
+      (i32.const 0xE0001) (i32.const 0xBAD) (local.get $flags) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_event_timer_peek") (result i32)
+    (call $timer_check_due (i32.const 0x00510000) (i32.const 0)))
+  (func (export "test_event_timer_kill") (param $id i32)
+    (call $handle_timeKillEvent (local.get $id)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
   (func $test_clear_slots
     (local $i i32)
     (block $done (loop $scan
@@ -128,7 +143,40 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: wat } = await bootRenderHarness({ extraWat });
+  let now = 1000;
+  const signals = [];
+  const { exports: wat } = await bootRenderHarness({ extraWat, extraHostOverrides: {
+    get_ticks: () => now,
+    set_event: handle => { signals.push(['set', handle]); return 1; },
+    reset_event: handle => { signals.push(['reset', handle]); return 1; },
+  } });
+
+  for (const mode of [0x10, 0x20]) {
+    for (const periodic of [0, 1]) {
+      signals.length = 0;
+      const id = wat.test_event_timer_create(mode | periodic);
+      assert.ok(id, 'timeSetEvent creates an event timer');
+      assert.strictEqual(wat.fire_mm_timer(), 0, 'event is not due early');
+      assert.deepStrictEqual(signals, []);
+      now += 10;
+      assert.strictEqual(wat.fire_mm_timer(), 0, 'event handle is never entered as guest code');
+      assert.strictEqual(wat.get_eip() >>> 0, 0x00401234);
+      assert.strictEqual(wat.get_esp() >>> 0, 0x00500018, 'signalling leaves the completed API frame intact');
+      assert.strictEqual(wat.get_yield_reason(), 1, 'signalling does not borrow the parked guest context');
+      const expected = mode === 0x10 ? [['set', 0xE0001]] : [['set', 0xE0001], ['reset', 0xE0001]];
+      assert.deepStrictEqual(signals, expected);
+      now += 10;
+      assert.strictEqual(wat.test_event_timer_peek(), 0, 'event timers do not become MM_TIMER messages');
+      assert.deepStrictEqual(signals, periodic ? expected.concat(expected) : expected,
+        'periodic event timers survive consumption; one-shots retire');
+      const count = signals.length;
+      wat.test_event_timer_kill(id);
+      now += 10;
+      assert.strictEqual(wat.fire_mm_timer(), 0);
+      assert.strictEqual(signals.length, count, 'killed timers stop signalling');
+    }
+  }
+  wat.clear_yield();
 
   assert.strictEqual(wat.test_mm_timer_consume_tick(100, 5, 156), 155,
     'late periodic delivery retains the original 5ms phase');

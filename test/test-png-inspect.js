@@ -78,6 +78,17 @@ try {
   assert.match(run('png-crop.js', source, '--rect=1,1,2,2', '--scale=2', `--out=${crop}`),
     /2x2 at 1,1 scaled 2x/);
   assert.deepStrictEqual([inspect.loadPng(crop).width, inspect.loadPng(crop).height], [4, 4]);
+
+  // --gain lifts near-black pixels into view and saturates rather than wrapping,
+  // which is the whole point: a glyph drawn at #00000e on black has to come out
+  // visible, and the background it sits on has to stay black.
+  const lifted = path.join(temp, 'gain.png');
+  assert.match(run('png-crop.js', source, '--rect=0,0,8,8', `--gain=4`, `--out=${lifted}`),
+    /8x8 at 0,0 scaled 1x gain 4x/);
+  const liftedPng = inspect.loadPng(lifted);
+  assert.deepStrictEqual(inspect.pixel(liftedPng, 1, 1), [0, 0, 0, 255]);
+  assert.deepStrictEqual(inspect.pixel(liftedPng, 0, 0), [0, 255, 255, 255]);
+  assert.deepStrictEqual(inspect.pixel(liftedPng, 2, 2), [255, 255, 255, 255]);
   assert.match(run('png-crop-desktop.js', source, '--dry-run', '--pad=0'),
     /crop\s+fixture\.png\s+8x8 -> 6x6/);
   assert.match(run('png-inspect.js', 'pixel', '1,1', source), /\(1,1\)=000000/);

@@ -662,4 +662,3 @@
             (call $ctrl_table_get_id (local.get $hwnd))
             (local.get $dis)))
     (call $heap_free (local.get $dis)))
-

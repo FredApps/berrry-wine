@@ -3,6 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // A direct link (?app=ID) is a request for that program, not for the
+    // desktop. Marked here, before the first paint, so CSS can keep the
+    // desktop, its icons and the taskbar from ever being drawn; the desktop
+    // is built only when the visitor leaves the program. The launch window
+    // counts its 500ms from navigation start (startedAt 0 on the
+    // performance.now() clock): lib/launch-progress.js picks this up as soon
+    // as it loads. ?debug keeps the old page, toolbar and all.
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var id = q.get('app');
+      if (!id || q.has('debug')) return;
+      document.documentElement.classList.add('direct-launch');
+      window.__wineDirectLaunch = { appId: id, startedAt: 0 };
+    })();
+  </script>
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#008080">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -601,6 +617,128 @@
       display: flex;
       align-items: center;
     }
+    /* A direct ?app= link (the head script sets html.direct-launch): no
+       desktop, no icons, no taskbar, no debug chrome -- a black page with,
+       if the launch takes longer than 500ms, the launch window on it. The
+       desktop is built when the program exits (ensureDesktop). */
+    html.direct-launch, html.direct-launch body,
+    html.direct-launch #screen-wrap { background: #000 !important; }
+    html.direct-launch #shell { margin: 0; border: 0; background: transparent; }
+    html.direct-launch #titlebar,
+    html.direct-launch #toolbar,
+    html.direct-launch #log,
+    html.direct-launch #debug-peek,
+    html.direct-launch #taskbar,
+    html.direct-launch #start-menu,
+    html.direct-launch #desktop-icons,
+    html.direct-launch #readme-window,
+    html.direct-launch #build-stamp,
+    html.direct-launch #compile-status { display: none !important; }
+
+    /* The launch window (lib/launch-progress.js): the Win98 "File Download"
+       dialog. Above the screen canvas and the taskbar, below crash reports
+       and the LAN cards. Never modal on the desktop -- it takes only the
+       clicks that land on it. */
+    .wa-launch {
+      position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
+      z-index: 5000;
+      width: min(400px, calc(100vw - 20px));
+      max-height: calc(100dvh - 16px); overflow: auto;
+      background: #c0c0c0; color: #000;
+      border: 1px solid; border-color: #dfdfdf #000 #000 #dfdfdf;
+      box-shadow: inset 1px 1px #fff, inset -1px -1px #808080, 2px 2px 0 rgba(0,0,0,.35);
+      font: 11px "MS Sans Serif", Tahoma, Arial, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    .wa-launch[hidden], .wa-launch.wa-launch-minimized { display: none; }
+    .wa-launch [hidden] { display: none !important; }
+    .wa-launch-titlebar {
+      display: flex; align-items: center; gap: 4px; margin: 2px; padding: 2px 3px; height: 18px;
+      background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: bold;
+      white-space: nowrap; overflow: hidden; touch-action: none; cursor: default;
+    }
+    .wa-launch-ico { width: 16px; height: 16px; image-rendering: pixelated; flex: none; }
+    .wa-launch-titletext { overflow: hidden; text-overflow: ellipsis; }
+    .wa-launch-tbtns { margin-left: auto; display: flex; gap: 2px; flex: none; }
+    .wa-launch-tb {
+      width: 16px; height: 14px; padding: 0; background: #c0c0c0; color: #000;
+      border: 1px solid; border-color: #fff #000 #000 #fff; box-shadow: inset -1px -1px #808080;
+      font: bold 9px/12px Tahoma, Arial, sans-serif; text-align: center; cursor: default;
+    }
+    .wa-launch-body { padding: 8px 10px 10px; }
+    .wa-launch-art { height: 44px; margin-bottom: 8px; }
+    .wa-launch-art svg { display: block; }
+    .wa-launch-page { animation: wa-launch-fly 1.6s linear infinite; }
+    @keyframes wa-launch-fly {
+      0% { transform: translate(52px, 14px); }
+      50% { transform: translate(122px, 2px); }
+      100% { transform: translate(196px, 14px); }
+    }
+    .wa-launch-err { display: flex; gap: 10px; align-items: flex-start; margin: 2px 0 6px; }
+    .wa-launch-erricon {
+      width: 32px; height: 32px; border-radius: 50%; flex: none;
+      background: #e00000; color: #fff; border: 1px solid #800000;
+      font: bold 20px/32px Arial, sans-serif; text-align: center;
+    }
+    .wa-launch-err.wa-launch-noicon .wa-launch-erricon { display: none; }
+    .wa-launch-heading { font-weight: bold; padding-top: 2px; }
+    .wa-launch-saving div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+    .wa-launch-bar {
+      position: relative; height: 18px; margin: 6px 0 2px; padding: 2px; overflow: hidden;
+      border: 1px solid; border-color: #808080 #fff #fff #808080;
+    }
+    .wa-launch-fill {
+      height: 100%; width: 0;
+      background: repeating-linear-gradient(90deg, #000080 0 9px, transparent 9px 11px);
+    }
+    .wa-launch-indeterminate .wa-launch-fill {
+      position: absolute; top: 2px; bottom: 2px; width: 42px; height: auto;
+      animation: wa-launch-slide 1.4s linear infinite;
+    }
+    @keyframes wa-launch-slide { from { left: -42px; } to { left: 100%; } }
+    .wa-launch-status { margin-top: 6px; }
+    .wa-launch-status div { margin-bottom: 2px; }
+    .wa-launch-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin-top: 8px; }
+    .wa-launch-grid span:nth-child(even) { overflow-wrap: anywhere; }
+    .wa-launch-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    .wa-launch-btn {
+      min-width: 75px; height: 23px; padding: 0 8px; background: #c0c0c0; color: #000;
+      font: 11px "MS Sans Serif", Tahoma, Arial, sans-serif;
+      border: 1px solid; border-color: #fff #000 #000 #fff; box-shadow: inset -1px -1px #808080;
+      cursor: default;
+    }
+    .wa-launch-btn:active { border-color: #000 #fff #fff #000; box-shadow: inset 1px 1px #808080; }
+    .wa-launch-default { box-shadow: inset -1px -1px #808080, 0 0 0 1px #000; }
+    .wa-launch-btn:focus-visible, .wa-launch-tb:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+    .wa-launch-details { margin-top: 8px; max-height: 140px; overflow: auto; background: #fff; border: 2px inset #dfdfdf; }
+    .wa-launch-details table { width: 100%; border-collapse: collapse; }
+    .wa-launch-details th {
+      position: sticky; top: 0; text-align: left; font-weight: normal; padding: 1px 4px;
+      background: #c0c0c0; border: 1px solid; border-color: #fff #808080 #808080 #fff;
+    }
+    .wa-launch-details td { padding: 1px 4px; white-space: nowrap; }
+    .wa-launch-live {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+    }
+    @media (pointer: coarse) {
+      .wa-launch-btn { height: 44px; min-width: 88px; }
+      .wa-launch-tb { width: 28px; height: 22px; }
+      .wa-launch-titlebar { height: 26px; }
+    }
+    /* A landscape phone: the art goes, the body tightens, the window fits. */
+    @media (max-height: 420px) {
+      .wa-launch { top: 50%; width: min(460px, calc(100vw - 20px)); }
+      .wa-launch-art { display: none; }
+      .wa-launch-body { padding: 6px 10px 8px; }
+      .wa-launch-foot { margin-top: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .wa-launch-page { animation: none; transform: translate(122px, 2px); }
+      .wa-launch-indeterminate .wa-launch-fill { animation: none; left: 30%; }
+    }
+    #launch-task-buttons { display: flex; gap: 2px; min-width: 0; }
+    #launch-task-buttons:empty { display: none; }
     #compile-status {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
       background: #c0c0c0; border: 2px outset #dfdfdf; padding: 16px 24px;
@@ -1444,6 +1582,7 @@
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
         <optgroup label="Local Candidates">
+          <option value="pirates_2004">Sid Meier's Pirates! (experimental)</option>
           <option value="far_manager_170">Far Manager 1.70</option>
           <option value="winrar_310">WinRAR 3.10</option>
           <option value="cave_story">Cave Story</option>
@@ -1457,6 +1596,11 @@
           <option value="icy_tower_installer">Icy Tower Installer</option>
           <option value="snood">Snood 2.2W</option>
           <option value="snood_installer">Snood 2.2W Installer</option>
+          <option value="ricochet_xtreme">Ricochet Xtreme</option>
+          <option value="alien_shooter">Alien Shooter</option>
+          <option value="collapse_crunch">Collapse! Crunch</option>
+          <option value="zuma_deluxe">Zuma Deluxe (experimental)</option>
+          <option value="crimsonland">Crimsonland (experimental)</option>
           <option value="elasto_mania">Elasto Mania</option>
           <option value="jardinains">Jardinains!</option>
           <option value="jardinains_installer">Jardinains! Installer</option>
@@ -1585,12 +1729,12 @@
         <label title="Compile proven x87 expression regions and fold contiguous x87 islands. On by default; ?no-x87-fold starts it off. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" checked onchange="setX87Fusion(this.checked)">x87 fold</label>
         <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
         <label title="WebGL accelerates Direct3D and Glide when available, with software fallback. Choose Software to use CPU rendering. Relaunch the app after changing this.">GPU: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="software">Software</option></select></label>
+        <label title="Delay Direct3D surface readback until pixels are accessed. Applies to running apps using shared WebGL. Disable if a game shows stale graphics."><input id="lazy-sync-toggle" type="checkbox" checked onchange="setLazySync(this.checked)">Lazy sync</label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Real guest threads, on by default (?no-threads starts this page without them): the guest main thread and every CreateThread target run in Workers. Needs cross-origin isolation, which the page installs once (sw-coi.js) and reloads for. An app with `threads: false` in lib/apps.js always runs cooperatively."><input id="threads-toggle" type="checkbox" checked onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
       </span>
       <span class="debug-profile">
-        <label title="Delay Direct3D surface readback until pixels are accessed. Applies to running apps using shared WebGL. Disable if a game shows stale graphics."><input id="lazy-sync-toggle" type="checkbox" checked onchange="setLazySync(this.checked)">Lazy sync</label>
         <label title="Freeze the emulator: no slices run, no frames are drawn and the guest clock stops until somebody steps it. The browser twin of the headless CLI — an agent screenshots, clicks, steps, screenshots again, and the picture cannot change in between. Uncheck to go back to live; the guest sees no time jump either way."><input id="frozen-toggle" type="checkbox" onchange="setFrozenMode(this.checked)">Frozen</label>
         <button id="frozen-step-btn" onclick="frozenStepOnce(event)" title="Run one step's worth of guest work and stop again. Shift-click for 100 steps.">Step</button>
         <span id="frozen-status"></span>
@@ -1671,26 +1815,29 @@ Resource-aware Win98 emulator
   <div id="taskbar">
     <button class="start-btn" id="start-btn" onclick="toggleStartMenu(event)"><span class="win-flag"><span style="background:#FF0000"></span><span style="background:#00FF00"></span><span style="background:#0000FF"></span><span style="background:#FFFF00"></span></span>Start</button>
     <div id="task-buttons"></div>
+    <!-- The launch window's button ("34% of Diablo"): kept apart from
+         #task-buttons, which the renderer rebuilds from guest windows. -->
+    <div id="launch-task-buttons"></div>
     <div id="clock-area"><div id="notify-icons" role="status" aria-label="Notification area"></div><span id="clock"></span></div>
   </div>
   <div id="start-menu">
     <div class="banner">Wine&nbsp;Assembly</div>
     <div class="items">
-      <a class="item" href="#" id="start-add-game-item" onclick="addGameFromStart(event)" title="Open a game, disc image or archive from this device"><span class="ico"><img src="icons/ui/add-game.png" width="16" height="16" alt="&#128190;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Add a Game...</a>
+      <a class="item" href="#" id="start-add-game-item" onclick="addGameFromStart(event)" title="Open a game, disc image or archive from this device"><span class="ico"><img data-src="icons/ui/add-game.png" width="16" height="16" alt="&#128190;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Add a Game...</a>
       <div class="sep"></div>
-      <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico"><img src="icons/ui/readme.png" width="16" height="16" alt="&#128196;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Read Me</a>
-      <a class="item" href="apps/"><span class="ico"><img src="icons/ui/apps.png" width="16" height="16" alt="&#127918;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Apps</a>
-      <a class="item" href="design/"><span class="ico"><img src="icons/ui/design.png" width="16" height="16" alt="&#128208;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Design</a>
-      <a class="item" href="story.html"><span class="ico"><img src="icons/ui/story.png" width="16" height="16" alt="&#128218;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>The Story</a>
-      <a class="item" href="https://berrry.app/create?remix=wine-assembly" target="_blank" rel="noopener"><span class="ico"><img src="icons/ui/berrry.png" width="16" height="16" alt="&#127827;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Remix on Berrry</a>
-      <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico"><img src="icons/ui/github.png" width="16" height="16" alt="&#128187;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Source on GitHub</a>
+      <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico"><img data-src="icons/ui/readme.png" width="16" height="16" alt="&#128196;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Read Me</a>
+      <a class="item" href="apps/"><span class="ico"><img data-src="icons/ui/apps.png" width="16" height="16" alt="&#127918;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Apps</a>
+      <a class="item" href="design/"><span class="ico"><img data-src="icons/ui/design.png" width="16" height="16" alt="&#128208;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Design</a>
+      <a class="item" href="story.html"><span class="ico"><img data-src="icons/ui/story.png" width="16" height="16" alt="&#128218;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>The Story</a>
+      <a class="item" href="https://berrry.app/create?remix=wine-assembly" target="_blank" rel="noopener"><span class="ico"><img data-src="icons/ui/berrry.png" width="16" height="16" alt="&#127827;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Remix on Berrry</a>
+      <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico"><img data-src="icons/ui/github.png" width="16" height="16" alt="&#128187;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Source on GitHub</a>
       <div class="sep"></div>
       <a class="item" href="#" id="start-record-item" onclick="toggleRecordingFromStart(event)" title="Record screen + audio to video"><span class="ico" id="start-record-ico">&#9679;</span><span id="start-record-label">Record Screen</span></a>
-      <a class="item" href="#" id="start-agent-item" onclick="connectAgentFromStart(event)" title="Let an AI agent see and play this session"><span class="ico"><img src="icons/ui/agent.png" width="16" height="16" alt="&#129302;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Connect Agent...</a>
+      <a class="item" href="#" id="start-agent-item" onclick="connectAgentFromStart(event)" title="Let an AI agent see and play this session"><span class="ico"><img data-src="icons/ui/agent.png" width="16" height="16" alt="&#129302;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Connect Agent...</a>
       <div class="sep"></div>
-      <a class="item" href="?debug"><span class="ico"><img src="icons/ui/debug.png" width="16" height="16" alt="&#128295;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Debug Mode</a>
+      <a class="item" href="?debug"><span class="ico"><img data-src="icons/ui/debug.png" width="16" height="16" alt="&#128295;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span>Debug Mode</a>
       <div class="sep"></div>
-      <a class="item" href="#" id="start-account-item" onclick="accountFromStart(event)" title="Your berrry account: online play and saves"><span class="ico"><img src="icons/ui/account.png" width="16" height="16" alt="&#128100;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span><span id="start-account-label">Log In...</span></a>
+      <a class="item" href="#" id="start-account-item" onclick="accountFromStart(event)" title="Your berrry account: online play and saves"><span class="ico"><img data-src="icons/ui/account.png" width="16" height="16" alt="&#128100;" draggable="false" style="vertical-align:middle;image-rendering:pixelated" onerror="this.replaceWith(this.alt)"></span><span id="start-account-label">Log In...</span></a>
       <a class="item" href="#" id="start-shutdown-item" onclick="openShutdownFromStart(event)" title="Shut Down Windows"><span class="ico"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="1.5" width="13" height="9" fill="#c0c0c0" stroke="#000"/><rect x="2" y="3" width="10" height="6" fill="#1084d0"/><rect x="5" y="11" width="4" height="2" fill="#808080"/><rect x="3" y="13" width="8" height="1.5" fill="#000"/><circle cx="12.5" cy="12" r="3" fill="#ffd700" stroke="#000"/></svg></span>Shut Down...</a>
     </div>
   </div>
@@ -1807,6 +1954,9 @@ Resource-aware Win98 emulator
     // runtime dependency order, now named once without 59 hand-bumped keys.
     const WINE_RUNTIME_SCRIPTS = Object.freeze([
       "lib/region-map.generated.js",
+      // Second: a direct ?app= link's launch window counts its 500ms from
+      // navigation start, so it has to be live while the rest still loads.
+      "lib/launch-progress.js",
       "lib/mem-utils.js",
       "lib/dib.js",
       "lib/gdi-surface.js",
@@ -2073,12 +2223,31 @@ Resource-aware Win98 emulator
       screenCanvasSize: () => screenCanvasSize(),
       appendDebugLog: text => appendDebugLog(text),
       singleApp: () => SINGLE_APP_MODE,
+      // The launch window (lib/launch-progress.js) and what it needs from
+      // the page: a name and an icon for the app, whether this is a direct
+      // ?app= link, and the way back to the desktop from one.
+      launchUi: window.wineLaunchUi || null,
+      appLabel: id => appLabelFor(id),
+      appIcon: id => appIconFor(id),
+      directLaunch: () => document.documentElement.classList.contains('direct-launch'),
+      onShowDesktop: () => ensureDesktop(),
       onAppBootingChange: booting => {
         document.body.classList.toggle('app-booting', !!booting);
       },
       onAppRunningChange: running => {
         document.body.classList.toggle('app-running', !!running);
         if (!running) document.body.classList.remove('windowed-focus-close');
+        // The program a direct link was for has gone: now the desktop. Not
+        // while a launch window is asking something (a Cancel's "Start
+        // again", a download error) or a hand-off (WRITE.EXE -> WordPad) is
+        // about to start the next program -- hence the turn of the loop.
+        if (!running && document.documentElement.classList.contains('direct-launch')) {
+          setTimeout(() => {
+            if (runningApps.length || shell.launchInFlight) return;
+            if (window.wineLaunchUi && window.wineLaunchUi.onScreen) return;
+            ensureDesktop();
+          }, 0);
+        }
         // Windowed phone games need Safari's scroll affordance too. They
         // never take DirectDraw exclusive mode, so the renderer cannot arm
         // it for them. Desktop/debug and browsers with a real API stay as-is.
@@ -2187,10 +2356,20 @@ Resource-aware Win98 emulator
     // icon here, launching the installed program from its filesystem.
     shell.onGuestShortcuts(items => { for (const item of items) mediaUI.addSessionIcon(item); });
     window.browserShell.onAccountChange(refreshStartAccount);
-    refreshStartAccount();
-    // Kept media becomes desktop icons again on every visit. Nothing is read
-    // from OPFS here beyond the catalog -- the disc itself is opened on launch.
-    mediaUI.restoreLibrary().catch(e => appendDebugLog(`[media] ${e && e.message || e}`));
+    // The account probe and the kept-media catalog are desktop work: they run
+    // in ensureDesktop(), which a direct ?app= link reaches only on leaving
+    // its program.
+    let mediaLibraryRestore = null;
+    function restoreMediaLibrary() {
+      if (!mediaLibraryRestore) {
+        // Kept media becomes desktop icons again on every visit. Nothing is
+        // read from OPFS here beyond the catalog -- the disc itself is opened
+        // on launch.
+        mediaLibraryRestore = mediaUI.restoreLibrary()
+          .catch(e => appendDebugLog(`[media] ${e && e.message || e}`));
+      }
+      return mediaLibraryRestore;
+    }
 
     const threadStateViewer = window.debugThreadState.createDebugThreadState({
       debugMode: DEBUG_MODE,
@@ -2302,17 +2481,58 @@ Resource-aware Win98 emulator
     // goes to the shell directly rather than through the <select>, because the
     // selector is filtered down to the desktop set outside ?debug and a valid
     // registry id that is simply not in the dropdown should still launch.
+    //
+    // It launches at DOMContentLoaded, not `load`: `load` also waits for every
+    // image on the page, and nothing about starting a program needs them.
+    // The launch adopts the window the head script began at navigation start
+    // (lib/launch-progress.js), so its 500ms counts from the click on the
+    // link, not from when the runtime finished loading.
     (() => {
       // Back from a Berrry sign-in that returned to the site root rather
       // than to the room link that sent it there: go on to that link.
       if (window.browserShell.resumeAfterSignIn()) return;
       const wanted = new URLSearchParams(location.search).get('app');
       if (!wanted) return;
-      window.addEventListener('load', () => {
+      const direct = window.__wineDirectLaunch;
+      const intent = direct && direct.launch;
+      // Before the shell has adopted it, the window can only offer the way
+      // out (a Cancel during the first second of a cold load).
+      if (intent) {
+        intent.setInfo({ handlers: {
+          showDesktop: () => ensureDesktop(),
+          closed: () => ensureDesktop(),
+          again: () => shell.launchApp(wanted),
+        } });
+      }
+      const start = async () => {
+        // An imported program's id only exists once the kept-media catalog
+        // has been read; nothing else needs that catalog on a direct link.
+        if (!apps[wanted]) await restoreMediaLibrary();
+        if (intent && intent.status !== 'pending') return;  // cancelled already
+        if (!apps[wanted]) {
+          appendDebugLog(`?app=${wanted}: no such program`);
+          if (intent) {
+            intent.fail({
+              title: 'Wine-Assembly',
+              heading: `There is no program called “${wanted}”.`,
+              message: 'The link may be mistyped or out of date.',
+              retry: false,
+              retryKeeps: false,
+            });
+          } else {
+            ensureDesktop();
+          }
+          return;
+        }
         const select = document.getElementById('app-select');
         if (select && [...select.options].some(o => o.value === wanted)) select.value = wanted;
-        shell.launchApp(wanted);
-      });
+        shell.launchApp(wanted, { directIntent: intent || null, startedAt: 0 });
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { void start(); }, { once: true });
+      } else {
+        void start();
+      }
     })();
     // Decode-time superop switches. The flag is read when an instance is
     // created (host.js), so the honest A/B is toggle-then-relaunch; toggling
@@ -2438,15 +2658,10 @@ Resource-aware Win98 emulator
         (q.has('d3dim-gpu') && /^(0|false|off)$/i.test(q.get('d3dim-gpu')) ? 'software' : 'webgl');
       window.WineD3D.renderer = wanted === 'software' ? 'software' : 'webgl';
       window.WINE_D3DIM_GPU = window.WineD3D.renderer === 'webgl';
-      window.addEventListener('load', syncD3DSelect);
-    })();
-    function setD3DRenderer(value) {
-      const mode = D3D_MODES[value];
-      if (!mode) return;
       window.WINE_D3DIM_LAZY_SYNC = !q.has('no-lazy-sync');
       document.getElementById('lazy-sync-toggle').checked = window.WINE_D3DIM_LAZY_SYNC;
-      window.WineD3D.renderer = mode.renderer;
-      window.WINE_D3DIM_GPU = mode.d3dim;
+      window.addEventListener('load', syncD3DSelect);
+    })();
     async function setLazySync(on) {
       window.WINE_D3DIM_LAZY_SYNC = !!on;
       document.getElementById('lazy-sync-toggle').checked = !!on;
@@ -2459,6 +2674,11 @@ Resource-aware Win98 emulator
         throw error;
       }
     }
+    function setD3DRenderer(value) {
+      const mode = D3D_MODES[value];
+      if (!mode) return;
+      window.WineD3D.renderer = mode.renderer;
+      window.WINE_D3DIM_GPU = mode.d3dim;
       syncD3DSelect();
       appendDebugLog(`[gpu] Glide and D3D8/9 on ${mode.renderer === 'software' ? 'the software backend' : 'WebGL'}, ` +
         `DX2-7 on ${mode.d3dim ? 'WebGL' : 'the WAT software rasterizer'}` +
@@ -2841,12 +3061,62 @@ Resource-aware Win98 emulator
     }
     showBuildStamp();
 
-    if (!DEBUG_MODE) {
-      document.body.classList.add('no-debug');
+    // Everything that makes the desktop a desktop: the icon grid (and its
+    // ~90 icon images), the Start menu's pictures, the account probe and the
+    // kept-media catalog. A normal visit builds it at DOMContentLoaded; a
+    // direct ?app= link builds it only when the visitor leaves the program,
+    // so that link fetches the runtime and that program and nothing else.
+    let desktopBuilt = false;
+    function ensureDesktop() {
+      if (document.documentElement.classList.contains('direct-launch')) {
+        const url = new URL(location.href);
+        url.searchParams.delete('app');
+        url.searchParams.delete('room');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+      }
+      if (desktopBuilt) return;
+      desktopBuilt = true;
+      const wasDirect = document.documentElement.classList.contains('direct-launch');
+      document.documentElement.classList.remove('direct-launch');
+      for (const img of document.querySelectorAll('#start-menu img[data-src]')) {
+        img.src = img.dataset.src;
+        img.removeAttribute('data-src');
+      }
+      refreshStartAccount();
+      restoreMediaLibrary();
+      if (!DEBUG_MODE) initDesktop();
+      // The page's chrome just changed shape under the canvas.
+      if (wasDirect) resizeCanvas();
+    }
+    function appLabelFor(id) {
+      for (const list of [DEFAULT_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS]) {
+        const row = (list || []).find(entry => entry && entry[0] === id);
+        if (row && row[1]) return row[1];
+      }
+      const app = apps[id] || {};
+      return app.title || app.label || app.name || id;
+    }
+    // The desktop icon when there is one (already decoded, maybe from the
+    // exe); otherwise the pre-extracted PNG, which a direct link loads alone.
+    function appIconFor(id) {
+      const img = document.querySelector(`.desktop-icon[data-app="${CSS.escape(id)}"] .icon-img img`);
+      if (img && img.src) return img.src;
+      return typeof preExtractedIconUrl === 'function' ? preExtractedIconUrl(id) : '';
+    }
+    // Closing the launch window hands the keyboard back to the guest.
+    window.wineLaunchUiRestoreFocus = () => {
+      const canvas = document.getElementById('screen');
+      if (canvas && runningApps.length) {
+        try { canvas.focus({ preventScroll: true }); } catch (_) {}
+      }
+    };
+
+    if (!DEBUG_MODE) document.body.classList.add('no-debug');
+    if (!document.documentElement.classList.contains('direct-launch')) {
       if (document.readyState === 'loading') {
-        window.addEventListener('DOMContentLoaded', initDesktop);
+        window.addEventListener('DOMContentLoaded', ensureDesktop);
       } else {
-        initDesktop();
+        ensureDesktop();
       }
     }
 

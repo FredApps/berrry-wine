@@ -86,7 +86,7 @@ The summary does not change task status, dispatch agents, or resolve blockers.
 | What matters now | Agent-maintained `ops/STATUS.md` |
 | Corpus | `test/candidate-corpus/manifest.json`, matching tasks and recorded runs |
 | Candidate notes | Existing `docs/re-notes/<candidate-id>.md` or note paths named in the manifest |
-| Activity | Latest 150 nonempty lines of append-only `messageboard.txt` |
+| Activity | Latest 150 messageboard entries plus up to 150 unique Git commits reachable from local refs, with All / Commits / Messages filtering |
 | Agents | Project-scoped local Claude and Codex JSONL session logs, local process snapshots |
 | Runs | `scratch/runs/<id>/result.json` and preserved `ops/runs/<id>/result.json` |
 
@@ -94,6 +94,31 @@ The dashboard does not treat manifest notes or smoke-test `READY` as evidence
 of gameplay. Fixture **present** means the named executable files exist, not
 that their checksums or behavior have been verified. Candidate IDs are exact;
 they are not inferred from executable basenames.
+
+## Persistent Claude terminals on the Linux box
+
+Run `node ops/claude-tmux.js --session-id UUID --id claude-worker --tmux wine-claude-worker --label 'Claude worker' --wait`
+to resume an existing conversation interactively and register its current pane
+and PID. Unlike `claude -p`, the interactive session stays available after a
+turn. The launcher waits for an existing run of the same session to finish;
+it never kills or duplicates that run. Use this launcher for subsequent resumes
+instead of starting headless copies of a session that already has a terminal.
+
+On the dedicated box, the user explicitly requested Claude permission bypass.
+Pass `--dangerously-skip-permissions` to the launcher for that mode; the default
+does not bypass permissions. This controls tool permission prompts, not task
+decisions: design approval, release decisions, and existing review blockers
+still require their recorded resolution.
+
+Terminal records expose provider, lifecycle state, and permission mode. Ended
+panes remain unavailable until resumed and registered; they do not generate
+urgent approval-monitor warnings. Codex's menu parser and y/p/Escape controls
+are not applied to Claude. Claude in normal permission mode is operated through
+the terminal; automated Claude approval-menu buttons are not implemented.
+Telegram chat currently routes to the Codex coordinator, which must relay
+Claude task feedback through its persistent terminal. Linux Claude process
+matching validates machine/namespace, kernel start ticks and wall-clock start
+before showing PID, CPU, RSS and descendants.
 
 ## Tasks: use the existing Markdown file
 
@@ -218,6 +243,15 @@ Use a stable explicit `id:` (letters, digits, underscore, dot or hyphen) to enab
 replies. Quiet sessions and unstructured messageboard prose are not inferred to
 be blocked tasks. `blocker`, `needs`, and `waiting-on` are single-line descriptions.
 
+Blockers are split into **Needs your input** and **Agent-resolvable** by
+`blocker-model.js` `actor()`, the same function Telegram `/blockers` uses, from
+recorded fields only: a blocked dependency → agent; `waiting-on` saying "no user
+decision" → agent; `waiting-on` naming the user, human, you, maintainer,
+dashboard-user or an approval → user; an automated-review stop or a capacity need
+(host/CPU/GPU) → user; any other `waiting-on` → agent; nothing recorded → agent
+(the owner must state the need). Each row shows the basis. Write
+`waiting-on: user` when the user must act.
+
 **Respond → Post reply to messageboard** appends one timestamped line:
 
 ```text
@@ -332,10 +366,33 @@ paths are relative to that run folder; PNG/JPEG/WebP/JSON/text/log files are
 served. Escaping paths and symlinks outside the folder are rejected. A missing
 artifact is reported, not silently treated as a successful capture.
 
+For reviewed gameplay scenes, also record `verification: "reviewed"`, a named
+`gameplaySceneReview.reviewer`, and an explicit `gameplayScreenshots` image-name
+allowlist. The corpus prefers the newest such scene, labels it **Reviewed gameplay
+scene**, and identifies an earlier capture while retaining the latest run outcome.
+Only existing, safely contained screenshot artifacts qualify; diagrams and route
+text cannot promote an image. This records a review assertion, not automatic scene
+recognition or proof of controls/FPS. Without that metadata, ordinary captures
+remain visible without the gameplay badge.
+
+### Agent rows on Overview and Agents
+
+Agents are one full-width column. Each agent is exactly two text lines: line 1
+provider, short session id, name (task title, else the task ID named in its
+prompt), status word and last-activity age; line 2 the decision needed, else the
+active task's `Next:`, else `Latest:` (the session's last assistant text), else
+"No result or next step recorded". Each subagent (`parentAgentId`) is the same two
+lines under its parent; three are shown, the rest behind "Show N more". Status
+words are observations: "Quiet · check session" after 15 minutes without session
+activity, "Turn ended" when the log is idle; the age is activity, never progress.
+Process, tokens, evidence previews and timestamps are in the agent detail (▸).
+A current subagent keeps its parent row current; search matches subagents too.
+On phones lines wrap instead of truncating.
+
 ### Visuals on Overview and Agents
 
-The EXE corpus prioritizes candidates linked to running tasks, then review,
-blocked, and queued tasks. Within those groups, failed/timeout/harness-error
+Within each category the EXE corpus prioritizes candidates linked to running
+tasks, then review, blocked, and queued tasks. Within those groups, failed/timeout/harness-error
 results come before untested, unknown, and passed results; names break ties.
 An In progress banner names the active task, with a matching filter. Completed
 and deferred tasks do not mark a candidate active. Task state and run outcome
@@ -495,14 +552,30 @@ session logs. `CHROME` can point to a Chrome executable.
 
 ## Corpus assessments, source groups and FPS
 
+EXE corpus groups candidates by an editorial genre/application category, with
+category counts and a category filter that combines with search, source group
+and evidence/status filters. Work and failure priority is retained within each
+category. `ops/corpus-categories.js` assigns exact candidate identities from the
+local manifest and registry; installer entries use the target title's category. New unmapped
+identities are explicitly **Unclassified**. Categories do not establish gameplay,
+compatibility or permission to distribute assets.
+
+The corpus includes registry-only entries from `lib/apps.js`, including WEP and
+community games. Exact app IDs and executable paths deduplicate them against the
+manifest using `ops/corpus-inventory.js`, shared with the gameplay coverage audit.
+Unknown registry entries stay visible for classification. Registered executable
+presence is reported separately from the original candidate fixture; neither
+proves companion assets or a playable route. Registry-only rows use the
+**Registry only** source group and retain their stable app ID for run association.
+
 `ops/corpus-status.json` contains a dated evidence assessment and next step for each
 candidate; `ops/corpus-status.md` is the readable audit. The dashboard separates
 this assessment from an individual run outcome and flags a newer run for review.
 Source groups and package/distribution notes are independent of compatibility.
-The 76-candidate manifest does not yet index the WEP and community-remake registry
+The manifest and registry are combined for display, including WEP and community
 collections. Do not treat a demo label as permission to publish its assets.
 
-To publish FPS, add `performance` to the existing run's `result.json`:
+To publish a recorded presentation-event rate, add `performance` to the existing run's `result.json`:
 
 ```json
 {"performance":{"metric":"guest-presents","measuredAt":"2026-10-02T00:00:00Z","renderer":"D3D / WebGL","scene":"Race cockpit","host":"Machine / CPU","gpu":"Actual renderer string","wasmSha256":"exact module hash","historical":false,"samples":[{"frames":600,"durationMs":10000,"p95FrameMs":21.4}],"notes":"Route and measurement conditions"}}
@@ -510,10 +583,13 @@ To publish FPS, add `performance` to the existing run's `result.json`:
 
 Capture counted guest presents/flips over wall time in a reviewed gameplay scene.
 Keep raw measurement output in the run's artifacts. Record hardware GPU versus
-SwiftShader explicitly. FPS is total counted frames / total sampled wall seconds;
-p95 is shown per sample, never averaged across samples. Zero FPS is valid, missing
-measurements are unknown. CLI batch counts, CPU-window seconds and browser rAF
-are not gameplay FPS. Historical FPS remains labelled with renderer and age.
+SwiftShader explicitly. The event rate is total counted events / total sampled wall
+seconds; p95 is shown per sample, never averaged across samples. A zero rate is
+valid; missing measurements are unknown. Legacy `guest-presents` records without
+a qualified frame discriminator display **guest presentation events/s** and
+**p95 presentation interval**, preserving their numbers without certifying FPS.
+CLI batch counts, CPU-window seconds and browser rAF are not gameplay FPS.
+Historical measurements remain labelled with renderer and age.
 Current archived measurements cover NFS3 and GTA2 under SwiftShader only; fresh
 hardware baselines are queued as `OPS-GAME-FPS-BASELINE` and `NFS3-RENDERER-BENCH`.
 
@@ -523,12 +599,29 @@ For an identified raw guest Flip collector, set optional
 numbers but represent event counts, events/second and successive Flip intervals.
 Cards and sample columns then say **guest Flip events/s** and **p95 Flip interval**.
 This discriminator does not certify unique logical frames or displayed FPS.
+
+Source-qualified game-specific render submissions use both `metric` and
+`counterKind` set to `guest-logical-frame-submissions`, with the same counted
+`frames`/`durationMs` samples. The reader requires `qualification.accepted: true`
+and nonempty `sceneReview`, `counterReview`, and `evidence` fields in that object.
+These identify the reviewers and the linked run receipt; they are documentary
+assertions, not automatic revalidation of the raw counter. Cards label this
+**logical gameplay frames/s**. Preserve raw observations, pinned binaries,
+temporal scene captures, counter proof, and instrumentation conditions in the
+run. Physical displayed FPS remains unknown; leave unavailable p95 values null.
 Unknown explicit counter kinds are rejected; omission preserves existing labels.
 The archived NFS3/GTA2 collectors count originating `dx_trace` kind6, not public
 frame callbacks; surface IDs and same-context arm/stop calibration were absent.
 Their reported p95 uses sorted intervals at zero-based `floor(count*0.95)`;
 preserve that convention and each sample rather than averaging/recomputing it.
 See `ops/handoffs/ops-historical-fps-semantics.md` for exact collector evidence.
+
+Candidate details add **Before / after** when more than one measurement is
+recorded: the newest measurement is compared with each earlier one only when
+metric, counter, scene, renderer, host and GPU are identical and both runs
+recorded `wasmSha256`; the delta is shown with the metric label and whether the
+builds differ. Every other earlier measurement is listed as not comparable with
+the fields that differ. One measurement says "only one measurement recorded".
 
 ## Reviewed historical screenshot recovery
 
@@ -544,8 +637,21 @@ matching rules or turn image filenames into pass/fail results.
 Corpus displays linked screenshot coverage and filters for present/missing
 captures. Recorded evidence precedes unrecorded candidates after active work and
 failures. Queue previews show short summaries; full criteria remain in Details.
-Activity initially shows 25 entries with controls to reveal the remaining 150
-entry window. Narrow portrait and short landscape screens use compact navigation.
+Activity initially shows 25 matching entries, with controls to show more or all.
+The source filter combines with search and survives refreshes. Commits include
+subject, author, timestamp, short hash and a GitHub link when the configured
+origin is recognized; local visibility does not certify remote publication.
+Git reads are bounded and cached for 30 seconds, without fetching. Dated items
+sort newest first; undated board messages keep their order after dated items.
+Each commit shows where it is, from local refs only (no fetch, no GitHub call):
+**merged** (reachable from `origin/HEAD`, normally `origin/main`, via `rev-list`
+with an exact `merge-base --is-ancestor` fallback), **pushed** (on another remote
+branch, named) or **local only**; **tested** when a run's `build.commit` is this
+commit (count, passed, reviewed); **deployed: not recorded**, because the
+production snapshot records deployed files, not a commit. The Activity header
+gives the last fetch time. Task IDs named in a commit message link to the task;
+task rows summarise `Code: N commits · merged/pushed/local` and task details list
+them. Narrow portrait and short landscape screens use compact navigation.
 
 ## Live command approvals
 
@@ -573,3 +679,94 @@ are displayed explicitly. Pending observations live in memory, not a database,
 and disappear when the dashboard server restarts.
 
 For private orchestrator chat and approval buttons, see [Telegram setup and watchdog](TELEGRAM.md).
+
+### Game release readiness
+
+EXE corpus has independent release filters: **Unreleased games**, **Ready for
+release**, and **Unreleased · gameplay reviewed**. The last includes games with
+remaining blockers. Candidate details show gameplay, input, correctness,
+performance, distribution and package gates, their evidence, and the next step.
+This view does not publish games.
+
+`ops/release-readiness.json` records the dated public desktop snapshot and explicit
+per-game reviews. Production membership comes from the archived deployed
+`DESKTOP_APPS`, with source and index hashes verified on read; local registry
+membership is separate. Missing or invalid provenance leaves membership unknown.
+Refresh the archived public index/apps and snapshot together after a deployment.
+
+Ready requires an explicit review tied to a reviewed gameplay run, current
+runtime source hashes, all required gates passed, and no associated open blocker.
+Only the performance gate can be marked not-required, with a documented reason.
+New failed gameplay or source changes invalidate readiness. A short instrumented
+logical-frame sample remains distinct from release performance qualification.
+To review another game, add a record following the existing records and retain
+exact evidence paths and package-specific limitations.
+
+**Ready for desktop** (`#release`) lists one row per game whose verified
+production membership is `no`: the reviewed gameplay screenshot, the gameplay
+run's recorded build (`rev · dirty · wasm`, each "not recorded" when absent),
+the recorded rate with its own metric label and review state (or "Rate unknown"),
+the input gate, sound ("not recorded": no gate or run field holds audio
+evidence yet), every unmet gate with its status and summary, recorded blockers,
+and why a recorded review is not current (`staleReasons` from
+`release-readiness.js`). Rows sort ready first, then reviewed gameplay, then
+fewest blockers and unmet gates. Logic lives in `release-model.js`, shared by the
+page and `release-model.test.js`. Games with unknown membership are counted, not
+listed.
+
+Above the list: **Playable unreleased** (reviewed gameplay screenshot and a launch
+route available now), **Review needed** (status review-needed) and **Ready**
+counts, each a filter; and, separately, a notice naming the recorded release
+reviews that are stale and why. Sound and deploy evidence are shown as not
+recorded; they are not gates and add no approval requirement.
+
+Launch links carry `&build=<wasm sha256>` of the module the emulator route
+serves (`emulatorBuild` in `/api/state`: `rev · dirty (N tracked files) · wasm`,
+read from the live tree and cached 30 s). If `build/wine-assembly.wasm` changes
+before the click, `/emulator/` answers 409 naming both hashes instead of running
+another build; an unavailable app answers 409 listing its missing files. The
+Ready view compares the served module with the reviewed gameplay run's recorded
+wasm (match / differs / unknown); commits are not compared, only module hashes.
+
+### Launch from EXE corpus
+
+Use **Launchable now** above the corpus list to show entries with an available
+local route. Each registered route with its declared files present has a **Launch in emulator**
+link on the corpus card and in its details. It opens `/emulator/?app=ID` in a new
+tab using this box's runtime and files. Missing routes show the missing paths;
+availability is separate from gameplay verification. **Open production** points
+to the public site only for an app in the verified production desktop snapshot.
+
+The private emulator uses the dashboard's existing authentication gateway. Its
+GET/HEAD handler serves only runtime resources and registered asset closures,
+including file manifests, shared DLLs and CUE dependencies. It supports byte ranges
+and cross-origin isolation for Workers. The private entry enables local candidates
+without changing the production desktop source. Arbitrary repository files,
+private configuration and other symlink targets are not served. The route catalog
+refreshes after 30 seconds; backend code changes require the scoped dashboard
+service restart described in the dashboard handoff.
+
+## Telegram blocker parity
+
+`/blockers` reads the same `/api/state` snapshot as the dashboard and uses the shared `blocker-model.js` for primary blockers, dependent tasks, ordering and live approvals. It lists the next action, reason, owner and dependent titles without changing tasks or answering approvals. `/approvals` remains the command for reviewing an orchestrator approval. The bot menu and `/help` are generated from one command catalog in `telegram-core.js`.
+
+### Daily agent analytics
+
+`#analytics` reads `GET /api/analytics`: daily UTC tokens (fresh input, cache read/write,
+output), API-equivalent cost estimates, observed time distribution and attributable
+Git commits, per Codex/Claude session. Children have their own rows. Dollar amounts
+are **not subscription charges or invoices**. Rates and source links live in
+`ops/analytics-rates.json`; unknown models stay unpriced.
+
+Accounting reads full logs for the same project sessions discovered by the dashboard
+(up to 100 recent logs per provider), and shows 14 UTC days. Incremental offsets,
+deduplication state and daily aggregates are readable JSON in `scratch/analytics/`.
+Delete that directory to rebuild it; no database or external telemetry is required.
+Changes to rates take effect after restarting Ops and rebuilding the cache.
+
+Time is inferred from event boundaries: model response, pending tools, test/benchmark
+commands, idle between observed turns, and unknown. Silent model gaps over five
+minutes and tool gaps over thirty minutes become unknown. No time is extrapolated
+after the last event. Concurrent sessions overlap; these are not CPU hours. Commit
+attribution requires a git-commit tool result plus a matching local Git hash. Missing
+or ambiguous attribution remains visible in the project total.

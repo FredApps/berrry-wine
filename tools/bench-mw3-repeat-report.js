@@ -4,7 +4,7 @@
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert');
 const dir=path.resolve(process.argv[2]);
 const host=JSON.parse(fs.readFileSync(path.join(dir,'host.json')));
-const runs=fs.readdirSync(dir).filter(f=>/^(p|pc)\d+\.log$/.test(f)).map(file=>{
+const runs=fs.readdirSync(dir).filter(f=>/^(p|pc|pcm|pcp)\d+\.log$/.test(f)).map(file=>{
   const tag=file.slice(0,-4),stem=path.join(dir,tag),log=fs.readFileSync(stem+'.log','utf8');
   const stats=/Stats: (\d+) API calls, (\d+) batches/.exec(log);
   const cpu=/\[cpu-window\].*user ([\d.]+)s sys ([\d.]+)s wall ([\d.]+)s/.exec(log);
@@ -37,7 +37,7 @@ for(let i=1;i<runs.length;i++){
     counters:eq(a.counters,b.counters),batchTrace});
 }
 const summary={};
-for(const variant of ['p','pc']){
+for(const variant of [...new Set(runs.map(r=>r.variant))]){
   const values=runs.filter(r=>r.variant===variant&&r.complete&&r.cpu).map(r=>r.cpu.user);
   if(values.length){const mean=values.reduce((a,b)=>a+b,0)/values.length;
     summary[variant]={values,mean,rangePercent:100*(Math.max(...values)-Math.min(...values))/mean};}

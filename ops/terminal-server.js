@@ -7,6 +7,7 @@ const { promisify } = require('node:util');
 const exec = promisify(execFile);
 const {parseApproval,approvalIdentity}=require('./approval-prompt');
 const {chatReady,hasCodexChild,chatSubmitKey}=require('./telegram-guard');
+const {workReady,workSubmitKey,claudeChatReady,claudeChatSubmitKey,plainScreen}=require('./work-guard');
 
 function createTerminalBridge(server, options = {}) {
   const root = options.root || path.resolve(__dirname, '..');
@@ -21,14 +22,19 @@ function createTerminalBridge(server, options = {}) {
   const signature=value=>crypto.createHash('sha256').update(value).digest('hex');
   async function capture(target) {
     if(!await exists(target))throw Error('Registered pane changed or unavailable');
-    const {stdout}=await exec(tmux,[...tmuxArgs,'capture-pane','-p','-J','-t',target.pane],{timeout:2000,maxBuffer:131072});
-    return stdout;
+    const {stdout}=await exec(tmux,[...tmuxArgs,'capture-pane','-p','-e','-J','-t',target.pane],{timeout:2000,maxBuffer:524288});
+    return plainScreen(stdout);
   }
   async function approvals() {
     const targets=await mappings(),items=[],warnings=[];
     for(const id of observed.keys())if(!targets.some(t=>t.id===id))observed.delete(id);
     for(const target of targets) {
       try {
+        // Ended workers are terminal lifecycle state, not urgent approvals.
+        // Never interpret Claude's screen using Codex's menu/key protocol.
+        if(!await exists(target) || provider(target)!=='codex' || target.permissionMode==='bypass') {
+          observed.delete(target.id);continue;
+        }
         const screen=await capture(target),prompt=parseApproval(screen),fingerprint=prompt&&signature(JSON.stringify(target)+approvalIdentity(prompt.prompt));
         if(!prompt){observed.delete(target.id);continue;}
         let record=observed.get(target.id);
@@ -58,6 +64,7 @@ function createTerminalBridge(server, options = {}) {
     try {
       const target=(await mappings()).find(t=>t.id===id);
       if(!target || JSON.stringify(target)!==JSON.stringify(record.target))return fail(409,'Terminal registration changed. Refresh first.');
+      if(provider(target)!=='codex' || target.permissionMode==='bypass')return fail(409,'This terminal does not use Codex command approvals');
       const screen=await capture(target);
       const prompt=parseApproval(screen);
       if(!prompt || signature(JSON.stringify(target)+approvalIdentity(prompt.prompt))!==record.fingerprint)return fail(409,'Prompt changed. Refresh and review the current command.');
@@ -74,7 +81,15 @@ function createTerminalBridge(server, options = {}) {
     try{if(!target)throw Error();const text=await capture(target);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({text,agentId:target.agentId}));}
     catch{res.writeHead(409);res.end('Orchestrator pane unavailable');}
   }
-  async function chat(req,res) {
+  async function workStatus() {
+    return Promise.all((await mappings()).map(async target=>{
+      try {
+        const screen=await capture(target);
+        return {id:target.id,agentId:target.agentId,provider:provider(target),idle:!controllers.has(target.id)&&!decisions.has(target.id)&&workReady(screen,provider(target)),screenHash:signature(screen)};
+      } catch {return {id:target.id,agentId:target.agentId,idle:false,reason:'Terminal unavailable'};}
+    }));
+  }
+  async function chat(req,res,work=false) {
     const fail=(code,message)=>{res.writeHead(code,{'Content-Type':'text/plain'});res.end(message);};
     if(!originOK(req))return fail(403,'Same-origin request required');
     if(req.headers['content-type']!=='application/json')return fail(415,'JSON required');
@@ -82,25 +97,29 @@ function createTerminalBridge(server, options = {}) {
     for await(const chunk of req){size+=chunk.length;if(size>20000)return fail(413,'Message too long');chunks.push(chunk);}
     let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{return fail(400,'Invalid JSON');}
     if(typeof input.message!=='string' || !input.message.trim() || input.message.length>4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.message))return fail(400,'Plain text of 1–4000 characters required');
-    const target=(await mappings()).find(t=>t.id==='orchestrator');
+    const target=(await mappings()).find(t=>t.id===(work?input.terminalId:'orchestrator'));
     if(!target)return fail(409,'Orchestrator not registered');
     if(controllers.has(target.id) || decisions.has(target.id))return fail(409,'Terminal is being controlled; retry when it is in View mode');
     decisions.add(target.id);
     try {
       const processes=await exec('ps',['-ax','-o','pid=,ppid=,comm='],{timeout:2000,maxBuffer:2*1024*1024});
-      if(!hasCodexChild(processes.stdout,target.panePid))return fail(409,'Registered pane is not running Codex');
+      if(provider(target)==='codex' ? !hasCodexChild(processes.stdout,target.panePid) : provider(target)!=='claude' || !processes.stdout.split('\n').some(l=>new RegExp('^\\s*'+target.panePid+'\\s+\\d+\\s+(?:.*/)?claude\\s*$').test(l)))return fail(409,'Registered pane is not running its agent');
       if(JSON.stringify((await mappings()).find(t=>t.id===target.id))!==JSON.stringify(target))return fail(409,'Orchestrator registration changed');
-      if(!chatReady(await capture(target)))return fail(409,'Orchestrator has a prompt or draft open. Resolve it before sending chat');
+      const initial=await capture(target);
+      // A Claude orchestrator uses the Claude screen guards for Telegram chat too.
+      const claudeChat=!work && provider(target)==='claude';
+      if(work ? !workReady(initial,provider(target)) || signature(initial)!==input.screenHash : claudeChat ? !claudeChatReady(initial) : !chatReady(initial))return fail(409,claudeChat?'Orchestrator has a prompt or draft open.':'Agent is busy, changed, or has a prompt/draft open');
       // One literal line, with a fixed prefix: never a slash command or terminal control sequence.
-      const message='[Telegram] '+input.message.replace(/\s+/g,' ').trim();
+      const message=(work?'[Work watchdog] ':'[Telegram] ')+input.message.replace(/\s+/g,' ').trim();
       await exec(tmux,[...tmuxArgs,'send-keys','-l','-t',target.pane,'--',message],{timeout:2000,maxBuffer:65536});
       // Let the TUI finish processing pasted text before choosing its submit key.
       await new Promise(resolve=>setTimeout(resolve,300));
-      const key=chatSubmitKey(await capture(target),message);
+      const submitted=screen=>work?workSubmitKey(screen,message,provider(target)):claudeChat?claudeChatSubmitKey(screen,message):chatSubmitKey(screen,message);
+      const key=submitted(await capture(target));
       if(!key)return fail(409,'Message entered but not submitted. Inspect the terminal before resending');
       await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,key],{timeout:2000,maxBuffer:65536});
       await new Promise(resolve=>setTimeout(resolve,300));
-      if(chatSubmitKey(await capture(target),message))return fail(409,'Message remains in the input box. Inspect the terminal before resending');
+      if(submitted(await capture(target)))return fail(409,'Message remains in the input box. Inspect the terminal before resending');
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({sent:true}));
     }catch{return fail(409,'Delivery uncertain; inspect the terminal before resending');}
     finally{decisions.delete(target.id);}
@@ -120,9 +139,15 @@ function createTerminalBridge(server, options = {}) {
       return stdout.split('\n').some(line=>line===`${t.pane}\t${t.panePid}\t0`);
     } catch {return false;}
   }
+  const provider=t=>t.agentId.startsWith('claude:')?'claude':t.agentId.startsWith('codex:')?'codex':'unknown';
   async function list() {
-    return Promise.all((await mappings()).map(async t=>({id:t.id,agentId:t.agentId,label:t.label || t.session,session:t.session,
-      available:!!wss && await exists(t),reason:!wss?'Run npm ci --prefix ops':'Registered pane must still match its PID'})));
+    return Promise.all((await mappings()).map(async t=>{
+      const live=await exists(t),kind=provider(t);
+      return {id:t.id,agentId:t.agentId,label:t.label || t.session,session:t.session,provider:kind,
+        state:live?'live':'ended-or-changed',permissionMode:t.permissionMode==='bypass'?'bypass':'default',
+        approvalMode:t.permissionMode==='bypass'?'disabled':kind==='codex'?'command-menu':'terminal',
+        available:!!wss && live,reason:!wss?'Run npm ci --prefix ops':!live?'Session ended or pane changed; resume the agent and register its current pane.':null};
+    }));
   }
   async function ticket(req,res) {
     const fail=(code,message)=>{res.writeHead(code,{'Content-Type':'text/plain'});res.end(message);};
@@ -232,6 +257,6 @@ function createTerminalBridge(server, options = {}) {
   }
   function close(){tickets.clear();for(const ws of connections)ws.terminate();wss?.close();}
   server.on('close',close);
-  return {list,ticket,close,approvals,approvalDecision,screen,chat};
+  return {list,ticket,close,approvals,approvalDecision,screen,chat,workStatus,nudge:(req,res)=>chat(req,res,true)};
 }
 module.exports={createTerminalBridge};

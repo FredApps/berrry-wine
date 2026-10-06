@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// Dialog-button releases must re-enter a native modal loop through
-// GetMessage/DispatchMessage. A synchronous out-of-band UP can let the button
-// set its completion state while leaving the loop blocked inside GetMessage.
+// A captured WAT BUTTON release may execute its built-in control procedure
+// directly: that procedure only clears/toggles local state and queues the
+// parent's BN_CLICKED. The parent dialog still runs through GetMessage, while
+// frameworks cannot pre-translate and discard WM_LBUTTONUP before the built-in
+// BUTTON sees it.
 
 const assert = require('assert');
 const { installInputHandlers } = require('../lib/renderer-input');
@@ -61,21 +63,12 @@ renderer.repaint = () => {};
 
 renderer.handleMouseUp(55, 70, 1);
 
-assert.strictEqual(routedSynchronously, 0,
-  'captured dialog button must not receive a synchronous out-of-band mouse-up');
-assert.strictEqual(renderer.inputQueue.length, 1, 'mouse-up should be queued');
-assert.deepStrictEqual(renderer.inputQueue[0], {
-  type: 'mouse',
-  hwnd: 0x10002,
-  msg: 0x0202,
-  wParam: 0,
-  lParam: (20 << 16) | 15,
-  mouseX: 55,
-  mouseY: 70,
-  mouseButtons: 0,
-});
+assert.strictEqual(routedSynchronously, 1,
+  'captured WAT dialog button must receive its built-in mouse-up directly');
+assert.strictEqual(renderer.inputQueue.length, 0,
+  'the built-in button queues BN_CLICKED, not the renderer mouse-up');
 
-console.log('PASS  captured dialog mouse-up is queued for modal-loop dispatch');
+console.log('PASS  captured WAT button mouse-up directly reaches the built-in control');
 
 let watRoutedSynchronously = 0;
 const watModalWasm = {
@@ -127,7 +120,7 @@ assert.strictEqual(watRenderer.inputQueue.length, 0,
 
 console.log('PASS  WAT-owned modal dialog mouse-up stays synchronous');
 
-function capturedControlCase(ctrlClass, owner) {
+function capturedControlCase(ctrlClass, owner, workerOwned = false) {
   const sent = [];
   const captureWasm = {
     exports: {
@@ -146,6 +139,7 @@ function capturedControlCase(ctrlClass, owner) {
   };
   const r = new FakeRenderer();
   r.wasm = captureWasm;
+  if (workerOwned) r._guestWorkerWasms = new WeakSet([captureWasm]);
   r.windows = {
     0x30001: {
       hwnd: 0x30001, visible: true, isChild: false,
@@ -187,7 +181,15 @@ assert.strictEqual(ownerlessButton.sent.length, 2,
   'ownerless main-dialog WAT button should dispatch synchronously');
 assert.strictEqual(ownerlessButton.queued.length, 0);
 
-console.log('PASS  WAT capture dispatches directly outside owned guest modal buttons');
+const workerCapture = capturedControlCase(1, 0x90001, true);
+assert.strictEqual(workerCapture.sent.length, 0, 'Worker capture never calls page native handlers');
+assert.deepStrictEqual(workerCapture.queued.map(({hwnd, msg, wParam, lParam}) =>
+  ({hwnd, msg, wParam, lParam})), [
+  {hwnd: 0x30002, msg: 0x200, wParam: 1, lParam: (20 << 16) | 15},
+  {hwnd: 0x30002, msg: 0x202, wParam: 0, lParam: (20 << 16) | 15},
+], 'Worker captured move and release keep control-local coordinates');
+
+console.log('PASS  WAT capture dispatches directly for controls and ownerless buttons');
 
 const nativeDialogWasm = {
   exports: {
@@ -239,3 +241,76 @@ assert.strictEqual(nativeDialogRenderer._queueNativeDialogChildMouseDown(
 assert.strictEqual(nativeDialogRenderer.inputQueue.length, 0);
 
 console.log('PASS  native x86 dialog child mouse-down is queued through GetMessage');
+
+// WAT controls can synchronously notify a guest parent while transferring
+// focus. With a Worker owner, neither DOWN nor its paired UP may execute on
+// the page instance (whose code16 can be false for a real Win16 task).
+for (const controlClass of [1, 2]) {
+  const workerWasm = { exports: {
+    ctrl_get_class: () => controlClass,
+    wnd_get_proc_export: () => 0xFFFF0001,
+    is_win16: () => 0, // deliberately uninformative page-side CPU state
+    dialog_route_mouse: () => { throw Error('page-side dialog callback'); },
+    send_message: () => { throw Error('page-side guest notification'); },
+  }};
+  const workerDialog = { hwnd: 0x50001, wasm: workerWasm };
+  const r = new FakeRenderer();
+  Object.assign(r, {
+    wasm: workerWasm, windows: {0x50001: workerDialog}, inputQueue: [],
+    _guestWorkerWasms: new WeakSet([workerWasm]),
+    _mouseX: 132, _mouseY: 79, _mouseButtonsMask: 1,
+    _hitTestDeepChild: () => ({hwnd: 0x50002, sx: 100, sy: 60}),
+    _wakeMessageWait: () => {}, _traceInput: () => {},
+    _mapExclusiveInputPoint: (x, y) => ({x, y, outside: false}),
+    _applyCursorClip: (x, y) => ({x, y}), _mouseMaskForButton: () => 1,
+    _inputWasmAtPoint: () => workerWasm, _modalDialogHwnd: () => 0,
+    _handleNativeScrollbarUp: () => false, _signalDirectInputDevice: () => {},
+    _setMousePoint(x, y) { this._mouseX = x; this._mouseY = y; },
+  });
+  assert.strictEqual(r._queueNativeDialogChildMouseDown(workerDialog, 132, 79, 0x201, 1), true);
+  assert.strictEqual(r._dialogBtnDrag, undefined, 'Worker control never enters direct dialog drag');
+  r.wasm = {exports: {}}; // another app may become the renderer's current instance
+  r.handleMouseUp(92, 85, 1); // release outside the original control still pairs
+  assert.deepStrictEqual(r.inputQueue.map(({hwnd, msg, wParam, lParam}) =>
+    ({hwnd, msg, wParam, lParam})), [
+    {hwnd: 0x50002, msg: 0x201, wParam: 1, lParam: (19 << 16) | 32},
+    {hwnd: 0x50002, msg: 0x202, wParam: 0, lParam: (25 << 16) | 0xfff8},
+  ], 'Worker gets exact control-relative paired mouse messages');
+  assert.strictEqual(r._directMouseDown, null, 'paired release retires pointer ownership');
+}
+console.log('PASS  Worker WAT BUTTON/EDIT input stays on owning guest queue; cooperative PE route retained');
+
+const groupRows = [
+  {hwnd: 8, cls: 1, style: 0x50000007, x: 48, y: 160, w: 290, h: 100},
+  {hwnd: 9, cls: 1, style: 0x50010009, x: 58, y: 188, w: 262, h: 24},
+  {hwnd: 11, cls: 1, style: 0x40010009, x: 58, y: 218, w: 262, h: 24}, // hidden
+  {hwnd: 12, cls: 1, style: 0x58010009, x: 58, y: 218, w: 262, h: 24}, // disabled
+  {hwnd: 13, cls: 3, style: 0x50000000, x: 58, y: 218, w: 262, h: 24}, // static
+  {hwnd: 10, cls: 1, style: 0x50010009, x: 58, y: 218, w: 262, h: 24},
+];
+const row = h => groupRows.find(r => r.hwnd === h);
+const groupWasm = {exports: {
+  ctrl_get_class: h => row(h).cls,
+  wnd_get_style_export: h => row(h).style,
+  wnd_get_proc_export: () => 0xFFFF0001,
+  wnd_get_parent: () => 4,
+  wnd_next_child_slot: (parent, slot) => { assert.strictEqual(parent, 4); return slot < groupRows.length ? slot : -1; },
+  wnd_slot_hwnd: slot => groupRows[slot].hwnd,
+  wnd_window_screen_x: h => row(h).x, wnd_window_screen_y: h => row(h).y,
+  wnd_screen_w: h => row(h).w, wnd_screen_h: h => row(h).h,
+  dialog_route_mouse: () => { throw Error('group fallback executed page dialog callback'); },
+}};
+const groupRenderer = new FakeRenderer();
+Object.assign(groupRenderer, {
+  wasm: {exports: {}}, _guestWorkerWasms: new WeakSet([groupWasm]), inputQueue: [],
+  _hitTestDeepChild: () => ({hwnd: 8, sx: 48, sy: 160}), _wakeMessageWait: () => {},
+});
+assert.strictEqual(groupRenderer._queueNativeDialogChildMouseDown(
+  {hwnd: 4, wasm: groupWasm}, 64, 227, 0x201, 1), true);
+assert.strictEqual(groupRenderer.inputQueue.length, 1);
+assert.strictEqual(groupRenderer.inputQueue[0].hwnd, 10, 'overlapping groupbox must not steal dealer radio input');
+assert.strictEqual(groupRenderer.inputQueue[0].lParam, (9 << 16) | 6, 'radio gets its own local coordinates');
+assert.strictEqual(groupRenderer._queueNativeDialogChildMouseDown(
+  {hwnd: 4, wasm: groupWasm}, 50, 165, 0x201, 1), true);
+assert.strictEqual(groupRenderer.inputQueue.length, 1, 'empty group frame is noninteractive');
+console.log('PASS  Worker groupbox transparency selects visible enabled underlying radio');

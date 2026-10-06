@@ -1223,7 +1223,12 @@ GetTopWindow(hWnd) — 1 arg stdcall
   ;; 634: AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle) — 4 args stdcall
   ;; Same as AdjustWindowRect but with extended style (ignored for now)
   (func $handle_AdjustWindowRectEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $border i32) (local $caption i32)
+    (local $wa i32) (local $border i32) (local $caption i32) (local $frame i32)
+    ;; Match the existing non-client fixed/sizing frame. Bottom chrome keeps
+    ;; its established four-pixel extent; only side/top frame varies.
+    (local.set $frame
+      (select (call $defwndproc_style_frame_width (local.get $arg1)) (i32.const 4)
+        (i32.eq (i32.and (local.get $arg1) (i32.const 0x00C00000)) (i32.const 0x00C00000))))
     (local.set $wa (call $g2w (local.get $arg0)))
     ;; border (1px) when WS_BORDER|WS_DLGFRAME|WS_THICKFRAME present
     (local.set $border (i32.ne (i32.and (local.get $arg1) (i32.const 0x00CC0000)) (i32.const 0)))
@@ -1244,13 +1249,13 @@ GetTopWindow(hWnd) — 1 arg stdcall
         (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (i32.const 1)))
         (store.field.memarg Rect bottom (local.get $wa) (i32.add (load.field.memarg Rect bottom (local.get $wa)) (i32.const 1)))))
     (if (i32.or (local.get $border) (local.get $caption)) (then
-      (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (i32.const 4)))
+      (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (local.get $frame)))
       (store.field.memarg Rect top (local.get $wa)
         (i32.sub (load.field.memarg Rect top (local.get $wa))
-          (i32.add (i32.const 4)
+          (i32.add (local.get $frame)
             (i32.add (select (i32.const 20) (i32.const 0) (local.get $caption))
-                     (select (i32.const 19) (i32.const 0) (local.get $arg2))))))
-      (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (i32.const 4)))
+                     (select (i32.const 18) (i32.const 0) (local.get $arg2))))))
+      (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (local.get $frame)))
       (store.field.memarg Rect bottom (local.get $wa) (i32.add (load.field.memarg Rect bottom (local.get $wa)) (i32.const 4)))
     ))
     ;; WS_EX_CLIENTEDGE sinks the client two pixels on every side, and
@@ -3299,3 +3304,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $mouse_buttons_swapped (i32.ne (local.get $arg0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
+  ;; Both import names implement the same tracking service. COMCTL32's
+  ;; underscore wrapper forwards to USER32 when that implementation exists.
+  (func $handle_TrackMouseEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (call $mouse_track_request (local.get $arg0) (local.get $name_ptr)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+  (func $handle__TrackMouseEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_TrackMouseEvent (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

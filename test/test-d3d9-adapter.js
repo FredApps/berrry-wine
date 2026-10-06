@@ -4,7 +4,7 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const { exports: e } = await bootRenderHarness({ fonts: 'none', extraWat: `
+  const { exports: e, hostCtx } = await bootRenderHarness({ fonts: 'none', extraWat: `
     (func (export "test_adapter") (param $adapter i32) (param $flags i32) (param $p i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
       (call $handle_IDirect3D9_GetAdapterIdentifier (i32.const 0) (local.get $adapter)
@@ -74,6 +74,7 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(e.guest_read32(ptr + 196), 0, 'no vertex shader version advertised');
   assert.strictEqual(e.guest_read32(ptr + 204), 0, 'no pixel shader version advertised');
   assert.strictEqual(e.guest_read32(ptr + 152), 0, 'no texture sampling advertised');
+  assert.strictEqual(e.guest_read32(ptr + 148), 0, 'no blend stages before pipeline readiness');
   assert.strictEqual(e.guest_read32(ptr + 232), 1, 'one adapter in group');
   assert.strictEqual(e.guest_read32(ptr + 236), 0, 'DeclTypes is not adapter count');
   assert.strictEqual(e.guest_read32(ptr + 240), 1, 'one simultaneous render target');
@@ -85,6 +86,19 @@ const { bootRenderHarness } = require('./render-helper');
   assert.deepStrictEqual(Array.from({ length: 304 }, (_, i) => e.guest_read8(ptr + 1200 + i)), caps);
   assert.strictEqual(e.test_caps(1, 1, ptr) >>> 0, 0x8876086c);
   assert.strictEqual(e.test_caps(0, 1, 0) >>> 0, 0x8876086c);
+  const bridge = hostCtx.d3d9Bridge;
+  const previousBackend = bridge.backend;
+  bridge.backend = 'software';
+  bridge.options.enableProgrammable = true;
+  assert.strictEqual(e.test_caps(0, 1, ptr), 0);
+  assert.strictEqual(e.test_device_caps(ptr + 1200), 0);
+  for (const base of [ptr, ptr + 1200]) {
+    assert.strictEqual(e.guest_read32(base + 148), 4, 'ready pipeline exposes texture cascade');
+    assert.strictEqual(e.guest_read32(base + 152), 4, 'blend stages match exposed samplers');
+    assert.strictEqual(e.guest_read32(base + 244), 0x03000300, 'ready pipeline exposes real POINT/LINEAR StretchRect');
+  }
+  bridge.options.enableProgrammable = false;
+  bridge.backend = previousBackend;
   e.init_dx_com_thunks();
   const pp=ptr+2048,out=pp+128,parent=e.new_parent();
   for(let i=0;i<56;i+=4)e.guest_write32(pp+i,0);

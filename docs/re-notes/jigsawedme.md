@@ -63,3 +63,11 @@ diagnostic, and it has not been fixed.
   nothing to do with error 5.
 - `LoadLibraryA("SXS.DLL")` returns the exe base with `GetLastError=2`, and `GetProcAddress` then returns 0.
   msvbvm60 copes with this, so it is not a blocker, but the return value is odd if it ever matters.
+
+## Owning valid-BMP diagnostic (2026-10-04)
+
+Ordinary Upload/Open of the existing49206-byte128×12824bppBMP reproduces the image error on canonicalf40. The owner positively captures block42e588, actual APIentry with return42e5b3, paired guest return42e5b3, and VBcatch body431c9c. Dynamic target0x7508500 is IVBDirectDraw7_DirectSlot008/API2542. Actual stack has four arguments (this,BSTR,twooutputs); EAX returns80004001 E_NOTIMPL, outputs0/0. ESP advances8bytes, matching the current generic metadata but not a four-argument stdcall20bytes. This establishes the actual unsupported-handler/ABI boundary; method identity still needs typelib confirmation before implementation.
+
+A separate concrete problem appears in the actual BSTR: visible filename C:\JIGTEST.BMP becomes C:\C:\JIGTEST.BMP (34bytes). Path construction has not yet been traced; do not label the supplied BMP corrupt or assume a converter dependency. A future ordinary basename selection can disambiguate this without overriding gueststate.
+
+Evidence scratch/runs/20261004-jigssawme-owning-image-failure; no observererrors/drops,86servedchecksPASS, session89047exit0 cleanup18:26:10.936Z browser/serverclosed/errors[],processclear. No gameplay/FPS. Source fixes and further runtime not yet performed.

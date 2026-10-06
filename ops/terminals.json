@@ -1,12 +1,48 @@
 {
   "terminals": [
     {
-      "id": "orchestrator",
-      "agentId": "codex:01a0f9d8-c0cd-73b3-a357-fb3ff1c784c0",
-      "label": "Orchestrator",
+      "id": "codex-orchestrator",
+      "agentId": "codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5",
+      "label": "Codex coordinator · out of usage until Oct 12",
       "session": "wine-orchestrator",
       "pane": "%0",
-      "panePid": 80668
+      "panePid": 95949
+    },
+    {
+      "id": "claude-launch-ux",
+      "agentId": "claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256",
+      "label": "Claude · App loading UX",
+      "session": "wine-claude-launch-ux",
+      "pane": "%4",
+      "panePid": 2539023,
+      "permissionMode": "bypass"
+    },
+    {
+      "id": "claude-myth",
+      "agentId": "claude:d10ba697-f69c-4855-aeff-e6a61b6e2735",
+      "label": "Claude · Myth",
+      "session": "wine-claude-myth",
+      "pane": "%5",
+      "panePid": 3269346,
+      "permissionMode": "bypass"
+    },
+    {
+      "id": "orchestrator",
+      "agentId": "claude:80aa9e95-435b-4acb-aeea-8ae3d860613c",
+      "label": "Orchestrator · Claude",
+      "session": "wine-claude-orchestrator",
+      "pane": "%6",
+      "panePid": 3281208,
+      "permissionMode": "bypass"
+    },
+    {
+      "id": "claude-tr3",
+      "agentId": "claude:202b4b39-6838-4802-a2d9-03dd6d3cd1d8",
+      "label": "Claude · Tomb Raider III demo",
+      "session": "wine-claude-tr3",
+      "pane": "%7",
+      "panePid": 3283984,
+      "permissionMode": "bypass"
     }
   ]
 }

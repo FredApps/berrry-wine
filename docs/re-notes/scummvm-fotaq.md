@@ -62,3 +62,11 @@ intro and credits play, the hotel room is up by batch 8,000, hovering the chest 
 
 The GOG ScummVM (SDL2, the one that actually imports GetMessageExtraInfo) dies earlier on
 `InitializeSListHead` (in a DllMain) and then `VerSetConditionMask`. Not addressed.
+
+## 2026-10-03 ordinary browser audio/fullscreen reproduction
+
+The registered ScummVM 0.8.0 command line has no `-f` fullscreen flag. The matching upstream default is windowed; bundled README documents `-f` and Alt+Enter. Ordinary current-source Worker launch shows a 640x400 game client on the desktop. A click inside the game followed by Alt+Enter did not switch it in this bounded check. The browser-fullscreen consent control remained hidden and no browser fullscreen element appeared. This is an observed toggle failure, not yet a diagnosed keyboard or display-mode bug.
+
+Silence is not an intentional mute setting established by this run. With the AudioContext running at 22050 Hz, submitted stereo16 PCM stalls at 44096 bytes (about half a second). The two CALLBACK_FUNCTION completions remain queued for more than 20 seconds, and the auxiliary audio thread stays at 11 returned slices. Exact SDL.dll callback at original VA 0x10012140 releases the audio semaphore on WOM_DONE; current Worker execution has no completion-queue delivery, while the cooperative host loop pumps it. This explains the exhausted audio stream. Floppy edition alone does not imply absence of music/effects.
+
+Repair must deliver callbacks on a real owning Worker with safe interrupted-wait restoration and exactly-once handling. Do not invoke `fire_wave_out_callback` on the page shadow instance or fake semaphore completion. Scoped design and exact binary proof: `scratch/scummvm-av-20261003/source/FINDINGS.md`. Browser artifacts: `scratch/scummvm-av-20261003/attempt2/`. The first helper run ended at a selector error; the corrected run closed cleanly. A late CDP attachment resized the viewport to 800x600, so that change is not fullscreen evidence. No runtime repair or deployment in this investigation.

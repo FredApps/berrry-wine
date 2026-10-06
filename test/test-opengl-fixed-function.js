@@ -15,6 +15,7 @@ class FakeBackend {
       TRIANGLES: 4,
     };
     this.draws = []; this.uniforms = new Map(); this.uploads = [];
+    this.clears = [];
     this.parameters = [];
     this.depthRanges = [];
     this.polygonOffsets = [];
@@ -31,6 +32,7 @@ class FakeBackend {
   setUniform(_program, name, _kind, value) { this.uniformCalls++; this.uniforms.set(name, value); }
   bindTexture() {}
   draw(command) { this.draws.push(command); }
+  clear(color, mask, depth) { this.clears.push({ color, mask, depth }); }
   createTexture() { return {}; }
   setTextureParameter(texture, pname, value) {
     assert(texture, 'texture parameters must never target WebGL null binding');
@@ -48,6 +50,32 @@ class FakeBackend {
 
 const backend = new FakeBackend();
 const gl = new FixedFunctionGL(backend);
+// A real texture definition drives the query; undefined levels and deleted
+// names must not retain an earlier object's dimensions or component sizes.
+{
+const gl = new FixedFunctionGL(new FakeBackend());
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x1000), 0);
+gl.bindTexture(71);
+gl.texImage(0, 0x8058, 8, 4, 0, GL.RGBA, GL.UNSIGNED_BYTE, null);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x1000), 8);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x1001), 4);
+assert.deepStrictEqual(Array.from({ length: 6 }, (_, i) =>
+  gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x805C + i)), [8, 8, 8, 8, 0, 0]);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 1, 0x805D), 0);
+gl.texImage(1, GL.RGB, 4, 2, 0, GL.RGB, 0x8363, null);
+assert.deepStrictEqual([0x805C, 0x805D, 0x805E, 0x805F].map(p =>
+  gl.getTexLevelParameter(GL.TEXTURE_2D, 1, p)), [5, 6, 5, 0]);
+gl.bindTexture(72);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x1000), 0);
+gl.bindTexture(71);
+gl.deleteTextures([71]);
+gl.bindTexture(71);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, 0, 0x805D), 0);
+assert.strictEqual(gl.getTexLevelParameter(GL.TEXTURE_2D, -1, 0x1000), undefined);
+assert.strictEqual(gl.lastError, 0x0501);
+gl.lastError = 0;
+gl.bindTexture(0);
+}
 const triangle = new Float32Array(3 * require('../lib/gl-command-stream').VERTEX_FLOATS);
 for (const stack of Object.values(gl.matrices)) {
   stack.slice = () => { throw new Error('matrix-stack slice allocated'); };
@@ -148,6 +176,29 @@ bridge.contexts.set(1, {
   backend: { present() {} },
   layer: { writeSeq: 0 },
 });
+assert.strictEqual(matrixFrontend.clearDepth, 1);
+for (const [input, expected] of [[1 / 3, 1 / 3], [-2, 0], [2, 1]]) {
+  bridgeView.setFloat64(stack + 4, input, true);
+  bridge.call(CALL_INDEX.glClearDepth, stack, 0);
+  bridgeView.setUint32(stack + 4, 0x100, true);
+  bridge.call(CALL_INDEX.glClear, stack, 0);
+  assert.strictEqual(matrixFrontend.backend.clears.at(-1).depth, expected,
+    'GLdouble clear depth is clamped and reaches the backend');
+}
+matrixFrontend.clearDepth = 0.25;
+matrixFrontend.pushAttrib(0x100);
+matrixFrontend.clearDepth = 0.75;
+matrixFrontend.popAttrib();
+assert.strictEqual(matrixFrontend.clearDepth, 0.25, 'depth attributes restore clear depth');
+matrixFrontend.pushAttrib(0x4000);
+matrixFrontend.clearDepth = 0.75;
+matrixFrontend.popAttrib();
+assert.strictEqual(matrixFrontend.clearDepth, 0.75, 'color attributes do not restore clear depth');
+bridgeView.setUint32(stack + 4, 0x0B73, true); // GL_DEPTH_CLEAR_VALUE
+bridgeView.setUint32(stack + 8, 0x800, true);
+bridge.call(CALL_INDEX.glGetFloatv, stack, 0);
+assert.strictEqual(bridgeView.getFloat32(0x800, true), 0.75, 'query returns the retained clear depth');
+matrixFrontend.clearDepth = 1;
 for (const [index, value] of [60, 4 / 3, 1, 101].entries()) {
   bridgeView.setFloat64(stack + 4 + index * 8, value, true);
 }
@@ -178,6 +229,15 @@ assert.strictEqual(matrixFrontend.backend.uploads.at(-1).level, 0,
   'gluBuild2DMipmaps uploads the source image as level zero');
 assert.strictEqual(matrixFrontend.backend.mipmapTextures.length, 1,
   'gluBuild2DMipmaps asks the GPU backend to derive the mip chain');
+[GL.TEXTURE_2D, 1, 0x1000, 0x300].forEach((v, i) => bridgeView.setUint32(stack + 4 + i * 4, v, true));
+bridge.call(CALL_INDEX.glGetTexLevelParameteriv, stack, 0);
+assert.strictEqual(bridgeView.getInt32(0x300, true), 1,
+  'host texture query writes the generated mip level width into guest memory');
+bridgeView.setInt32(stack + 8, -1, true);
+bridgeView.setInt32(0x300, 12345, true);
+bridge.call(CALL_INDEX.glGetTexLevelParameteriv, stack, 0);
+assert.strictEqual(bridgeView.getInt32(0x300, true), 12345,
+  'invalid texture queries leave the output untouched');
 matrixFrontend.matrixMode = GL.PROJECTION;
 matrixFrontend._replaceMatrix(require('../lib/gl-compat').identity());
 [0, 640, 0, 480].forEach((value, index) =>

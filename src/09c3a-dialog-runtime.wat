@@ -17,10 +17,14 @@
   ;; sends a message, and whatever that paints takes scratch slots of its own.
   ;; Marking here and resetting on the way out recycles everything the inner
   ;; frame took while leaving the caller's slots (taken before the mark) alone.
+  ;; Completion of the immediately returned synchronous send, not its LRESULT.
+  ;; Consumers of temporary output structs must reject a bounded-run timeout.
+  (global $wnd_send_completed (mut i32) (i32.const 0))
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $mark i32) (local $r i32)
     (local.set $mark (call $paint_scratch_mark))
+    (global.set $wnd_send_completed (i32.const 1))
     (local.set $r (call $wnd_send_message_inner
       (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
     (call $paint_scratch_reset (local.get $mark))
@@ -140,6 +144,7 @@
     ;; src/09e-win16-api.wat for the path that does call it.
     (if (global.get $code16)
       (then
+        (global.set $wnd_send_completed (i32.const 0))
         ;; Only for a procedure the task could actually be entered at. A
         ;; sentinel below 0xFFFF0000 — the built-in default, which is what a
         ;; window whose class went unresolved is given — is not one, and
@@ -206,6 +211,7 @@
           (br $sync_done)))
       (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    (global.set $wnd_send_completed (i32.eqz (global.get $eip)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (i32.load offset=0 (global.get $reg_base)))
     (global.set $eip (local.get $old_eip))
@@ -682,8 +688,61 @@
   ;; dismissed, which is when the API call it belongs to can be spliced back
   ;; together. The two worlds differ only in how that splice works, which is why
   ;; the splice stays with each caller and only this part is shared.
+  ;; WAT common dialogs do not run GetMessage. Worker-owned controls still
+  ;; receive ordinary input through the host queue, so the owning pump must
+  ;; perform that pull itself. Never execute controls on the renderer shadow.
+  ;; Unrelated input is retained in its owning USER queue, not dispatched here.
+  (func $modal_pull_input (result i32)
+    (local $packed i32) (local $hwnd i32) (local $msg i32)
+    (local $wp i32) (local $lp i32) (local $proc i32)
+    (if (global.get $host_shadow) (then (return (i32.const 0))))
+    (if (global.get $pending_input_packed)
+      (then
+        (local.set $packed (global.get $pending_input_packed))
+        (global.set $pending_input_packed (i32.const 0)))
+      (else
+        (local.set $packed (call $host_check_input))
+        (if (local.get $packed)
+          (then
+            (global.set $pending_input_hwnd (call $host_check_input_hwnd (global.get $focus_hwnd)))
+            (global.set $pending_input_lparam (call $host_check_input_lparam))))))
+    (if (i32.eqz (local.get $packed)) (then (return (i32.const 0))))
+    (local.set $packed (call $input_route_to_owner (local.get $packed)))
+    (if (i32.eqz (local.get $packed)) (then (return (i32.const 1))))
+    (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $wp (i32.shr_u (local.get $packed) (i32.const 16)))
+    (local.set $lp (global.get $pending_input_lparam))
+    (local.set $hwnd (global.get $pending_input_hwnd))
+    ;; A zero-target key belongs to this modal's focused child, or its frame.
+    (if (i32.and (i32.eqz (local.get $hwnd))
+          (i32.and (i32.ge_u (local.get $msg) (i32.const 0x0100))
+                   (i32.le_u (local.get $msg) (i32.const 0x0108))))
+      (then
+        (local.set $hwnd (global.get $modal_dlg_hwnd))
+        (if (call $wnd_is_child (global.get $modal_dlg_hwnd) (global.get $focus_hwnd))
+          (then (local.set $hwnd (global.get $focus_hwnd))))))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.and
+          (i32.or (i32.eq (local.get $hwnd) (global.get $modal_dlg_hwnd))
+            (call $wnd_is_child (global.get $modal_dlg_hwnd) (local.get $hwnd)))
+          (i32.ge_u (local.get $proc) (i32.const 0xFFFF0000)))
+      (then
+        (if (i32.eq (local.get $msg) (i32.const 0x0100))
+          (then
+            (if (call $dialog_handle_key (global.get $modal_dlg_hwnd)
+                  (local.get $wp) (i32.and (call $host_get_key_down_state (i32.const 16)) (i32.const 0x8000)))
+              (then (return (i32.const 1))))))
+        (drop (call $wat_wndproc_dispatch
+          (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp))))
+      (else
+        (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (global.get $main_hwnd))))
+        (if (i32.eqz (call $post_queue_push_input
+              (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp)))
+          (then (global.set $pending_input_packed (local.get $packed))))))
+    (i32.const 1))
+
   (func $modal_pump_step (param $pump_eip i32) (result i32)
-    (local $flags i32) (local $hwnd i32) (local $proc i32)
+    (local $flags i32) (local $hwnd i32) (local $proc i32) (local $input i32)
     ;; A renderer-side shadow instance may have delivered the button command.
     ;; Finish in the instance that owns the parked API call: its private
     ;; common-dialog kind/struct and saved register frame are authoritative.
@@ -693,6 +752,10 @@
         (call $modal_finish_local
           (i32.atomic.load (global.get $SHARED_MODAL_RESULT)))))
     (if (i32.eqz (global.get $modal_dlg_hwnd)) (then (return (i32.const 0))))
+    (local.set $input (call $modal_pull_input))
+    (if (i32.eqz (global.get $modal_dlg_hwnd)) (then (return (i32.const 0))))
+    ;; One input and one pending paint may progress in the same slice: a
+    ;; continuous mouse stream must not indefinitely defer dialog damage.
     ;; Drain nc_flags for the dialog hwnd only: child controls have no
     ;; non-client chrome and would leave spurious fragments.
     (if (global.get $nc_flags_count)
@@ -731,6 +794,11 @@
             (global.set $eip (local.get $pump_eip))
             (global.set $steps (i32.const 0))
             (return (i32.const 1))))))
+    (if (local.get $input)
+      (then
+        (global.set $eip (local.get $pump_eip))
+        (global.set $steps (i32.const 0))
+        (return (i32.const 1))))
     (global.set $yield_flag (i32.const 1))
     (global.set $yield_reason (i32.const 15)) ;; drained paints: sleep until input
     (i32.const 1))

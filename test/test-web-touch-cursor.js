@@ -203,28 +203,52 @@ async function main() {
     // Track a finger, and stay put when it lifts: the hourglass that matters
     // is the one that appears after the tap that started the work.
     const tracked = await page.evaluate(async () => {
-      const at = (type, x, y) => {
-        const touch = new Touch({ identifier: 1, target: document.body, clientX: x, clientY: y });
-        document.body.dispatchEvent(new TouchEvent(type, {
+      const canvas = document.getElementById('screen');
+      const at = (type, x, y, target = canvas, id = 1) => {
+        const touch = new Touch({ identifier: id, target, clientX: x, clientY: y });
+        target.dispatchEvent(new TouchEvent(type, {
           bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch],
           changedTouches: [touch],
         }));
       };
-      at('touchstart', 200, 300);
-      at('touchmove', 220, 320);
-      at('touchend', 220, 320);
+      const screen = canvas.getBoundingClientRect();
+      const fx = screen.left + screen.width * 0.4;
+      const fy = screen.top + screen.height * 0.5;
+      at('touchstart', fx - 20, fy - 20);
+      at('touchmove', fx, fy);
+      at('touchend', fx, fy);
       await new Promise(resolve => setTimeout(resolve, 200));
       const el = document.getElementById('touch-cursor');
+      // A finger on shell UI outside the screen is not pointing at the guest:
+      // the sprite must neither follow it nor ever be drawn outside the screen.
+      const outside = document.createElement('button');
+      outside.style.cssText = 'position:fixed;left:0;top:0;width:40px;height:40px;z-index:10';
+      document.body.appendChild(outside);
+      at('touchstart', 20, 20, outside, 2);
+      at('touchmove', 25, 25, outside, 2);
+      at('touchend', 25, 25, outside, 2);
+      outside.remove();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const stayed = el.getBoundingClientRect();
+      const stayedX = stayed.left + TouchCursor._hotX;
+      const stayedY = stayed.top + TouchCursor._hotY;
+      TouchCursor.move(screen.left - 50, screen.top - 50);
+      const clamped = el.getBoundingClientRect();
+      const clampX = clamped.left + TouchCursor._hotX;
+      const clampY = clamped.top + TouchCursor._hotY;
+      TouchCursor.move(fx, fy);
       const rect = el.getBoundingClientRect();
       const style = getComputedStyle(el);
       return {
+        fx, fy, stayedX, stayedY, clampX, clampY,
+        screen: { left: screen.left, top: screen.top },
         // The hotspot, not the sprite's corner.
         x: rect.left + TouchCursor._hotX,
         y: rect.top + TouchCursor._hotY,
         pointerEvents: style.pointerEvents,
         // The one check that matters for input: a tap where the sprite is has
         // to reach whatever is underneath it.
-        hitsCanvas: document.elementFromPoint(220, 320) !== el,
+        hitsCanvas: document.elementFromPoint(fx, fy) !== el,
         display: style.display,
         // A sprite that is positioned, sized and invisible would pass every
         // other check here.
@@ -237,7 +261,13 @@ async function main() {
         })(),
       };
     });
-    assert(Math.abs(tracked.x - 220) <= 2 && Math.abs(tracked.y - 320) <= 2,
+    assert(Math.abs(tracked.stayedX - tracked.fx) <= 2 && Math.abs(tracked.stayedY - tracked.fy) <= 2,
+      `the cursor should stay where the screen finger left it, not follow a touch on shell UI; ` +
+      `got ${tracked.stayedX},${tracked.stayedY} for ${tracked.fx},${tracked.fy}`);
+    assert(Math.abs(tracked.clampX - tracked.screen.left) <= 2 &&
+      Math.abs(tracked.clampY - tracked.screen.top) <= 2,
+      `a position outside the screen must clamp to its edge, got ${tracked.clampX},${tracked.clampY}`);
+    assert(Math.abs(tracked.x - tracked.fx) <= 2 && Math.abs(tracked.y - tracked.fy) <= 2,
       `the cursor hotspot should sit where the finger left it, got ${tracked.x},${tracked.y}`);
     assert(tracked.inked > 50,
       `the cursor sprite drew ${tracked.inked} opaque pixels -- nothing a visitor could see`);

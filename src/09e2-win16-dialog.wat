@@ -471,7 +471,9 @@
     ;; CreateDialogParam shares all creation and WM_INITDIALOG behavior with
     ;; DialogBoxParam but is modeless: once the init procedure returns, leave
     ;; the live dialog in the window table and return its HWND to the caller.
-    (if (i32.eq (local.get $dlg) (global.get $win16_dlg_modeless_pending))
+    ;; Zero means no modeless return is pending, not a matching dialog.
+    (if (i32.and (i32.ne (global.get $win16_dlg_modeless_pending) (i32.const 0))
+          (i32.eq (local.get $dlg) (global.get $win16_dlg_modeless_pending)))
       (then
         (global.set $win16_dlg_modeless_pending (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 2)))

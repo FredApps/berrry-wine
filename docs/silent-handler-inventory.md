@@ -724,3 +724,10 @@ global, exactly as GetMessageTime reads $last_msg_time. The behavior lives
 in $handle_GetMessageA / $handle_PeekMessageA, which clear it whenever a
 message is retrieved (every message source here attaches extra info 0).
 Covered by test/test-message-extra-info.js.
+
+2026-10-01: 242 -> 244 manual, wglGetCurrentContext and wglGetCurrentDC.
+These straight-line query handlers return the actual current WGL context and
+its DC; GetCurrentDC returns zero when no context is current. They are not
+constant-success placeholders. test/test-opengl-swapbuffers.js exercises
+unbound, bound, failed-rebind and cleared-current states. Reviewed while
+building the Pirates candidate against the concurrent Serious Sam WGL work.

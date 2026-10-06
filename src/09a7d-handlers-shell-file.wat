@@ -554,6 +554,7 @@
 
   (func $io_apc_start (param $frame i32) (result i32)
     (local $ret i32) (local $wa i32)
+    (call $user_apc_fill)
     (if (i32.eqz (global.get $io_apc_head)) (then (return (i32.const 0))))
     (if (i32.eqz (global.get $io_apc_thunk)) (then
       (global.set $num_thunks (call $thunk_reserve))
@@ -574,6 +575,7 @@
     ;; EIP. handler_set_eip alone protects only the outer thunk-zone path.
     (global.set $steps (i32.const 0))
     (global.set $handler_set_eip (i32.const 1))
+    (call $user_apc_fill)
     (local.set $node (global.get $io_apc_head))
     (if (i32.eqz (local.get $node)) (then
       (global.set $eip (call $gl32 (i32.load offset=16 (global.get $reg_base))))
@@ -583,12 +585,52 @@
     (global.set $io_apc_head (i32.load (local.get $wa)))
     (if (i32.eqz (global.get $io_apc_head)) (then (global.set $io_apc_tail (i32.const 0))))
     (local.set $callback (i32.load offset=16 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=12 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=8 (local.get $wa)))
+    ;; OVERLAPPED is required for ReadFileEx; zero tags a one-argument user APC.
+    (if (i32.load offset=12 (local.get $wa)) (then
+      (call $io_apc_push (i32.load offset=12 (local.get $wa)))
+      (call $io_apc_push (i32.load offset=8 (local.get $wa)))))
     (call $io_apc_push (i32.load offset=4 (local.get $wa)))
     (call $io_apc_push (global.get $io_apc_thunk))
     (call $heap_free (local.get $node))
     (global.set $eip (local.get $callback)))
+
+  (func $user_apc_fill
+    (local $node i32) (local $wa i32)
+    (if (global.get $io_apc_head) (then (return)))
+    (if (i32.eqz (call $host_dequeue_user_apc (global.get $current_thread_id) (i32.const 0))) (then (return)))
+    (local.set $node (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $node)) (then (unreachable)))
+    (local.set $wa (call $g2w (local.get $node)))
+    ;; Host writes callback/data at +0/+4; move callback to shared queue layout.
+    (drop (call $host_dequeue_user_apc (global.get $current_thread_id) (local.get $wa)))
+    (i32.store offset=16 (local.get $wa) (i32.load (local.get $wa)))
+    (i32.store (local.get $wa) (i32.const 0))
+    (i32.store offset=12 (local.get $wa) (i32.const 0))
+    (global.set $io_apc_head (local.get $node))
+    (global.set $io_apc_tail (local.get $node)))
+
+  (func $user_apc_set_alertable (param $value i32)
+    (global.set $user_apc_alertable (local.get $value))
+    (call $host_set_apc_alertable (global.get $current_thread_id) (local.get $value)))
+
+  ;; Scheduler completion runs in the waiting thread's own WASM instance.
+  (func (export "complete_alertable_wait") (param $result i32) (param $frame i32) (result i32)
+    (local $ret i32)
+    (if (i32.eqz (global.get $user_apc_alertable)) (then (return (i32.const 0))))
+    (call $user_apc_set_alertable (i32.const 0))
+    (if (i32.eq (local.get $result) (i32.const 0xc0)) (then
+      (if (call $io_apc_start (local.get $frame)) (then (return (i32.const 1))))))
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $frame)))
+    (i32.store (global.get $reg_base) (select (i32.const 0) (local.get $result) (global.get $user_apc_sleep)))
+    (global.set $eip (local.get $ret))
+    (i32.const 1))
+
+  (func (export "dispatch_startup_apcs")
+    (call $user_apc_fill)
+    (if (global.get $io_apc_head) (then
+      (call $io_apc_push (global.get $eip))
+      (drop (call $io_apc_start (i32.const 4))))))
 
   (func $handle_ReadFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $err i32) (local $bytes i32)

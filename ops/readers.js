@@ -5,6 +5,11 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { createProcessObserver } = require('./processes');
+const { classifyCandidate } = require('./corpus-categories');
+const { inventory } = require('./corpus-inventory');
+const { getCatalog, getBuildIdentity, launchFor } = require('./emulator-server');
+const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
+const { createActivityReader, boardEntry, linkCommits } = require('./activity');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -13,13 +18,18 @@ const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{
 const inside = (root, file) => file === root || file.startsWith(root + path.sep);
 
 function normalizePerformance(p) {
-  if(!p || p.metric!=='guest-presents' || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
-  if(p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
+  if(!p || !['guest-presents','guest-logical-frame-submissions','selected-window-presentations'].includes(p.metric) || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
+  const logical=p.metric==='guest-logical-frame-submissions', windowPresentations=p.metric==='selected-window-presentations';
+  if(windowPresentations){
+    const v=p.visibility, r=v?.client;
+    if(p.physicalFps!==null || !r || ![r.x,r.y,r.w,r.h].every(Number.isFinite) || r.w<=0 || r.h<=0 || !Number.isFinite(v.fraction) || v.fraction<=0 || v.fraction>1)return null;
+  }
+  if(logical || windowPresentations ? p.counterKind!==p.metric || p.qualification?.accepted!==true || !clip(p.qualification.sceneReview) || !clip(p.qualification.counterReview) || !clip(p.qualification.evidence) : p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
   if(p.samples.some(s=>!Number.isInteger(s.frames) || s.frames<0 || number(s.durationMs)===null || s.durationMs<=0))return null;
   const samples=p.samples.map(s=>({frames:s.frames,durationMs:s.durationMs,fps:s.frames*1000/s.durationMs,p95FrameMs:number(s.p95FrameMs)}));
   const fps=samples.reduce((n,s)=>n+s.frames,0)*1000/samples.reduce((n,s)=>n+s.durationMs,0);
   if(!Number.isFinite(fps))return null;
-  return {fps,samples,metric:p.metric,counterKind:p.counterKind,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
+  return {fps,samples,metric:p.metric,counterKind:p.counterKind,physicalFps:windowPresentations?null:undefined,visibility:windowPresentations?{client:{...p.visibility.client},fraction:p.visibility.fraction}:undefined,qualification:logical || windowPresentations?{accepted:true,sceneReview:clip(p.qualification.sceneReview),counterReview:clip(p.qualification.counterReview),evidence:clip(p.qualification.evidence)}:undefined,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
 }
 
 async function safeFile(root, relative) {
@@ -124,6 +134,9 @@ function parseSession(provider, records, file, partial, root) {
     cwd: null, startedAt: null, turnStartedAt: null, lastActivityAt: null, lastEvent: 'Unknown', state: 'unknown',
     inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, contextLimit: null,
     totalTokens: null, usageAt: null, compactions: 0, partial, progressAt: null, taskId: null };
+  session.parentAgentId = provider === 'claude' && path.basename(path.dirname(file)) === 'subagents'
+    ? `claude:${path.basename(path.dirname(path.dirname(file)))}` : null;
+  session.summary = null;
   let projectMatch = false;
   let usageAtCompaction = false;
   let hasSessionMeta = false;
@@ -146,6 +159,8 @@ function parseSession(provider, records, file, partial, root) {
         session.id = `codex:${p.id || p.session_id || path.basename(file, '.jsonl')}`;
         session.startedAt = date(p.timestamp) || time;
         session.contextLimit = number(p.context_window);
+        const parent = p.source?.subagent?.thread_spawn?.parent_thread_id;
+        if (typeof parent === 'string' && parent) session.parentAgentId = `codex:${parent}`;
       }
       if (e.type === 'turn_context') session.model = clip(p.model) || session.model;
       if (e.type === 'event_msg') {
@@ -162,6 +177,10 @@ function parseSession(provider, records, file, partial, root) {
         }
       }
       if (e.type === 'response_item') {
+        if (p.type === 'message' && p.role === 'assistant') {
+          const summary = Array.isArray(p.content) && p.content.filter(c => c.type === 'output_text').map(c => c.text || '').join(' ');
+          if (summary) session.summary = clip(summary, 240);
+        }
         if (p.type === 'message' && p.role === 'user' && Array.isArray(p.content)) {
           const message = p.content.filter(c => ['input_text', 'text'].includes(c.type)).map(c => c.text || '').join('\n').trim();
           if (message && !/^(?:<|# AGENTS\.md|# .*instructions)/i.test(message)) session.title = clip(message, 160);
@@ -185,6 +204,8 @@ function parseSession(provider, records, file, partial, root) {
       }
       if (e.type === 'assistant') {
         const m = e.message || {}, u = m.usage;
+        const summary = Array.isArray(m.content) && m.content.filter(c => c.type === 'text').map(c => c.text || '').join(' ');
+        if (summary) session.summary = clip(summary, 240);
         session.model = clip(m.model) || session.model;
         const tool = Array.isArray(m.content) && m.content.find(c => c.type === 'tool_use');
         session.lastEvent = tool ? `Tool: ${clip(tool.name, 70)}` : 'Assistant message';
@@ -231,6 +252,7 @@ async function walkLogs(root, warnings, maxFiles = 10000) {
 
 function createReader(options = {}) {
   const root = path.resolve(options.root || path.join(__dirname, '..'));
+  const readActivity = createActivityReader(root);
   const codexRoot = options.codexRoot === false ? null : options.codexRoot || path.join(os.homedir(), '.codex', 'sessions');
   const claudeRoot = options.claudeRoot === false ? null : options.claudeRoot || path.join(os.homedir(), '.claude', 'projects', root.replace(/[^a-zA-Z0-9-]/g, '-'));
   const sessionCache = new Map();
@@ -296,7 +318,9 @@ function createReader(options = {}) {
             environment: clip(typeof r.environment === 'string' ? r.environment : JSON.stringify(r.environment || {}), 1000),
             summary: clip(r.summary, 2000), verification: r.verification === 'reviewed' ? 'reviewed' : 'unreviewed',
             performance: normalizePerformance(r.performance),
-            screenshots: [], visuals: [], artifacts: [] };
+            screenshots: [], gameplayScreenshots: [], visuals: [], artifacts: [] };
+          const gameplayNames = new Set(run.verification === 'reviewed' && typeof r.gameplaySceneReview?.reviewer === 'string' && r.gameplaySceneReview.reviewer.trim() && Array.isArray(r.gameplayScreenshots)
+            ? r.gameplayScreenshots.filter(v => typeof v === 'string') : []);
           const diagrams = new Set(Array.isArray(r.diagrams) ? r.diagrams.filter(v => typeof v === 'string') : []);
           const names = new Set(['result.json', 'output.log']);
           for (const value of [r.screenshot, ...(Array.isArray(r.screenshots) ? r.screenshots : []), ...diagrams, ...(Array.isArray(r.artifacts) ? r.artifacts : [])]) {
@@ -312,7 +336,10 @@ function createReader(options = {}) {
             run.artifacts.push(artifact);
             if (/\.(png|jpe?g|webp)$/i.test(name)) {
               run.visuals.push({ ...artifact, kind: diagrams.has(name) ? 'diagram' : 'screenshot' });
-              if (!diagrams.has(name)) run.screenshots.push(artifact);
+              if (!diagrams.has(name)) {
+                run.screenshots.push(artifact);
+                if (gameplayNames.has(name)) run.gameplayScreenshots.push(artifact);
+              }
             }
           }
           result.push(run);
@@ -355,6 +382,36 @@ function createReader(options = {}) {
       }
       sources.push('test/candidate-corpus/manifest.json');
     } catch (e) { warnings.push(`Candidate manifest: ${e.message}`); }
+    // Keep registry-only games and unknown apps visible without changing the
+    // candidate manifest. Exact app/executable associations come from the same
+    // inventory used by the coverage report, not fuzzy title matching.
+    try {
+      const registryFile = await safeFile(root, 'lib/apps.js');
+      if (registryFile) {
+        const registry = require(registryFile);
+        let assessments = [];
+        try { assessments = JSON.parse(await readText(path.join(root, 'ops/corpus-status.json'), MB)).entries || []; }
+        catch (e) { if (e.code !== 'ENOENT') warnings.push(`Registry associations: ${e.message}`); }
+        const manifest = JSON.parse(await readText(path.join(root, 'test/candidate-corpus/manifest.json')));
+        for (const entry of inventory(manifest, registry.APPS, assessments,
+          [...(registry.DESKTOP_APPS || []), ...(registry.LOCAL_CANDIDATE_APPS || []), ...(registry.DEBUG_ONLY_APPS || [])])) {
+          let c = candidates.find(c => c.id === entry.id);
+          if (!c) {
+            c = {id:entry.id,name:clip(entry.name),kind:clip(entry.kind),version:'Registered app',
+              notes:'Registered in lib/apps.js; fixture presence does not establish a working launch route.',
+              executables:entry.executablePaths,localOnly:true,sourcePage:null,fixture:entry.id,fixtureStatus:'unknown',noteLinks:[]};
+            candidates.push(c);
+          }
+          c.inventoryScope = entry.scope;
+          c.localDesktopAppIds = entry.appIds.filter(id => (registry.DESKTOP_APPS || []).some(row => row[0] === id));
+          c.registryOnly = entry.origin === 'registry-only';
+          c.appIds = entry.appIds;
+          c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(root,app.executable)})));
+          if (c.registryOnly) c.fixtureStatus = c.registeredExecutables.every(e=>e.present) ? 'present' : c.registeredExecutables.some(e=>e.present) ? 'partial' : 'missing';
+        }
+        sources.push('lib/apps.js');
+      }
+    } catch (e) { warnings.push(`App registry: ${e.message}`); }
     try { todo = await readText(path.join(root, 'TODOS.md')); sources.push('TODOS.md'); }
     catch (e) { warnings.push(`TODOS.md: ${e.code || e.message}`); }
     try {
@@ -362,7 +419,7 @@ function createReader(options = {}) {
       const start = Math.max(0, stat.size - 256 * 1024);
       let tail = await windowText(file, start, Math.min(stat.size, 256 * 1024));
       if (start) tail = tail.slice(tail.indexOf('\n') + 1);
-      activity = tail.split(/\r?\n/).filter(l => l.trim()).slice(-150).reverse().map(text => ({ text: text.slice(0, 12000), source: 'messageboard.txt' }));
+      activity = tail.split(/\r?\n/).filter(l => l.trim()).slice(-150).reverse().map(boardEntry);
       sources.push('messageboard.txt (latest 150 entries)');
       const stamp=stat.mtimeMs+':'+stat.size;
       if(stamp!==boardStamp){
@@ -377,6 +434,10 @@ function createReader(options = {}) {
         taskMessages=messages;boardStamp=stamp;
       }
     } catch (e) { warnings.push(`messageboard.txt: ${e.code || e.message}`); }
+    const activityResult = await readActivity(activity);
+    activity = activityResult.activity;
+    if (activityResult.warning) warnings.push(activityResult.warning);
+    else sources.push('git log --all (latest 150 commits; cached 30 seconds)');
     const tasks = parseTasks(todo, candidates);
     for (const task of tasks) {
       task.discussion=taskMessages.get(task.id) || [];
@@ -386,7 +447,7 @@ function createReader(options = {}) {
     const [runList, agents] = await Promise.all([runs(warnings), sessions(warnings)]);
     const observations = agents.length ? await observeProcesses(agents) : new Map();
     for (const a of agents) { a.process = observations.get(a); delete a.logFile; }
-    for (const run of runList) if (!candidates.some(c => c.id === run.candidateId)) warnings.push(`${run.key}: candidate ${run.candidateId} is not in the manifest.`);
+    for (const run of runList) if (!candidates.some(c => c.id === run.candidateId || c.appIds?.includes(run.candidateId))) warnings.push(`${run.key}: candidate ${run.candidateId} is not in the corpus.`);
     for (const a of agents) {
       const task = ['active','blocked','review','ready'].map(status=>tasks.find(t=>t.owner===a.id && t.status===status)).find(Boolean);
       if (task) { a.taskId = task.id; a.taskTitle = task.title; a.taskStartedAt = task.startedAt; a.progressAt = task.progressAt; }
@@ -398,19 +459,30 @@ function createReader(options = {}) {
       sources.push('ops/corpus-status.json');
     } catch (e) { if(e.code !== 'ENOENT') warnings.push(`Corpus status review: ${e.message}`); }
     for (const c of candidates) {
+      c.category = classifyCandidate(c);
       c.taskIds = tasks.filter(t => t.candidateIds.includes(c.id)).map(t => t.id);
-      const matching = runList.filter(r => r.candidateId === c.id);
+      const matching = runList.filter(r => r.candidateId === c.id || c.appIds?.includes(r.candidateId));
       c.latestRun = matching[0] || null;
       c.lastVerifiedRun = matching.find(r => r.outcome === 'passed' && r.verification === 'reviewed') || null;
       const measured=matching.find(r=>r.performance);
       c.performance=measured?{...measured.performance,runKey:measured.key}:null;
       const review = corpusReview?.entries?.find(e => e.id === c.id);
+      c.sourceGroup = clip(review?.origin) || (c.registryOnly ? 'Registry only' : 'Source unclassified');
       if(review)c.assessment={status:clip(review.status),summary:clip(review.summary,4000),next:clip(review.next,2000),
         reviewedAt:date(corpusReview.reviewedAt),origin:clip(review.origin),distribution:clip(review.distribution),licenseNote:clip(review.licenseNote,2000),appIds:Array.isArray(review.appIds)?review.appIds.map(v=>clip(v)):[],
         registeredExecutablePresent:Array.isArray(review.apps) && review.apps.some(a=>a.executablePresent),
         needsReview:(review.basedOnLatestRun || null)!==(c.latestRun?.key || null) || (review.basedOnLatestStartedAt || null)!==(c.latestRun?.startedAt || null)};
     }
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,projectStatus,
+    const releaseReadiness = deriveReleaseReadiness({candidates, runs: runList, tasks, review: await loadReleaseReview(root)});
+    for (const candidate of candidates) candidate.releaseReadiness = releaseReadiness.entries.find(entry => entry.id === candidate.id);
+    let emulatorBuild = null;
+    try { emulatorBuild = await getBuildIdentity(root); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
+    try {
+      const launchCatalog = await getCatalog(root);
+      for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
+    } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
+    linkCommits(activityResult.commits || [], tasks, runList);
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }
@@ -419,7 +491,12 @@ function createReader(options = {}) {
     const file = value ? await safeFile(value.root, value.name) : null;
     return file && inside(await fs.realpath(root), file) ? file : null;
   }
-  return { root, snapshot, artifact };
+  // Internal only: retain log paths for accounting without exposing them in /api/state.
+  async function analyticsSnapshot() {
+    const warnings = [];
+    return { agents: await sessions(warnings), warnings };
+  }
+  return { root, snapshot, artifact, analyticsSnapshot };
 }
 
 module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows };

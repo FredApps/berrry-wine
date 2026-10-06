@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
-const {createBot,hash}=require('./telegram-core');
+const {createBot,hash,COMMANDS}=require('./telegram-core');
 const replies=require('./telegram-replies');
 const root=path.resolve(__dirname,'..'),dir=path.join(root,'scratch/telegram');
 const base=process.env.OPS_URL||'http://127.0.0.1:8098';
 if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base))throw Error('OPS_URL must be loopback HTTP');
 async function atomic(file,data){await fs.writeFile(file+'.tmp',JSON.stringify(data,null,2)+'\n',{mode:0o600});await fs.rename(file+'.tmp',file);}
 async function findLog(agentId){
-  const id=agentId?.replace(/^codex:/,'');if(!/^[a-f0-9-]{36}$/.test(id||''))return null;
-  const start=process.env.CODEX_SESSIONS_ROOT||path.join(os.homedir(),'.codex/sessions');
+  const claude=/^claude:/.test(agentId||''),id=agentId?.replace(/^(codex|claude):/,'');if(!/^[a-f0-9-]{36}$/.test(id||''))return null;
+  const start=claude?process.env.CLAUDE_PROJECTS_ROOT||path.join(os.homedir(),'.claude/projects'):process.env.CODEX_SESSIONS_ROOT||path.join(os.homedir(),'.codex/sessions');
   async function walk(d,depth){if(depth>4)return null;for(const e of await fs.readdir(d,{withFileTypes:true})){const f=path.join(d,e.name);if(e.isFile()&&e.name.endsWith(id+'.jsonl'))return f;if(e.isDirectory()){const found=await walk(f,depth+1);if(found)return found;}}return null;}
   return walk(start,0);
 }
@@ -36,7 +36,7 @@ async function main(){
   if(state.replyPolicyVersion!==2){state.replyQueue=(state.replyQueue||[]).filter(x=>x.direct);state.replyPolicyVersion=2;state.replyDeliveryVersion=1;await save();}
   const me=await telegram('getMe',{});console.log('Telegram bridge connected: @'+me.username);
   const webhook=await telegram('getWebhookInfo',{});if(webhook.url)throw Error('Bot has a webhook configured; remove it before long polling');
-  await telegram('setMyCommands',{commands:[{command:'status',description:'Current work and blockers'},{command:'screen',description:'Orchestrator terminal'},{command:'approvals',description:'Review pending approval'},{command:'queue',description:'Waiting messages'},{command:'cancel',description:'Cancel waiting messages'},{command:'help',description:'Chat and approval help'}]});
+  await telegram('setMyCommands',{commands:COMMANDS});
   let log=null,logId=null;
   const typingTimer=setInterval(()=>{void bot.typing();},4000);typingTimer.unref();
   while(true){

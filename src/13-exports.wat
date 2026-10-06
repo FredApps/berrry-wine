@@ -311,6 +311,15 @@
       (if (global.get $page_chunk_deferred)
         (then (call $page_chunk_reclaim_deferred)))
       (br $main)))
+    ;; A terminating callback does not pass through CACA000A. Restore only
+    ;; context identity; leave its terminal EIP/yield intact (never resume main).
+    (if (i32.and (global.get $mm_context_active)
+          (i32.or (i32.eqz (global.get $eip))
+            (i32.eq (global.get $yield_reason) (i32.const 2))))
+      (then
+        (call $mm_timer_context_leave)
+        (global.set $mm_timer_in_cb (i32.const 0))
+        (global.set $mm_timer_resume_yield (i32.const 0))))
     ;; What this call actually got through. $block_budget can end up negative --
     ;; a fold retires k blocks in one go and subtracts all k -- so this can read
     ;; slightly above the budget it was given; that is honest, not a wrap.
@@ -535,6 +544,7 @@
   (func (export "test_shared_post_read") (param $msg_ptr i32) (param $remove i32) (result i32)
     (call $shared_post_queue_read (local.get $msg_ptr) (local.get $remove)))
   (func (export "reset_thread_message_queue") (param $tid i32)
+    (call $mouse_track_reset_thread (local.get $tid))
     (call $shared_post_queue_reset_tid (local.get $tid)))
   (func (export "test_timer_set")
     (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
@@ -1635,6 +1645,7 @@
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $current_thread_id (i32.add (local.get $tid) (i32.const 1)))
+    (call $mouse_track_reset_thread (global.get $current_thread_id))
     (call $shared_post_queue_reset_tid (global.get $current_thread_id))
     (global.set $post_queue_count (i32.const 0))
     (global.set $pq_read_off (i32.const 0))
@@ -2310,8 +2321,17 @@
     (global.set $benchmark_chain_bp (local.get $on)) (call $dbg_recompute))
 
   ;; Watchpoint exports
-  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
-  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)) (call $dbg_recompute))
+  ;; Skip-once belongs to the breakpoint that just halted. Retargeting must
+  ;; stop on the new address's first hit; rearming the same address preserves
+  ;; ordinary resume through the current block without immediately rehalting.
+  (func (export "set_bp") (param $addr i32)
+    (if (i32.ne (local.get $addr) (global.get $bp_addr))
+      (then (global.set $bp_skip_once (i32.const 0))))
+    (global.set $bp_addr (local.get $addr))
+    (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
+  (func (export "clear_bp")
+    (global.set $bp_addr (i32.const 0))
+    (global.set $bp_skip_once (i32.const 0)) (call $dbg_recompute))
   (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
   ;; --fault-null: 0=off, 1=log unmapped guest accesses, 2=log and trap,
   ;; 3=log and raise a guest EXCEPTION_ACCESS_VIOLATION at the faulting
@@ -3122,6 +3142,9 @@
     (local.set $id (i32.load (local.get $slot)))
     (local.set $dwuser (i32.load offset=12 (local.get $slot)))
     (local.set $cb (i32.load offset=8 (local.get $slot)))
+    ;; Prepare before consuming a one-shot or disturbing the parked wait.
+    ;; Allocation failure leaves this due callback available for a later poll.
+    (if (i32.eqz (call $mm_timer_context_enter)) (then (return (i32.const 0))))
     ;; Timer is due — consume through the latest interval boundary without
     ;; turning host scheduling lateness into permanent periodic-timer drift,
     ;; retiring the slot first if it was a one-shot.
@@ -5328,3 +5351,10 @@
 
   ;; NO closing paren for `(module` here — this fragment is self-balanced.
   ;; See the banner at the top of src/01-header.wat.
+  ;; Pure publication; safe on a shadow/page instance sharing the USER queue.
+  (func (export "track_mouse_observe") (param $client_hwnd i32) (result i32)
+    (call $mouse_track_observe (local.get $client_hwnd)))
+  ;; Host resolves the physically topmost process/window; WAT resolves its
+  ;; child and client rectangle. Capture never participates in this hit test.
+  (func (export "track_mouse_client_hit") (param $top i32) (param $sx i32) (param $sy i32) (result i32)
+    (call $mouse_track_client_at (local.get $top) (local.get $sx) (local.get $sy) (i32.const 0)))

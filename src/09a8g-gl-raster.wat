@@ -180,6 +180,7 @@
   (global $gl_sw_tex_unsupported (mut i32) (i32.const 0))
   ;; GL's default clear colour is (0,0,0,0).
   (global $gl_sw_clear_color (mut i32) (i32.const 0))
+  (global $gl_sw_clear_z (mut i32) (i32.const 65535))
   ;; glPushAttrib depth, 0..16. GL requires at least 16.
   (global $gl_sw_attrib_depth (mut i32) (i32.const 0))
 
@@ -200,6 +201,7 @@
   ;;       never set, which GL defines as the whole drawable
   (func $gl_sw_state_defaults
     (local $s i32)
+    (global.set $gl_sw_clear_z (i32.const 65535))
     (local.set $s (global.get $gl_sw_st))
     (i32.store offset=0 (local.get $s) (i32.const 0))
     (i32.store offset=4 (local.get $s) (i32.const 2))       ;; GL_ONE
@@ -264,6 +266,7 @@
     (local.set $frame (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (i32.store (local.get $frame) (local.get $mask))
+    (i32.store offset=68 (local.get $frame) (global.get $gl_sw_clear_z))
     (call $memcpy (i32.add (local.get $frame) (i32.const 4)) (global.get $gl_sw_st) (i32.const 64))
     ;; Point size and line width sit outside the 64-byte block, at +1600.
     (local.set $frame (call $gl_sw_attrib_sizes (global.get $gl_sw_attrib_depth)))
@@ -300,6 +303,8 @@
     (local.set $frame (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (local.set $mask (i32.load (local.get $frame)))
+    (if (i32.and (local.get $mask) (i32.const 0x100))
+      (then (global.set $gl_sw_clear_z (i32.load offset=68 (local.get $frame)))))
     (local.set $saved (i32.add (local.get $frame) (i32.const 4)))
     (local.set $s (global.get $gl_sw_st))
     ;; GL_POINT_BIT, GL_LINE_BIT.
@@ -940,12 +945,13 @@
     (global.set $gl_sw_flip_y (i32.const 1)))
 
   (func $gl_sw_clear_depth
-    (call $gl_sw_fill_depth (global.get $gl_sw_zbuf)))
+    (call $gl_sw_fill_depth (global.get $gl_sw_zbuf) (i32.const 65535)))
 
-  ;; Depth 1.0 over a 16bpp depth surface or a view into one, row by row so a
+  ;; Clear a 16bpp depth surface or a view into one, row by row so a
   ;; scissor view leaves the rest of each row alone.
-  (func $gl_sw_fill_depth (param $z i32)
+  (func $gl_sw_fill_depth (param $z i32) (param $value i32)
     (local $y i32) (local $h i32) (local $row i32) (local $pitch i32) (local $bytes i32)
+    (local $x i32)
     (if (i32.eqz (local.get $z)) (then (return)))
     (local.set $h (load.field DxObject height (local.get $z)))
     (local.set $pitch (load.field DxObject pitch (local.get $z)))
@@ -953,7 +959,15 @@
     (local.set $row (load.field DxObject misc1 (local.get $z)))
     (block $done (loop $lp
       (br_if $done (i32.ge_s (local.get $y) (local.get $h)))
-      (memory.fill (local.get $row) (i32.const 0xFF) (local.get $bytes))
+      (if (i32.eq (local.get $value) (i32.const 65535))
+        (then (memory.fill (local.get $row) (i32.const 0xFF) (local.get $bytes)))
+        (else
+          (local.set $x (i32.const 0))
+          (block $row_done (loop $pixel
+            (br_if $row_done (i32.ge_u (local.get $x) (local.get $bytes)))
+            (i32.store16 (i32.add (local.get $row) (local.get $x)) (local.get $value))
+            (local.set $x (i32.add (local.get $x) (i32.const 2)))
+            (br $pixel)))))
       (local.set $row (i32.add (local.get $row) (local.get $pitch)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
@@ -1297,6 +1311,14 @@
       (then (call $gl_sw_push_attrib (i32.load offset=4 (local.get $stack))) (return)))
     (if (i32.eq (local.get $op) (i32.const 77))
       (then (call $gl_sw_pop_attrib) (return)))
+    ;; 109 glClearDepth(GLclampd), quantized to the software depth surface.
+    (if (i32.eq (local.get $op) (i32.const 109))
+      (then
+        (global.set $gl_sw_clear_z (i32.trunc_sat_f64_u
+          (f64.add (f64.const 0.5) (f64.mul (f64.const 65535)
+            (f64.min (f64.const 1) (f64.max (f64.const 0)
+              (f64.load offset=4 align=4 (local.get $stack))))))))
+        (return)))
     ;; 3 glClearColor(four GLclampf)
     (if (i32.eq (local.get $op) (i32.const 3))
       (then
@@ -1357,8 +1379,9 @@
             (load.field DxObject width (local.get $rt))
             (load.field DxObject height (local.get $rt))
             (global.get $gl_sw_clear_color))))
-        (if (i32.and (local.get $mask) (i32.const 0x100))
-          (then (call $gl_sw_fill_depth (local.get $zv)))))))
+        (if (i32.and (i32.ne (i32.and (local.get $mask) (i32.const 0x100)) (i32.const 0))
+                     (i32.ne (i32.load offset=24 (local.get $s)) (i32.const 0)))
+          (then (call $gl_sw_fill_depth (local.get $zv) (global.get $gl_sw_clear_z)))))))
 
   ;; ---- lighting -------------------------------------------------------------
   ;; GL 1.x fixed-function lighting per vertex, from the matrix mirror's lights

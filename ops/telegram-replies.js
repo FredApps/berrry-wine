@@ -7,7 +7,23 @@ function reply(record){
  if(!text)return null;
  return {id:p.id||createHash('sha256').update(JSON.stringify(record)).digest('hex'),text,phase:p.phase,at:record.timestamp};
 }
+// Claude Code transcript lines → the Codex rollout shape the rest of this file reads.
+// Claude records carry no turn id, so turns fall back to telegramActiveTurn; a text
+// block is final only when its message stopped with end_turn.
+function fromClaude(record){
+ if(!['user','assistant'].includes(record?.type)||record.isSidechain||record.isMeta||!record.message)return record;
+ const m=record.message,content=typeof m.content==='string'?[{type:'text',text:m.content}]:Array.isArray(m.content)?m.content:[];
+ if(record.type==='user'){
+  if(content.some(c=>c.type==='tool_result'))return null;
+  const text=content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
+  return text?{type:'response_item',timestamp:record.timestamp,payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}:null;
+ }
+ const text=content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
+ if(!text)return null;
+ return {type:'response_item',timestamp:record.timestamp,payload:{type:'message',role:'assistant',id:record.uuid,phase:m.stop_reason==='end_turn'?'final':'commentary',content:[{type:'output_text',text}]}};
+}
 function enqueue(state,record){
+ record=fromClaude(record);if(!record)return;
  const p=record.payload,turn=p?.internal_chat_message_metadata_passthrough?.turn_id;
  if(record.type==='response_item'&&p?.type==='message'&&p.role==='user'){
   const fromTelegram=p.content?.some(c=>c.type==='input_text'&&c.text.startsWith('[Telegram] '));
@@ -52,4 +68,4 @@ function formatChunks(text){
  while((m=fence.exec(text))){add(text.slice(start,m.index));code=!code;start=fence.lastIndex;}
  add(text.slice(start));if(current.text)chunks.push(current);return chunks;
 }
-module.exports={reply,enqueue,flush,formatChunks};
+module.exports={reply,enqueue,flush,formatChunks,fromClaude};

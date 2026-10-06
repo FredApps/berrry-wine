@@ -31,11 +31,19 @@ const gl = {
   uniform4iv: (location, value) => calls.push(['uniform4iv', location, Array.from(value)]),
   enable() {}, disable() {}, viewport() {}, scissor() {}, depthFunc() {}, depthMask() {},
   depthRange() {}, blendFunc() {}, cullFace() {}, frontFace() {}, lineWidth() {},
-  clearColor() {}, clear() {}, readPixels() {}, finish() {}, flush() {}, getParameter: () => 4096,
+  clearColor() {}, clear: mask => calls.push(['clear', mask]),
+  clearDepth: depth => calls.push(['clearDepth', depth]),
+  readPixels() {}, finish() {}, flush() {}, getParameter: () => 4096,
   getError: () => 0,
 };
 const canvas = { getContext: name => name === 'webgl' ? gl : null };
 const gpu = new WebGLBackend(canvas);
+gpu.clear(null, 0x100, 0.25);
+gpu.clear(null, 0x100, 0.75);
+assert.deepStrictEqual(calls.slice(-4), [
+  ['clearDepth', 0.25], ['clear', 0x100],
+  ['clearDepth', 0.75], ['clear', 0x100],
+], 'each clear applies its requested depth before clearing');
 const buffer = gpu.createBuffer();
 gpu.updateBuffer(buffer, gl.ARRAY_BUFFER, new Float32Array([1, 2, 3]), gl.STREAM_DRAW);
 assert(calls.some(call => call[0] === 'bufferData'), 'backend uploads normalized buffer data');
