@@ -7189,8 +7189,34 @@
     ;; reopens on waveOut, whose ~1.5s latency overflows Bink's audio sizing
     ;; divide (Arcanum's first movie).
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0xF1F))
-    ;; dwMaxSecondarySampleRate = 44100
-    (i32.store (i32.add (local.get $wa) (i32.const 56)) (i32.const 44100))
+    ;; DSCAPS: +8/+12 dwMin/MaxSecondarySampleRate (DSBFREQUENCY_MIN/MAX),
+    ;; +16 dwPrimaryBuffers. The max used to be written at +56, which is
+    ;; dwFreeHw3DAllBuffers, leaving the rate range 0..0.
+    (if (i32.ge_u (local.get $sz) (i32.const 20))
+      (then
+        (i32.store offset=8 (local.get $wa) (i32.const 100))
+        (i32.store offset=12 (local.get $wa) (i32.const 100000))
+        (i32.store offset=16 (local.get $wa) (i32.const 1))))
+    ;; Mixing and 3D voices: our voices are mixed and spatialized by the host,
+    ;; not by the CPU in the guest, so report them as hardware buffers --
+    ;; +20..+40 dwMax/FreeHwMixing{All,Static,Streaming}Buffers and +44..+64
+    ;; dwMax/FreeHw3D{All,Static,Streaming}Buffers. Diablo II's d2sound keeps
+    ;; 3D sound only when dwMaxHw3DAllBuffers >= 16, and otherwise refuses
+    ;; every sound it flags as 3D.
+    (if (i32.ge_u (local.get $sz) (i32.const 68))
+      (then
+        (i32.store offset=20 (local.get $wa) (i32.const 64))
+        (i32.store offset=24 (local.get $wa) (i32.const 64))
+        (i32.store offset=28 (local.get $wa) (i32.const 64))
+        (i32.store offset=32 (local.get $wa) (i32.const 64))
+        (i32.store offset=36 (local.get $wa) (i32.const 64))
+        (i32.store offset=40 (local.get $wa) (i32.const 64))
+        (i32.store offset=44 (local.get $wa) (i32.const 32))
+        (i32.store offset=48 (local.get $wa) (i32.const 32))
+        (i32.store offset=52 (local.get $wa) (i32.const 32))
+        (i32.store offset=56 (local.get $wa) (i32.const 32))
+        (i32.store offset=60 (local.get $wa) (i32.const 32))
+        (i32.store offset=64 (local.get $wa) (i32.const 32))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
