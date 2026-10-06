@@ -9,7 +9,13 @@ const hash=text=>crypto.createHash('sha256').update(text).digest('hex');
 const promptHash=p=>hash(p.terminalId+'\n'+approvalIdentity(p.prompt));
 const isStatusQuestion=text=>/^(?:\/status|status|(?:ascii(?: art)? )?tldr(?: status)?|(?:what['’]?s|whats['’]?|whtas['’]?) (?:the )?latest|any updates?|sup|hi|hey)[?!.]*$/i.test(text.trim());
 const HELP='Send text to chat with the orchestrator.\n'+COMMANDS.map(c=>'/'+c.command+' — '+c.description).join('\n')+'\n\nApproval buttons accept once, decline, or allow the displayed persistent rule when supported. Plain chat never answers a permission prompt. Direct answers and explicit milestones are forwarded; routine progress stays on the dashboard.';
-function createBot({state,save,telegram,local,now=Date.now}) {
+// Anything the owner attaches: the largest photo size, or any file, video, audio, voice note, animation or sticker.
+const attachmentOf=m=>{
+  if(m?.photo?.length)return {...m.photo[m.photo.length-1],kind:'image'};
+  for(const kind of ['document','video','animation','audio','voice','video_note','sticker'])if(m?.[kind]?.file_id)return {...m[kind],kind:/^image\//.test(m[kind].mime_type||'')?'image':kind};
+  return null;
+};
+function createBot({state,save,telegram,local,download,now=Date.now}) {
   let typingBusy=false,lastTyping=0;
   async function typing(){
     if(typingBusy||!state.owner||!state.lastChat||state.pending||now()-state.lastChat.at>10*60000||state.lastDirectReplyAt>=state.lastChat.at||now()-lastTyping<3500)return;
@@ -69,7 +75,9 @@ function createBot({state,save,telegram,local,now=Date.now}) {
       await telegram('editMessageReplyMarkup',{chat_id:state.owner.chatId,message_id:callback.message.message_id,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
       return;
     }
-    if(!m || m.chat?.type!=='private' || m.from?.is_bot || typeof m.text!=='string')return;
+    if(!m || m.chat?.type!=='private' || m.from?.is_bot)return;
+    const attachment=attachmentOf(m);
+    if(typeof m.text!=='string' && !attachment)return;
     if(!state.owner){
       const code=/^\/start ([a-f0-9]{32})$/.exec(m.text);
       if(!code || !state.pairing || state.pairing.expires<now() || hash(code[1])!==state.pairing.hash){
@@ -80,7 +88,12 @@ function createBot({state,save,telegram,local,now=Date.now}) {
     }
     if(!authorized(m.from,m.chat))return;
     if(m.date && now()-m.date*1000>5*60000)return send('Old message ignored. Please resend it if still needed.');
-    const text=m.text.trim();
+    let text=(m.text??m.caption??'').trim();
+    if(attachment){
+      if(!download)return send('Attachments are not supported by this bridge build.');
+      let saved;try{saved=await download(attachment,m.message_id);}catch(e){return send('Could not save the attachment: '+e.message);}
+      text=(text?text+'\n':'')+'['+attachment.kind+' attached: '+saved+(attachment.kind==='image'?' — open it with the Read tool':'')+']';
+    }
     if(['/help','/start'].includes(text))return send(HELP);
     if(text==='/queue')return send(state.chatQueue?.length?state.chatQueue.map((x,i)=>`${i+1}. ${x.text}`).join('\n'):'No messages waiting.');
     if(text==='/cancel'){state.chatQueue=[];await save();return send('Waiting messages cancelled.');}

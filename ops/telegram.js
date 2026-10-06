@@ -32,7 +32,20 @@ async function main(){
     let r;try{r=await fetch(base+endpoint,{method:body?'POST':'GET',headers:{Origin:base,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(8000)});}catch{throw Error('Local dashboard unavailable');}
     if(!r.ok){const error=Error((await r.text()).slice(0,300));error.status=r.status;throw error;}return r.json();
   }
-  const save=()=>atomic(file,state),bot=createBot({state,save,telegram,local});
+  // Every image and file the owner sends is saved here, so the orchestrator can open it by path.
+  // The Bot API serves files up to 20 MB.
+  async function download(attachment,messageId){
+    if(attachment.file_size>20*1024*1024)throw Error('over the Bot API 20 MB download limit');
+    const info=await telegram('getFile',{file_id:attachment.file_id});
+    if(!info.file_path)throw Error('Telegram returned no file path');
+    const r=await fetch('https://api.telegram.org/file/bot'+token+'/'+info.file_path,{signal:AbortSignal.timeout(60000)});
+    if(!r.ok)throw Error('download failed ('+r.status+')');
+    const name=path.basename(attachment.file_name||info.file_path).replace(/[^A-Za-z0-9._-]/g,'_').slice(-80);
+    const inbox=path.join(dir,'inbox');await fs.mkdir(inbox,{recursive:true,mode:0o700});
+    const out=path.join(inbox,new Date().toISOString().replace(/[:.]/g,'-')+'-'+messageId+'-'+name);
+    await fs.writeFile(out,Buffer.from(await r.arrayBuffer()),{mode:0o600});return out;
+  }
+  const save=()=>atomic(file,state),bot=createBot({state,save,telegram,local,download});
   if(state.replyPolicyVersion!==2){state.replyQueue=(state.replyQueue||[]).filter(x=>x.direct);state.replyPolicyVersion=2;state.replyDeliveryVersion=1;await save();}
   const me=await telegram('getMe',{});console.log('Telegram bridge connected: @'+me.username);
   const webhook=await telegram('getWebhookInfo',{});if(webhook.url)throw Error('Bot has a webhook configured; remove it before long polling');

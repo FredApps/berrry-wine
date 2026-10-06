@@ -230,3 +230,20 @@ test('a dim Claude prompt suggestion is not a draft', () => {
   assert.equal(claudeChatReady(plainScreen(typed)),false);
   assert.match(plainScreen('\x1b[2mdim status\x1b[0m line'),/^dim status line$/);
 });
+test('Owner images and files are saved and forwarded to the orchestrator by path, with the caption',async()=>{
+ const state={owner:{userId:10,chatId:10}},actions=[],fetched=[];
+ const bot=createBot({state,save:async()=>{},telegram:async()=>({message_id:20}),local:async(url,body)=>{if(url==='/api/state')return {tasks:[],approvals:{items:[]}};actions.push({url,body});return {sent:true};},
+  download:async(a,messageId)=>{fetched.push(a.file_id);return '/inbox/'+messageId+'-'+(a.file_name||'photo.jpg');}});
+ const base={date:Date.now()/1000,from:{id:10},chat:{id:10,type:'private'}};
+ await bot.handle({message:{...base,message_id:7,caption:'what is wrong here?',photo:[{file_id:'small'},{file_id:'large'}]}});
+ assert.deepEqual(fetched,['large'],'the largest photo size is saved');
+ assert.equal(actions[0].url,'/api/orchestrator-chat');
+ assert.match(actions[0].body.message,/^what is wrong here\?\n\[image attached: \/inbox\/7-photo\.jpg — open it with the Read tool\]$/);
+ await bot.handle({message:{...base,message_id:8,document:{file_id:'png',file_name:'shot.png',mime_type:'image/png'}}});
+ assert.match(actions[1].body.message,/^\[image attached: \/inbox\/8-shot\.png/);
+ await bot.handle({message:{...base,message_id:9,document:{file_id:'zip',file_name:'save.zip',mime_type:'application/zip'}}});
+ assert.equal(actions[2].body.message,'[document attached: /inbox/9-save.zip]');
+ await bot.handle({message:{...base,message_id:10,voice:{file_id:'v'}}});
+ assert.equal(actions[3].body.message,'[voice attached: /inbox/10-photo.jpg]');
+ assert.deepEqual(fetched,['large','png','zip','v']);
+});
