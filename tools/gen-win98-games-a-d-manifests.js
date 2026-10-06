@@ -121,6 +121,15 @@ const GAMES = [
     root: 'Dark Reign-SWonlyProbablyMaybeD3D/DATA',
     exe: 'DKReign.exe',
   },
+  {
+    // Codemasters' 1998 CD demo, run from its SETUP\ directory as the CD's
+    // autorun does. SETUPDIR\, the cabs and the InstallShield stubs are the
+    // installer; the game reads GAME\, DEMO\ and INI\ beside GAME.EXE.
+    id: 'colin_mcrae_rally_demo',
+    root: 'ColinMcrae-Rally1-Demo/SETUP',
+    exe: 'GAME.EXE',
+    exclude: ['SETUPDIR'],
+  },
 ];
 
 function walk(directory, relative = '', output = []) {
