@@ -126,15 +126,19 @@ for (const run of runs) {
   check(`${run.name}: emulator run completed`, !run.failed);
   check(`${run.name}: File menu exposes Open, Close, and Exit`,
     new RegExp(`menu-dump:${run.name}-file-open:[^\\n]*&Open\\.\\.[^\\n]*&Close[^\\n]*E&xit`).test(run.output));
-  check(`${run.name}: MIDI file opened`, /\[MCI\] open sequencer id=1 element="PINBALL\.MID" notes=14139/.test(run.output));
+  // MCI device ids are process-wide since f4134ad7 (one device table for all
+  // HostImports instances), and Media Player probes the waveaudio/sequencer
+  // types first, so the file's id is not 1; the element is the full path
+  // GetOpenFileName returned.
+  check(`${run.name}: MIDI file opened`, /\[MCI\] open sequencer id=\d+ element="(?:[A-Za-z]:\\)?PINBALL\.MID" notes=14139/.test(run.output));
   check(`${run.name}: stable stopped title rendered`, /title="PINBALL\.MID - Media Player \(stopped\)"/.test(run.output));
-  check(`${run.name}: Play reaches MCI`, /\[MCI\] play sequencer id=1 element="PINBALL\.MID" notes=14139/.test(run.output));
+  check(`${run.name}: Play reaches MCI`, /\[MCI\] play sequencer id=\d+ element="(?:[A-Za-z]:\\)?PINBALL\.MID" notes=14139/.test(run.output));
   check(`${run.name}: Help menu remains usable during playback`,
     new RegExp(`menu-dump:${run.name}-help-playing:[^\\n]*&Help Topics[^\\n]*&About Media Player`).test(run.output));
   check(`${run.name}: PCM WAV file opened through WaveAudio`,
-    /\[MCI\] open waveaudio id=\d+ element="TEST\.WAV" frames=[1-9]\d* rate=22050 channels=1 bits=16/.test(run.output));
+    /\[MCI\] open waveaudio id=\d+ element="(?:[A-Za-z]:\\)?TEST\.WAV" frames=[1-9]\d* rate=22050 channels=1 bits=16/.test(run.output));
   check(`${run.name}: WAV Play reaches MCI`,
-    /\[MCI\] play waveaudio id=\d+ element="TEST\.WAV" frames=[1-9]\d* duration=[1-9]\d*ms/.test(run.output));
+    /\[MCI\] play waveaudio id=\d+ element="(?:[A-Za-z]:\\)?TEST\.WAV" frames=[1-9]\d* duration=[1-9]\d*ms/.test(run.output));
   check(`${run.name}: WAV enters the playing state`,
     /\[SetWindowText\] "TEST\.WAV - Media Player \(playing\)"/.test(run.output));
   check(`${run.name}: WAV title rendered`,
