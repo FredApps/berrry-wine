@@ -154,6 +154,13 @@ const GAMES = [
     exe: 'DKReign.exe',
   },
   {
+    // Max Design's 1998 demo: a RAR self-extractor whose contents are the
+    // game tree itself (extracted with node-unrar-js; 7-Zip lacks the codec).
+    id: 'anno1602_demo',
+    root: 'Anno1602-demo-SW/extracted',
+    exe: '1602.exe',
+  },
+  {
     // Codemasters' 1998 CD demo, run from its SETUP\ directory as the CD's
     // autorun does. SETUPDIR\, the cabs and the InstallShield stubs are the
     // installer; the game reads GAME\, DEMO\ and INI\ beside GAME.EXE.
