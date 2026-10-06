@@ -48,10 +48,43 @@ room with her dialogue "Hi there." (~437k). Batches cost ~0.75 s each in the
 world (software GL at 640x480 plus the debug-build UI), against ~1 ms in the
 menu.
 
-Open: the opening dialogue did not advance on a left click or Enter within
-~200 batches, and the in-world cursor did not follow `relmousemove` -- either
-the scene is scripted and ignores input, or input needs more frames than were
-given. Evidence: `scratch/runs/20261006T1720Z-anachronox_demo-menu-to-world`.
+Evidence: `scratch/runs/20261006T1720Z-anachronox_demo-menu-to-world`.
+
+## Open: the opening dialogue never advances (parked 2026-10-06)
+
+The opening scene in Fatima's room shows her line "Hi there." and stays on it.
+Measured on two runs (one ctl session to 434k, one scripted to 440k):
+
+- Batches in the scene are fast (~300 per few seconds); the ~0.75 s/batch
+  seen on the first visit did not recur.
+- The in-world cursor follows `relmousemove` (input reaches the game).
+- Nothing advances the line: Space (bound to `selectforward` in
+  `ANOXDATA\CONFIGS\default.cfg`), left clicks on the box and on Fatima, Enter,
+  F1 (`fatstat goals`) -- over ~10k batches.
+
+Ruled out, with how:
+
+- **RSX 3D provider timer.** Its 11 ms `timeSetEvent` callback
+  (`mssrsx+0x22d0cda0`) fires once because RSX itself calls
+  `timeKillEvent(1)`: Miles opens each 3D provider, probes it and closes it.
+  The callback returned normally (`--count` on its unlock landing).
+- **A wedged Miles mixer.** The DirectSound mixer timer
+  (mss32 `0x211136e0`, 10 ms, timer table at runtime `0x021325cc`) runs: a
+  `--watch-log` on its `lock inc`/`lock dec` re-entrancy counter
+  (`[0x2114f8cc]`, runtime `0x1e338cc`) shows ~23k clean 0->1->0 passes on
+  thread T1 in 30k batches. Single memory dumps catch it at 1 because they land
+  mid-pass -- do not read a dump of that counter as "stuck".
+
+Not yet established: whether sound reaches the scene at all. `--trace-api`
+from batch 428k shows **zero** DirectSound buffer calls (Lock, Unlock,
+GetCurrentPosition, Play) while the mixer is demonstrably running on T1, which
+suggests the API trace does not see that guest thread's calls -- check that
+before using it as evidence either way. The voice-line hypothesis
+(`anoxsnd.dll` polls `AIL_sample_status` / `AIL_sample_ms_position`; dialogue
+playback is `A3SV_Playback_*` in `planet.dll`) is therefore open, not
+confirmed. Next lead without the sound question: read how `ui.dll`'s dialogue
+code decides a line is finished (`UI_StartTalk`, `ui_skipscene`,
+`A3SV_Playback_Skip`).
 
 ## Named addresses
 
