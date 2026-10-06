@@ -751,3 +751,15 @@ it opens any stream; the ACM behaviour itself (drivers, streams, the PCM-only
 converter) lives in the other acm* handlers. Covered by
 test/test-acm-get-version.js.
 Pin242/e1c4e029d81a700a65690174bb49c78361b1476bc261b7a91a97fad4f8bc8b0f.
+
+### 2026-10-06: IDirect3DDevice7::Load copies the texture
+
+242 -> 241: handle_IDirect3DDevice7_Load returned D3D_OK without copying
+anything and popped 32 bytes for a 6-argument method (this, lpDestTex,
+lpDestPoint, lpSrcTex, lprcSrcRect, dwFlags). The extra 4 bytes shifted the
+caller's ESP, so Deus Ex's D3DDrv restored a garbage EBX after SetTexture and
+asserted in MakeNew ("Assertion failed: Pool"). It now pops 28, copies every
+level of the source mip chain into the destination's through
+$d3dim_texture_load, and fails loudly for the destination-point / source-rect
+form, which needs a sub-rectangle copy nobody has asked for yet.
+Pin241/f8ef783a7756762629ecdc59b8dd352acbd3ad08be8e42d254cb2516b779ab76.

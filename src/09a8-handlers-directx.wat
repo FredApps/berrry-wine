@@ -3432,6 +3432,11 @@
       ;; DDCAPS_3D (bit 0) is required — MCM's acceptability gate at 0x00465441
       ;; tests `[DDCAPS.dwCaps] & 1` to decide whether the driver offers 3D.
       (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24041))
+      ;; dwCaps2 = DDCAPS2_CANRENDERWINDOWED: every D3D device here draws
+      ;; into a window's canvas. Deus Ex's D3DDrv reads this bit and, without
+      ;; it, refuses a -windowed viewport ("D3D Device: Fullscreen only").
+      (if (i32.gt_u (local.get $sz) (i32.const 8))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x80000))))
       ;; dwZBufferBitDepths = DDBD_16 (0x400) — MCM checks
       (if (i32.gt_u (local.get $sz) (i32.const 0x38))
         (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))

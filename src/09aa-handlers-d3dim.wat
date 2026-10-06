@@ -1292,10 +1292,33 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3DDevice7_Load — 7 args (incl. this)
+  ;; IDirect3DDevice7_Load(this, lpDestTex, lpDestPoint, lpSrcTex, lprcSrcRect,
+  ;; dwFlags) — 6 args (incl. this). Popping a seventh shifted the caller's ESP
+  ;; by 4, so Deus Ex's D3DDrv restored a garbage EBX after its SetTexture.
   (func $handle_IDirect3DDevice7_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Only the whole-texture form is implemented: a destination point or a
+    ;; source rectangle needs a sub-rectangle copy per level.
+    (if (i32.or (i32.ne (local.get $arg2) (i32.const 0))
+                (i32.ne (local.get $arg4) (i32.const 0)))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (call $d3dim_device7_load_chain (local.get $arg1) (local.get $arg3))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+
+  ;; Copy every level of a source mip chain into the destination's matching
+  ;; level, converting format per level as Texture::Load does. A level's next
+  ;; level is its misc0 (see $dx_create_mip_chain); the walk ends with the
+  ;; shorter chain.
+  (func $d3dim_device7_load_chain (param $dst_this i32) (param $src_this i32)
+    (local $level i32)
+    (block $done (loop $next
+      (br_if $done (i32.or (i32.eqz (local.get $dst_this)) (i32.eqz (local.get $src_this))))
+      (br_if $done (i32.gt_u (local.get $level) (i32.const 20)))
+      (call $d3dim_texture_load (local.get $dst_this) (local.get $src_this))
+      (local.set $dst_this (load.field DxObject misc0 (call $dx_from_this (local.get $dst_this))))
+      (local.set $src_this (load.field DxObject misc0 (call $dx_from_this (local.get $src_this))))
+      (local.set $level (i32.add (local.get $level) (i32.const 1)))
+      (br $next))))
 
   ;; IDirect3DDevice7_LightEnable — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_LightEnable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
