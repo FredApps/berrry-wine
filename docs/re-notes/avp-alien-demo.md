@@ -33,9 +33,38 @@ Logos, then the main menu by ~1700 (Start Alien Demo / Controls / Video /
 Audio / Exit); Enter loads the colony level (~2200-3300) into first person.
 Left/Right turn; a 10-batch tap is a large turn.
 
-## Open
+## Walking and the "black view" (resolved: not an emulator bug)
 
-Holding Up (forward) for 30+ batches turns the whole 3D view black, HUD
-intact, and it stays black. Not yet diagnosed: it could be walking into an
-unlit tunnel, which AvP's alien levels are full of, or a render failure that
-starts when the camera translates (turning alone renders fine).
+Holding Up from the spawn point turns the 3D view black with the HUD intact.
+That is the Alien standing nose-to-wall against the big hive-resin trunk
+straight ahead, which is unlit: hunt vision draws it black. Evidence in
+`scratch/runs/20261006T072800Z-avp-alien-demo-forward-walk`:
+
+- `--trace-dx-raw` now prints each PROCESSVERTICES' depth range. The "black"
+  frame still submits 89 TL vertices with sane depth (sz 0.68-0.99, rhw > 0);
+  the nearest ones (sz 0.68-0.91) are two screen-filling quads the game lit
+  `0xff000000`/`0xff020100`, in front of lit resin at sz 0.97+. The game drew
+  a dark wall, we rasterized it.
+- `I` (NAVIGATION vision) on the same route shows the resin texture filling
+  the screen at point-blank range instead of black.
+- DirectInput is clean: the keyboard buffer has only DIK_UP (0xC8) set, the
+  mouse's buffered `GetDeviceData` returns 0 records, no joystick. The Alien
+  only climbs with Crouch/Climb (RIGHTCTRL) held, which it is not.
+- The 16.16 fixed-point idioms the walking-only blocks use
+  (`cdq; rol eax,16; mov dx,ax; xor ax,ax; idiv` and `imul; shrd eax,edx,16`)
+  are covered with negative operands in `test/test-x86-ops.js`.
+
+What made it look broken is the headless clock. The game presents about once
+every 5 batches, so at the default 200 ms/batch one frame is ~1 s of guest
+time: a held turn jumps between coarse yaw angles (a mid-turn frame and the
+frame after release can show the same view) and one forward frame carries the
+Alien from open floor to the next wall. Walk at `tick-ms:10`, and switch it
+some frames before the keypress so the first frame's dt is small too:
+
+```sh
+node test/run.js --app=avp_alien_demo --quiet-api --batch-size=50000 --max-batches=4461 --no-close \
+  --input='1800:keydown:13,1804:keyup:13,3900:tick-ms:10,4000:keydown:100,4050:keyup:100,4060:keydown:38,4460:keyup:38,4100:png:/tmp/walk.png'
+```
+
+At 10 ms/batch Numpad4 turns a full circle in ~200 batches; 50 batches faces
+the lit corridor, and walking covers it by ~4100 and stops at its end wall.
