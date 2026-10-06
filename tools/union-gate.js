@@ -196,7 +196,7 @@ const UNIONS = {
       '10e-gdi-metafile.wat:2603': 'GdiBrush',     // style,       under `type == 2`
       '10e-gdi-metafile.wat:2604': 'GdiBrush',     // pattern_bitmap, style is 3|6
 
-      // $gdi_object_write_pen_brush (10f:870) — style and flags are read BEFORE
+      // $gdi_object_write_pen_brush (10f:877) — style and flags are read BEFORE
       // the pen/brush branch, which is precisely why the GdiPenBrush view
       // exists.
       //
@@ -208,12 +208,12 @@ const UNIONS = {
       // that the site at each new line still does what its comment says (the
       // pre-branch pair, then the `type == 1` arm, then the else arm) and
       // renumber; do NOT delete the entry to make the gate pass.
-      '10f-gdi-dc.wat:902': 'GdiPenBrush',         // style, pre-branch
-      '10f-gdi-dc.wat:903': 'GdiPenBrush',         // flags, pre-branch
-      '10f-gdi-dc.wat:906': 'GdiPen',              // width, in the `type == 1` arm
-      '10f-gdi-dc.wat:907': 'GdiPen',              // color, in the `type == 1` arm
-      '10f-gdi-dc.wat:909': 'GdiBrush',            // color, in the `type == 2` arm
-      '10f-gdi-dc.wat:910': 'GdiBrush',            // hatch, in the `type == 2` arm
+      '10f-gdi-dc.wat:909': 'GdiPenBrush',         // style, pre-branch
+      '10f-gdi-dc.wat:910': 'GdiPenBrush',         // flags, pre-branch
+      '10f-gdi-dc.wat:913': 'GdiPen',              // width, in the `type == 1` arm
+      '10f-gdi-dc.wat:914': 'GdiPen',              // color, in the `type == 1` arm
+      '10f-gdi-dc.wat:916': 'GdiBrush',            // color, in the `type == 2` arm
+      '10f-gdi-dc.wat:917': 'GdiBrush',            // hatch, in the `type == 2` arm
 
       // $gdi_brush_sample (10g:775) holds a brush record AND the record of the
       // bitmap named by brush.pattern_bitmap, in one frame, and reads +16 from

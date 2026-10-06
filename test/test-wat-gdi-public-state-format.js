@@ -125,7 +125,11 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 0);
     assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 1);
     assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 1);
-    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 0);
+    // Setting the format the DC already has succeeds (Warcraft III does it
+    // before creating its real context); a different format is refused.
+    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 1, requested), 1);
+    assert.strictEqual(wat.test_call_GetPixelFormat(hdc), 1);
+    assert.strictEqual(wat.test_call_SetPixelFormat(hdc, 2, requested), 0);
     assert.strictEqual(wat.test_call_SwapBuffers(hdc), 1);
     wat.test_call_DeleteObject(bitmap);
     wat.test_call_DeleteDC(hdc);

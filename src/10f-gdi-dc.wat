@@ -381,9 +381,16 @@
     (if (i32.or (i32.ne (local.get $format) (i32.const 1))
           (i32.eqz (call $gdi_pixel_format_choose (local.get $hdc) (local.get $pfd))))
       (then (return (i32.const 0))))
+    ;; A window takes one pixel format for life, but setting the format it
+    ;; already has succeeds (Wine: only a different format is refused).
+    ;; Warcraft III sets format 1, creates and deletes a probe context, then
+    ;; sets format 1 again on the same window and creates its real context
+    ;; only if that returns TRUE; refusing it left the game with no GL
+    ;; context and not one draw. Format 1 is the only one we describe, so an
+    ;; already-set DC holds exactly the format being asked for.
     (if (i32.ne (call $gdi_dc_meta_get (local.get $hdc) (i32.const 16)
           (i32.const 0)) (i32.const 0))
-      (then (return (i32.const 0))))
+      (then (return (i32.const 1))))
     (drop (call $gdi_dc_meta_set (local.get $hdc) (i32.const 16)
       (i32.const 1) (i32.const 0)))
     (i32.const 1))
