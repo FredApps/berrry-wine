@@ -87,6 +87,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Die by the Sword (demo) | [die-by-the-sword-demo.md](die-by-the-sword-demo.md) |
 | Dark Colony (magazine demo) | [dark-colony-demo.md](dark-colony-demo.md) |
 | Daytona USA Deluxe (Win95 demo) | [daytona-usa-deluxe-demo.md](daytona-usa-deluxe-demo.md) |
+| Blood II: The Chosen (demo) | [blood2-demo.md](blood2-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |

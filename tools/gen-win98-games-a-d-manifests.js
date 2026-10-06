@@ -65,6 +65,13 @@ const GAMES = [
     exe: 'DAYTONA USA Deluxe Demo WWW.exe',
     flatten: ['../DOC/English'],
   },
+  {
+    // The Game directory is the unpacked install. CLIENT.EXE LoadLibrary's
+    // its renderer, sound and music DLLs from here, and Music\ keeps its tree.
+    id: 'blood2_demo',
+    root: 'Blood2-demoD3D/Game',
+    exe: 'Client.exe',
+  },
 ];
 
 function walk(directory, relative = '', output = []) {

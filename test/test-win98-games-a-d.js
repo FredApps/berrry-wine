@@ -22,6 +22,7 @@ const expected = {
   die_by_the_sword_demo: ['dbts_demo.exe', 28],
   dark_colony_demo: ['dc.exe', 971],
   daytona_usa_deluxe_demo: ['DAYTONA USA Deluxe Demo WWW.exe', 702],
+  blood2_demo: ['Client.exe', 97],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
