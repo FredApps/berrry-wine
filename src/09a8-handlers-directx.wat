@@ -737,13 +737,213 @@
     (if (local.get $entry_wa)
       (then (i32.store (call $dx_surf_fmt_ptr (local.get $entry_wa)) (local.get $fmt)))))
 
+  ;; S3TC block-compressed surfaces (DDPF_FOURCC "DXT1".."DXT5"), stored as
+  ;; format kinds 7..11 (FourCC 0x31545844 + (kind - 7) << 24). Their bytes are
+  ;; a linear run of 4x4 blocks, 8 bytes each for DXT1 and 16 for the rest;
+  ;; the DIB is allocated at 16bpp, which always holds that. Real DirectDraw
+  ;; decompresses on Blt to an uncompressed surface -- Colin McRae Rally 2.0
+  ;; loads every texture as a DXT5 staging surface and Blts it into ARGB4444.
+  (func $dx_fmt_is_dxt (param $fmt i32) (result i32)
+    (i32.and (i32.ge_u (local.get $fmt) (i32.const 7))
+             (i32.le_u (local.get $fmt) (i32.const 11))))
+
+  (func $dx_dxt_linear_size (param $fmt i32) (param $w i32) (param $h i32) (result i32)
+    (i32.mul
+      (i32.mul (i32.shr_u (i32.add (select (local.get $w) (i32.const 1) (local.get $w)) (i32.const 3)) (i32.const 2))
+               (i32.shr_u (i32.add (select (local.get $h) (i32.const 1) (local.get $h)) (i32.const 3)) (i32.const 2)))
+      (select (i32.const 8) (i32.const 16) (i32.eq (local.get $fmt) (i32.const 7)))))
+
+  ;; Rewrite a DDSURFACEDESC that $dx_fill_surface_desc/Lock filled for a DXT
+  ;; surface: DDSD_LINEARSIZE instead of DDSD_PITCH, and a FOURCC pixel format.
+  (func $dx_dxt_fix_desc (param $wa i32) (param $entry i32)
+    (local $fmt i32)
+    (local.set $fmt (call $dx_surf_fmt_get (local.get $entry)))
+    (if (i32.eqz (call $dx_fmt_is_dxt (local.get $fmt))) (then (return)))
+    (i32.store offset=4 (local.get $wa)
+      (i32.or (i32.and (i32.load offset=4 (local.get $wa)) (i32.const 0xFFFFFFF7))
+              (i32.const 0x80000))) ;; -DDSD_PITCH +DDSD_LINEARSIZE
+    (i32.store offset=16 (local.get $wa)
+      (call $dx_dxt_linear_size (local.get $fmt)
+        (load.field.memarg DxObject width (local.get $entry))
+        (load.field.memarg DxObject height (local.get $entry))))
+    (call $zero_memory (i32.add (local.get $wa) (i32.const 76)) (i32.const 28))
+    (i32.store offset=76 (local.get $wa) (i32.const 4)) ;; DDPF_FOURCC
+    (i32.store offset=80 (local.get $wa)
+      (i32.add (i32.const 0x31545844)
+        (i32.shl (i32.sub (local.get $fmt) (i32.const 7)) (i32.const 24)))))
+
+  ;; RGB565 -> 0x00RRGGBB
+  (func $dx_dxt_565 (param $c i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    (local.set $r (i32.and (i32.shr_u (local.get $c) (i32.const 11)) (i32.const 31)))
+    (local.set $g (i32.and (i32.shr_u (local.get $c) (i32.const 5)) (i32.const 63)))
+    (local.set $b (i32.and (local.get $c) (i32.const 31)))
+    (i32.or
+      (i32.shl (i32.or (i32.shl (local.get $r) (i32.const 3)) (i32.shr_u (local.get $r) (i32.const 2))) (i32.const 16))
+      (i32.or
+        (i32.shl (i32.or (i32.shl (local.get $g) (i32.const 2)) (i32.shr_u (local.get $g) (i32.const 4))) (i32.const 8))
+        (i32.or (i32.shl (local.get $b) (i32.const 3)) (i32.shr_u (local.get $b) (i32.const 2))))))
+
+  ;; Per-channel (a*wa + b*wb) / div over 0x00RRGGBB.
+  (func $dx_dxt_mix (param $a i32) (param $b i32) (param $wa i32) (param $wb i32) (param $div i32) (result i32)
+    (local $i i32) (local $out i32) (local $sh i32)
+    (block $done (loop $ch
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
+      (local.set $sh (i32.shl (local.get $i) (i32.const 3)))
+      (local.set $out (i32.or (local.get $out)
+        (i32.shl
+          (i32.div_u
+            (i32.add
+              (i32.mul (i32.and (i32.shr_u (local.get $a) (local.get $sh)) (i32.const 255)) (local.get $wa))
+              (i32.mul (i32.and (i32.shr_u (local.get $b) (local.get $sh)) (i32.const 255)) (local.get $wb)))
+            (local.get $div))
+          (local.get $sh))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ch)))
+    (local.get $out))
+
+  ;; Decode the whole DXT surface $src_entry into $dst_wa (pitch $dst_pitch),
+  ;; packing each texel in the pixel format of $dst_entry ($dst_bpp 16 or 32).
+  (func $dx_dxt_decode_to
+      (param $src_entry i32) (param $dst_entry i32) (param $dst_wa i32)
+      (param $dst_pitch i32) (param $dst_bpp i32)
+    (local $fmt i32) (local $w i32) (local $h i32) (local $bw i32) (local $bh i32)
+    (local $bx i32) (local $by i32) (local $blk i32) (local $cblk i32) (local $bytes i32)
+    (local $c0 i32) (local $c1 i32) (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $idx i32) (local $abits i64) (local $a0 i32) (local $a1 i32)
+    (local $i i32) (local $px i32) (local $py i32) (local $rgb i32) (local $alpha i32)
+    (local $code i32) (local $argb i32) (local $out i32) (local $four i32)
+    (local.set $fmt (call $dx_surf_fmt_get (local.get $src_entry)))
+    (local.set $w (load.field DxObject width (local.get $src_entry)))
+    (local.set $h (load.field DxObject height (local.get $src_entry)))
+    (local.set $bw (i32.shr_u (i32.add (local.get $w) (i32.const 3)) (i32.const 2)))
+    (local.set $bh (i32.shr_u (i32.add (local.get $h) (i32.const 3)) (i32.const 2)))
+    (local.set $bytes (select (i32.const 8) (i32.const 16) (i32.eq (local.get $fmt) (i32.const 7))))
+    (local.set $blk (load.field DxObject misc1 (local.get $src_entry)))
+    (local.set $by (i32.const 0))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $by) (local.get $bh)))
+      (local.set $bx (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $bx) (local.get $bw)))
+        ;; Colour half: the whole block for DXT1, the second 8 bytes otherwise.
+        (local.set $cblk (i32.add (local.get $blk)
+          (select (i32.const 0) (i32.const 8) (i32.eq (local.get $fmt) (i32.const 7)))))
+        (local.set $c0 (i32.load16_u (local.get $cblk)))
+        (local.set $c1 (i32.load16_u offset=2 (local.get $cblk)))
+        (local.set $idx (i32.load offset=4 (local.get $cblk)))
+        (local.set $p0 (call $dx_dxt_565 (local.get $c0)))
+        (local.set $p1 (call $dx_dxt_565 (local.get $c1)))
+        ;; DXT1 with c0 <= c1 is the 3-colour mode whose fourth entry is
+        ;; transparent black; every other case interpolates two thirds.
+        (local.set $four (i32.or (i32.ne (local.get $fmt) (i32.const 7))
+                                 (i32.gt_u (local.get $c0) (local.get $c1))))
+        (if (local.get $four)
+          (then
+            (local.set $p2 (call $dx_dxt_mix (local.get $p0) (local.get $p1) (i32.const 2) (i32.const 1) (i32.const 3)))
+            (local.set $p3 (call $dx_dxt_mix (local.get $p0) (local.get $p1) (i32.const 1) (i32.const 2) (i32.const 3))))
+          (else
+            (local.set $p2 (call $dx_dxt_mix (local.get $p0) (local.get $p1) (i32.const 1) (i32.const 1) (i32.const 2)))
+            (local.set $p3 (i32.const 0))))
+        (if (i32.ge_u (local.get $fmt) (i32.const 10)) (then
+          (local.set $a0 (i32.load8_u (local.get $blk)))
+          (local.set $a1 (i32.load8_u offset=1 (local.get $blk)))
+          (local.set $abits (i64.shr_u (i64.load (local.get $blk)) (i64.const 16)))))
+        (if (i32.or (i32.eq (local.get $fmt) (i32.const 8)) (i32.eq (local.get $fmt) (i32.const 9)))
+          (then (local.set $abits (i64.load (local.get $blk)))))
+        (local.set $i (i32.const 0))
+        (block $px_done (loop $pixels
+          (br_if $px_done (i32.ge_u (local.get $i) (i32.const 16)))
+          (local.set $px (i32.add (i32.shl (local.get $bx) (i32.const 2)) (i32.and (local.get $i) (i32.const 3))))
+          (local.set $py (i32.add (i32.shl (local.get $by) (i32.const 2)) (i32.shr_u (local.get $i) (i32.const 2))))
+          (if (i32.and (i32.lt_u (local.get $px) (local.get $w)) (i32.lt_u (local.get $py) (local.get $h))) (then
+            (local.set $code (i32.and (i32.shr_u (local.get $idx) (i32.shl (local.get $i) (i32.const 1))) (i32.const 3)))
+            (local.set $rgb (select (local.get $p0) (local.get $p1) (i32.eqz (local.get $code))))
+            (if (i32.eq (local.get $code) (i32.const 2)) (then (local.set $rgb (local.get $p2))))
+            (if (i32.eq (local.get $code) (i32.const 3)) (then (local.set $rgb (local.get $p3))))
+            (local.set $alpha (i32.const 255))
+            (if (i32.eq (local.get $fmt) (i32.const 7)) (then
+              (if (i32.and (i32.eqz (local.get $four)) (i32.eq (local.get $code) (i32.const 3)))
+                (then (local.set $alpha (i32.const 0))))))
+            (if (i32.or (i32.eq (local.get $fmt) (i32.const 8)) (i32.eq (local.get $fmt) (i32.const 9))) (then
+              (local.set $alpha (i32.mul (i32.const 17)
+                (i32.wrap_i64 (i64.and
+                  (i64.shr_u (local.get $abits) (i64.extend_i32_u (i32.shl (local.get $i) (i32.const 2))))
+                  (i64.const 15)))))))
+            (if (i32.ge_u (local.get $fmt) (i32.const 10)) (then
+              (local.set $code (i32.wrap_i64 (i64.and
+                (i64.shr_u (local.get $abits) (i64.extend_i32_u (i32.mul (local.get $i) (i32.const 3))))
+                (i64.const 7))))
+              (local.set $alpha
+                (if (result i32) (i32.eqz (local.get $code))
+                  (then (local.get $a0))
+                  (else (if (result i32) (i32.eq (local.get $code) (i32.const 1))
+                    (then (local.get $a1))
+                    (else (if (result i32) (i32.gt_u (local.get $a0) (local.get $a1))
+                      (then (i32.div_u
+                        (i32.add (i32.mul (i32.sub (i32.const 8) (local.get $code)) (local.get $a0))
+                                 (i32.mul (i32.sub (local.get $code) (i32.const 1)) (local.get $a1)))
+                        (i32.const 7)))
+                      (else (if (result i32) (i32.eq (local.get $code) (i32.const 6))
+                        (then (i32.const 0))
+                        (else (if (result i32) (i32.eq (local.get $code) (i32.const 7))
+                          (then (i32.const 255))
+                          (else (i32.div_u
+                            (i32.add (i32.mul (i32.sub (i32.const 6) (local.get $code)) (local.get $a0))
+                                     (i32.mul (i32.sub (local.get $code) (i32.const 1)) (local.get $a1)))
+                            (i32.const 5)))))))))))))))
+            (local.set $argb (i32.or (i32.shl (local.get $alpha) (i32.const 24)) (local.get $rgb)))
+            (local.set $out (i32.add (local.get $dst_wa)
+              (i32.add (i32.mul (local.get $py) (local.get $dst_pitch))
+                       (i32.mul (local.get $px) (i32.shr_u (local.get $dst_bpp) (i32.const 3))))))
+            (if (i32.eq (local.get $dst_bpp) (i32.const 32))
+              (then (i32.store (local.get $out)
+                (call $d3dim_encode_surface_pixel (local.get $dst_entry) (local.get $argb) (i32.const 32))))
+              (else (i32.store16 (local.get $out)
+                (call $d3dim_encode_surface_pixel (local.get $dst_entry) (local.get $argb) (i32.const 16)))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $pixels)))
+        (local.set $blk (i32.add (local.get $blk) (local.get $bytes)))
+        (local.set $bx (i32.add (local.get $bx) (i32.const 1)))
+        (br $cols)))
+      (local.set $by (i32.add (local.get $by) (i32.const 1)))
+      (br $rows))))
+
+  ;; One scratch DIB, grown on demand, that a Blt from a DXT source decodes
+  ;; into before the ordinary copy path runs over it (WASM address).
+  (global $dx_dxt_scratch (mut i32) (i32.const 0))
+  (global $dx_dxt_scratch_size (mut i32) (i32.const 0))
+  (func $dx_dxt_scratch_get (param $bytes i32) (result i32)
+    (local $guest i32)
+    (if (i32.gt_u (local.get $bytes) (global.get $dx_dxt_scratch_size)) (then
+      (if (global.get $dx_dxt_scratch)
+        (then (call $dib_free_wasm (global.get $dx_dxt_scratch))))
+      (local.set $guest (call $dib_alloc (local.get $bytes)))
+      (if (i32.eqz (local.get $guest)) (then
+        (global.set $dx_dxt_scratch (i32.const 0))
+        (global.set $dx_dxt_scratch_size (i32.const 0))
+        (return (i32.const 0))))
+      (global.set $dx_dxt_scratch (call $g2w (local.get $guest)))
+      (global.set $dx_dxt_scratch_size (local.get $bytes))))
+    (global.get $dx_dxt_scratch))
+
   ;; Normalize a DDPIXELFORMAT already mapped into WASM memory. Unknown masks
   ;; deliberately fall back to the native display layout rather than being
   ;; guessed from their texel contents.
   (func $dx_surf_fmt_from_ddpf (param $pf_wa i32) (param $bpp i32) (result i32)
-    (local $r i32) (local $g i32) (local $b i32) (local $a i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $a i32) (local $fourcc i32)
     (if (i32.eqz (local.get $pf_wa))
       (then (return (call $dx_surf_fmt_default (local.get $bpp)))))
+    ;; DDPF_FOURCC: S3TC "DXT1".."DXT5" become kinds 7..11 (see $dx_fmt_is_dxt).
+    (if (i32.and (i32.load offset=4 (local.get $pf_wa)) (i32.const 4)) (then
+      (local.set $fourcc (i32.load offset=8 (local.get $pf_wa)))
+      ;; "DXTn" little-endian: the digit is the high byte.
+      (if (i32.and
+            (i32.eq (i32.and (local.get $fourcc) (i32.const 0x00FFFFFF)) (i32.const 0x00545844))
+            (i32.and (i32.ge_u (local.get $fourcc) (i32.const 0x31545844))
+                     (i32.le_u (local.get $fourcc) (i32.const 0x35545844))))
+        (then (return (i32.add (i32.const 7)
+          (i32.shr_u (i32.sub (local.get $fourcc) (i32.const 0x31545844)) (i32.const 24))))))))
     (local.set $r (i32.load offset=16 (local.get $pf_wa)))
     (local.set $g (i32.load offset=20 (local.get $pf_wa)))
     (local.set $b (i32.load offset=24 (local.get $pf_wa)))
@@ -2291,6 +2491,9 @@
       (then (local.set $fmt
         (call $dx_surf_fmt_from_ddpf
           (i32.add (local.get $ddsd_wa) (i32.const 72)) (local.get $bpp)))))
+    ;; A FOURCC format has dwRGBBitCount 0; the DXT blocks fit in 16bpp rows.
+    (if (call $dx_fmt_is_dxt (local.get $fmt))
+      (then (local.set $bpp (i32.const 16))))
     ;; Compute pitch (bytes per row, DWORD-aligned)
     (local.set $pitch (i32.and
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
@@ -4678,6 +4881,21 @@
     (local.set $src_pitch (load.field DxObject pitch (local.get $src_entry)))
     (local.set $src_full_w (load.field DxObject width (local.get $src_entry)))
     (local.set $src_full_h (load.field DxObject height (local.get $src_entry)))
+    ;; DXT source into an uncompressed destination: decompress, as the driver
+    ;; does, into scratch laid out in the destination's own pixel format, then
+    ;; let the ordinary copy below run over it.
+    (if (i32.and
+          (call $dx_fmt_is_dxt (call $dx_surf_fmt_get (local.get $src_entry)))
+          (i32.and
+            (i32.eqz (call $dx_fmt_is_dxt (call $dx_surf_fmt_get (local.get $dst_entry))))
+            (i32.or (i32.eq (local.get $bpp) (i32.const 16)) (i32.eq (local.get $bpp) (i32.const 32)))))
+      (then
+        (local.set $src_pitch (i32.mul (local.get $src_full_w) (local.get $bps)))
+        (local.set $src_dib (call $dx_dxt_scratch_get
+          (i32.mul (local.get $src_pitch) (local.get $src_full_h))))
+        (if (local.get $src_dib)
+          (then (call $dx_dxt_decode_to (local.get $src_entry) (local.get $dst_entry)
+            (local.get $src_dib) (local.get $src_pitch) (local.get $bpp))))))
     (local.set $ckey (load.field DxObject misc2 (local.get $src_entry)))
     (local.set $src_keyed
       (i32.and
@@ -5811,7 +6029,8 @@
             (i32.store offset=4 (local.get $wa) (i32.const 0x102F))
             (i32.store offset=20 (local.get $wa) (i32.const 1))))))
     (i32.store offset=104 (local.get $wa)
-      (i32.load (call $dx_surf_meta_ptr (local.get $entry)))))
+      (i32.load (call $dx_surf_meta_ptr (local.get $entry))))
+    (call $dx_dxt_fix_desc (local.get $wa) (local.get $entry)))
 
   ;; GetPixelFormat(this, lpDDPixelFormat)
   (func $handle_IDirectDrawSurface_GetPixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5893,6 +6112,7 @@
     (local.set $dib_guest (call $w2g (local.get $dib_wa)))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
+    (call $dx_dxt_fix_desc (local.get $wa) (local.get $entry))
     (global.set $present_lock_whole
       (select (local.get $entry) (i32.const 0)
         (i32.and (i32.eqz (local.get $arg1))
