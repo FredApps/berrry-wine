@@ -47,26 +47,26 @@ screenshot cited was looked at.
 | blood2_demo | D3DIM (Device3) | **gameplay** | **gameplay** (2026-10-06, browser; in-level, HUD 100/50; `scratch/runs/20261006T1840Z-gld3d-webgl`) | — |
 | tomb_raider_2_demo | D3DIM (Device2) | **gameplay** | **gameplay** (2026-10-06, browser; Venice alley) | — |
 | tomb_raider_3_demo | D3DIM (Device2) | **gameplay** | title (2026-10-06, browser, D3DIM on WebGL); Enter reaches the guest but the page route does not leave the title -- input, not rendering (see note) | — |
-| gta2_demo | D3DIM (Device3) | **gameplay** | gameplay (2026-09-20, headless-gl) | — |
-| mw3 | D3DIM (Device3) | **gameplay** (cockpit) | gameplay (2026-09-20) | route: Escape at batches 10-41 skips the Zipper intro |
+| gta2_demo | D3DIM (Device3) | **gameplay** | **gameplay** (2026-10-06, browser; city map, HUD) | — |
+| mw3 | D3DIM (Device3) | **gameplay** (cockpit) | menu (2026-10-06, browser, no input; an Escape in the page's timing QUITS the demo, exit 3); gameplay (2026-09-20) | route: Escape at batches 10-41 skips the Zipper intro |
 | diablo2_demo | D3DIM (Device3) | menu (hero select) | menu (2026-10-06, browser; Single Player / Exit) | gameplay needs > 120 s |
 | darkstone_demo | D3DIM (Device2) | menu | menu (2026-10-06, browser) | gameplay route is the 240 s test |
-| arcanum_demo | D3DIM (D3D7) | loading at 120 s | menu (2026-09-25, headless-gl, pixel-identical to software) | boot needs > 120 s |
-| dx_boids / dx_flip3dtl / dx_tunnel / dx_twist | D3DIM | **renders** | flip3dtl renders (2026-09-23, browser) | — |
-| mcm | D3DRM over Device2 | **gameplay** (race) | gameplay (2026-09-20) | w4 |
-| dx_globe / dx_viewer | D3DRM | **renders** | renders (2026-09-23, browser) | globe texture seam (w4) |
-| scr_architec, fallingl, geometry, jazz, oasaver, rockroll, scifi | D3DRM | **renders** (w4 rerun at `--tick-ms-per-batch=2`) | 7 savers render (2026-09-23, browser) | fallingl black leaves, oasaver stray box: w4 |
-| halflife_uplink | OpenGL | **gameplay** (corridor + HUD) | gameplay (2026-09-23) | route: clicks at 8000/9500 on this box |
-| simgolf_demo | OpenGL | **gameplay** | gameplay (2026-09-23, browser) | — |
-| quake2_demo | OpenGL (ref_gl) | menu | gameplay (2026-09-23, browser) | level load ~300 s, past the cap |
-| warcraft3_demo | OpenGL | **menu** after `579ee802` (was blank) | menu (2026-09-23, browser) | fixed today: a second SetPixelFormat of the same format was refused, so WC3 never made its real context |
-| ptct | OpenGL | renders, correctness unverified | beams draw (2026-09-23, browser `--gpu`) | 0.35 presents/s on software |
-| ut2003_demo | D3D8 | menu | gameplay (2026-09-25) | each frame ~1 s on software |
+| arcanum_demo | D3DIM (D3D7) | loading at 120 s | **menu** (2026-10-06, browser; past the software cap) | boot needs > 120 s |
+| dx_boids / dx_flip3dtl / dx_tunnel / dx_twist | D3DIM | **renders** | **renders**, all four (2026-10-06, browser; `scratch/runs/20261006T1935Z-gld3d-webgl-recheck`) | — |
+| mcm | D3DRM over Device2 | **gameplay** (race) | gameplay (2026-09-20); not re-run (long route) | w4 |
+| dx_globe / dx_viewer | D3DRM | **renders** | **renders** (2026-10-06, browser) | globe texture seam (w4) |
+| scr_architec, fallingl, geometry, jazz, oasaver, rockroll, scifi | D3DRM | **renders** (w4 rerun at `--tick-ms-per-batch=2`) | **7 savers render** (2026-10-06, browser; fallingl dark leaves and oasaver green field as on software) | fallingl black leaves, oasaver stray box: w4 |
+| halflife_uplink | OpenGL | **gameplay** (corridor + HUD) | **black at 60 s** (2026-10-06, browser: 640x480 window + 320x240 child, main thread idle in GetMessage); gameplay (2026-09-23) -- regression to chase, follow-up row | route: clicks at 8000/9500 on this box |
+| simgolf_demo | OpenGL | **gameplay** | **gameplay** (2026-10-06, browser; course + build bar) | — |
+| quake2_demo | OpenGL (ref_gl) | menu | menu (2026-10-06, browser, no route); gameplay (2026-09-23, browser) | level load ~300 s, past the cap |
+| warcraft3_demo | OpenGL | **menu** after `579ee802` (was blank) | **menu** (2026-10-06, browser) | fixed today: a second SetPixelFormat of the same format was refused, so WC3 never made its real context |
+| ptct | OpenGL | renders, correctness unverified | beams draw (2026-10-06, browser) | 0.35 presents/s on software |
+| ut2003_demo | D3D8 | menu | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | each frame ~1 s on software |
 | ut2003_demo_server | D3D8 | **gameplay** (listen server renders DM-Antalus) | **gameplay** (2026-10-06, browser; DM-Antalus, HUD) | — |
-| ut2004_demo | D3D8 | splash at 120 s | gameplay (2026-09-25) | slow |
+| ut2004_demo | D3D8 | splash at 120 s | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | slow |
 | alien_shooter | D3D8 | loading at 120 s | **menu** (2026-10-06, browser; past the software cap) | CPU-bound load |
 | crimsonland | D3D8 | **menu** after `1fdd9a64` (was blocked: "DirectX8.1 or newer not detected") | **menu** (2026-10-06, browser, D3D9 backend = webgl; launcher Play) | Play Game opens; the Survival click does not start a game yet (`scratch/runs/20261006T031629Z-crimsonland-dx81`) |
-| pawn | D3D9 | **gameplay** (board) | gameplay (2026-09-23) | — |
+| pawn | D3D9 | **gameplay** (board) | board (2026-10-06, browser); gameplay (2026-09-23) | — |
 | pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not measured: bigMemory and its 1.3 GB tree cannot be shipped to a boat browser; the local box cannot hold it | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
 | winamp | D3D8 (MilkDrop) | not run | — | needs a Winamp 5 exe |
