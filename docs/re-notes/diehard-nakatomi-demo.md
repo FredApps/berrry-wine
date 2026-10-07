@@ -266,3 +266,34 @@ read-only counter snapshots at the reviewed main menu, immediately before Easy,
 and after Easy/Enter to attribute increments without clearing counters or
 writing guest state. This capability is source-verified, not yet exercised in
 this diagnostic. No further runtime is authorized by these findings.
+
+### Phase snapshots attribute the success to startup, not Easy
+
+Read-only control `exports.get_count` snapshots in session65541/PID2482337
+(09:59:50.128–10:01:53.210Z, normal quit0, streams drained/PID absent/port free)
+resolve the aggregate ambiguity. Menu baseline batch74177 already had queue1,
+consumer1, world1, commit1, success1. Immediately before Easy at81363 those
+counts were unchanged. After Easy86242, cshell setup became1 and queue2 while
+consumer remained1; by after-Enter154690 consumer became2. Settled274402 retained
+the same counts. The main-update entry stayed233 across those last snapshots.
+No selected post-setup/world/commit/success/error counter advanced after Easy.
+Thus the successful selected world path belongs to startup. Easy is enqueued
+and eventually enters the consumer, but the next boundary remains inside early
+consumer work, not a demonstrated missing-world rejection. Enter attribution
+is temporal only: the queued consumer may run independently of that key.
+
+The screen remained the difficulty menu. Evidence is
+`scratch/wt-diehard-20261007/scratch/engine-load-phases/attempt1`;
+23 artifact hashes manifest SHA256
+`932e7ffa41c0eff5cf4c5e9ed0a011953086dbde5002e0e82782ddd8197e5118`.
+Full1,485,330-byte log SHA256
+`be7026abf9676adbcd551a035d1a40255a3a97914fda975e2d02b702f04545a7`.
+Snapshots retain exact expression/raw responses/batch. No resets, guest writes,
+shadow-register reads, performance or gameplay claims.
+
+Source lead, not established cause: consumer40cdfb calls40d233 at40ce3b before
+new-session allocation.40d233 tests previous session at object+248c, invokes
+its slot0 destructor with flag1 at40d244 and clears the pointer only at40d246.
+A source-backed next probe should distinguish that destructor's entry/return
+from later allocation/setup, preserving existing wait/thread evidence; no
+engine change is justified yet.
