@@ -127,6 +127,19 @@ for (const stack of [[top], null]) {
   assert.deepStrictEqual(read(3, 3), [0, 255, 0, 255], 'source retains new A pixels');
   assert.deepStrictEqual(read(6, 3), [255, 0, 0, 255], 'source must not revive old B pixels');
 }
+const shared = state.surfacePresentations.get(0x610001);
+for (let frame = 0; frame < 32; frame++) {
+  const coveredAt = renderer.nextSurfaceWriteSeq();
+  renderer._compositeExclusiveSharedChildren(top, null, coveredAt);
+  assert.strictEqual(shared.writeRegions.length, 0,
+    'a primary presentation must release obsolete upload coverage');
+  for (let i = 0; i < 16; i++) {
+    const x = i % 8, y = Math.floor(i / 8);
+    assert.strictEqual(host.gdi_surface_upload(0x610001, x, y, x + 1, y + 1), 1);
+  }
+  assert.strictEqual(shared.writeRegions.length, 16,
+    'fragmented uploads must retain only coverage since the latest primary');
+}
 delete renderer.windows[0x10014];
 delete top._dxFrameLayer;
 assert.strictEqual(host.gdi_surface_delete(0x610001), 1);

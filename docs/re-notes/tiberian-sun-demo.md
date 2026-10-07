@@ -246,6 +246,14 @@ including both post-processing paths. Its contained first-candidate failure
 is `scratch/runs/20261007-tiberian-repair-preparation/whole-canvas-regression-result.json`.
 The existing nine GDI checks
 also pass, including upload-versus-flush order and empty-upload behavior.
+Coverage tracking is restricted to a canvas actually retained as the exclusive
+shared GDI child overlay. Ordinary desktop/window GDI surfaces keep no rectangle
+ledger. At primary composition boundaries, obsolete coverage is discarded;
+there is no rectangle cap that could lose visible pixels. A fragmented-upload
+regression runs 32 primary epochs with 16 distinct pixel uploads each and
+verifies zero old regions at each boundary and only the 16 current regions
+afterward. The two-child test still verifies that newer A remains visible and
+older B stays covered in ordinary and both post-processing outputs.
 This source candidate awaits a newly built, identified module and ordinary
 runtime/gameplay validation; it is not a completed new-game lane.
 

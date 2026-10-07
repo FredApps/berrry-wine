@@ -144,6 +144,8 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
   const presentation = gdi.surfacePresentations.get(0x1234);
   assert.strictEqual(presentation.writeSeq, 1,
     'the actual guest upload must establish the surface write order');
+  assert.strictEqual(presentation.writeRegions, undefined,
+    'ordinary GDI surfaces must not retain an exclusive child upload ledger');
   renderer.nextSurfaceWriteSeq(); // a later DirectDraw present
   assert.deepStrictEqual(Array.from(canvas.getImageData(1, 0, 1, 1).data),
     [0x11, 0x22, 0x33, 0xFF]);
