@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { scanDosExe } = require('../tools/dos-exe-scan');
-const { assess, TOYVM_FACTS } = require('../tools/toyvm-dos-corpus');
+const { assess, TOYVM_FACTS, applyEvidence } = require('../tools/toyvm-dos-corpus');
 
 let n = 0, failed = 0;
 const check = (name, fn) => { n++; try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}: ${e.message}`); } };
@@ -97,6 +97,24 @@ check('a missing entry program blocks', () => {
 check('every fact a rule cites exists in TOYVM_FACTS, with a source', () => {
   const a = assess(title({ devices: { cdrom: true, vbe2Lfb: true, midiMpu401: true } }), [file('GAME.EXE', 1e9), file('A/X'), file('B/X')], { entry: pm, others: [] });
   for (const b of [...a.blockers, ...a.cautions]) for (const f of b.facts) { assert.ok(TOYVM_FACTS[f], f); assert.ok(TOYVM_FACTS[f].cite); }
+});
+
+check('observed native failure replaces only its dated static hypothesis', () => {
+  const base = assess(title(), [file('GAME.EXE'), file('A/X'), file('B/X')], { entry: pm, others: [] });
+  const result = applyEvidence({ toyvmEvidence: [{ run: 'actual-run', at: '2026-10-07T09:51:12Z', reached: 'protected-mode-decode-loop', summary: 'Entered PM, repeated decoder failure.', observedBlocker: { replaces: 'extender', id: 'observed-pm-decode-loop', text: 'Exact descriptor cause unresolved.' } }] }, base);
+  assert.deepStrictEqual(ids(result.blockers), ['observed-pm-decode-loop', 'flat-fs-collision']);
+  assert.strictEqual(result.status, 'blocked'); assert.match(result.verdict, /Entered PM/);
+  assert.ok(!/Not attempted/.test(result.verdict)); assert.strictEqual(base.blockers[0].id, 'extender');
+  assert.strictEqual(result.blockers[0].sourceRun, 'actual-run');
+  assert.deepStrictEqual(result.cautions.find(c => c.id === 'remaining-capabilities-extender').facts, base.blockers[0].facts);
+  assert.ok(!base.cautions.some(c => c.id === 'remaining-capabilities-extender'));
+});
+check('a title screenshot never promotes gameplay or clears independent blockers', () => {
+  const t = { toyvmEvidence: [{ run: 'menu-run', at: '2026-10-07', reached: 'main-menu', summary: 'Main menu only.' }] };
+  const base = assess(title({ devices: { cdrom: true } }), [file('GAME.EXE')], { entry: real, others: [] });
+  assert.strictEqual(applyEvidence(t, base).status, 'blocked');
+  assert.deepStrictEqual(ids(applyEvidence(t, base).blockers), ['cdrom']);
+  assert.throws(() => applyEvidence({ toyvmEvidence: [{ observedBlocker: {} }] }, base), /invalid observed/);
 });
 
 // Freshness, only where every payload is present on this machine.
