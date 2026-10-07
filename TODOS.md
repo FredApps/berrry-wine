@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Browser7 validated32frames/330scalars then reached declared cap before USER87; no rejected scalar. Findings9bbd1cb5. Worker prepares selective validated capture of actual KERNEL95 SETUPL load and USER87/218 dialog, avoiding repeated early UI/profile frames. No gameplay; browser resources released.
+  Next: Browser8 authentic USER87 handle87/resource102 returns missing immediately; main0713557f. Original SETUPL lookup can be short-circuited by generic named GetModuleHandle fallback returning taskDS. Worker implementing focused module-lookup fix/regression; causal branch not yet runtime-proven.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Actual Athena.dll lock_file path calls EnterCriticalSection with013a95ff pointing at original ASCII key bytes; wait counter rises, no valid thread owner. Main277da2f5 records exact fields/source matches. Root traces FILE-pointer provenance, without bypassing lock. Retainedmodule8eb lacks standalonebuildlog; current-main module validation required before repair acceptance.
+  Next: Current-main f1de/module992a reproduces invalid CS ASCII; stack evidence634a2833 traces native seek wrapper. Original packed-resource handles are13byte records and may be misclassified as native FILE. Root read-only handle/mode/callback capture prepared to distinguish types; no bypass.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1232,7 +1232,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Faithful2965file installed view verified. Current-main f1de9742 full mandatory build passed19.637sec, module992a8b02. Worker prepares first private ordinary launch and served-source pins. No gameplay yet; build resources released.
+  Next: Corrected private dropdown/select guard passes6tests. Actual attempt2 running currentf1de/module992a: hardware IntegrityCheck modal acknowledged ordinarily, then sound prompt and AlphaDemo launcher. Worker tests ordinary Start; runtime45036 deadline13:13:55Z. No gameplay yet.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
@@ -1242,5 +1242,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Generic EXEC environment candidate b6c999ba passes11contracts plus matched resident-retention regression: original overwrites32 resident bytes, candidate preserves them. Root reviews allocation lifecycle; worker prepares final-candidate actual terminate test and original native installer retry. No productionrepair or gameplay yet.
+  Next: EXEC environment repair revealed allocator MCB header overwriting child filename (observed C:\IZ). Candidate31758370 fixes generic header boundary, passes20groups incl actual AH4A byte preservation. Final terminate+original native installer retry queued; no mainrepair or gameplay.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.

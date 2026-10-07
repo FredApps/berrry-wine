@@ -1,9 +1,9 @@
-updated: 2026-10-07T12:53:34.839Z
+updated: 2026-10-07T13:08:59.205Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: four active investigations per user. Antara browser7 reached32-frame cap before DialogBox; selective causal capture in preparation. Arx actual Athena.dll FILE-lock pointer points at ASCII data; pointer origin under investigation. TDR2000 installed closure2965 hardlinks verified and full current-main build passed; ordinary launch next. Comanche3 EXEC environment/resident-retention candidate passes11contracts and actual overwrite regression; lifecycle review and original installer retry next. No new gameplay qualification; browser/build resources released.
+New-game pipeline: four active investigations. Antara actual dialog resource miss established; generic module-lookup fix in progress. Arx current-main reproduces file-lock stall; packed-handle versus native-FILE discrimination next. TDR2000 authentic launcher reached after ordinary error acknowledgments; worker testing Start in sole browser45036. Comanche3 generic MCB boundary repair passes20groups after reproducing filename corruption; installer retry queued. No new gameplay qualification.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
