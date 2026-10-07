@@ -43,8 +43,73 @@ owner corrected the hit-test hypothesis: New Campaign was delivered as
 WM_COMMAND 1559; the grey campaign panel and displaced captions still need
 actual current-run evidence before attributing a generic defect.
 
-Remote transfer and execution await an explicit coordinator grant after
-Antara and corrected Winamp on `bx_d8nw3e8t`. The prepared driver enforces a
+Source preparation initially queued behind Antara and corrected Winamp on
+`bx_d8nw3e8t`. The prepared driver enforces a
 600-second session, 2 GiB disk floor, current personally reviewed screenshots
 before ordinary clicks/held keys, and terminal browser/server cleanup. No
 gameplay or FPS qualification follows from this source preparation.
+
+## Actual ordinary browser result: main menu remains unusable
+
+The coordinator's October 7 22:31:45 UTC grant moved this title ahead of
+Winamp to preserve the temporary box's lifetime. Independent preflight found
+the prior owner's PIDs absent, no Chrome process and 49 GB free. Transfer
+verified all 355 runtime pins before launch. All attempts shared the first
+launch's absolute deadline, 22:43:58.973 UTC; actual browser activity was
+22:33:58–22:41:25, under the 600-second aggregate limit.
+
+The first two attempts are preserved harness failures, not compatibility
+results. First, the private APPS entry was missing from the visible HTML
+selector, and Puppeteer's unchecked `select()` launched Notepad (404).
+The second added the visible option and checked selection, but lacked the
+normal `binaries/...` URL aliases for the pinned `test/binaries/...` files,
+producing SUN.EXE 404. Both were stopped and terminal cleanup verified.
+The corrected third attempt includes all 29 fixture aliases, the visible
+selector option and a fail-closed selector assertion. Emulator source, module,
+original files and settings remain unchanged.
+
+Attempt 3 loads the original title/background and creates the 640×480 main
+window plus a visible grey rectangle at guest x171/y187, 299×202. Startup,
+settled and final captures show no usable menu controls or captions.
+An ordinary 200 ms Escape press logs WM_KEYDOWN, WM_CHAR and WM_KEYUP, with
+no visible menu response. No invisible menu control was clicked. New Game,
+player control and gameplay were not reached; FPS was not measured.
+
+The visible built-in Thread State button was clicked normally. Its popup
+reported main EIP `0x004230e2`, yield 0; static original disassembly places
+this inside the bitmap row loop `0x423074`–`0x423111`. Repeated popup samples
+alone do **not** prove a stopped loop. A bounded read-only sample using existing
+Worker getters observed EIP `0x4230cb` then `0x4230d9`, different register
+values and ongoing slice activity. Additional existing `guest_read32` calls
+sampled twelve stack fields without writing guest memory; these reads are
+not atomic with the getter snapshots and cannot establish a zero-height
+underflow. No hook replacement, execution forcing or state bypass occurred.
+
+The first failed user-visible contract is main-menu painting. This is not
+proved to be a missing asset, missing native DLL, stopped CPU, input-routing
+bug or owner-draw callback defect. The exact creation/paint cause remains
+unmeasured. The next causal step is to observe original template 226 control
+creation and its first native/guest painting callbacks before proposing a
+generic repair. No speculative emulator change was made.
+
+Evidence: `scratch/runs/20261007-tiberian-sun-preparation/investigation.json`,
+with separate `evidence/`, `attempt2/` and `attempt3/` outputs. Six reviewed
+final-attempt images include the ordinary Thread State popup; no image is
+marked gameplay. The contained artifact index covers 91 files; all 184
+served GET/range producer hashes match their pinned source bytes, including
+the full 1,720,920-byte module's SHA-256. The server records cannot prove
+client consumption of every stream. All 26 payload hashes and original
+archive hash remained unchanged after the run.
+
+No candidate-corpus manifest entry exists for this title. Its local app ID is
+`tiberian_sun_demo`; investigation metadata explicitly leaves candidateId
+null and is retained in these notes rather than attaching dashboard
+`result.json` to an unrelated candidate.
+
+Ordinary quit closed browser and server, Chrome exited 0, pending streams were
+0 and cleanup errors were 0. Independent checks found all six attempt
+driver/Chrome PIDs absent and no remaining Chrome or owned port 39265 at
+22:41:39 UTC. The worker's unique remote prefix was removed at 22:43:50,
+after evidence collection; the box was retained for the coordinator's Winamp
+run. Shared HEAD/index, local native/build ownership, Arx and public deployment
+were untouched.
