@@ -6,7 +6,9 @@ const source=require('../lib/daggerfall-gog-source.json');
 const sha=f=>crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 function buildManifest(candidateRoot,repoRoot){
  const installed=path.join(candidateRoot,'installed'),files=[];
- function visit(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){const full=path.join(dir,e.name);if(e.isSymbolicLink())continue;if(e.isDirectory())visit(full);else if(e.isFile()){const rel=path.relative(installed,full).split(path.sep).join('/');files.push({url:'installed/'+rel,vfsPath:'c:\\'+rel.replaceAll('/','\\'),size:fs.statSync(full).size});}}}
+ function visit(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){const full=path.join(dir,e.name);if(e.isSymbolicLink())continue;if(e.isDirectory())visit(full);else if(e.isFile()){const rel=path.relative(installed,full).split(path.sep).join('/');files.push({url:'installed/'+rel,vfsPath:'c:\\'+rel.replaceAll('/','\\'),size:fs.statSync(full).size,...(/\.sav$/i.test(rel)?{loadMode:'required'}:{})});}}}
+ // DOSBox opens original save files for synchronous writes/truncation. Keep
+ // these mutable bytes resident; read-only game archives still use lazy ranges.
  visit(installed);
  for(const rel of ['DOSBOX/DOSBox.exe','DOSBOX/SDL.dll','DOSBOX/SDL_net.dll','FALL.EXE','Z.CFG','__support/app/dosbox_daggerfall.conf'])if(!files.some(f=>f.url==='installed/'+rel))throw Error('Missing required original file: '+rel);
  // The CLI driver mounts GOG base configuration at root, then two existing overrides.
