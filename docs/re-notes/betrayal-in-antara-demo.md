@@ -40,3 +40,53 @@ not in the directory unpacked; Sierra's 16-bit `SETUP.EXE` installs it.
     range is the likely cause.
 
 Status 2026-10-06: parked (claude:d10ba697); TODOS NEW-GAME-BETRAYAL-ANTARA-DEMO-20261006.
+
+## 2026-10-07: recovered original DLL; additive far relocation defect
+
+The earlier SI/DI hypothesis is superseded by direct original-file evidence.
+`SETUP.SOL` (982,010bytes) contains thirteen DH91 records followed by individual
+PKWARE DCL streams. Each26-byte record stores its compressed length at+18;
+those lengths cover the payload exactly. The existing native `tools/mpq.js`
+`explode` reader recovered `_SETUP.EXE`, `EREGLIB.DLL`, `SMACKE16.DLL`, and
+`SMACKW16.DLL` without running guest code or changing the original package.
+Source/recovery receipts are in `scratch/new-game-antara-20261007/recovery.json`;
+the previous scratch directory was empty, so this is independent recovery,
+not a claim to have reverified the unavailable historical runtime capture.
+
+Recovered SMACKW16.DLL is13,946bytes, SHA-256
+`0c7e5a7473ac1ca979faeb48cced01b707afd55ff7138ecd867c8085f6e7fcfd`.
+Its ordinal37 at1:0275 has an additive FAR_ADDR relocation at0276, resolving
+ordinal43=1:01e8 with existing offset0056. The intended destination is023e,
+a wrapper that explicitly sets SI=DI=01b2 before calling01e8. Ordinal39 at027b
+similarly has addend0074 and must reach025c. The loader previously discarded
+both far-pointer addends and jumped directly into01e8, bypassing these
+initializers. No generic DLL-entry register-convention change is appropriate.
+
+The repair adds the existing low16 offset only for additive FAR_ADDR(type3),
+with16-bit wrap; the selector is replaced, without carry or selector addition.
+This matches Wine's `apply_relocations` POINTER32 additive branch in
+[dlls/krnl386.exe16/ne_segment.c](https://github.com/wine-mirror/wine/blob/master/dlls/krnl386.exe16/ne_segment.c).
+Non-additive chains, OFFSET16 and other source types retain their behavior.
+
+`test/test-ne-additive-far.js` invokes the actual WAT NE loader. It checks the
+0056/0074 cases, offset wrap, replacement of a nonzero selector, non-additive
+chaining, and unchanged OFFSET16. An optional authenticated original DLL
+argument also checks its actual0276/027c targets and wrapper instruction bytes.
+The unmodified-source control fails the exact0056 assertion (01e8 vs023e);
+the candidate passes. The test requires no private fixture for its core cases.
+
+Full production build gates passed on isolated base775bae77 plus the narrow
+repair; existing NE loader2881checks, NE image-extent, and the new test with
+original DLL all passed. Source/tests were registered by the normal UNIT rule.
+Final production module is1,719,337bytes, SHA-256
+`992a8b021897e52d2ec1b5f3604f5f89098f02ee2e4748e5340ff4d960f5e880`.
+Receipts: `scratch/new-game-antara-20261007/production3/` and
+`production3-supervisor/result.json` (exit0,16.439sec, process group clear).
+Two earlier build attempts stopped at missing sparse checkout fonts/bundles;
+those failures remain preserved. A complete tracked checkout resolved them,
+without copying ignored payloads or modifying shared canonical outputs.
+
+Status: generic loader repair validated; ordinary installer progression and
+player-controlled Antara gameplay are still unverified. Next run the original
+SETUP.EXE with original media and normal installer input on the pinned repaired
+runtime. Do not skip LibMain, force function pointers, or label setup as gameplay.
