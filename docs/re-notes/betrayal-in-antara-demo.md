@@ -1,5 +1,17 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Latest scoped investigation (2026-10-07): the original installer on full module
+`fb1be916` retains an empty Main Menu. Two actual main/child Worker reads17.166s
+apart prove the child is alive in the Win16 modal pump (EIP12ff40, yield6,
+cs_waits0). Its saved return0047:313f is authenticated against original
+`_SETUP.EXE` segment2: the call2:313a is USER.87 DialogBox. This establishes a
+live modal wait, not an exited child or the earlier immediate resource miss.
+Current parent geometry is640x480, so width is not the next fix. The original
+Main Menu resource declares zero controls; content initialization/painting still
+needs actual callback/message evidence. No generic contract failure or gameplay
+is established. See [the owner/caller handoff](../../ops/handoffs/antara-menu-owner-20261007.md)
+and durable evidence `scratch/runs/20261007T215840Z-antara-menu-owner/`.
+
 Sierra, 1997 (SCI32 engine, VMD video). Fixture:
 `test/binaries/win98-games-a-d/Betrayl-a-Antara-DEMO-SW` (35 MB): the game is
 not in the directory unpacked; Sierra's 16-bit `SETUP.EXE` installs it.
