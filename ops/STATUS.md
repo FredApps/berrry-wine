@@ -14,3 +14,5 @@ Claude remains stopped; Telegram now routes to this Codex coordinator per user i
 New user priority: direct ToyVM/dedicated-DOS gameplay. CALL gate/RETF and hidden segment cache correction feature90dd5d20 passes36 targeted cases. CPU/VM86 regressions now granted sole120sec slot; backend-install and browser-bundle gates remain before main integration. Daggerfall paging/earlier invalid stack, Arena CD query and U4 world remain open; none native gameplay-qualified.
 
 Deployment boundary: new registry entries and native evidence updates are committed/pushed to main. Active8098 reader uses WINE_EMULATOR_ROOT=/home/user/wine-assembly-web, whose registry still lacks Croc/DieHard; those main registrations are not yet live there. No public deployment or live checkout mutation performed.
+
+User added two parallel game lanes: Carmageddon TDR2000 (/root/corpus_categories) and Comanche3 selection/closure audit (/root/restore_evidence). Antara remains with coverage_audit; root takes Arx. Source investigations parallel, runtime tests serialized. DOS targeted fixture retry preserved pending root; no native gameplay qualification.
