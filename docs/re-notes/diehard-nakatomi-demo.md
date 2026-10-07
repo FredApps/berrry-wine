@@ -360,3 +360,11 @@ Full1569808-byte log SHA256
 Read-state synthetic tests/source layout receipt: sibling validation.json.
 Personally reviewed settled screenshot remains Easy/Medium/Hard, not gameplay;
 same8eb283c1 module and debug-counter timing limitations remain.
+
+Thread-label correction: ThreadManager stores main separately as tid0/win32Tid1
+(lib/thread-manager.js:49). The final report iterates created threads, so T1
+is the first created worker, NOT the main guest. T5 is the authenticated loader
+handle e1005. Similar work-loop waits in two workers can be normal; this run did
+not capture the main instance PC/stack. A next bounded read-only main snapshot
+is legitimate for locating MAIN teardown only, never a substitute for either
+worker's registers. Earlier conversational wording calling T1 main was wrong.
