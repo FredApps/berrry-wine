@@ -348,3 +348,40 @@ reported both current contexts closed and trace ownership cleared; ordinary
 cleanup at12:24:55.627Z had exit0, no errors, zero pending streams, browser/server
 closed and driver2645450/Chrome2645465 absent. This remains installer diagnosis,
 not gameplay qualification or a completed modal-dialog result.
+
+### 2026-10-07: complete trace frames, early cap before DialogBox
+
+The separately authorized attempt7 used the source-censused17-frame protocol
+and real WorkerLink transport regression. Evidence is under
+`scratch/new-game-antara-20261007/attempt7/`: `owner-probe.json`,
+`analysis.json`, `hashes.json`, `dialog-stop.json`, and `cleanup.json`.
+The owning child emitted32 complete frames/330 scalars and stopped at the
+predeclared32-frame cap, with no rejected scalar or partial frame. Its first
+frame was the actual CreateWindow `CA16A9E6` frame. This observation applies to
+attempt7; attempt6's unretained rejected value remains unknown.
+
+The capture ended before USER87. KERNEL47 returned0087 for the captured far
+pointer004f:20c0; the authenticated original child's segment3 offset20c0 holds
+`SETUP`, not `SETUPL`. KERNEL49 returned26 on two module-filename calls with
+instance0087. Neither result identifies the language DLL. The last paired
+entry/return was KERNEL127 GetPrivateProfileInt, with default0 and AX0. Its
+pointer offsets correspond to original segment3 strings `Config`, `CDROM`,
+and `SIERRA.INI`. These string interpretations use original bytes, not captured
+live string bytes. Return0 matches the provided default and does not prove a
+missing-file error. The earlier DOS AH3d record contains raw registers only;
+its live filename was not captured.
+
+All139 full served-source responses matched the frozen pins. Private Worker
+was `a7674fcf5c7d31d940be112916a6a1f4c5c1cc885bc4985c1b4293fdbf628996`;
+module remained `992a8b021897e52d2ec1b5f3604f5f89098f02ee2e4748e5340ff4d960f5e880`.
+Raw observer SHA-256 is
+`3b99aed39eb70ebc17d9213dc9a6ed5b5b931d2dea043b66f5991d072fc543ca`;
+`hashes.json` covers40 artifacts. The reviewed screenshot remained black and
+no input was sent. Both owning contexts acknowledged closed/trace-unowned.
+Ordinary cleanup at12:44:18.935Z closed browser/server/recorder, had no errors
+or pending streams, and Chrome/driver exited0 with PIDs absent.
+
+The next source question remains the normal SETUPL load and actual DialogBox102
+selection/return. Repeating the same early32-frame interval would not answer
+it. This capture neither establishes missing DialogBox execution nor a modal
+failure, and supplies no gameplay qualification.
