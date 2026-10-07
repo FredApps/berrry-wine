@@ -1,7 +1,7 @@
 updated: 2026-10-07T22:23:01.829Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: antara-dialog, fresh tiberian-paint (replaces completed ordinary-run worker), and toyvm-paging-integrate. Antara has the next remote resource-path diagnostic grant on a fresh temporary box. Tiberian Sun first-menu painting remains broken despite active CPU; fresh worker investigates actual creation/paint contracts. Corrected Winamp complete DLL closure still produces MilkDrop illegal-operation error; evidence preserved and browser closed. Paging software-origin guest regressions now pass; final gates and original Comanche acceptance remain. Arx held; no retry.
+Current workers: antara-dialog, tiberian-paint, and toyvm-paging-integrate. Tiberian owns the next targeted remote menu-paint diagnostic on bx_7qga8j7x after verified Antara cleanup. Antara actual resource open receives EMPTY filename; descriptor/module/start-record cause remains under investigation. Paging guest interrupt regressions pass; original Comanche exposed generic POP memory-destination ordering bug, now in validation before original rerun. Corrected Winamp still raises plugin error; exact fault remains unknown. Arx held; no retry.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 

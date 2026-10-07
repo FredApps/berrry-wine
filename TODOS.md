@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Authenticated original USER87 caller and actual child Win16 modalwait, not an exited child. Fresh WM_INITDIALOG/WM_PAINT procedure and asset/API investigation before generic fix; remote after Arx. Findings0951fac87; no gameplay.
+  Next: Actual LoadResource file-open receives EMPTY path and returns failure; no seek/read, so prior C-root path hypothesis is not the observed cause. Antara prepares bounded descriptor/module/start-record capture; next remote after Tiberian actual cleanup. WM_PAINT reaches original callback; no generic fix or gameplay yet. Evidence 20261007T225022Z-antara-resource-outcomes.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
