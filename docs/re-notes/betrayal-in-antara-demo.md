@@ -522,3 +522,11 @@ Both supervisors enforce deadlines, output caps and a 2 GiB disk floor.
 The generic fix is ready for root integration. Ordinary installer progression
 on this version fix remains untested; no browser was run. Next validation is
 the original installer on a separate temporary browser box after integration.
+
+## 2026-10-07 actual installer initialization callback
+
+The ordinary original installer on source `096889e174488a97529b8e73076d3a1e2feb2345`, module `fb1be916c309bf619a9331c8fd46c4319f9051af76b05b236d3c362bb632638f`, delivers `WM_INITDIALOG` to the original procedure `0047:2ca0`. Its lookup returns object `0087:655a` and virtual slot `+70h` enters authenticated original `004f:d530`. It installs the normal `0047:12f2` window subclass; ordinary dispatcher slot `+58h` enters authenticated `0047:1c2e`.
+
+A concrete asset failure occurs during initialization: bitmap type 2 / id 164 is found as resource handle `0118`, but `LoadResource` returns zero, `LockResource` returns `0000:0000`, and `CreateDIBitmap` returns zero. Original `SOL_ENG.DLL` contains the bitmap (640x480, 8 bpp, 308272 bytes). The allocation/open/read cause is not measured yet. The capture reaches its 512-hook cap before paint; it does not establish a paint failure. No sizing or artificial-control fix follows from this evidence.
+
+Contained run `scratch/runs/20261007T222523Z-antara-callback-init/artifact-index.json` has 570 hashed artifacts, all 509 runtime pins, original media/module/source, four screenshots and terminal cleanup. The reviewed scene remains an empty gray Main Menu, with no input, completed installation or gameplay. See [callback evidence](../../ops/handoffs/antara-callback-init-20261007.md).
