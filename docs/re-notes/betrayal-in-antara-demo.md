@@ -249,3 +249,56 @@ window. Ordinary close completed at 11:18:29.093Z, exit 0, errors empty,
 streams pending 0, browser/server closed and driver/Chrome PIDs absent.
 There is no installer-success or gameplay claim, and no engine fix follows
 from the width discrepancy alone.
+
+### 2026-10-07: normal geometry still shuts down; dialog boundary next
+
+Attempt 5 (`scratch/new-game-antara-20261007/attempt5/`) authenticates the
+56-byte original argument-push block at 0047:152f, with only its explicit
+USER.452 far relocation changed. The owning API identity is module 2, ordinal
+452, and the pushed return is 0047:1567. The actual Pascal arguments and host
+import both contain **640x480**. The same renderer creates that size, shows
+the child window, and receives its destruction nine milliseconds after
+creation. Therefore the prior 8707 width is not necessary for the observed
+shutdown and is not a stable reproduction in this run.
+
+At the later host-import observation, scratch ESP+28 contains 640 but ESP+32
+contains zero, whereas the host's already-hoisted height argument is 480.
+This is a later memory snapshot, not evidence of what the handler originally
+read, and it does not identify a writer or prove inter-thread contention.
+No width-only retry or speculative bridge repair follows.
+
+Static relocation resolution supplies a more relevant shutdown boundary.
+Original segment 3:05b0 calls **segment 2:30ea**, not segment 3:30ea. That
+wrapper invokes USER.87 DialogBox for a nonzero template identifier, or
+USER.218 DialogBoxIndirect for the other form, and returns its AX unchanged.
+The caller compares AX to 0481h at 3:05b5; the other branch clears the parent
+object's +5ah field and calls its virtual destruction method at 3:0611.
+The observed return 004f:0615 belongs to that method call. The preceding
+actual API result is still uncaptured.
+
+Existing attempt 4 and 5 frame bytes already contain the small dialog object's
+first 40 bytes: the saved parent BP is 6778h and its local object starts at
+BP-21eh = 655ah. Both copies have template identifier +1eh = 0066h, selector
+part +20h = 0, and parent far pointer +24h = 0037:0418. This agrees with
+constructor 3:d278 passing 0066h to base constructor 2:2ffe. These are late
+bytes, not proof that no intermediate mutation occurred.
+
+The original `_SETUP.EXE` does not contain dialog 102, but that is not a
+missing-fixture finding: the original SETUP.SOL member **SOL_ENG.DLL** contains
+that dialog (offset 427824, 48 bytes). Native decoding in
+`inspect-language-resource.js` produces 485312 bytes, SHA-256
+`22f02bb8ee3adbe997b87bff3409492effb35baa0453d39e78104002cf33a375`.
+The setup's source names `setupl.dll`; segment 3:10f6/1150 copies a loaded
+module handle into DS:108c, which the named-dialog wrapper supplies as
+hInstance. Original strings distinguish `Can't find SETUPL.DLL` and
+`Can't find EREGLIB.DLL`. Runtime staging, that handle's actual value, resource
+selection and the DialogBox return must be established before blaming a
+dependency or dialog implementation. The useful next boundary is that module
+and dialog call/result, not another geometry capture.
+
+All 139 full served-source responses matched pins; raw observer SHA-256 is
+`befe1b2b1da4405f790037744407e45e4923d50149ab33a08865251e5bf6be2a`.
+`analysis.json` records the byte comparison and geometry; both prior width
+receipts remain unchanged. The scene was black, with no installer input.
+Ordinary close at 11:39:58.550Z completed with exit 0, no errors, zero pending
+streams, browser/server closed and both PIDs absent. No gameplay claim.
