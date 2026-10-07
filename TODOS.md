@@ -972,11 +972,12 @@ commit output — do not assume your hunks landed.**
 
 - [ ] Verify Quake II world traversal beyond a changed frame
   id: Q2-MOVEMENT-FOLLOWUP
-  status: backlog
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: quake-2-demo-installer
-  Next: Extend the existing shared-registry route with controlled movement and a verifiable position or landmark change.
+  Next: Source preparation behind Antara/Arx runtime queue. October2 world/weapon-change and October6 +map demo1 software60sec runs do not prove physical traversal. Prepare finite forward/reverse/idle ordinary keys with reviewed fixed world landmarks, exact source/module/renderer provenance. No redundant menu capture or performance claim.
   Done: Reviewed before/after world captures and position/landmark evidence demonstrate actual traversal, with exact build, route and renderer provenance. Retain texture/resource checks and distinguish movement from animation or camera-only changes.
   Evidence: ops/handoffs/mig-render-q2.md
 
