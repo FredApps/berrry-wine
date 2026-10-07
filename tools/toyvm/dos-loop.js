@@ -1383,9 +1383,19 @@ class DosSession {
       vm.mem[lin(of)] = v & 0xFF;
       vm.mem[lin(of + 1)] = (v >> 8) & 0xFF;
     };
+    // DOS/BIOS return 16-bit register words even when the guest uses a
+    // 386 real-mode extender. VM.set initializes a whole register; using it
+    // here erased EAX/EDX's upper halves across a seek in Comanche 3's
+    // free-space calculation. Word writes, including IRET's SP advance,
+    // must merge with the current full general register.
+    const setWord = (n, v) => {
+      if (isa.REG16.includes(n)) {
+        vm.exports[`set_${n}`]((vm.raw(n) & 0xFFFF0000) | (v & 0xFFFF));
+      } else vm.set(n, v);
+    };
     const r = {
       get: (n) => vm.get(n),
-      set: (n, v) => vm.set(n, v),
+      set: setWord,
       setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
       setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
       // Where this INT returns to, and the SP it returns with. EXEC needs it:
@@ -1426,7 +1436,7 @@ class DosSession {
     vm.set('gip', rd(0));
     vm.set('cs', rd(2));
     vm.set('flags', rd(4));
-    vm.set('sp', (sp + 6) & 0xFFFF);
+    setWord('sp', sp + 6);
     // A service that transfers control -- EXEC into a child program, or a
     // child's exit back into its parent -- says so here rather than editing the
     // registers behind the IRET's back, which would just be overwritten by the
