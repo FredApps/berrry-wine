@@ -903,7 +903,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, intsFast, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector, exitKinds, earlySites,
+    dispatched, handbacks, ints, intsFast, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector, protectedTransferStop, exitKinds, earlySites,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
   } = session.stats();
@@ -964,7 +964,7 @@ async function runDos(o) {
     // parsing the printed line.
     tree: folder ? folder.stats() : null,
     smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
-    stuckAt, blockedOn32, badSelector, ranOutOfTime, exitKinds, earlySites,
+    stuckAt, blockedOn32, badSelector, protectedTransferStop, ranOutOfTime, exitKinds, earlySites,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // What the live region JIT did, or null when it was never asked for.
     jit: jit ? jit.stats() : null,
@@ -1508,6 +1508,9 @@ async function main() {
   // otherwise walk whatever those bytes happen to be for the rest of its budget.
   if (r.badSelector) {
     console.log(`bad CS selector at ${r.badSelector} -- names no GDT descriptor`);
+  }
+  if (r.protectedTransferStop) {
+    console.log(`protected transfer stopped: ${JSON.stringify(r.protectedTransferStop)} -- exception delivery not implemented`);
   }
   // Only when the guest actually switched. Which descriptor table is live, and
   // what CS resolved through, is the first question about any of these -- and
