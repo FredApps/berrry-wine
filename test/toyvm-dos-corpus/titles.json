@@ -44,7 +44,7 @@
           "ARENADATA": "C:"
         }
       },
-      "entrySource": "__support/app/dosbox_arena_single.conf [autoexec]: `mount d \"..\" -t cdrom`, `SET ARENADATA=C:`, `d:`, `ACD -S… -Mgenmidi.adv -IOM330 …`",
+      "entrySource": "__support/app/dosbox_arena_single.conf [autoexec]: `mount d \"..\" -t cdrom`, `SET ARENADATA=C:`, `d:`, `ACD -S\u2026 -Mgenmidi.adv -IOM330 \u2026`",
       "otherPrograms": [
         "INSTALL.EXE",
         "ULTRAMID.EXE"
@@ -92,7 +92,26 @@
           "reached": "main-menu",
           "summary": "Browser /toyvm/ session (headless Chrome, paced 10 MIPS, sound off): the title screen drew, and after Enter the game showed its own main menu (Options: Return to the view / Journey Onward / Initiate New Game), personally viewed -- keyboard input reaches the guest. Character creation and gameplay not attempted."
         }
-      ]
+      ],
+      "requiredOriginalFiles": [
+        {
+          "path": "__support/save/DNGMAP.SAV",
+          "guestPath": "DNGMAP.SAV"
+        },
+        {
+          "path": "__support/save/MONSTERS.SAV",
+          "guestPath": "MONSTERS.SAV"
+        },
+        {
+          "path": "__support/save/OUTMONST.SAV",
+          "guestPath": "OUTMONST.SAV"
+        },
+        {
+          "path": "__support/save/PARTY.SAV",
+          "guestPath": "PARTY.SAV"
+        }
+      ],
+      "requiredOriginalFilesSource": "Original GOG __support/save templates and dosboxULTIMA4_single.conf overlay mount. ToyVM mounts these explicit original bytes by root basename; no generated character state. Writes use existing in-memory copy-on-write, not original files."
     },
     {
       "id": "shadow-warrior",

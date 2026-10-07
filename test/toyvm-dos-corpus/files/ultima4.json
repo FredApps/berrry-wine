@@ -874,6 +874,30 @@
    "load": "preload"
   },
   {
+   "path": "__support/save/DNGMAP.SAV",
+   "size": 512,
+   "sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+   "load": "preload"
+  },
+  {
+   "path": "__support/save/MONSTERS.SAV",
+   "size": 256,
+   "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1",
+   "load": "preload"
+  },
+  {
+   "path": "__support/save/OUTMONST.SAV",
+   "size": 256,
+   "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1",
+   "load": "preload"
+  },
+  {
+   "path": "__support/save/PARTY.SAV",
+   "size": 502,
+   "sha256": "f647ceab6d0e9dd619335988e0dfd5dfdc5b1d7690f9eac1cf686d32f04a0acb",
+   "load": "preload"
+  },
+  {
    "path": "readme.rtf",
    "size": 162714,
    "sha256": "087797e09f24555aa6b376d461174e7b763c8eef71ee7778f3f54fbc5efca4f8",
