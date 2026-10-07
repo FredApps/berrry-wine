@@ -1175,7 +1175,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Source audit complete: ordinary reuse collects before write, so warning alone does not prove unsafe reuse. Findings and pinned Chromium references in docs/gl-d3d-corpus-status.md; scratch/d3dim-pbo-audit-20261007/source-receipt.json. Next add binding-aware repeated-flip/discard negative-control tests, then a separately serialized context/PBO identity observation. No speculative engine fix or performance claim. Preserve Drakan acceptance pins through Threads-off check; benchmarks on separate boats.
+  Next: Source audit and binding-aware PBO regression integrated main737cc38c/faa0b2df/7be5eb0b. Candidate PASS; removing collect-before-reuse fails actual first-frame bytes, no engine change. Worker prepares bounded10sec/256event live MW3 context/PBO identity observer with forwarding/cleanup tests; no live diagnostic grant yet. Chrome warning unresolved, no performance claim; benchmarks on separate boats.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [~] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
@@ -1189,6 +1189,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
   created: 2026-10-06T05:27:48.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Reclaimed October7: source-only resolve Start binding/InputDevice Keyboard defaults and frontend transition after Enter; existing 20 original files 46712129B present, no missing paths. Nonpublic/unregistered; previous attract loop is not gameplay. Read docs/re-notes/croc2-demo.md; proposal scratch/daggerfall-refill-20261007/croc2-proposal.json. No runtime grant; preserve late T2 handshake as unresolved, no guest state shortcuts.
+  Next: Source distinguishes P/Start mask0x8 from Enter/back mask0x1000; actual ordinary P opens rendered Jungle Demo/Mine Demo menu. Sole browser live driver2409750/Chrome2409763, original deadline09:11:56.906Z; worker checks ordinary Jungle selection and controlled movement, not attract playback.20 original files present, private registration only, source3b/module8eb. Evidence scratch/new-game-croc2-20261007/attempt1; no gameplay/FPS qualification yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
