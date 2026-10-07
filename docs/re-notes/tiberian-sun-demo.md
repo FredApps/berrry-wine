@@ -176,3 +176,41 @@ Independent 23:00:00 checks find actual PIDs 35864/35876 absent, no Chrome and
 the original socket baseline. All 355 pins verify again before the owned remote
 prefix is removed at 23:00:24; dependency tools remain for Antara's next grant.
 No production repair or local native/build run was performed.
+
+## 2026-10-07 first paint delivery and sparse bitmap contracts
+
+One targeted run at 23:13:44–23:14:23 UTC used the same original payload,
+source `0cbc1c6ffd997f5ab31142b4f2d9d57b318d05c6` and module `7c6864f8…`.
+Private Worker `16197636abb9cb491ed6231d0960de44b9a99a9d4c38a95a2defbf79da703a76`
+replaces broad callback tracing with exact callback-entry observations and
+reads sparse objects through the pinned pure JS address translator. All import
+receivers, arguments and results are forwarded; no guest bytes are written.
+
+Original authenticated subclass `0x57e790` receives WM_PAINT for dialog
+`0x10002` and all six buttons. The parent calls original `0x580ac0`, then the
+normal dialog proc `0xffff0004`. The first button calls original `0x580c00`
+and reads its text with GetWindowTextA. Sparse bitmap-copy entries now expose
+the 299×202 menu and 191×26 first-button objects, each with two bytes per pixel.
+This establishes actual paint delivery; it does not establish correct pixel
+contents or composition. In particular EDI at the sampled loop is not the
+destination pointer, so its null byte sample cannot diagnose an empty image.
+Nested API entry/exit records must not be paired blindly.
+
+The reviewed `diagnostic/01-destination.png` still shows the blank menu.
+The raw-canvas collector fails with `native canvas type unavailable back`:
+it accepts HTMLCanvasElement, whereas the renderer's `_createOffscreen`
+creates OffscreenCanvas when available. `surfaces.json` is absent. A prepared
+native OffscreenCanvas prototype read bypasses the host's flush wrappers;
+its focused JS mock test passes, but it has not run in a browser yet. No
+generic repair is demonstrated and no gameplay qualification is claimed.
+
+Contained evidence is
+`scratch/runs/20261007-tiberian-destination-preparation/investigation.json`,
+`analysis.json` and 45 indexed artifacts, including the full pinned package.
+The observer stops after 15 seconds with no errors; bitmap hooks cap at 4096,
+callback hooks at 128, callback output at 64, and API entries/exits at 40 each.
+Ordinary quit closes browser/server with Chrome exit 0 and streams 0. The
+collector error and missing UI icon `icons/apps/tiberian_sun_demo.png` are
+retained. Independent 23:14:41 checks find PIDs 24030/24042 absent, no Chrome,
+and unchanged listeners. All 355 pins verify before removal of only the owned
+runtime prefix at 23:14:58. No missing guest fixture/DLL/TLB path was observed.
