@@ -265,3 +265,42 @@ the baseline regression failure. Ordinary quit closes browser/server with
 Chrome exit 0, no cleanup errors and streams 0. Independent 23:20:53 checks
 find actual PIDs 34442/34454 absent, no Chrome and original listeners. All 355
 runtime pins verify before removing only the owned prefix at 23:21:07.
+
+## 2026-10-07 ordinary menu repair validated; campaign input unresolved
+
+Source candidate `61ac72804e0c0ebd3b130fa5f098f7a94373aed4` passes the full
+build at 23:34:42–23:34:58. All 910 src/lib/tools/fonts hashes remain unchanged
+across compilation. The newly built 1,720,920-byte module hashes to
+`7c6864f8e224a0d42c6743b3c088ce79349101182295b79b1e4fa8a4c3911cc0`, the same
+as baseline because this repair changes JavaScript only. The ordinary runtime
+uses exact committed Worker `6f42f2b0c8d67acd6f3890ad893141ed571d7543d658e8ef3917e6a8d43a88d7`
+and WorkerLink, with no callback/bitmap observer injection. Original private
+APPS/visible-option routing, all 26 original demo files, and the complete
+DLL/TLB closure remain unchanged; 355 runtime pins and 29 aliases verify.
+
+The personally reviewed normal screenshot `diagnostic/01-ordinary-menu.png`
+(`3631ab8e…`) now displays all six original menu buttons and captions. The
+grey covering slab is gone. The remaining three normal screenshots also show
+the correct menu. This validates the generic first-paint repair in ordinary
+presentation; it does not qualify the new-game lane as complete.
+
+One ordinary click at page `(305,455)` on the reviewed New Campaign button
+produces page input records WM_LBUTTONDOWN/UP for HWND `0x10004`, but the
+screen remains at the menu. These records do not prove that the original guest
+callback or parent WM_COMMAND receives the event. An earlier commentary claim
+of command delivery was corrected. No campaign or player-controlled gameplay
+is observed. An Enter command queued at 23:47:25 is rejected by the input
+deadline reserve and is not performed; its error is retained. Next measure
+the owning mouse callback, native button tracking/point contract and parent
+command route. No additional input repair is demonstrated yet.
+
+Contained evidence is
+`scratch/runs/20261007-tiberian-repair-preparation/investigation.json`,
+`analysis.json` and 65 indexed artifacts, including full ordinary fixture/runtime
+archive, all four reviewed normal screenshots, source/build/terminal receipts
+and actual commands. Runtime is 23:44:36–23:47:34 under a 180-second guard.
+Ordinary quit closes browser/server, Chrome exits 0 and streams drain to 0.
+The one rejected-input guard error is a collector limitation, not an observed
+guest fault. Independent 23:48:48 checks find actual PIDs 24300/24312 absent,
+no Chrome and baseline listeners. All 355 pins verify again before removing
+only the owned prefix at 23:49:14 and releasing the browser slot to Winamp.
