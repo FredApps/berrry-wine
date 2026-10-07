@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Original3CAB members decoded/hash verified and faithful12file hardlink mount prepared. Corrected attempt2 served stdole and pinned earlier module successfully; four reviewed captures through259sec show hidden ARX window, no menu/input.300sec run closed11:57:20.648Z cleanly. Worker investigates original startup continuation and owning Worker state before another runtime; cause unknown.
+  Next: Three actual owning Worker snapshots stable EIP07507190/previous011a89ef/yield0; retainedmodule8eb/imagebase400000, no menu. Root next captures live thunk mapping and last-run/scheduler status; current source thunk range is a hypothesis, not proven loop/deadlock. Evidence main671e2c30; browser30805 closed12:14:58.883 cleanly.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1232,7 +1232,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Reconcile current main/public evidence, original InstallShield cabinet and demo README; prepare faithful asset closure and launch. Source-only; root serializes extraction/runtime. DOS correction READY preserved with root for later validation.
+  Next: Original CAB extraction completed1.821s,2961files203099877B exact sizes/hashes, source unchanged/childgroupabsent. Worker authenticates required loose-file overlays, launcher and config before private registration; no guest yet.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
@@ -1242,5 +1242,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Confirm distinct from parked Comanche Gold, nonpublic and not already qualified; inspect original asset closure and prepare ordinary launch. Replace selection promptly if excluded; source-only, no runtime grant. Root takes Arx continuation.
+  Next: Verified distinct original DOS demo, not Comanche Gold. Direct native ToyVM installer probe prepared from maina2816e17;30sec guest/90sec total, no automatic answers. Hardened supervisor8mocktestsPASS. Preserve protectedTransferStop result before serialized firstprobe; no DOSBox substitution.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
