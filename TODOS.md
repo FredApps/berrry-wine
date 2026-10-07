@@ -1168,14 +1168,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] D3DIM async-flip PBO trips Chrome "READ-usage buffer written again before being read back"
   id: D3DIM-ASYNC-PBO-WARN-20261006
-  status: active
+  status: ready
   note: 2026-10-06T21:25Z parked at WIND-DOWN, not started. Next: page probe on MW3 menu wrapping the D3DIM executor's readPixels/fenceSync/getBufferSubData (lib/d3dim-gpu.js asyncFlip path) to find which PBO is written again before its readback; likely reuse of one PIXEL_PACK_BUFFER across flips while an earlier read is inflight -> ring of PBOs or wait on the fence before reuse.
   note: 2026-10-06T20:25Z claude:1863d2b5 claimed: code read finds no write-before-read path; next a page probe wrapping readPixels/fenceSync/getBufferSubData on MW3's live context (browser queue).
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root/corpus_categories
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Source audit and binding-aware PBO regression integrated main737cc38c/faa0b2df/7be5eb0b. Candidate PASS; removing collect-before-reuse fails actual first-frame bytes, no engine change. Worker prepares bounded10sec/256event live MW3 context/PBO identity observer with forwarding/cleanup tests; no live diagnostic grant yet. Chrome warning unresolved, no performance claim; benchmarks on separate boats.
+  Next: Source audit/regression integrated737cc38c/faa0b2df/7be5eb0b; candidate PASS and removed-collection control fails first-frame bytes. Chrome warning unresolved. Bounded context/PBO observer source preparation retained by corpus_categories; worker reassigned to user-priority native DOS compatibility. No live diagnostic active or new engine fix, no performance claim. Resume exact observer preparation when a worker is available; heavy benchmarks on separate boats.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [~] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
@@ -1192,3 +1191,14 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Source distinguishes P/Start mask0x8 from Enter/back mask0x1000; actual ordinary P opens rendered Jungle Demo/Mine Demo menu. Sole browser live driver2409750/Chrome2409763, original deadline09:11:56.906Z; worker checks ordinary Jungle selection and controlled movement, not attract playback.20 original files present, private registration only, source3b/module8eb. Evidence scratch/new-game-croc2-20261007/attempt1; no gameplay/FPS qualification yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
+
+- [~] Run DOSBox-packaged games directly in ToyVM for the dedicated DOS production route
+  id: TOYVM-DOS-NATIVE-GAMEPLAY-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/corpus_categories
+  created: 2026-10-07T09:08:16.475Z
+  requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
+  Next: Reconcile original five-title native corpus from main550d7d4a and current ToyVM implementations. Native entries: Daggerfall FALL.EXE Z.CFG, Arena ACD.EXE, UltimaIV ULTIMA.COM, Shadow Warrior SW.EXE, GTA demo GTADOS/K.EXE. Worker audits exact payload/device/compatibility gaps, then prepares bounded native probes and concrete fixes. Current corpus has four dated static blockers; UltimaIV reached title/menu only, no native gameplay qualified. Preserve existing two-new-game lanes; serialize runtime and use separate boats for heavy benchmarks.
+  Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
+  Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
