@@ -26,6 +26,7 @@
 
 const isa = require('./isa');
 const pmTransfer = require('./pm-transfer');
+const paging = require('./paging');
 
 // ---------------------------------------------------------------------------
 // Handler table. Order IS the handler index -- the decoder emits these numbers.
@@ -2883,13 +2884,7 @@ function gen386() {
     }
   }
 
-  // SMSW, and reading a control register. This machine has exactly one CR0
-  // value -- real mode, no coprocessor -- and never leaves it, because nothing
-  // WRITES a control register: LMSW, MOV CR,r and LGDT/LIDT stay unimplemented,
-  // so a program that genuinely tries to switch mode is reported as blocked
-  // rather than quietly run in the wrong one. Reading is a different matter:
-  // nine corpus programs open with `smsw ax` / `test al,1` to check they are
-  // not already inside a V86 monitor, and the answer to that is no.
+  // SMSW reads the low word of CR0, including the current PE state.
   h('smsw_r16', 1, `
   ${ops(1)}
   (call $rset16 (local.get $t0) (global.get $cr0))
@@ -2899,13 +2894,18 @@ function gen386() {
   ${EA_SETUP_PRE}
   (call $wr16 (local.get $t5) (local.get $t4) (global.get $cr0))
 `);
-  // MOV r32, CRn. Only CR0 has a value; CR2 (the page-fault address) and CR3
-  // (the page directory) are zero on a machine that has never paged.
+  // CR2 and CR3 are architectural registers even while PG is clear. Keeping
+  // them is a prerequisite for paging, not an implementation of translation.
   h('mov_r_cr', 1, `
   ${ops(1)}
+  (local.set $t1 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
   (call $rset32 (i32.and (local.get $t0) (i32.const 7))
-    (select (global.get $cr0) (i32.const 0)
-      (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))))
+    (select (global.get $cr0)
+      (select (global.get $cr2)
+        (select (global.get $cr3) (i32.const 0)
+          (i32.eq (local.get $t1) (i32.const 3)))
+        (i32.eq (local.get $t1) (i32.const 2)))
+      (i32.eqz (local.get $t1))))
 `);
 
   // The segment limit out of the descriptor whose address is in $t7: twenty
@@ -3011,10 +3011,8 @@ function gen386() {
     (i32.and (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 0xF))))
 `);
 
-  // MOV CRn, r32 -- the mode switch itself. Only CR0 is kept; a write to CR2 or
-  // CR3 is a paging setup this machine has nothing to page with, and is
-  // dropped rather than refused because the extenders that write them do so
-  // unconditionally on their way past.
+  // MOV CRn, r32. Retain CR2 and CR3 through real/protected-mode transitions.
+  // A later paging integration must end cached execution on CR0/CR3 changes.
   //
   // Setting PE does NOT reload any segment register, and that is not an
   // omission: a real 386 keeps running on the descriptors already cached in
@@ -3025,8 +3023,11 @@ function gen386() {
   // either side of the switch.
   h('mov_cr_r', 1, `
   ${ops(1)}
-  (if (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
-    (then (global.set $cr0 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))))
+  (local.set $t1 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+  (local.set $t2 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))
+  (if (i32.eqz (local.get $t1)) (then (global.set $cr0 (local.get $t2))))
+  (if (i32.eq (local.get $t1) (i32.const 2)) (then (global.set $cr2 (local.get $t2))))
+  (if (i32.eq (local.get $t1) (i32.const 3)) (then (global.set $cr3 (local.get $t2))))
 `);
 
   // LGDT/LIDT. Six bytes: a 16-bit limit then a 32-bit base, of which a
@@ -5798,6 +5799,9 @@ ${memAccessors()}
   (i32.const 1))
 ${JMP_SYN_BUDGET_TEST ? '' : JLOOK_SYN_FN}${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
   s += pmTransfer.helpers(isa);
+  // WIP primitive, exercised through exportAll. Memory access integration and
+  // restartable #PF delivery remain separate work; $lin does not call this yet.
+  s += paging.helpers(isa);
   return s;
 }
 
@@ -6190,6 +6194,8 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; encodings are available, no paging. MOV CR0,r and LMSW write it, and setting
 ;; PE is what puts $segbase on the descriptor path.
 (global $cr0 (mut i32) (i32.const 0x0010))
+(global $cr2 (mut i32) (i32.const 0))
+(global $cr3 (mut i32) (i32.const 0))
 ;; EFLAGS.VM, kept out of \$flags on purpose.
 ;;
 ;; Virtual-8086 mode is protected mode -- PE stays set -- with segmentation put
@@ -6318,7 +6324,7 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 // reads them to find a gate, so an instance swap that left them at zero would
 // take the next interrupt through the real-mode vector table instead of the
 // guest's own IDT -- silently, and only in a protected-mode program.
-const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
+const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'cr2', 'cr3', 'vm86',
   'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr',
   // Hidden bases are lowered into REGFILE_SEGB, not separate WASM globals.
   // Replay of selectors cannot reconstruct a cache after descriptor mutation.
@@ -6430,6 +6436,8 @@ ${EXTRA_GLOBALS}
 ;; compiler shares -- see the note there)
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
+(func (export "get_cr2") (result i32) (global.get $cr2))
+(func (export "get_cr3") (result i32) (global.get $cr3))
 (func (export "get_vm86") (result i32) (global.get $vm86))
 ;; The VGA clock's host side: the phase dos-loop writes before every slice,
 ;; the attribute flip-flop the host's out 3C0h reads, and the read count.
