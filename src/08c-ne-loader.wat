@@ -470,8 +470,14 @@
                     ;; LOBYTE
                     (i32.store8 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off)))
                   (else
-                    ;; FAR_ADDR (3) and anything else pointer-shaped: off:sel
-                    (i32.store16 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off))
+                    ;; FAR_ADDR additive relocations add the existing offset,
+                    ;; but replace the selector (there is no carry into it).
+                    ;; Preserve the legacy fallback for other pointer types.
+                    (i32.store16 (i32.add (local.get $seg_wa) (local.get $site))
+                      (i32.add (local.get $tgt_off)
+                        (select (local.get $next) (i32.const 0)
+                          (i32.and (local.get $additive)
+                            (i32.eq (local.get $addr_type) (i32.const 3))))))
                     (i32.store16 (i32.add (i32.add (local.get $seg_wa) (local.get $site)) (i32.const 2))
                                  (local.get $tgt_sel))))))))
         ;; Additive records patch one site and stop; chained ones follow the
