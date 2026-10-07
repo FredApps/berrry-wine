@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara (scratch/fresh-workers-20261007)
+  worker: fresh CLI antara-browser (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Fresh worker owns generic NE version-resource/query correctness, focused before/candidate and mandatory build regressions; no version override. Ordinary9 reviewed Setup Version Mismatch. Local build slot assigned; all browser retests remote only.
+  Next: Generic NE resource/query fix pushed mainc7f8c5b4; authenticated original, focused negative control, mandatory build +8NE/PE suites PASS; modulefb1be916. Fresh worker prepares original installer remote-only retest after Arx browser closes. No version override/gameplay claim.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1219,9 +1219,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ARX-FATALIS-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI arx-remote (scratch/fresh-workers-20261007)
+  worker: fresh CLI arx-allocation (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Fresh worker transfers pinned read-only arena diagnostic to temporary box bx_d8nw3e8t using permitted API; remote browser only. Observe actual heap membership, retrieve screenshot/context/closure. No allocation or binary bypass.
+  Next: Remote bx_d8nw3e8t readonly run verified352pins, twoowner rows/cleanclosure; rootreviewed startup only. Entry7ef0b780 matches noneof4 publishedheaparenas. Fresh worker identifies original allocation call/flags before generic placement fix; preserve capacity/concurrency, no bypass.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 

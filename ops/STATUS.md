@@ -1,4 +1,4 @@
-updated: 2026-10-07T20:58:07.120Z
+updated: 2026-10-07T21:07:06.166Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
@@ -20,3 +20,7 @@ User added two parallel game lanes: Carmageddon TDR2000 (/root/corpus_categories
 Resume: three fresh CLI workers with short briefs (built-in thread slots cannot be recycled): Antara owns local NE version build/tests; TDR finalizes durable corpus registration after reviewed driving; Arx owns remote browser diagnostic on temporary bx_d8nw3e8t. All future browsers remote. Four verified archived worktrees removed; about3.8GB free. Comanche memory diagnostic queued after local build slot. Config unchanged; batch checks and one board line per real result.
 
 TDR lane completed mainb7cdb5fd: durable original-media corpus registration plus reviewed forward/reverse/brake gameplay, no FPS/audio qualification. Fresh TDR thread stopped. Three continuing lanes are Antara (NE version tests), Arx (remote diagnostic), and Comanche (fresh worker, native slot after Antara).
+
+Antara version-resource/query repair pushed c7f8c5b4 after full mandatory build/eight suites; fresh antara-browser worker takes remote-only ordinary installer followup after Arx. Comanche readonly diagnostic identified possible upper-EAX loss on16bit seek return; worker validates regression before fix.
+
+Arx remote diagnostic completed with352pins verified and clean browser shutdown; root reviewed startup screenshot. Pointer7ef0b780 is outside all4 published heap arenas; fresh allocation worker investigates actual allocation call/flags. Temporary box retained for Antara.
