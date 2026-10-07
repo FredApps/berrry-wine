@@ -1177,9 +1177,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Source audit/regression integrated737cc38c/faa0b2df/7be5eb0b; candidate PASS and removed-collection control fails first-frame bytes. Chrome warning unresolved. Bounded context/PBO observer source preparation retained by corpus_categories; worker reassigned to user-priority native DOS compatibility. No live diagnostic active or new engine fix, no performance claim. Resume exact observer preparation when a worker is available; heavy benchmarks on separate boats.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
-- [~] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
+- [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
   id: NEW-GAME-CROC2-DEMO-20261006
-  status: active
+  status: done
   reparked: 2026-10-06T16:20Z -- second look (e37aa7c6 re-notes): D3DDevice/DisplayDevice seeds select a hardware D3D record but the game stays on its software renderer (no CreateDevice); Demo Mode at ~8 presents/s with defaults; at tick 10 the picture freezes ~120k with main computing and T2 in InterlockedExchange+CS. Not a clock artifact alone. Next: what main waits on (T2 handshake).
   resumed: 2026-10-06T16:00Z by claude:d10ba697 -- testing whether the black front end after Enter is the headless 200ms/batch clock (menu idle timeout) rather than a render bug.
   candidate: win98-games-a-d/Croc2DemoSW-D3D.exe (local, no download)
@@ -1188,7 +1188,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
   created: 2026-10-06T05:27:48.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Fast ordinary P-to-menu-to-Return route reached player scene; Down changed orientation/camera. Disk guard stopped attempt2 before reverse/idle screenshot, so qualification incomplete (main472f9e09). Finite control phase tests pass. Prepare local registration while native U4 uses runtime; next Croc browser requires2.9GB preflight and2GiB runtime floor, unchanged original source3b/module8eb/payload. Capture reviewed reverse and idle evidence before qualification.
+  Next: Completed narrow ordinary Jungle movement/reversal/settled idle, personally reviewed by root; main20bdd9c6 registration and600be49b findings. Evidence scratch/runs/20261007-croc2-jungle-controls/result.json, 500 artifact hashes, exit0/clean closure. No FPS/audio/sustained-play claim. Refill lane with Antara source investigation.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1202,3 +1202,15 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Original five-title closure audited. Ultima IV required original save templates fixed and tested through actual page launcher and native DOS file mounting (main4e44592c); five-title manifest preserved. Prepare bounded native U4 browser and Daggerfall/Arena CLI probes. No native gameplay qualified; static extender/device risks still need runtime attribution. Dedicated DOS route remains production target, no deployment switch.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
+- [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
+  id: NEW-GAME-BETRAYAL-ANTARA-DEMO-20261006
+  status: active
+  candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/coverage_audit
+  created: 2026-10-06T04:51:54.000Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: Reclaimed replacement for completed Croc lane. Reconcile latest main NE DLL initialization against preserved SMACKW16 LibMain far-call-before-initialization finding (docs/re-notes/betrayal-in-antara-demo.md); verify exact original fixture and retained installer output, then fix or prepare a bounded confirming probe. Source work first; no runtime granted while native DOS/DieHard own serialized slots. No prior gameplay qualification found.
+  Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
+  Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
+
