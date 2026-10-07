@@ -771,6 +771,8 @@
   ;; checking only committed maps leaves a race between placement and commit.
   ;; Default VirtualAlloc searches upward; MEM_TOP_DOWN searches downward.
   ;; Both searches retain the entire arena and step across the excluded band.
+  ;; down=1 keeps the internal cursor policy; down=2 starts at the ceiling on
+  ;; every call, as guest MEM_TOP_DOWN requires when a higher gap was released.
   (func $virtual_reserve_place
       (param $size i32) (param $down i32) (param $protect i32) (result i32)
     (local $cand i32) (local $edge i32) (local $top i32) (local $min i32)

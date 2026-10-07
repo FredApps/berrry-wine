@@ -5221,7 +5221,8 @@
         ;; HeapAlloc's upward-growing low heap. MEM_RESERVE is address-space
         ;; bookkeeping; real backing is added only by MEM_COMMIT.
         (local.set $new_top (call $virtual_reserve_place (local.get $size)
-          (i32.ne (i32.and (local.get $arg2) (i32.const 0x100000)) (i32.const 0))
+          (select (i32.const 2) (i32.const 0)
+            (i32.ne (i32.and (local.get $arg2) (i32.const 0x100000)) (i32.const 0)))
           (local.get $arg3)))
         (if (i32.eqz (local.get $new_top))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
