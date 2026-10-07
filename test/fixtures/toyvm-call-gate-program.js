@@ -7,7 +7,7 @@ function descriptor(base, limit, access, flags = 0) {
   return [...w16(limit), ...w16(base), base >>> 16 & 255, access, (limit >>> 16 & 15) | flags, base >>> 24 & 255];
 }
 function build({ ring3 = false, parameters = 0, callForm = 'direct16', returnFault = false,
-  useLdt = false, mutateCache = null } = {}) {
+  useLdt = false, mutateCache = null, mutateData = null } = {}) {
   if (![0, 2].includes(parameters)) throw Error('bounded parameter cases0/2');
   if (!['direct16', 'direct32', 'memory16', 'memory32'].includes(callForm)) throw Error('unknown CALL form');
   const blob = Buffer.alloc(0x1000), labels = {}, fixes = [], assertions = [];
@@ -72,6 +72,11 @@ function build({ ring3 = false, parameters = 0, callForm = 'direct16', returnFau
   emit(0x0f, 0x92, 0xc0, 0x66, 0x0f, 0xb6, 0xc0); cmpAx(1, 'RETF preserves carry');
   emit(0x8c, 0xc8); cmpAx(callerCs, 'return CS');
   emit(0x8c, 0xd0); cmpAx(callerSs, 'return SS'); cmpEsp(initialSp, 'return ESP with parameters released');
+  if (mutateData) {
+    if (!ring3 || !['retain', 'clear'].includes(mutateData)) throw Error('invalid data-cache case');
+    emit(0x8c, 0xe0); cmpAx(mutateData === 'clear' ? 0 : 0x23, 'cached FS access after outer RETF');
+    emit(0x8c, 0xe8); cmpAx(mutateData === 'clear' ? 0 : 0x23, 'cached GS access after outer RETF');
+  }
   store(RESULT, 3); jump('exit');
   if (pos >= CALLEE) throw Error('caller crossed callee');
   pos = CALLEE; label('callee'); store(RESULT, 2);
@@ -90,6 +95,14 @@ function build({ ring3 = false, parameters = 0, callForm = 'direct16', returnFau
   emit(0x67, 0x66, 0x81, 0x3d, ...d32(0x71000), ...d32(0xa55aa55a)); check('above-stack sentinel unchanged');
   for (let i = 0; i < parameters; i++) cmpStack(8 + i * 4, (i + 1) * 0x11111111, 'parameter' + i);
   if (ring3) { cmpStack(8 + parameters * 4, oldSp, 'frame old ESP'); cmpStack(12 + parameters * 4, callerSs, 'frame old SS'); }
+  if (mutateData === 'clear') {
+    // Load DPL0 FS/GS, then change the table to DPL3. Hidden DPL remains0.
+    emit(0xb8, 0x18, 0, 0x8e, 0xe0, 0x8e, 0xe8);
+    store(BLOB + 0x1c, 0x00cff200);
+  } else if (mutateData === 'retain') {
+    // Existing ring3 data caches stay usable despite a DPL0 table rewrite.
+    store(BLOB + 0x24, 0x00cf9200);
+  }
   if (returnFault) emit(0x36, 0x67, 0xc7, 0x43, 4, 0, 0); // Guest writes a null return CS.
   emit(0xf9); label('ret');
   emit(0x66, 0xca, ...w16(parameters * 4)); // RETF32 imm, even though CS.D=0.

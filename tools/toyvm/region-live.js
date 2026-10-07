@@ -723,10 +723,12 @@ class LiveJit {
 // a deferred lazy-flag rule and retire it, so the arithmetic bits survive the
 // move. A raw copy of $flags would carry a word that had not been computed yet.
 function carryState(from, to) {
+  // Both instances may share the register-file memory. Snapshot BEFORE any
+  // selector setter re-resolves a descriptor and changes that shared cache.
+  const machineSnapshot = MACHINE_STATE.filter(g => from[`mget_${g}`] && to[`mset_${g}`])
+    .map(g => [g, from[`mget_${g}`]()]);
   const machine = () => {
-    for (const g of MACHINE_STATE) {
-      if (from[`mget_${g}`] && to[`mset_${g}`]) to[`mset_${g}`](from[`mget_${g}`]());
-    }
+    for (const [g, value] of machineSnapshot) to[`mset_${g}`](value);
   };
   // THE ORDER IS THE WHOLE OF THIS FUNCTION, AND IT USED TO BE WRONG.
   //
