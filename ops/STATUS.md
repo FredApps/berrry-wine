@@ -1,13 +1,13 @@
-updated: 2026-10-07T22:20:37.286Z
+updated: 2026-10-07T22:23:01.829Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: antara-dialog, darkstone-gameplay and toyvm-paging-integrate. Arx diagnostic worker stopped after automated safety rejection; root collected existing output and verified remote cleanup, no rejected-work retry. Antara receives browser, corrected root Winamp follows, then Darkstone. Paging full integration continues; root reproduced softwareINT14 error-frame bug for worker correction.
+Current workers: antara-dialog, darkstone-gameplay (reassigned to Tiberian Sun after historical Darkstone qualification audit), and toyvm-paging-integrate. Antara owns remote callback capture; corrected rootWinamp follows, then Tiberian Sun. Arx held after automated safety rejection; no retry. Paging softwareINT14 frame correction is in WIP, full guest tests and original Comanche acceptance still required.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
 Quake II WebGL ordinary Game/Easy/forward/reverse/idle traversal qualified main2534731b3, root personally reviewed worldlandmarks. Sixscreens/38artifacts self-contained; Telegram860/861 sent. FPS/audio/network unqualified,16ancillaryVLANrefusals preserved. GL27 stillincomplete: softwareQ2menu, otherlongroutes/heavytitles/Winamphost remain. Fresh toyvm-paging worker replaces finishedQ2thread and owns nextlocalcorrectness slot; CR3 baseline actualguesttest preserved3007158e9.
 
-Two new-game lanes: Antara callback investigation and Darkstone ordinary-gameplay refill. Darkstone is nonpublic and current task unqualified; fresh worker must audit latest evidence before runtime. Arx held after rejected diagnostic, introAV unresolved. TDR2000 completed; no new FPS/audio claims.
+Two new-game lanes: Antara callback investigation and Tiberian Sun ordinary mission-control investigation. Darkstone historical controlledTown evidence already exists, so no duplicate new-game run. Tiberian Sun previous boat blocker cleared by serialized temporarybox; original local media ready. Arx held; TDR2000 completed. No new FPS/audio claims.
 
 Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
 
