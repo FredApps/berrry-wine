@@ -4,7 +4,7 @@ Private candidate a1ca7441 implements DOS temporary-file creation on the existin
 
 Thirteen real-handler groups and unchanged native DOS-files/ioctl tests passed in final-ready/tests-attempt2. The earlier 14d candidate fails the added truncation identity test. A first correction failed old-handle EOF; the final candidate preserves shared record identity and updates existing handle buffers on truncation without resetting their file positions. This commit is for review, not integration approval.
 
-Known inherited limitation: writeFile refreshes only the writing handle's buffer. A second open handle may retain a stale view after another handle writes or grows the file. This is separate from the tested truncation refresh; general multi-handle coherence is not claimed. It needs a targeted contract before integration, not a weakened assertion.
+Shared-handle follow-up: the earlier candidate failed a real second-handle read after a 5000-byte growth (returned zero instead of seven). Temporary-record writes now refresh every handle sharing that record while retaining each position and access mode. Fifteen pure-JS contracts pass, including growth beyond the original buffer, seek-to-end, readonly refusal, and truncation followed by replacement bytes visible at an existing offset. The original 13-contract/native files/ioctl receipts predate this small follow-up; no new guest run is claimed.
 
 The original installer run finished 2026-10-07T13:49:13.028Z with clean process/stream closure and all five original file hashes unchanged. Child INSTALL.BIN exited 1; parent wrapper exited 0. The visible message remains insufficient extended memory, followed by missing setup.exe. No installed payload or gameplay was produced.
 

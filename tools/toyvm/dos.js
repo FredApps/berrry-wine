@@ -1426,6 +1426,11 @@ class Machine {
     f.pos = end;
     if (end > rec.len) rec.len = end;
     f.buf = rec.data.subarray(0, rec.len);
+    if (rec.temporary) {
+      for (const handle of this.files.values()) {
+        if (handle.rec === rec) handle.buf = rec.data.subarray(0, rec.len);
+      }
+    }
   }
 
   // A number that changes exactly when the text page does, and does not change
