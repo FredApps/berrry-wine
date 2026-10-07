@@ -141,3 +141,42 @@ probes as expected 404 on a future harness; do not broaden file access or alter
 the old 403 receipt. `optional-cards-probes.json` records that correction.
 Browser/server closed at 10:27:05.715, streams pending 0, Chrome exit 0;
 driver 2512853 and Chrome 2512867 were absent afterward. No retry occurred.
+
+### 2026-10-07: actual child window destruction captured
+
+The one repeat, `scratch/new-game-antara-20261007/attempt2/`, recorded six
+host lifecycle events and closed the observer at 15 seconds without overflow
+or observer errors. All 139 served source hashes matched. Child slot/tid 1
+created HWND `0x18001` in the same renderer, with geometry `0,0,8707,480`.
+ShowWindow made that entry visible; the child's actual `destroy_window` call
+removed it 73ms later. This is explicit destruction, not a renderer losing
+another task's window. The guest reason and DLL initialization outcome remain
+unobserved.
+
+The native-recovered original `_SETUP.EXE` relocation table identifies one
+USER.452 CreateWindowEx call: segment 2 instruction 1562, relocated operand
+1563, return 1567. It identifies one USER.53 DestroyWindow call: instruction
+1779, operand 177a, return 177e. These are static image candidates, not yet
+dynamically authenticated callers. Creation wrapper 2:148e builds a 34-byte
+argument block at BP-22h, passes its address to virtual method vtable+38h,
+then pushes that block in Pascal order. Width comes from wrapper BP+14h into
+BP-16h and is pushed at 2:154d; height BP+12h is pushed next. The WAT USER.452
+handler reads width at word index 6, height at 5 and extended style at 15.
+This static layout agrees. Width 0x2203 alone does not prove an argument shift;
+the virtual method can modify the argument block before the API call.
+
+Destruction wrapper 2:174a tests object+14h (HWND), obtains a property through
+its 2:176b call, then passes the HWND to USER.53 at 2:1779. Its caller and
+reason remain unresolved. The next useful boundary is the owning Win16
+return/stack and object identity at those exact calls, authenticated against
+the mapped original image. No generic renderer fix or forced value follows.
+Static receipts: `child-user-calls.json`, `child-createwindow-disasm.txt`,
+and `child-destroywindow-disasm.txt` under the Antara scratch directory.
+
+Base CARDS probes returned expected 404; the normal `fetchAssetBytes` fallback
+then requested ten corresponding `.part000` names. All are absent, explicitly
+enumerated in `optional-cards-part-probes.json`; declare only those negatives,
+not a wildcard. The old response evidence is unchanged. Ordinary cleanup at
+10:50:04.890 closed browser/server, streams 0, Chrome exit 0, both PIDs absent.
+Overall exit 1 retains those ten refused fallback requests. No installer input
+or gameplay was claimed.
