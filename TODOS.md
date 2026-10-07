@@ -1094,7 +1094,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Two current lanes: Die Hard Nakatomi demo (/root/restore_evidence), actual menu and difficulty selection verified, next ordinary Easy-to-level route; Croc 2 demo (/root/coverage_audit), source-only Start binding/frontend investigation using 20 original local files. Daggerfall qualified ordinary dungeon movement (main724637d9). Runtime serialized; Drakan OFF separate repair test through08:57:37Z.
+  Next: Two active source lanes: Croc2 (/root/coverage_audit) prepares short ordinary menu route after identifying timeout-confounded input; DieHard (/root/restore_evidence) diagnoses difficulty activation after finite held click/Enter failed to start level. Daggerfall qualified ordinary dungeon control on DOSBox route only. Native DOS compatibility is separate user-priority worker; runtime currently free, no duplicate old-qualified screenshots.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Texture repair main8cbd797c now verified in actual150sec run: readable menu and held-mouse New Game reaches difficulty, no gameplay. Local-candidate registration/category/Program selector and40-file manifest generator integrated mainfea60cb9; manifestf80a3de7 generated locally, structural/selector/dependency tests PASS. Worker prepares registered --app ordinary Easy-to-level route, queued after Drakan; no FPS/release-ready claim. Evidence scratch/wt-diehard-20261007/scratch/ordinary-menu/attempt1/review.json and manifest-install-receipt.json.
+  Next: Registered launch mainfea60cb9 reaches actual menu and difficulty.300sec bounded run stopped normally early09:13:51Z after finite settled1200ms Easy click plus Enter both stayed on difficulty; no gameplay. Worker investigates actual native activation callback/loader or input routing before another run. No runtime held, original40-file manifest/payload unchanged; evidence scratch/wt-diehard-20261007/scratch/ordinary-registered-next/attempt1.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1188,7 +1188,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
   created: 2026-10-06T05:27:48.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Source distinguishes P/Start mask0x8 from Enter/back mask0x1000; actual ordinary P opens rendered Jungle Demo/Mine Demo menu. Sole browser live driver2409750/Chrome2409763, original deadline09:11:56.906Z; worker checks ordinary Jungle selection and controlled movement, not attract playback.20 original files present, private registration only, source3b/module8eb. Evidence scratch/new-game-croc2-20261007/attempt1; no gameplay/FPS qualification yet.
+  Next: Ordinary P opens real menu and Down/Up changes Mine/Jungle highlight, but no player control. Browser closed09:10:23Z, streams0/processes absent; optional icon403 and exit1 retained. Source identifies40sec menu timeout before input dispatch; prior51/66sec action gaps confound transitions. Worker prepares finite previously-reviewed P→menu→Return route within2–5sec, preserves original evidence, no engine fix inferred. Source3b/module8eb;20 originals present.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
 

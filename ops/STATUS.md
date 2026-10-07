@@ -1,9 +1,9 @@
-updated: 2026-10-07T09:08:57.509Z
+updated: 2026-10-07T09:16:32.569Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc 2 (/root/coverage_audit) sole browser live through09:11:56Z; ordinary P/Start opens actual Jungle/Mine menu, gameplay validation next. Die Hard (/root/restore_evidence) registered launch verified through difficulty; prepares300sec finite menu replay and input diagnosis, no live runtime. Both lanes active.
+New-game pipeline: Croc2 source lane prepares a finite P→menu→Return route; prior long gaps crossed the menu timeout, while ordinary navigation itself works. DieHard source lane investigates why settled Easy click/Enter leaves difficulty. Both bounded runs closed cleanly with no retained processes; Croc optional icon403/driverexit1 preserved. Runtime free; native DOS tests/probes next as ready.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
