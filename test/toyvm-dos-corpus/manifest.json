@@ -375,10 +375,28 @@
    },
    "entrySource": "__support/app/dosboxULTIMA4_single.conf [autoexec]: `ultima.com` from C:\\ (mount C \"..\")",
    "notes": "docs/re-notes/ultima4-gog.md",
+   "requiredOriginalFiles": [
+    {
+     "path": "__support/save/DNGMAP.SAV",
+     "guestPath": "DNGMAP.SAV"
+    },
+    {
+     "path": "__support/save/MONSTERS.SAV",
+     "guestPath": "MONSTERS.SAV"
+    },
+    {
+     "path": "__support/save/OUTMONST.SAV",
+     "guestPath": "OUTMONST.SAV"
+    },
+    {
+     "path": "__support/save/PARTY.SAV",
+     "guestPath": "PARTY.SAV"
+    }
+   ],
    "payload": {
     "present": true,
-    "files": 146,
-    "bytes": 889342,
+    "files": 150,
+    "bytes": 890868,
     "excluded": {
      "/\\.pdf$/i": 1,
      "/^goggame-/i": 3,
@@ -465,8 +483,8 @@
    },
    "load": {
     "policy": "preload-all",
-    "preloadFiles": 146,
-    "preloadBytes": 889342,
+    "preloadFiles": 150,
+    "preloadBytes": 890868,
     "lazyFiles": 0,
     "reason": "ToyVM reads a file whole and synchronously when it is opened, so every file a live session might open must be downloaded before boot; there is no on-demand fetch."
    },

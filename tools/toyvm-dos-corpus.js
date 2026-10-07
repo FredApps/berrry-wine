@@ -100,6 +100,37 @@ function assess(t, files, scans) {
   return { status, verdict, blockers, cautions, flatFs: { filesInSubdirs: inSub.length, collisions: collisions.slice(0, 20), collisionCount: collisions.length } };
 }
 
+// Explicit original support data is not an exemption for an entire wrapper
+// directory. Each required file has a safe source path and an unambiguous root
+// guest name, matching ToyVM's existing flat mount contract.
+function requiredOriginalFiles(t, base, rels) {
+  const result = [], names = new Set(rels.map(p => path.posix.basename(p).toLowerCase()));
+  for (const item of t.requiredOriginalFiles || []) {
+    const p = item.path, guest = item.guestPath;
+    if (typeof p !== 'string' || !p || p.includes('\\') || p.includes('\0') || path.posix.isAbsolute(p)
+        || p.split('/').some(part => !part || part === '.' || part === '..')
+        || typeof guest !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(guest)
+        || guest !== path.posix.basename(p)) throw new Error('invalid required original path for ' + t.id);
+    if (names.has(guest.toLowerCase())) throw new Error('required original guest name collision: ' + guest);
+    const root = fs.realpathSync(base), source = fs.realpathSync(path.join(base, p));
+    if (!source.startsWith(root + path.sep) || !fs.statSync(source).isFile()) throw new Error('required original outside payload: ' + p);
+    names.add(guest.toLowerCase()); result.push(p);
+  }
+  return result;
+}
+
+// A selected regeneration must never discard other registered titles or
+// silently replace their assessments with metadata from an unscanned payload.
+function mergeSelectedManifest(previous, current, only) {
+  if (!only || !only.length) return current;
+  if (!previous || !Array.isArray(previous.titles)) throw new Error('selected regeneration needs existing manifest');
+  const selected = new Set(only), rows = new Map(current.titles.map(t => [t.id, t]));
+  for (const id of selected) {
+    if (!rows.has(id) || !previous.titles.some(t => t.id === id)) throw new Error('unknown selected title ' + id);
+  }
+  return { ...previous, titles: previous.titles.map(t => selected.has(t.id) ? rows.get(t.id) : t) };
+}
+
 function build(only) {
   const cfg = JSON.parse(fs.readFileSync(path.join(DIR, 'titles.json'), 'utf8'));
   const outTitles = [], fileLists = {};
@@ -115,13 +146,17 @@ function build(only) {
     }
     const skipped = {};
     const rels = walk(base, '', t.exclude || [], [], skipped);
+    const required = requiredOriginalFiles(t, base, rels);
+    rels.push(...required); rels.sort();
     const files = rels.map((r) => { const f = path.join(base, r); return { path: r, size: fs.statSync(f).size, sha256: sha256(f), load: 'preload' }; });
     const scanOf = (p) => { const hit = findCi(rels, p); return hit ? { ...scanDosExe(fs.readFileSync(path.join(base, hit)), hit), name: hit } : null; };
     const scans = { entry: scanOf(t.entry.program), others: (t.otherPrograms || []).map(scanOf).filter(Boolean) };
     const bytes = files.reduce((n, f) => n + f.size, 0);
+    if (required.length) row.requiredOriginalFiles = t.requiredOriginalFiles;
     row.payload = { present: true, files: files.length, bytes, excluded: Object.fromEntries(Object.entries(skipped).sort()), largest: [...files].sort((a, b) => b.size - a.size).slice(0, 3).map((f) => ({ path: f.path, size: f.size })) };
     row.programs = [scans.entry, ...scans.others].filter(Boolean).map((s) => ({ name: s.name, bytes: s.bytes, mode: s.mode, extender: s.extender, packers: s.packers, newHeader: s.newHeader ? s.newHeader.signature : null }));
-    row.toyvm = assess(t, files, scans);
+    const assessmentFiles = files.map(f => required.includes(f.path) ? { ...f, path: path.posix.basename(f.path) } : f);
+    row.toyvm = assess(t, assessmentFiles, scans);
     // Recorded ToyVM runs (titles.json toyvmEvidence). They can say how far a
     // run got; the status stays 'untested' for gameplay until a reviewed
     // gameplay scene exists, and a static blocker is never cleared by them.
@@ -137,13 +172,22 @@ function build(only) {
   return { manifest, fileLists };
 }
 
-module.exports = { build, assess, TOYVM_FACTS };
+function parseOnly(argv) {
+  const selectors = argv.filter(a => a === '--only' || a.startsWith('--only='));
+  if (!selectors.length) return null;
+  if (selectors.length !== 1 || !selectors[0].startsWith('--only=')) throw new Error('expected one nonempty --only=id[,id] selector');
+  const ids = selectors[0].slice(7).split(',');
+  if (ids.some(id => !/^[a-z0-9][a-z0-9-]*$/.test(id))) throw new Error('expected nonempty --only title IDs');
+  return ids;
+}
+module.exports = { build, assess, TOYVM_FACTS, requiredOriginalFiles, mergeSelectedManifest, parseOnly };
 
 if (require.main === module) {
-  const only = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7).split(',').filter(Boolean);
+  const only = parseOnly(process.argv.slice(2));
   const check = process.argv.includes('--check');
-  const { manifest, fileLists } = build(only.length ? only : null);
-  const outputs = [[path.join(DIR, 'manifest.json'), manifest], ...Object.entries(fileLists).map(([id, v]) => [path.join(DIR, 'files', `${id}.json`), v])];
+  const { manifest, fileLists } = build(only);
+  const published = mergeSelectedManifest(only ? JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8')) : null, manifest, only);
+  const outputs = [[path.join(DIR, 'manifest.json'), published], ...Object.entries(fileLists).map(([id, v]) => [path.join(DIR, 'files', `${id}.json`), v])];
   let stale = 0;
   for (const [file, value] of outputs) {
     const text = JSON.stringify(value, null, 1) + '\n';
