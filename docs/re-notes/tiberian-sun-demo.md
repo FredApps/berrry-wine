@@ -296,7 +296,7 @@ command route. No additional input repair is demonstrated yet.
 
 Contained evidence is
 `scratch/runs/20261007-tiberian-repair-preparation/investigation.json`,
-`analysis.json` and 65 indexed artifacts, including full ordinary fixture/runtime
+`analysis.json`, `result.json` and indexed artifacts, including full ordinary fixture/runtime
 archive, all four reviewed normal screenshots, source/build/terminal receipts
 and actual commands. Runtime is 23:44:36–23:47:34 under a 180-second guard.
 Ordinary quit closes browser/server, Chrome exits 0 and streams drain to 0.
@@ -304,3 +304,5 @@ The one rejected-input guard error is a collector limitation, not an observed
 guest fault. Independent 23:48:48 checks find actual PIDs 24300/24312 absent,
 no Chrome and baseline listeners. All 355 pins verify again before removing
 only the owned prefix at 23:49:14 and releasing the browser slot to Winamp.
+
+Continuation and exact input blocker: [fresh input worker handoff](../../ops/handoffs/tiberian-input-blocker-20261007.md). Root requested thread rotation after accepting the rendering repair; no further runtime action occurs in this worker.
