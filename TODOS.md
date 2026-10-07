@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Read-only phase snapshots attribute successful world setup to startup, while Easy enters early prior-session cleanup. Fresh16counter probe closed10:13:39 exit0; nested destructor interval40fc25-to40fc40 stalls. Source identifies stop-event SetEvent(object+bc), virtual join and WaitForMultipleObjects(count2,waitAny,INFINITE); finalwaitH2 is count, not invalid handle. Investigate actual event identities/signaled state and wait ownership before proposing repair. No gameplay; source worker active, no runtime held.
+  Next: Generic zero-duration thread poll bug fixed on main236e8be9: live/pending handles return WAIT_TIMEOUT rather than yielding; beforecontrol fails and8 actual ThreadManager contracts/existing suite pass. Ordinary CLI confirmation queued with exact JS-only delta, main-instance PC/stack plus authenticated event state. No gameplay qualification. T1 in final worker table is first created worker, not guest main; prior label corrected.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1174,7 +1174,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Source audit/regression integrated737cc38c/faa0b2df/7be5eb0b; candidate PASS and removed-collection control fails first-frame bytes. Chrome warning unresolved. Bounded context/PBO observer source preparation retained by corpus_categories; worker reassigned to user-priority native DOS compatibility. No live diagnostic active or new engine fix, no performance claim. Resume exact observer preparation when a worker is available; heavy benchmarks on separate boats.
+  Next: Root resumed preparation:216 frozen historical sourcefiles/58 originalfixtures pinned without payloadcopies; observer8/8, controls4/4 and actualasset-handler tests pass. Driver latestscene/deadline/disk bounds hardened. Source receipt53750e17; final lifecycle review/browser observation pending capacity and serialized runtime. Engine unchanged; Chrome warning unresolved, no performanceclaim.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
@@ -1199,7 +1199,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   created: 2026-10-07T09:08:16.475Z
   requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
-  Next: Native CD/PM pair closed10:18:22 cleanly; evidence mainc1c33aa7. Arena actual AX1500 query is unhandled; requires real C:/D: readonly-CD mapping. Daggerfall CS4b is a32-bit call gate incorrectly loaded as code; target28 is DPL0 and predecessor5b DPL3. Capture precise transfer and actual TR/TSS stack inputs before implementing gate/return semantics; paging remains independent. U4 story reached, no native title gameplay-qualified.
+  Next: Native gate-input run closed10:33:25 cleanly. ActualTR23/TSS188f0 ESP0fc SS030 captured; original-file matching cannot map retained code, exact far transfer remains unknown. Evidence/design mainf5b848ff. Build actual instruction regression for correct callgate/privilege stack/RETF, synthetic architectural setup explicitly scoped to unitfixture; no productionCPU change yet. Arena still needs real CD/drive contracts; U4 story only.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
