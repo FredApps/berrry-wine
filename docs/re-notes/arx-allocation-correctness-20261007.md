@@ -144,5 +144,48 @@ The final mandatory build and all ten suites pass again. All twelve process
 groups (including the named negative control) exited0 and were verified absent.
 Final module SHA256 `7c6864f8e224a0d42c6743b3c088ce79349101182295b79b1e4fa8a4c3911cc0`, 1720920 bytes;
 logs/receipts `scratch/arx-crt-origin-20261007/validation/attempt3/`.
-The earlier ordinary settings capture above used the pre-review module; final
-module remote validation is queued behind Q2 and is not yet claimed.
+The earlier ordinary settings capture above used the pre-review module.
+Final module remote validation follows below.
+
+## Final original-media validation and limits
+
+All359 remote pins passed, including the exact final7c6864f8 module and122
+producer WAT inputs. Original private media/registry/defaults remain unchanged.
+Three actual-owning-thread rows report main and auxiliary cs_waits=0 and
+cs_bad_leaves=0. The initial two rows are5068ms apart; main remains at the
+internal CACA0004 continuation rather than the original key-text lock.
+
+The final run paints the original Settings dialog. Root personally reviewed
+settings-ready.png at21:49:23Z, including ordinary OK at471,568. A correctly
+placed ordinary click reaches the original title screen
+(after-restored-ok.png, SHA256 c187acbb45547920dfb0f5ed5577e0f992db03a5e665bd9ef4710a333eafbd07).
+Root personally reviewed this title capture at21:53:06Z.
+Ordinary Enter then reaches an animated startup scene, with a third guest
+thread reported by the host. This proves progress beyond registration/settings;
+no menu, new game, player-controlled gameplay, audio or FPS is claimed.
+
+Observer limitations are retained explicitly. Initial blank captures occurred
+before the visible Settings capture. Connecting Puppeteer without
+defaultViewport:null subsequently changed the host viewport to800x600; thus
+intermediate screenshot/input coordinates and apparent dialog dismissal were
+not reliable. Before the valid OK click, the harness original1280x900 viewport
+was restored and fresh Settings pixels reviewed. No guest memory/configuration
+was changed. A read-only offscreen-canvas observer used an unavailable
+toDataURL method and ended under boat30secSIGTERM; corrected observers
+disconnect in finally. The fourth owner command hit the collector three-sample
+cap, not a guest RPC timeout. One explicitly bounded extra fixed-whitelist
+main owning RPC succeeded with the same Settings state and zero CS waits.
+A late Escape was rejected by the input deadline guard; a final shot queued
+after closure never executed. Raw rejected commands/errors remain in evidence.
+
+The600sec session closed at2026-10-07T21:53:19.747Z: Chromeexit0, browser/server
+closed, zero pending streams. Driver76472/Chrome76484 were verified absent
+at21:53:59.725Z; final21:54:33Z scan found no Chrome. Ten screenshots total
+4,777,057 bytes. This worker released the remote slot for Antara and retains
+no browser/native runtime. Self-contained evidence, exact candidate,122producer
+inputs and artifact hashes are under
+`scratch/runs/20261007T214319Z-arx-allocation-final/`.
+
+Source fix and required tests are complete. Next work is a fresh ordinary
+title/menu/newgame route with a full bounded session; any CDP observer must
+use defaultViewport:null. Root owns final screenshot review and integration.
