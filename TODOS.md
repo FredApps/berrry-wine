@@ -1276,9 +1276,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Diagnose original Winamp MilkDrop exception and validate visualization
   id: GLD3D-WINAMP-EXCEPTION-20261007
-  status: active
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI winamp-runtime (observer cap review then queued remote diagnosis)
-  Next: Source-only actual exception diagnostic preparation; complete loader closure already reproduces illegal-operation(2). Native/browser queued behind Antara and Tiberian; require resource grant.
+  worker: none (worker exited1 after automated rejection)
+  Next: HELD: automated cybersecurity-risk rejection terminated Winamp diagnostic worker at23:52:06. No retry/rephrasing/delegation of rejected diagnostic. Root recovered14 existing outputs and verified driver/browser exited; no exception cause or visualization qualification.
   Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
   Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
