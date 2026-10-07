@@ -387,6 +387,39 @@
       (call $d3dim_lazy_materialize (i32.load (region.addr $D3DIM_LAZY_SHARED 8))
         (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 4)))))
     (call $d3dim_lazy_leave))
+  ;; Host file reads scatter directly through JS views, bypassing g2w stores.
+  ;; Run on the owning instance BEFORE its host import, never on the page
+  ;; shadow after copying. Lock only arms backing wholly inside this DIB
+  ;; window; other mappings need no lazy-surface materialization here.
+  (func $d3dim_host_write_interval (param $start i64) (param $end i64)
+    (local $lo i64) (local $hi i64) (local $window_end i64)
+    (local.set $lo (i64.extend_i32_u (global.get $DIB_GUEST_BASE)))
+    (local.set $window_end (i64.add (local.get $lo)
+      (i64.extend_i32_u (global.get $DIB_GUEST_CAPACITY))))
+    (if (i64.gt_u (local.get $start) (local.get $lo))
+      (then (local.set $lo (local.get $start))))
+    (local.set $hi (select (local.get $end) (local.get $window_end)
+      (i64.lt_u (local.get $end) (local.get $window_end))))
+    (if (i64.lt_u (local.get $lo) (local.get $hi)) (then
+      (call $d3dim_lazy_access
+        (i32.add (global.get $DIB_BACKING_BASE)
+          (i32.sub (i32.wrap_i64 (local.get $lo)) (global.get $DIB_GUEST_BASE)))
+        (i32.wrap_i64 (i64.sub (local.get $hi) (local.get $lo)))))))
+  (func $d3dim_host_write_fence (param $ga i32) (param $len i32)
+    (local $end i64)
+    (if (i32.eqz (local.get $len)) (then (return)))
+    (if (i32.eqz (i32.atomic.load (region.addr $D3DIM_LAZY_SHARED 4))) (then (return)))
+    ;; Match filesystem guestChunk((bufGA + moved) >>> 0), without changing
+    ;; its mapping validation or errors. Widen before adding; do not mistake
+    ;; a wrapping interval for an empty/nonoverlapping one.
+    (local.set $end (i64.add (i64.extend_i32_u (local.get $ga))
+      (i64.extend_i32_u (local.get $len))))
+    (call $d3dim_host_write_interval (i64.extend_i32_u (local.get $ga))
+      (select (local.get $end) (i64.const 4294967296)
+        (i64.lt_u (local.get $end) (i64.const 4294967296))))
+    (if (i64.gt_u (local.get $end) (i64.const 4294967296)) (then
+      (call $d3dim_host_write_interval (i64.const 0)
+        (i64.sub (local.get $end) (i64.const 4294967296))))))
   (func $d3dim_lock_fence (param $entry i32)
     (local $dib i32) (local $len i32)
     ;; Nested locks take the conservative barrier before replacing the range.
