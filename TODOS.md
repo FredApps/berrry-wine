@@ -1081,3 +1081,73 @@ commit output — do not assume your hunks landed.**
   Done: Publish only confidently associated existing captures with exact hashes/provenance, update coverage and disposition deltas, preserve originals and explicit unknowns; never rerun games to fabricate historical evidence.
   Evidence: ops/handoffs/ops-visual-acceptance.md; ops/handoffs/ops-quarantine-review.md; scratch/ops-visual-acceptance-20261002/final-verification.json
   Notes: The completed18-image recovery/147-bundle audit remains accepted. This deeper search is unscheduled, not permission to take deferred Claude claims or restore incorrect associations.
+
+
+## Codex reclaimed work — 2026-10-07
+
+Current scoped ownership after reconciling the stopped fleet. The shared operational ledger retains other historical and released tasks. See ops/handoffs/codex-resume-20261007.md.
+
+- [~] Keep two new games moving toward playable gameplay with screenshots
+  id: NEW-GAMES-PIPELINE
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  accepted: 2026-10-04T02:11:10.446Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Resumed2026-10-07: Daggerfall (/root/coverage_audit) reconciles interrupted attempt8 and prepares current-build ordinary dungeon route; Die Hard Nakatomi demo (/root/restore_evidence) diagnoses remaining black-menu vertex/blend contract after merged611837ab. Both nonpublic/unqualified; no old completed TR3/Myth work repeated. CLI/browser serialized; no heavybench on box.
+  done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
+  notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
+
+- [~] Inventory every game and complete gameplay screenshot/FPS coverage
+  id: OPS-ALL-GAMEPLAY-COVERAGE
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:30:54.631Z
+  created-by: user via Telegram
+  accepted: 2026-10-03T08:30:54.631Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reclaimed coordinator coverage at user relaunch. Reconcile Oct6 merged gameplay/measurement evidence before new runs; preserve44 archived FPS obligations, true counters and exactmissingpaths. Arena/TR3/DOS dashboard already landed; no duplicate screenshots or public deployment. Source/runtime claims serialized.
+  Done: Each game has a reviewed actual-gameplay screenshot and valid scene-qualified FPS evidence, or an explicit per-game blocker with exact missing paths; menus, intros and raw Flip event rates are not gameplay FPS.
+  Evidence: ops/handoffs/migration-core-ready-20261003.md
+
+- [ ] New-game lane: original Daggerfall ordinary player-controlled dungeon
+  id: NEW-GAME-DAGGERFALL-20261005
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  candidate: gog-free-elder-scrolls-daggerfall
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/coverage_audit
+  prev-owner: /root/coverage_audit — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-05T18:27:59.455Z
+  accepted: 2026-10-05T18:27:59.455Z
+  accepted-by: /root/coverage_audit
+  Next: Attempt9 live: driver2328917/Chrome2328929, absolute deadline2026-10-07T08:04:53.151Z. Ordinary scene-reviewed creator to dungeon route; source3b8189f5/module8eb283c1, current main runtime equivalent. Original assets in place; no gameplay/FPS qualification yet. Worker owns sole browser lease.
+  Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
+  Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
+
+- [ ] New-game lane: Die Hard: Nakatomi Plaza demo (Piranha/Fox 2002, LithTech, Direct3D)
+  id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  Next: Main611837ab surface fix retained; menu still black. Observer forwarding/error/cap tests PASS; bounded draw preload and150sec diagnostic command prepared in isolated8de worktree. Guest CLI queued after Daggerfall browser release; no runtime result yet. Correlate shape-matched draws with actual MAINMENU before drawing conclusions.
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/restore_evidence
+  created: 2026-10-06T18:40:00.000Z
+  candidate: test/binaries/win98-games-a-d/Diehard nacatomi demoD3D.exe (local, no download)
+  Earlier: 2026-10-06T20:00Z -- installs headless (03e2f5f3 LoadLibrary system path); boots past every emulator blocker so far: 33e4ff16 (_EH_prolog EBP), b15fa588 (__p___argv/argc), 0dbe4ab6 (D3D8 16-bit mode + back-buffer view, Reset, CopyRects, A1R5G5B5/X1R5G5B5 textures; A/B on other D3D8 apps clean). lithtech.exe initializes D3D8 at 640x480x16, presents, and is on its loading screen decompressing rez data at 1.8M batches (~7 min). Notes 16191cf9 docs/re-notes/diehard-nakatomi-demo.md. Waiting on orchestrator: long local run vs boat. Then registration (apps.js + corpus-categories + manifest) and gameplay input.
+  Done: registered app, reviewed gameplay screenshot with input evidence, result.json (candidateId = app id), commit on main, manifest generator command posted.
+  Evidence: board 2026-10-06T18:40Z
+
+- [ ] USER REPORT: Drakan demo crashes in the browser (Threads on): 'render endpoint is closed' + fs_read_file_result threw in notifyGuestWrite
+  id: DRAKAN-WEB-THREADS-LAZY-CRASH-20261006
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  note: 2026-10-06T21:25Z d3ec2640: invalidate_code_range runs with d3dim_lazy_bypass -- the page shadow no longer traps materializing a lazy D3DIM surface after a Worker ReadFile; Drakan reaches its main menu in the page with Threads on (scratch/runs/20261006T2120Z-drakan-threads-lazy). Next: fence the destination of host writes (ReadFile etc.) in the guest BEFORE the host writes so a later readback cannot overwrite file bytes read into an armed surface; regression test for that; Threads-off page check. Also: headless probe clicks/Enter do not dismiss the beta MessageBox in guest-Worker mode (renderer handleMouseDown via evalfile does) -- probe issue, pre-existing.
+  note: 2026-10-06T21:00Z claude:1863d2b5 taking it.
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/corpus_categories
+  created: 2026-10-06T20:57:00.000Z
+  Next: Merged d3ec2640 page-shadow bypass preserved. Audit and repair remaining owner-side host-write destination fencing before ReadFile/RPC; real regression must prove later GPU readback cannot overwrite file bytes. Then Threads on/off browser gameplay checks. Isolated8de5d0b3 worktree, no runtime yet.
+  Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
+  Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
