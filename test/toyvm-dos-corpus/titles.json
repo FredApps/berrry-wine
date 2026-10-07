@@ -57,7 +57,7 @@
           "ARENADATA": "C:"
         }
       },
-      "entrySource": "__support/app/dosbox_arena_single.conf [autoexec]: `mount d \"..\" -t cdrom`, `SET ARENADATA=C:`, `d:`, `ACD -S\u2026 -Mgenmidi.adv -IOM330 \u2026`",
+      "entrySource": "__support/app/dosbox_arena_single.conf [autoexec]: `mount d \"..\" -t cdrom`, `SET ARENADATA=C:`, `d:`, `ACD -S… -Mgenmidi.adv -IOM330 …`",
       "otherPrograms": [
         "INSTALL.EXE",
         "ULTRAMID.EXE"
@@ -117,6 +117,12 @@
           "at": "2026-10-05T22:35:31Z",
           "reached": "main-menu",
           "summary": "Browser /toyvm/ session (headless Chrome, paced 10 MIPS, sound off): the title screen drew, and after Enter the game showed its own main menu (Options: Return to the view / Journey Onward / Initiate New Game), personally viewed -- keyboard input reaches the guest. Character creation and gameplay not attempted."
+        },
+        {
+          "run": "scratch/toyvm-dos-native-20261007/u4-attempt1",
+          "at": "2026-10-07T09:43:36.145Z",
+          "reached": "character-creation-story",
+          "summary": "Ordinary Initiate New Game, Codex name and Male accepted; Space advanced illustrated portal story. Original170s work guard ended before completed creation/world; no game fault or gameplay qualification. Journey Onward packaged save was not used."
         }
       ],
       "requiredOriginalFiles": [

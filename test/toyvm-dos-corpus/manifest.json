@@ -478,7 +478,7 @@
    ],
    "toyvm": {
     "status": "untested",
-    "verdict": "No static blocker; furthest recorded ToyVM run: main menu (scratch/runs/20261005T223531Z-toyvm-dos-corpus-browser). Gameplay untested; not a claim that it works.",
+    "verdict": "No static blocker; furthest recorded ToyVM run: character creation story (scratch/toyvm-dos-native-20261007/u4-attempt1). Gameplay untested; not a claim that it works.",
     "blockers": [],
     "cautions": [
      {
@@ -506,6 +506,12 @@
       "at": "2026-10-05T22:35:31Z",
       "reached": "main-menu",
       "summary": "Browser /toyvm/ session (headless Chrome, paced 10 MIPS, sound off): the title screen drew, and after Enter the game showed its own main menu (Options: Return to the view / Journey Onward / Initiate New Game), personally viewed -- keyboard input reaches the guest. Character creation and gameplay not attempted."
+     },
+     {
+      "run": "scratch/toyvm-dos-native-20261007/u4-attempt1",
+      "at": "2026-10-07T09:43:36.145Z",
+      "reached": "character-creation-story",
+      "summary": "Ordinary Initiate New Game, Codex name and Male accepted; Space advanced illustrated portal story. Original170s work guard ended before completed creation/world; no game fault or gameplay qualification. Journey Onward packaged save was not used."
      }
     ]
    },
