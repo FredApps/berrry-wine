@@ -1268,7 +1268,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-paint
+  worker: fresh CLI tiberian-input
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
   Next: Shared GDI composition repair merged3946d5f9c after focused pixel/fragmentation tests, full build and reviewed ordinary visible menu. New Campaign down/up reaches HWND10004 but does not advance; parent WM_COMMAND unproven. Worker prepares causal input investigation; no campaign/gameplay qualification.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
