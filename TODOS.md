@@ -1094,7 +1094,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Resumed2026-10-07: Daggerfall (/root/coverage_audit) reconciles interrupted attempt8 and prepares current-build ordinary dungeon route; Die Hard Nakatomi demo (/root/restore_evidence) diagnoses remaining black-menu vertex/blend contract after merged611837ab. Both nonpublic/unqualified; no old completed TR3/Myth work repeated. CLI/browser serialized; no heavybench on box.
+  Next: Two current lanes: Die Hard Nakatomi demo (/root/restore_evidence), actual menu and difficulty selection verified, next ordinary Easy-to-level route; Croc 2 demo (/root/coverage_audit), source-only Start binding/frontend investigation using 20 original local files. Daggerfall qualified ordinary dungeon movement (main724637d9). Runtime serialized; Drakan OFF separate repair test through08:57:37Z.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1177,3 +1177,18 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created: 2026-10-06T20:20:00Z
   Next: Source audit complete: ordinary reuse collects before write, so warning alone does not prove unsafe reuse. Findings and pinned Chromium references in docs/gl-d3d-corpus-status.md; scratch/d3dim-pbo-audit-20261007/source-receipt.json. Next add binding-aware repeated-flip/discard negative-control tests, then a separately serialized context/PBO identity observation. No speculative engine fix or performance claim. Preserve Drakan acceptance pins through Threads-off check; benchmarks on separate boats.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
+
+- [~] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
+  id: NEW-GAME-CROC2-DEMO-20261006
+  status: active
+  reparked: 2026-10-06T16:20Z -- second look (e37aa7c6 re-notes): D3DDevice/DisplayDevice seeds select a hardware D3D record but the game stays on its software renderer (no CreateDevice); Demo Mode at ~8 presents/s with defaults; at tick 10 the picture freezes ~120k with main computing and T2 in InterlockedExchange+CS. Not a clock artifact alone. Next: what main waits on (T2 handshake).
+  resumed: 2026-10-06T16:00Z by claude:d10ba697 -- testing whether the black front end after Enter is the headless 200ms/batch clock (menu idle timeout) rather than a render bug.
+  candidate: win98-games-a-d/Croc2DemoSW-D3D.exe (local, no download)
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/coverage_audit
+  prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
+  created: 2026-10-06T05:27:48.000Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: Reclaimed October7: source-only resolve Start binding/InputDevice Keyboard defaults and frontend transition after Enter; existing 20 original files 46712129B present, no missing paths. Nonpublic/unregistered; previous attract loop is not gameplay. Read docs/re-notes/croc2-demo.md; proposal scratch/daggerfall-refill-20261007/croc2-proposal.json. No runtime grant; preserve late T2 handshake as unresolved, no guest state shortcuts.
+  Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
+  Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
