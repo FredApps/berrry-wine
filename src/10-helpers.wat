@@ -585,9 +585,25 @@
   ;; allocation contract even before any page in the reservation is committed.
   (func $virtual_reserve_record
       (param $guest i32) (param $size i32) (param $protect i32)
-    (local $count i32) (local $floor i32)
+    (local $count i32) (local $floor i32) (local $i i32) (local $ent i32)
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
     (local.set $count (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE)))
+    ;; Placement publishes ownership before unlocking. Older callers still
+    ;; supply the final protection afterward; update that entry, never append
+    ;; a second owner for the same reservation.
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $ent (i32.add (global.get $VIRTUAL_RESERVE_TABLE)
+        (i32.shl (local.get $i) (i32.const 3))))
+      (if (i32.eq (i32.and (i32.load (local.get $ent)) (i32.const -4096))
+            (local.get $guest))
+        (then
+          (i32.store (local.get $ent) (i32.or (local.get $guest)
+            (i32.and (local.get $protect) (global.get $GUEST_PTE_PROTECT_MASK))))
+          (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
     (if (i32.ge_u (local.get $count) (global.get $MAX_VIRTUAL_RESERVES))
       (then
         (local.set $floor (i32.load offset=20 (global.get $VIRTUAL_MAP_STATE)))
@@ -633,6 +649,24 @@
           (br $done)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
+
+  ;; Reservation identity also bounds coalescing: adjoining independent
+  ;; allocations must remain independently releasable.
+  (func $virtual_reservation_base_locked (param $guest i32) (result i32)
+    (local $i i32) (local $ent i32) (local $base i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i)
+        (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE))))
+      (local.set $ent (i32.add (global.get $VIRTUAL_RESERVE_TABLE)
+        (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $base (i32.and (i32.load (local.get $ent)) (i32.const -4096)))
+      (if (i32.and (i32.ge_u (local.get $guest) (local.get $base))
+            (i32.lt_u (local.get $guest)
+              (i32.add (local.get $base) (i32.load offset=4 (local.get $ent)))))
+        (then (return (local.get $base))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
 
   (func $virtual_reserve_reclaim_locked
     (local $count i32) (local $i i32) (local $rec i32) (local $base i32)
@@ -680,7 +714,8 @@
   ;; The base of a live range overlapping [cand, cand+size), or 0 when nothing
   ;; owns any of it. Both tables have a say: a committed map record, and an
   ;; uncommitted MEM_RESERVE that no record describes. Caller holds the lock.
-  (func $virtual_range_blocker_locked (param $cand i32) (param $size i32) (result i32)
+  (func $virtual_range_edge_locked
+      (param $cand i32) (param $size i32) (param $up i32) (result i32)
     (local $end i32) (local $count i32) (local $i i32) (local $rec i32)
     (local $base i32)
     (local.set $end (i32.add (local.get $cand) (local.get $size)))
@@ -692,7 +727,8 @@
     (if (i32.and
           (i32.lt_u (global.get $VIRTUAL_ALLOC_BAND_BASE) (local.get $end))
           (i32.gt_u (global.get $VIRTUAL_ALLOC_BAND_END) (local.get $cand)))
-      (then (return (global.get $VIRTUAL_ALLOC_BAND_BASE))))
+      (then (return (select (global.get $VIRTUAL_ALLOC_BAND_END)
+        (global.get $VIRTUAL_ALLOC_BAND_BASE) (local.get $up)))))
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
@@ -703,7 +739,9 @@
             (i32.lt_u (local.get $base) (local.get $end))
             (i32.gt_u (i32.add (local.get $base) (i32.load offset=4 (local.get $rec)))
               (local.get $cand)))
-        (then (return (local.get $base))))
+        (then (return (select
+          (i32.add (local.get $base) (i32.load offset=4 (local.get $rec)))
+          (local.get $base) (local.get $up)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.set $count (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE)))
@@ -718,103 +756,100 @@
             (i32.lt_u (local.get $base) (local.get $end))
             (i32.gt_u (i32.add (local.get $base) (i32.load offset=4 (local.get $rec)))
               (local.get $cand)))
-        (then (return (local.get $base))))
+        (then (return (select
+          (i32.add (local.get $base) (i32.load offset=4 (local.get $rec)))
+          (local.get $base) (local.get $up)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
 
-  ;; Place a reservation in a gap when the cursor cannot go any lower.
-  ;;
-  ;; The cursor is a one-way downward bump and the reclaim can only raise it as
-  ;; far as the lowest live range, so one long-lived allocation near the floor
-  ;; makes the whole arena above it unreachable however empty it is. Black &
-  ;; White 2 lands exactly there: after its abandoned growth steps are handed
-  ;; back, the one 121 MB buffer it kept sits at 0x164f0000 with 106 MB of
-  ;; address space under it and ~800 MB free above -- and the 191 MB step it
-  ;; asks for next is refused. So slide a candidate down from the ceiling past
-  ;; whatever it hits until it fits or runs out of arena. Each step starts below
-  ;; the range that blocked it, so the walk is monotone and cannot cycle.
-  (func $virtual_reserve_gap (param $size i32) (result i32)
-    (local $cand i32) (local $blocker i32) (local $steps i32)
-    ;; A reservation the reserve table had no room for is remembered only as the
-    ;; sticky floor at +20, which says "something down there is spoken for"
-    ;; without saying what. Placing into a gap needs every owner named, so once
-    ;; that has happened the arena is bump-only again.
-    (if (i32.load offset=20 (global.get $VIRTUAL_MAP_STATE))
-      (then (return (i32.const 0))))
-    (if (i32.gt_u (local.get $size)
-          (i32.sub (global.get $VIRTUAL_ALLOC_TOP_INIT) (call $virtual_alloc_min)))
+  (func $virtual_range_blocker_locked (param $cand i32) (param $size i32) (result i32)
+    (call $virtual_range_edge_locked (local.get $cand) (local.get $size) (i32.const 0)))
+
+  ;; Place AND publish a reservation under one process-wide lock. The reserve
+  ;; table covers pending commits, CRT reserves, mapped views and heap arenas;
+  ;; checking only committed maps leaves a race between placement and commit.
+  ;; Default VirtualAlloc searches upward; MEM_TOP_DOWN searches downward.
+  ;; Both searches retain the entire arena and step across the excluded band.
+  (func $virtual_reserve_place
+      (param $size i32) (param $down i32) (param $protect i32) (result i32)
+    (local $cand i32) (local $edge i32) (local $top i32) (local $min i32)
+    (local $retry i32)
+    (local.set $min (call $virtual_alloc_min))
+    (if (i32.or (i32.eqz (local.get $size))
+          (i32.gt_u (local.get $size)
+            (i32.sub (global.get $VIRTUAL_ALLOC_TOP_INIT) (local.get $min))))
       (then (return (i32.const 0))))
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
-    (local.set $cand
-      (i32.and (i32.sub (global.get $VIRTUAL_ALLOC_TOP_INIT) (local.get $size))
-        (i32.const 0xFFFF0000)))
-    (block $done (loop $slide
-      (br_if $done (i32.lt_u (local.get $cand) (call $virtual_alloc_min)))
-      (br_if $done (i32.gt_u (local.get $cand) (global.get $VIRTUAL_ALLOC_TOP_INIT)))
-      (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
-      (br_if $done (i32.gt_u (local.get $steps) (i32.const 20000)))
-      (local.set $blocker
-        (call $virtual_range_blocker_locked (local.get $cand) (local.get $size)))
-      (if (i32.eqz (local.get $blocker))
+    ;; Never return an address whose pending ownership cannot be recorded.
+    (if (i32.or (i32.load offset=20 (global.get $VIRTUAL_MAP_STATE))
+          (i32.ge_u (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE))
+            (global.get $MAX_VIRTUAL_RESERVES)))
+      (then
+        (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+        (return (i32.const 0))))
+    (local.set $cand (local.get $min))
+    (if (local.get $down)
+      (then
+        (local.set $top (i32.atomic.load offset=8 (global.get $VIRTUAL_MAP_STATE)))
+        (if (i32.eqz (local.get $top))
+          (then (local.set $top (global.get $virtual_alloc_top))))
+        (if (i32.eqz (local.get $top))
+          (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+        (if (i32.eq (local.get $down) (i32.const 2))
+          (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+        (if (i32.gt_u (local.get $top) (global.get $VIRTUAL_ALLOC_TOP_INIT))
+          (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+        (local.set $cand (i32.const 0))
+        (if (i32.ge_u (local.get $top) (local.get $size))
+          (then (local.set $cand (i32.and
+            (i32.sub (local.get $top) (local.get $size)) (i32.const -65536)))))))
+    (block $failed (loop $search
+      (if (i32.or (i32.lt_u (local.get $cand) (local.get $min))
+            (i32.gt_u (local.get $cand)
+              (i32.sub (global.get $VIRTUAL_ALLOC_TOP_INIT) (local.get $size))))
         (then
+          ;; A low live allocation can pin the cursor. Search all gaps above
+          ;; it once before failing, so fragmented large capacity stays usable.
+          (if (i32.and (local.get $down) (i32.eqz (local.get $retry)))
+            (then
+              (local.set $retry (i32.const 1))
+              (local.set $cand (i32.and
+                (i32.sub (global.get $VIRTUAL_ALLOC_TOP_INIT) (local.get $size))
+                (i32.const -65536)))
+              (br $search)))
+          (br $failed)))
+      (local.set $edge (call $virtual_range_edge_locked
+        (local.get $cand) (local.get $size) (i32.eqz (local.get $down))))
+      (if (i32.eqz (local.get $edge))
+        (then
+          (call $virtual_reserve_record
+            (local.get $cand) (local.get $size) (local.get $protect))
+          (if (local.get $down)
+            (then
+              (call $virtual_shared_top_observe (local.get $cand))
+              (global.set $virtual_alloc_top (local.get $cand))))
           (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
           (return (local.get $cand))))
-      ;; Below the range that blocked it. A blocker at or under the floor ends
-      ;; the walk rather than wrapping the subtraction.
-      (if (i32.lt_u (local.get $blocker) (local.get $size)) (then (br $done)))
-      (local.set $cand
-        (i32.and (i32.sub (local.get $blocker) (local.get $size))
-          (i32.const 0xFFFF0000)))
-      (br $slide)))
+      (if (local.get $down)
+        (then
+          (local.set $cand (i32.const 0))
+          (if (i32.ge_u (local.get $edge) (local.get $size))
+            (then (local.set $cand (i32.and
+              (i32.sub (local.get $edge) (local.get $size)) (i32.const -65536))))))
+        (else
+          (local.set $cand (i32.and
+            (i32.add (local.get $edge) (i32.const 65535)) (i32.const -65536)))))
+      (br $search)))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (i32.const 0))
 
   (func $virtual_reserve_down (param $size i32) (result i32)
-    (local $cell i32) (local $top i32) (local $new_top i32) (local $seen i32)
-    (local.set $cell (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8)))
-    ;; Reserve by CAS, and re-derive the new top from whatever the winner left
-    ;; behind. Reading the cursor, subtracting and storing would let two
-    ;; instances carve the same 64KB range out of one gap.
-    (block $done (loop $retry
-      (local.set $top (i32.atomic.load (local.get $cell)))
-      (if (i32.eqz (local.get $top))
-        (then
-          (local.set $top (global.get $virtual_alloc_top))
-          (if (i32.eqz (local.get $top))
-            (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
-          (local.set $seen (i32.const 0)))
-        (else (local.set $seen (local.get $top))))
-      (local.set $new_top
-        (i32.and (i32.sub (local.get $top) (local.get $size))
-          (i32.const 0xFFFF0000)))
-      ;; A size larger than the cursor wraps the subtraction into a high address
-      ;; that passes the floor test, so test the subtraction, not its result.
-      (if (i32.or (i32.lt_u (local.get $top) (local.get $size))
-                  (i32.lt_u (local.get $new_top) (call $virtual_alloc_min)))
-        (then (return (call $virtual_reserve_gap (local.get $size)))))
-      ;; Step the whole reservation below the excluded band rather than letting
-      ;; it straddle one. The cursor becomes the new base, so everything after
-      ;; this continues underneath the band and the test never fires again --
-      ;; the band costs one comparison per reservation and is crossed once.
-      (if (i32.and
-            (i32.lt_u (global.get $VIRTUAL_ALLOC_BAND_BASE)
-              (i32.add (local.get $new_top) (local.get $size)))
-            (i32.gt_u (global.get $VIRTUAL_ALLOC_BAND_END) (local.get $new_top)))
-        (then
-          (if (i32.lt_u (global.get $VIRTUAL_ALLOC_BAND_BASE) (local.get $size))
-            (then (return (call $virtual_reserve_gap (local.get $size)))))
-          (local.set $new_top
-            (i32.and (i32.sub (global.get $VIRTUAL_ALLOC_BAND_BASE) (local.get $size))
-              (i32.const 0xFFFF0000)))
-          (if (i32.lt_u (local.get $new_top) (call $virtual_alloc_min))
-            (then (return (call $virtual_reserve_gap (local.get $size)))))))
-      (br_if $done
-        (i32.eq (local.get $seen)
-          (i32.atomic.rmw.cmpxchg (local.get $cell) (local.get $seen) (local.get $new_top))))
-      (br $retry)))
-    (global.set $virtual_alloc_top (local.get $new_top))
-    (local.get $new_top))
+    (call $virtual_reserve_place (local.get $size) (i32.const 1) (i32.const 0x40)))
+
+  (func $virtual_reserve_gap (param $size i32) (result i32)
+    (call $virtual_reserve_place (local.get $size) (i32.const 2) (i32.const 0x40)))
+
 
   ;; Back a high guest VirtualAlloc commit with real WASM memory. Entries are
   ;; coalesced when the guest commits adjacent 64KB chunks in order, which keeps
@@ -1102,8 +1137,11 @@
               (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
             (i32.le_u (i32.add (local.get $backing_ptr) (local.get $size))
               (region.end $VIRTUAL_BACKING_BASE))))
-        (then (if (i32.eqz (call $virtual_backing_conflicts
-                (local.get $backing_ptr) (local.get $size) (local.get $count)))
+        (then (if (i32.and
+              (i32.eq (call $virtual_reservation_base_locked (local.get $base))
+                (call $virtual_reservation_base_locked (local.get $guest)))
+              (i32.eqz (call $virtual_backing_conflicts
+                (local.get $backing_ptr) (local.get $size) (local.get $count))))
           (then
           (call $zero_memory (local.get $backing_ptr) (local.get $size))
           ;; Publish translations before the larger record size. A reader can
@@ -1839,7 +1877,7 @@
   ;; the previous ended and carries the continuation flag. Releasing only the
   ;; first would leak the rest of the allocation on every level reload.
   (func $virtual_map_release_locked (param $guest i32) (result i32)
-    (local $rec i32) (local $size i32)
+    (local $rec i32) (local $size i32) (local $i i32) (local $end i32) (local $base i32)
     ;; DIAGNOSTIC ONLY, off by default. When a guest reads through a pointer
     ;; into a region it has already released, the read returns 0 here and its
     ;; own luck on real Windows -- where the freed page may still hold the old
@@ -1870,6 +1908,37 @@
               (global.set $virtual_leak_hits
                 (i32.add (global.get $virtual_leak_hits) (i32.const 1)))
               (return (i32.const 1))))))))
+    ;; A reservation can have disjoint committed islands, including no record
+    ;; at its base. Retire all its mappings before forgetting ownership.
+    (block $found (loop $reserves
+      (br_if $found (i32.ge_u (local.get $i)
+        (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE))))
+      (local.set $rec (i32.add (global.get $VIRTUAL_RESERVE_TABLE)
+        (i32.shl (local.get $i) (i32.const 3))))
+      (if (i32.eq (i32.and (i32.load (local.get $rec)) (i32.const -4096))
+            (local.get $guest))
+        (then
+          (local.set $end (i32.add (local.get $guest) (i32.load offset=4 (local.get $rec))))
+          (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $reserves)))
+    (if (local.get $end)
+      (then
+        (local.set $i (i32.const 0))
+        (block $done (loop $islands
+          (br_if $done (i32.ge_u (local.get $i)
+            (i32.load (global.get $VIRTUAL_MAP_STATE))))
+          (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
+            (i32.shl (local.get $i) (i32.const 4))))
+          (local.set $base (i32.load (local.get $rec)))
+          (if (i32.and (i32.ge_u (local.get $base) (local.get $guest))
+                (i32.lt_u (local.get $base) (local.get $end)))
+            (then (drop (call $virtual_map_release_one (local.get $base))))
+            (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+          (br $islands)))
+        (call $virtual_reserve_forget_locked (local.get $guest))
+        (call $virtual_reserve_reclaim_locked)
+        (return (i32.const 1))))
     ;; A reservation the guest never committed has no record at all, so its
     ;; release has to be handled before the record lookup gives up -- otherwise
     ;; its entry sits in the reserve table forever and pins the reclaim floor.
@@ -2133,16 +2202,19 @@
           (then
             (if (i32.eqz (call $heap_arena_release_free))
               (then
+                (drop (call $virtual_map_release (local.get $new_top)))
                 (call $host_heap_oom_trace (local.get $chunk) (i32.const 3))
                 (return (i32.const 0))))
             (if (i32.eqz (call $virtual_map_commit (local.get $new_top) (local.get $chunk)))
               (then
+                (drop (call $virtual_map_release (local.get $new_top)))
                 (call $host_heap_oom_trace (local.get $chunk) (i32.const 3))
                 (return (i32.const 0))))))
         (local.set $record (call $heap_arena_register
           (local.get $new_top) (i32.add (local.get $new_top) (local.get $chunk))))
         (if (i32.eqz (local.get $record))
           (then
+            (drop (call $virtual_map_release (local.get $new_top)))
             (call $host_heap_oom_trace (local.get $chunk) (i32.const 4))
             (return (i32.const 0))))
         (call $heap_arena_free_tail (global.get $heap_sparse_ptr) (global.get $heap_sparse_end)
