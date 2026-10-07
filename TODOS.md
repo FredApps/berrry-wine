@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-menu (scratch/fresh-workers-20261007)
+  worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Fresh Antara worker launched as Comanche lane refill.501pinned remote-harness files and bounded actual main/child owner collector ready/tested. Remote after Q2 then Arx finalrelease; diagnose blank Main Menu on original fb1 version-corrected module, then ordinary gameplay.
+  Next: Authenticated original USER87 caller and actual child Win16 modalwait, not an exited child. Fresh WM_INITDIALOG/WM_PAINT procedure and asset/API investigation before generic fix; remote after Arx. Findings0951fac87; no gameplay.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1219,9 +1219,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ARX-FATALIS-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI arx-gameplay (scratch/fresh-workers-20261007)
+  worker: fresh CLI arx-fault (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Allocation fix integrated85c1f7c68+6e6a90a8e; exact7c6864f8 ordinary OK reaches reviewed title/startup. Final findings47c4e6c43. Fresh arx-gameplay prepares ordinary menu/newgame/player controls after Antara then root Winamp remote release; no gameplay yet. Evidence scratch/runs/20261007T214319Z-arx-allocation-final.
+  Next: Allocation repaired; ordinary intro now exits unhandledAV0xC000DE05 beforemenu. Fresh actual-owning SEH fault capture then generic fix; remote after Winamp release. Findings7fa62abf7; no gameplay.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 

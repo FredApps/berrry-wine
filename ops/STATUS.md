@@ -1,13 +1,13 @@
-updated: 2026-10-07T22:05:25.360Z
+updated: 2026-10-07T22:11:56.855Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: fresh arx-gameplay, antara-menu and toyvm-paging-integrate. Arx owns remote ordinary gameplay continuation after allocator fix/title validation. Antara released browser after actual owner samples located child in Win16 modal pump; original caller analysis continues. Previous paging worker exited with isolated foundation5afd1bd, not merged; fresh integration worker now owns full guest translation/fault/cache implementation and original Comanche acceptance. CLAUDE summary completed672574957,113977->21806B, policy and details preserved.
+Current workers: fresh arx-fault, antara-dialog and toyvm-paging-integrate. Arx intro exits unhandledAV beforemenu; next actual owning fault capture. Antara original modal caller authenticated; next dialogproc/message/asset analysis. Root Winamp ordinary playback/Start opens MilkDrop then illegaloperation, no visualization; remote released22:10:25 to Arx then Antara. Paging full integration remains active, foundation alone not merged.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
 Quake II WebGL ordinary Game/Easy/forward/reverse/idle traversal qualified main2534731b3, root personally reviewed worldlandmarks. Sixscreens/38artifacts self-contained; Telegram860/861 sent. FPS/audio/network unqualified,16ancillaryVLANrefusals preserved. GL27 stillincomplete: softwareQ2menu, otherlongroutes/heavytitles/Winamphost remain. Fresh toyvm-paging worker replaces finishedQ2thread and owns nextlocalcorrectness slot; CR3 baseline actualguesttest preserved3007158e9.
 
-Two new-game lanes remain active: Arx gameplay continuation and Antara actual-owner investigation. Antara502pins and actual-child samples17.166sec apart show modal pump, no critical-section wait; fresh source analysis continues. Neither has gameplay qualification yet. TDR2000 is complete on mainb7cdb5fd with reviewed driving; FPS/audio unmeasured.
+Two new-game lanes: Arx fault investigation and Antara dialog initialization. Previous workers exited0 with findings7fa62abf7/0951fac87; fresh successors launched. Neither has gameplay qualification. TDR2000 remains completed; no new FPS/audio claims.
 
 Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
 

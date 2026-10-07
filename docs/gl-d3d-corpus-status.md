@@ -76,7 +76,7 @@ screenshot cited was looked at.
 | pawn | D3D9 | **gameplay** (board) | board (2026-10-06, browser); gameplay (2026-09-23) | — |
 | pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not measured: bigMemory and its 1.3 GB tree cannot be shipped to a boat browser; the local box cannot hold it | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
-| winamp | D3D8 (MilkDrop) | not run | — | registered plugin is MilkDrop1.04e (`vis_milk.dll`), not separate2.25c candidate; ordinary visualization start still unrun ([fixture audit](../ops/handoffs/winamp-milkdrop-fixture-20261007.md)) |
+| winamp | D3D8 (MilkDrop) | not run (CLI) | ordinary playback/Start opens MilkDrop then illegal-operation error (2026-10-07, browser) | original1.04e passes music gate but no visualization; fault/API cause unknown, native DLL probe refusals retained ([run findings](../ops/handoffs/winamp-milkdrop-ordinary-20261007.md)) |
 
 Glide is not in this goal's scope, but the sweep saw it: nfs3_glide_demo
 gameplay; diablo2_glide_demo title at 120 s (software Glide 1-2 batches/s and
