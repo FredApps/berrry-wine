@@ -1,9 +1,9 @@
-updated: 2026-10-07T09:53:05.348Z
+updated: 2026-10-07T09:58:49.396Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc2 completed reviewed ordinary Jungle movement, reversal and settled idle; registration20bdd9c6, findings600be49b, task310ef2c2. FPS/audio/sustained play remain open. Antara replaces it: original23 files present, worker recovers exact stage2 installer bytes before diagnosing historical SMACKW16 initialization fault. DieHard engine-load diagnostic is sole runtime, PID2472917/session52046 started09:51:59.902 with deadline09:56:59.902; tests deferred queue consumption and session/world rejection. No other runtime granted.
+New-game pipeline: Croc2 completed reviewed ordinary Jungle movement/reversal/idle and local registration (20bdd9c6/600be49b/310ef2c2); FPS/audio/sustained play remain open. Antara worker recovered authentic SMACKW16 and found additive FAR_ADDR relocation losing its offset addend, redirecting initialization to the wrong entry; scoped loader repair/regression preparation active, not yet tested. DieHard diagnostic closed09:54:23 cleanly: two queues consumed and one success path, but startup/Easy attribution unresolved. Next helper snapshots read-only counters around ordinary input. Runtime currently free; tests/probes require explicit serialized grants.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
@@ -12,3 +12,5 @@ GL/D3D: PBO binding/repeated-flip/dead-target tests integrated faa0b2df/7be5eb0b
 Claude remains stopped; Telegram now routes to this Codex coordinator per user instruction and Heroes II with the laptop. One runtime at a time, disk above 2GiB, heavy benchmarks on separate boats. Shared HEAD/index untouched; no public deployment.
 
 New user priority: direct ToyVM/dedicated-DOS gameplay. UltimaIV reached ordinary character creation and story (main785ee61f), no world yet. Native CLI pair closed09:51:12: Arena guest exit6 reports MSCDEX Driver not installed; Daggerfall hits30s limit repeating protected-mode CS4b:142a with decoder reading apparent error text, cause under source investigation. Missing host pngjs in first attempt is preserved as harness failure, corrected via existing installed dependency alias before successful report capture. No native gameplay qualification or public deployment.
+
+Deployment boundary: new registry entries and native evidence updates are committed/pushed to main. Active8098 reader uses WINE_EMULATOR_ROOT=/home/user/wine-assembly-web, whose registry still lacks Croc/DieHard; those main registrations are not yet live there. No public deployment or live checkout mutation performed.
