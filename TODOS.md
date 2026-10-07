@@ -1263,3 +1263,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Continue isolated WIP5afd1bd foundation through full guest paging integration, architectural fault restart and cache semantics, actual guest acceptance tests and unchanged Comanche. Previous foundation worker exited0;28groups pass only isolated helper/CRstate, no guest translation yet. Fresh integration worker owns implementation; no partial repair claim.
   Evidence: docs/re-notes/comanche3-later-execution-20261007.md; scratch/runs/20261007-comanche3-paging-diagnostic/evidence-index.json; source emit.js dropsCR3 and maskslinear24bits.
   Done: Generic paging correctness reviewed with fault semantics and original Comanche startup progressing beyond paged copy; no gameplay claim without ordinary control evidence.
+
+- [ ] New-game lane: Command & Conquer: Tiberian Sun demo
+  id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI darkstone-gameplay (replacement: Tiberian Sun)
+  candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
+  Next: Audit current original menu/campaign route and full loader closure, resolve demonstrated caption/painting defect, then ordinary mission control with reviewed screenshot. Remote after Antara and corrected Winamp. Previous missing-boat blocker is cleared by serialized temporary box; no local browser.
+  Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
+  Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
