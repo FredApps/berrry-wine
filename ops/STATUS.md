@@ -1,9 +1,9 @@
-updated: 2026-10-07T10:43:06.530Z
+updated: 2026-10-07T10:49:17.798Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc2 controls complete. DieHard generic zero-timeout thread poll repair236e8be9 passes8 focused contracts and existing ThreadManager suite; exact JS-only ordinary CLI confirmation conditionally granted, no gameplay yet. Antara black-screen source audit proves shared renderer child-window lifecycle unresolved; passive32record/15sec observer ready, browser awaits2.9GB launch headroom. No public deployment.
+New-game pipeline: Croc2 controls complete. DieHard generic zero-timeout thread poll repair236e8be9 now passes the stuck menu: ordinary Easy loaded actual3D narrated intro with a replacement loader thread. Root reviewed cutscene/photo842; run55241 closed10:47:48 exit0, no playercontrol yet. Antara shared-renderer window lifecycle observerREADY2 granted sole next browser, conditional2.9GBheadroom. Native callgate actualinstruction baseline fixtures follow release. No public deployment.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 

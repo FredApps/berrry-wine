@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Generic zero-duration thread poll bug fixed on main236e8be9: live/pending handles return WAIT_TIMEOUT rather than yielding; beforecontrol fails and8 actual ThreadManager contracts/existing suite pass. Ordinary CLI confirmation queued with exact JS-only delta, main-instance PC/stack plus authenticated event state. No gameplay qualification. T1 in final worker table is first created worker, not guest main; prior label corrected.
+  Next: Generic thread-poll repair236e8be9 confirmed past stuck menu: ordinary Easy loads actual3D narrated level intro. Oldloader e1005 replaced e1006 with new stop event. Same8eb WASM/JS-only delta, no counters. Run55241 closed10:47:48 exit0/PIDabsent; original300sec bound. Root reviewed cutscene, sent photo842. No player-control/FPS/audio qualification; publish immutable evidence and continue ordinary cutscene-to-controls route.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Ordinary original installer probe13179 closed10:27:05 clean browser/process cleanup; runexit1 retains ten refused CARDS search probes. Initial setup then black, no inputs or gameplay. Aux Worker logs visible child SierraSetup hwnd18001, omitted by main-only window census. Audit actual child renderer/window ownership and exact optional-probe closure before next run; no inferred repaired-loader failure. Production992a8b02/repair3880d93d retained.
+  Next: Repaired-loader blackscreen traced to unresolved shared-renderer child HWND lifecycle. Source observerREADY2 captures create/show/destroy32records/15sec with original forwarding; exact10 optionalCARDS absent probes corrected with negativepins. Sole browser granted after DieHard RELEASE10:47:48 conditional2.9GB launch headroom. No installer/gameplay qualification.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
