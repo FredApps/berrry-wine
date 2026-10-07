@@ -189,3 +189,9 @@ Receipt/logs: `scratch/d3dim-pbo-audit-20261007/test-validation.json`,
 `f9cfd55d29972759b7595aedea386bb4cb106d390d5fa4aeb05919b6a6dba13e`.
 No engine change or claim that Chrome's warning is fixed. The bounded live
 context/PBO lifecycle observer above remains the next causal diagnostic.
+
+### Registered MilkDrop initialization gate, October 7
+
+The exact registered `vis_milk.dll` export at `0x100299c0` returns its header directly. Its initializer at `0x10029a90` contains no blanket Winamp 5 rejection at the historical music check: it queries the host using `SendMessageA(WM_USER, 0, 0)`, accepts a result at least `0x4000`, and otherwise accepts `SendMessageA(WM_USER, 0, 0x68) == 1`. Only the latter failing path shows “This plugin can't run without music” and returns failure. This identifies an older-host playback condition, not proof of successful rendering. Raw exact-PE disassembly is retained at `scratch/sweep-reconciliation-20261007/milkdrop-init-disassembly.txt`.
+
+Current `test/test-winamp-visualizers.js` documents and exercises MilkDrop header enumeration on the existing host; its historical remaining-gap comment names cross-thread IsPlaying delivery, not a Winamp 5 dependency. Main `2dab96f8` later changed Worker-to-main SendMessage delivery and is in the pinned `3b8189f5` runtime ancestry, but its WinBoard regression does not prove the MilkDrop route. Next run the actual registered plugin with ordinary playback/Start and observe the returned playback query and D3D device creation under each relevant thread mode. Keep software/WebGL rendering unqualified until that evidence exists. No host download or new runtime was performed for this source audit.
