@@ -1381,7 +1381,16 @@ class Machine {
   createFile(name) {
     const key = fileKey(name);
     if (!key) return 0;
-    const rec = { data: new Uint8Array(4096), len: 0 };
+    // AH=3Ch may truncate an AH=5Ah file while another handle still exists.
+    // Keep its identity and attribute policy shared by all open handles.
+    const previous = this.tempFiles.get(key);
+    const rec = previous && previous.temporary ? previous : {};
+    rec.data = new Uint8Array(4096); rec.len = 0;
+    if (rec.temporary) {
+      for (const file of this.files.values()) {
+        if (file.rec === rec) file.buf = rec.data.subarray(0, 0);
+      }
+    }
     this.tempFiles.set(key, rec);
     const h = this.fileNext++;
     this.files.set(h, { buf: rec.data.subarray(0, 0), pos: 0, name, rec });
@@ -4776,6 +4785,7 @@ class Machine {
         if (h === 1 || h === 2) {
           for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
         } else if (f && !f.device) {
+          if (f.rec && f.rec.temporary && f.access === 0) { r.setResultCf(true); r.set('ax', 5); return true; }
           this.writeFile(f, src, n);
         }
         r.set('ax', n);
@@ -4912,25 +4922,78 @@ class Machine {
       // pages and reads its data into them, and every one of those reads was
       // going nowhere.
       case 0x3D: {                              // open
-        const f = this.openFile(this.guestPath(r), 'r');
+        const name = this.guestPath(r), rec = this.tempFiles.get(fileKey(name));
+        const access = al & 3;
+        if (rec && rec.temporary && (access > 2 || (rec.attributesActive && (rec.attributes & 1) && access !== 0))) {
+          r.setResultCf(true); r.set('ax', 5); return true;
+        }
+        const f = this.openFile(name, 'r');
+        if (f && rec && rec.temporary) this.files.get(f).access = access;
         if (!f) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
         r.set('ax', f);
         r.setResultCf(false);
         return true;
+      }
+      case 0x5A: {                              // create unique temporary file
+        const at = this.lin(r, 'ds', r.get('dx'));
+        const fail = code => { r.setResultCf(true); r.set('ax', code); return true; };
+        let directory = '';
+        for (let i = 0; i < 128 && at + i < this.mem.length; i++) {
+          if (!this.mem[at + i]) break;
+          directory += String.fromCharCode(this.mem[at + i]);
+        }
+        // This machine exposes only its mounted C: root. Do not silently
+        // flatten an unavailable temporary directory into that root.
+        if (!/^(?:[Cc]:)?\\+$/.test(directory) || this.mem[at + directory.length] !== 0) return fail(3);
+        const attr = r.get('cx') & 0xFFFF;
+        if (attr & ~0x27) return fail(5);
+        const end = at + directory.length + 9; // eight-character name and NUL
+        if (end > this.mem.length || (r.get('dx') & 0xFFFF) + directory.length + 9 > 0x10000) return fail(5);
+        if (this.fileNext > 0xFFFF) return fail(4);
+        let name;
+        for (let tries = 0; tries < 65536; tries++) {
+          this.tempSerial = (this.tempSerial || 0) + 1;
+          const suffix = ((this.ticks + this.tempSerial) >>> 0).toString(36).toUpperCase().padStart(8, '0');
+          const proposed = directory + suffix;
+          if (!this.tempFiles.has(fileKey(proposed)) && !this.hostPath(proposed)) { name = proposed; break; }
+        }
+        if (!name) return fail(5);
+        const handle = this.createFile(name);
+        if (!handle) return fail(5);
+        const file = this.files.get(handle);
+        file.access = 2; file.compatibility = true;
+        file.rec.temporary = true; file.rec.attributes = attr; file.rec.attributesActive = false;
+        for (let i = 0; i < name.length; i++) this.mem[at + i] = name.charCodeAt(i);
+        this.mem[at + name.length] = 0;
+        r.set('ax', handle); r.setResultCf(false); return true;
       }
       case 0x3C: {                              // create/truncate
         // CATWALK.EXE creates a file, gets no handle back, and then writes to
         // the failed return value as though it were one -- 0x3C02, which INT 21h
         // AH=40h cheerfully accepted. It reads the result back, finds nothing it
         // wrote and exits 0 without drawing a frame.
-        const h = this.createFile(this.guestPath(r));
+        const name = this.guestPath(r), rec = this.tempFiles.get(fileKey(name));
+        if (rec && rec.temporary && rec.attributesActive && (rec.attributes & 1)) {
+          r.setResultCf(true); r.set('ax', 5); return true;
+        }
+        if (rec && rec.temporary && (r.get('cx') & ~0x27)) {
+          r.setResultCf(true); r.set('ax', 5); return true;
+        }
+        const h = this.createFile(name);
         if (!h) { r.setResultCf(true); r.set('ax', 3); return true; }   // path not found
+        if (rec && rec.temporary) {
+          const file = this.files.get(h);
+          file.access = 2; file.compatibility = true;
+          rec.attributes = r.get('cx') & 0xFFFF; rec.attributesActive = false;
+        }
         r.set('ax', h);
         r.setResultCf(false);
         return true;
       }
       case 0x41: {                              // delete
         const key = fileKey(this.guestPath(r));
+        const rec = key && this.tempFiles.get(key);
+        if (rec && rec.temporary && rec.attributesActive && (rec.attributes & 1)) { r.setResultCf(true); r.set('ax', 5); return true; }
         if (key && this.tempFiles.delete(key)) { r.setResultCf(false); return true; }
         // A file we never created is on the host side and stays there; the
         // program is told it is gone, which is what it wants to hear.
@@ -4945,6 +5008,8 @@ class Machine {
         return true;
       }
       case 0x3E: {                              // close
+        const closing = this.files.get(r.get('bx') & 0xFFFF);
+        if (closing && closing.rec && closing.rec.temporary) closing.rec.attributesActive = true;
         this.files.delete(r.get('bx') & 0xFFFF);
         r.setResultCf(false);
         return true;
@@ -4968,6 +5033,7 @@ class Machine {
           return true;
         }
         if (!f) { r.setResultCf(true); r.set('ax', 6); return true; }   // bad handle
+        if (f.rec && f.rec.temporary && f.access === 1) { r.setResultCf(true); r.set('ax', 5); return true; }
         const at = this.lin(r, 'ds', r.get('dx'));
         const got = Math.max(0, Math.min(n, f.buf.length - f.pos));
         // A read that would run off the end of the 1MB address space is a bug
@@ -4997,6 +5063,13 @@ class Machine {
         return true;
       }
       case 0x43: {                              // get/set file attributes
+        const rec = this.tempFiles.get(fileKey(this.guestPath(r)));
+        if (rec && rec.temporary) {
+          if (al === 0) r.set('cx', rec.attributes);
+          else if (al === 1 && !(r.get('cx') & ~0x27)) { rec.attributes = r.get('cx'); rec.attributesActive = true; }
+          else { r.setResultCf(true); r.set('ax', 5); return true; }
+          r.setResultCf(false); return true;
+        }
         const p = this.hostPath(this.guestPath(r));
         if (!p) { r.setResultCf(true); r.set('ax', 2); return true; }
         r.set('cx', 0x20);                      // archive
