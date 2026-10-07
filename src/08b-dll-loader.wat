@@ -70,7 +70,9 @@
         (if (i32.eqz (local.get $load_addr)) (then (return (i32.const 0))))
         (if (i32.eqz (call $virtual_map_commit_protect
               (local.get $load_addr) (local.get $image_size) (i32.const 0x40))) ;; PAGE_EXECUTE_READWRITE
-          (then (return (i32.const 0))))
+          (then
+            (drop (call $virtual_map_release (local.get $load_addr)))
+            (return (i32.const 0))))
         (local.set $sparse (i32.const 1))))
     (local.set $delta (i32.sub (local.get $load_addr) (local.get $preferred_base)))
 

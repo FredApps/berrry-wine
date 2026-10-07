@@ -29,6 +29,10 @@ const extraWat = String.raw`
         (global.get $VIRTUAL_MAP_TABLE_SIZE)))
     (call $zero_memory (global.get $GUEST_PAGE_TABLE)
       (global.get $GUEST_PAGE_TABLE_SIZE))
+    (call $zero_memory (global.get $VIRTUAL_RESERVE_TABLE)
+      (global.get $VIRTUAL_RESERVE_TABLE_SIZE))
+    (call $zero_memory (global.get $VIRTUAL_HOLE_TABLE)
+      (global.get $VIRTUAL_HOLE_TABLE_SIZE))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (global.get $VIRTUAL_BACKING_BASE))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
@@ -41,7 +45,7 @@ const extraWat = String.raw`
   (func (export "test_virtual_alloc_null") (param $size i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
     (call $handle_VirtualAlloc
-      (i32.const 0) (local.get $size) (i32.const 0x2000)
+      (i32.const 0) (local.get $size) (i32.const 0x102000)
       (i32.const 0x04) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_virtual_alloc_commit") (param $size i32) (result i32)
@@ -159,14 +163,15 @@ async function main() {
 
   const state = new DataView(memory.buffer);
   const mapCount = state.getUint32(MAP_STATE, true);
-  assert.strictEqual(mapCount, 1,
-    'adjacent heap and graphics backing should coalesce into one sparse map');
+  assert.strictEqual(mapCount, 2,
+    'independently owned heap and graphics allocations must retain separate lifetimes');
   assert.strictEqual(state.getUint32(MAP_TABLE, true), heapBlock,
-    'the coalesced sparse map should begin at the worker heap reservation');
-  assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), graphicsSize + 0x00100000,
-    'the coalesced sparse map should cover each reservation exactly once');
-  const graphicsBacking = state.getUint32(MAP_TABLE + 8, true) +
-    (graphicsBase - heapBlock);
+    'the first sparse map should begin at the worker heap reservation');
+  assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), 0x00100000,
+    'the heap mapping must stop at its reservation boundary');
+  assert.strictEqual(state.getUint32(MAP_TABLE + 16, true), graphicsBase);
+  assert.strictEqual(state.getUint32(MAP_TABLE + 20, true), graphicsSize);
+  const graphicsBacking = state.getUint32(MAP_TABLE + 24, true);
   assert.strictEqual(main.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
     'packed translation must resolve the main instance mapping');
   assert.strictEqual(worker.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,

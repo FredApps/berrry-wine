@@ -5220,24 +5220,21 @@
         ;; Reserve from a sparse high guest-address arena, separate from
         ;; HeapAlloc's upward-growing low heap. MEM_RESERVE is address-space
         ;; bookkeeping; real backing is added only by MEM_COMMIT.
-        (local.set $new_top (call $virtual_reserve_down (local.get $size)))
+        (local.set $new_top (call $virtual_reserve_place (local.get $size)
+          (i32.ne (i32.and (local.get $arg2) (i32.const 0x100000)) (i32.const 0))
+          (local.get $arg3)))
         (if (i32.eqz (local.get $new_top))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
           (else
             (if (i32.and (local.get $arg2) (i32.const 0x1000))
-              (then (i32.store offset=0 (global.get $reg_base) (call $virtual_map_commit_protect
-                (local.get $new_top) (local.get $size) (local.get $arg3))))
+              (then
+                (i32.store offset=0 (global.get $reg_base) (call $virtual_map_commit_protect
+                  (local.get $new_top) (local.get $size) (local.get $arg3)))
+                (if (i32.eqz (i32.load (global.get $reg_base)))
+                  (then (drop (call $virtual_map_release (local.get $new_top))))))
               (else
-                ;; A reservation with no commit owns address space that no map
-                ;; record describes, and nothing tells us when the guest drops
-                ;; it. $virtual_reserve_reclaim_locked recovers released address
-                ;; space by taking the minimum over the record table, which
-                ;; cannot see this range — so remember the lowest such range
-                ;; ever handed out and let the reclaim stop there. Everything
-                ;; below it stays permanently spoken for, which costs address
-                ;; space; handing it out twice would cost correctness.
-                (call $virtual_reserve_record
-                  (local.get $new_top) (local.get $size) (local.get $arg3))
+                ;; Ownership was published atomically during placement; a
+                ;; reserve-only request consumes no physical backing.
                 (i32.store offset=0 (global.get $reg_base) (local.get $new_top))))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)
   )

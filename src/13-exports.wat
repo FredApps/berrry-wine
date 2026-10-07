@@ -3491,7 +3491,10 @@
     (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
     (local.set $guest (call $virtual_reserve_down (local.get $size)))
     (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-    (local.set $guest (call $virtual_map_commit (local.get $guest) (local.get $size)))
+    (if (i32.eqz (call $virtual_map_commit (local.get $guest) (local.get $size)))
+      (then
+        (drop (call $virtual_map_release (local.get $guest)))
+        (return (i32.const 0))))
     ;; Remember the range as a view, so VirtualFree can refuse it the way
     ;; Windows does instead of treating it as VirtualAlloc'd memory.
     (call $mapped_view_register (local.get $guest) (local.get $size))
