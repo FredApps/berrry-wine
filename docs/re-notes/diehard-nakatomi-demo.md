@@ -368,3 +368,28 @@ handle e1005. Similar work-loop waits in two workers can be normal; this run did
 not capture the main instance PC/stack. A next bounded read-only main snapshot
 is legitimate for locating MAIN teardown only, never a substitute for either
 worker's registers. Earlier conversational wording calling T1 main was wrong.
+
+### Zero-timeout fix advances to the rendered opening level
+
+Ordinary confirmation55241/PID2533830 used the same8eb283c1 WASM, with only
+ThreadManager236e8be9's live/pending thread zero-timeout poll correction; no
+counters or API/FS tracing. Actual before regression returned65535 rather than
+WAIT_TIMEOUT258;8 focused contracts and existing ThreadManager tests pass.
+Game execution ran10:42:57.331–10:47:48.227Z; scheduled ordinary quit at290s
+completed normally, exit0/streams drained/PID absent/8137 free.
+
+Personally reviewed normal New Game and held Easy now advance to loading and
+then textured 3D narrated opening scenes. Authenticated loader changed from
+thread e1005/stop e0008 to e1006/stop0e000000, preserving queue e0002. This
+confirms lifecycle progress; the sampling did not observe transient SetEvent.
+Actual main-only PC/ESP/EBP/wait/8-DWORD stack snapshots are explicitly labelled
+and are not worker register substitutes. One ordinary Escape did not end the
+reviewed opening cutscene. Final image is a bomb countdown, not player-controlled
+gameplay. No movement/FPS/audio/full-level claim. Next ordinary route needs
+time for opening completion and a reviewed player-view/input gate; no further
+engine fix is justified by this bounded run.
+
+Evidence: scratch/wt-diehard-20261007/scratch/thread-poll-confirmation/attempt1.
+28-artifact manifest SHA256 a9cca0b2083547c919e3415e19276b51dca4a463f76350bf3a3ea33685f90cf3.
+Full68086-byte log SHA256
+fe5c9d023331f01acdc1ef9cef4e7925a235274cf9f5703e45c5b793c95e95df.
