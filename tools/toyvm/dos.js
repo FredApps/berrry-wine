@@ -4215,10 +4215,10 @@ class Machine {
     const chain = [];
     let cur = psp;
     for (const it of items) {
-      if (it.seg - 1 < cur) continue;           // overlaps what is already laid; skip it
-      if (it.seg - 1 > cur) chain.push({ seg: cur, size: it.seg - 1 - cur, own: psp });
+      if (it.seg < cur) continue;               // data overlaps a prior block/header
+      if (it.seg > cur) chain.push({ seg: cur, size: it.seg - 1 - cur, own: psp });
       chain.push(it);
-      cur = it.seg + it.size;
+      cur = it.seg + it.size + 1; // next data segment follows the next MCB
     }
     if (cur < DEFAULT_ALLOC_TOP) chain.push({ seg: cur, size: DEFAULT_ALLOC_TOP - cur, own: psp });
     for (let i = 0; i < chain.length; i++) {
@@ -4365,42 +4365,56 @@ class Machine {
           // The first paragraph past what the child leaves resident. This,
           // not the parent's frontier, is what the next EXEC loads above: a
           // parent that never shrank its block has a frontier at the ceiling.
-          let top = keep;
-          if (keep) {
-            // AH=31h keeps DX paragraphs of the PSP block -- and every block
-            // the resident program took with AH=48h and never gave back. Those
-            // sit above `keep`, because the child was loaded at the parent's
-            // frontier, and they are the whole reason CATWALK.PLY goes
-            // resident: 0x3c0 paragraphs of S3M patterns at a21 and 64KB of
-            // samples at de2, both past its 0x635-paragraph image. With the
-            // frontier dropped to `keep` alone, EXEC put CATWALK.TMP at psp
-            // a20 and its unpacker wrote over the patterns; the player then
-            // read a speed of 0xAB out of unpacked code and advanced one row
-            // every 3.4 seconds (measured 2026-09-03 against DOSBox-X). The
-            // frontier goes above the highest held block and the gaps between
-            // them are free holes, which is what the MCB chain would say.
-            const held = [...this.memBlocks].filter(([s]) => s - 1 >= keep).sort((a, b) => a[0] - b[0]);
-            for (const [s, n] of held) top = Math.max(top, s + n);
-            this.allocTop = Math.max(parent.allocTop, top);
-            let cursor = keep;
-            for (const [s, n] of held) {
-              if (s - 1 > cursor) this.memRelease(cursor, s - 1 - cursor);
-              cursor = Math.max(cursor, s + n);
-            }
-          } else {
-            // AH=4Ch: the blocks the child owns go back, by MCB owner, the
-            // way the terminate-vector path below does it. Left in the map
-            // they would count as held on a later resident exit and hoist
-            // the frontier over memory nobody holds.
-            this.allocTop = parent.allocTop;
-            for (const s of [...this.memBlocks.keys()]) {
-              if (this.mcbOwner(s) !== leaving) continue;
-              const size = this.memBlocks.get(s);
-              this.memBlocks.delete(s);
-              if (size !== undefined) this.memReleaseBlock(s, size);
+          // Keep resident PSP images in the same owner-tracked arena as their
+          // environment and allocations. Otherwise an ancestor's later exit
+          // forgets this image even though it does not own it.
+          const released = [];
+          if (keep > leaving) {
+            this.memBlocks.set(leaving, keep - leaving);
+            this.mcbWrite(leaving, leaving, keep - leaving);
+          } else if (!keep) {
+            for (const seg of [...this.memBlocks.keys()]) {
+              if (this.mcbOwner(seg) === leaving) {
+                released.push({seg: seg - 1, size: this.memBlocks.get(seg) + 1});
+                this.memBlocks.delete(seg);
+              }
             }
           }
-          this.imageTop = Math.max(parent.imageTop, top);
+          const floor = parent.allocTop < DEFAULT_ALLOC_TOP
+            ? Math.max(parent.imageTop, parent.allocTop) : parent.imageTop;
+          const held = [...this.memBlocks].filter(([seg, size]) => seg + size > floor)
+            .sort((a, b) => a[0] - b[0]);
+          let top = Math.max(parent.imageTop, keep);
+          for (const [seg, size] of held) top = Math.max(top, seg + size);
+          this.allocTop = Math.max(parent.allocTop, top);
+          // Reconstruct only the returned child's region; retain older holes.
+          // Every gap excludes each surviving MCB as well as its data bytes.
+          const oldHoles = [...this.memFree, ...released].filter(block => block.seg < floor)
+            .map(block => ({seg: block.seg, size: Math.min(block.size, floor - block.seg)}));
+          // A surviving allocation may straddle the saved frontier. Preserve
+          // its lower part too; stale/coalesced holes must never include it.
+          this.memFree = [];
+          for (const hole of oldHoles) {
+            let pieces = [hole];
+            for (const [seg, size] of this.memBlocks) {
+              const lo = seg - 1, hi = seg + size;
+              pieces = pieces.flatMap(piece => {
+                const end = piece.seg + piece.size;
+                if (end <= lo || piece.seg >= hi) return [piece];
+                const out = [];
+                if (piece.seg < lo) out.push({seg: piece.seg, size: lo - piece.seg});
+                if (end > hi) out.push({seg: hi, size: end - hi});
+                return out;
+              });
+            }
+            for (const piece of pieces) this.memRelease(piece.seg, piece.size);
+          }
+          let cursor = floor;
+          for (const [seg, size] of held) {
+            if (seg - 1 > cursor) this.memRelease(cursor, seg - 1 - cursor);
+            cursor = Math.max(cursor, seg + size);
+          }
+          this.imageTop = top;
           this.memTrim();
           this.curPsp = parent.psp;
           this.log(`child exited ${code}${keep ? `, resident to ${keep.toString(16)}` : ''};`
@@ -4523,6 +4537,10 @@ class Machine {
         // before the image, because for a shell invocation it is what names the
         // program actually being run.
         const pb = this.lin(r, 'es', r.get('bx'));
+        const requestedEnv = this.mem[pb] | (this.mem[pb + 1] << 8);
+        const parentPspAt = this.curPsp << 4;
+        const sourceEnv = requestedEnv || (this.mem[parentPspAt + 0x2C]
+          | (this.mem[parentPspAt + 0x2D] << 8));
         const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
         const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
         const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
@@ -4579,10 +4597,39 @@ class Machine {
         // holding everything up to the ceiling is left as before: that is the
         // never-shrunk stub, and its allocation top says nothing about where
         // the child can go.
-        const pspSeg = this.allocTop < DEFAULT_ALLOC_TOP
+        const frontier = this.allocTop < DEFAULT_ALLOC_TOP
           ? Math.max(this.imageTop, this.allocTop) : this.imageTop;
+        // Clone only the variable strings; the trailing executable name belongs
+        // to the new process. Never rewrite the parent's environment in place.
+        const envAt = sourceEnv << 4;
+        const envEnd = Math.min(this.mem.length, envAt + 0x8000);
+        let end = envAt;
+        while (end + 1 < envEnd && !(this.mem[end] === 0 && this.mem[end + 1] === 0)) end++;
+        if (!sourceEnv || end + 1 >= envEnd) { r.setResultCf(true); r.set('ax', 10); return true; }
+        let childPath = name.replace(/\\/g, '/');
+        if (!/^[A-Za-z]:/.test(childPath)) childPath = 'C:' + (childPath.startsWith('/') ? '' : '/') + childPath;
+        childPath = childPath.replace(/\//g, '\\').toUpperCase();
+        const variables = this.mem.slice(envAt, end + 2);
+        const envBytes = variables.length + 2 + childPath.length + 1;
+        const envParas = Math.ceil(envBytes / 16);
+        const childEnv = frontier + 1; // its MCB occupies frontier
+        const pspSeg = childEnv + envParas + 1; // reserve child's image MCB too
         if (pspSeg + 0x1000 > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
+        // Check the minimum image/BSS footprint before any guest memory write.
+        const mz = img[0] === 0x4D && img[1] === 0x5A || img[0] === 0x5A && img[1] === 0x4D;
+        if (mz && img.length < 28) { r.setResultCf(true); r.set('ax', 11); return true; }
+        const imageSize = mz ? img.readUInt16LE(4) * 512 - (img.readUInt16LE(2) ? 512 - img.readUInt16LE(2) : 0) - img.readUInt16LE(8) * 16 : Math.min(img.length, 0xFEFE);
+        const minParas = mz ? 0x10 + Math.ceil(imageSize / 16) + img.readUInt16LE(10) : 0x1000;
+        if (imageSize < 0 || pspSeg + minParas > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
         const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
+        const childEnvAt = childEnv << 4;
+        this.mem.fill(0, childEnvAt, childEnvAt + envParas * 16);
+        this.mem.set(variables, childEnvAt);
+        let envWrite = childEnvAt + variables.length;
+        this.mem[envWrite++] = 1; this.mem[envWrite++] = 0;
+        for (const c of childPath) this.mem[envWrite++] = c.charCodeAt(0);
+        this.memBlocks.set(childEnv, envParas);
+        this.mcbWrite(childEnv, pspSeg, envParas);
 
         // The tail into the child's PSP, from the string rather than straight
         // out of the parameter block: a shell redirect above rewrote it, and the
@@ -4596,13 +4643,21 @@ class Machine {
         this.mem[(pspSeg << 4) + 0x81 + n] = 0x0D;   // the tail's terminating CR
         this.mem[(pspSeg << 4) + 0x16] = this.curPsp & 0xFF;     // parent PSP
         this.mem[(pspSeg << 4) + 0x17] = (this.curPsp >> 8) & 0xFF;
-        this.mem[(pspSeg << 4) + 0x2C] = ENV_SEG & 0xFF;         // same environment
-        this.mem[(pspSeg << 4) + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+        this.mem[(pspSeg << 4) + 0x2C] = childEnv & 0xFF;        // owned child environment
+        this.mem[(pspSeg << 4) + 0x2D] = (childEnv >> 8) & 0xFF;
         this.log(`exec ${name} (${img.length} bytes) at psp ${pspSeg.toString(16)},`
           + ` entry ${info.cs.toString(16)}:${info.ip.toString(16)},`
           + ` tail "${tailStr}"`);
 
         if (al === 0x01) {                       // load, do not execute
+          // No EXEC frame will retain this loaded image when its caller exits.
+          // Track its minimum live extent under the loaded PSP's ownership,
+          // just as a resident child image; AH49 can explicitly unload it.
+          this.memBlocks.set(pspSeg, info.minTop - pspSeg);
+          this.mcbWrite(pspSeg, pspSeg, info.minTop - pspSeg);
+          this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop ?? DEFAULT_ALLOC_TOP);
+          this.imageTop = Math.max(this.imageTop, info.minTop);
+          this.memTrim();
           this.mem[pb + 0x0E] = info.sp & 0xFF; this.mem[pb + 0x0F] = (info.sp >> 8) & 0xFF;
           this.mem[pb + 0x10] = info.ss & 0xFF; this.mem[pb + 0x11] = (info.ss >> 8) & 0xFF;
           this.mem[pb + 0x12] = info.ip & 0xFF; this.mem[pb + 0x13] = (info.ip >> 8) & 0xFF;
@@ -4621,7 +4676,7 @@ class Machine {
           allocTop: this.allocTop, imageTop: this.imageTop, psp: this.curPsp,
         });
         this.curPsp = pspSeg;
-        this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop);
+        this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop ?? DEFAULT_ALLOC_TOP);
         this.memTrim();
         this.imageTop = info.minTop;
         this.transfer = {
