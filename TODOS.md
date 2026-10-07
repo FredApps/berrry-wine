@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Browser8 authentic USER87 handle87/resource102 returns missing immediately; main0713557f. Original SETUPL lookup can be short-circuited by generic named GetModuleHandle fallback returning taskDS. Worker implementing focused module-lookup fix/regression; causal branch not yet runtime-proven.
+  Next: Generic named GetModuleHandle fix passes exact before/candidate realNE controls and actual WinExec childboot identity test. Worker prepares targeted full mandatory build closure; no fixed-game rerun yet. Actual resource102miss documented0713557f.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Current-main f1de/module992a reproduces invalid CS ASCII; stack evidence634a2833 traces native seek wrapper. Original packed-resource handles are13byte records and may be misclassified as native FILE. Root read-only handle/mode/callback capture prepared to distinguish types; no bypass.
+  Next: Actual current-main capture proves valid13byte packedhandle misclassified as FILE: mode4 tests high entrypointer byte7e &20. Mainba0d12e4. Root investigates generic allocation placement/pending-reservation collision safety; no lock bypass, data corruption claim, or reduced-capacity production workaround.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1232,7 +1232,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Corrected private dropdown/select guard passes6tests. Actual attempt2 running currentf1de/module992a: hardware IntegrityCheck modal acknowledged ordinarily, then sound prompt and AlphaDemo launcher. Worker tests ordinary Start; runtime45036 deadline13:13:55Z. No gameplay yet.
+  Next: Actual ordinary Start fails IntegrityCheck; source maps D3D7 EnumDevices descriptor to missing per-stage filter flags. Worker prepared9line truthful point/linear caps fix +actualcallback regression, serialized120sec before/candidate test granted. No race/gameplay; evidencec2e62340.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
@@ -1242,5 +1242,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: EXEC environment repair revealed allocator MCB header overwriting child filename (observed C:\IZ). Candidate31758370 fixes generic header boundary, passes20groups incl actual AH4A byte preservation. Final terminate+original native installer retry queued; no mainrepair or gameplay.
+  Next: Generic EXEC/MCB repair integrated51e3e748 +browserbundlesa94e97b3;20contracts+4native tests+browser-shaped COMPASS. Authenticinstaller nowopens INSTALL.BIN; next AH5A temp-file call unsupported despite successful XMS. Separate14d0abbf AH5A candidate passes12contracts, rootreview and native retry next.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
