@@ -64,7 +64,20 @@ the sole cause; the actual exception address and API cause remain unknown.
 An immediate Ctrl+P chord did not open preferences; holding the ordinary
 chord for 350 ms did. No guest state or callback return was changed.
 Evidence: `scratch/runs/20261007-winamp-milkdrop-complete-closure/` (39 hashed
-artifacts plus index/result). Four shell32 fallback URL errors remain in the
+artifacts initially; later logs and static scope evidence bring the index to
+43). Four shell32 fallback URL errors remain in the
 raw receipt. Browser and server closed, Chrome exited zero, streams drained,
 and actual driver 123703 / Chrome 123715 were absent at 22:45:59 UTC. No
 visualization, FPS or audio-quality qualification follows from this run.
+
+Static original-host inspection narrows the intended exception scope. Winamp
+function `0x440330` registers the scope table at `0x446af8`. Scope index 1 has
+filter `0x440623` and handler `0x440629`, which displays the observed `(2)`
+string at `0x44dda8`. The protected call at `0x4405f4` invokes offset `+0x92c`
+of the module pointed to by `0x458c78`; the preceding `+0x928` and following
+`+0x930` callbacks have separate scopes. This identifies where the host intends
+to catch this error, not the runtime fault address or proof of correct SEH
+routing. Preserve that distinction when capturing the actual exception.
+The exact original EXE hash, table words and instruction-aligned disassembly
+are retained as `host-exception-scope.json` and
+`host-exception-scope-disassembly.txt` in the complete-closure run.
