@@ -34,3 +34,19 @@ benchmark, fixture modification or public deployment occurred. Next capture the
 actual plugin exception and relevant loader/API outcomes on unchanged originals,
 then repair the demonstrated generic defect. Do not substitute a Winamp 5 host
 or claim that a blank MilkDrop window is rendered visualization.
+
+## Loader audit correction
+
+The subsequent source-only audit found a concrete harness omission: local
+`test/binaries/dlls/comctl32.dll`, `test/binaries/dlls/msvcrt.dll` and
+`test/binaries/tlbs/stdole2.tlb` exist but were not served. Running the exact
+browser `resolveDllGraph` and registered URL lookup over the unchanged originals
+selects five native modules: the three visualizer seeds plus COMCTL32 and MSVCRT.
+Those two DLLs and the standard type library add 871,477 bytes. The recorded
+illegal-operation result therefore describes a restricted fixture environment,
+not the full local launch environment. Repeat with this normal loader closure
+before attributing the exception to an emulator defect. No host substitution,
+new download or registry override is needed. Shell32/Ole32 lack URL mappings in
+this graph; that is distinct from the two available native DLLs omitted by the
+harness. Receipts: `dependency-audit.json` in the run and
+`scratch/winamp-visualization-20261007/loader-closure.json`.
