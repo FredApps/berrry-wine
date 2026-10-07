@@ -83,6 +83,17 @@ async function main() {
   e.placement_release(low);e.placement_release(high);
   assert.equal(count(),0);
 
+  // MEM_TOP_DOWN must find the highest free address even when a lower live
+  // tenant pins the internal downward cursor beneath a released top block.
+  e.placement_reset();
+  const topA=e.placement_alloc(65536,0x102000)>>>0;
+  const topB=e.placement_alloc(65536,0x102000)>>>0;
+  assert.equal(topA,top-65536);assert.equal(topB,top-2*65536);
+  assert.equal(e.placement_release(topA),1);
+  const topC=e.placement_alloc(65536,0x102000)>>>0;
+  assert.equal(topC,topA,'MEM_TOP_DOWN reuses the highest gap above a live tenant');
+  e.placement_release(topB);e.placement_release(topC);
+
   // Adjacent independent allocations may have adjacent backing but distinct
   // lifetime. Freeing one cannot clear its neighbour.
   e.placement_reset();

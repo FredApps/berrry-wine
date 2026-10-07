@@ -116,7 +116,8 @@ wait now report "not EnterCriticalSection"/"missing lock argument"; these are
 expected observer limitations, not new guest failures.
 
 Two screenshots were retrieved and hash-verified, identical content,
-505,129 bytes each. **Root screenshot review is pending.** This is progress
+505,129 bytes each. Root reviewed settled.png at21:30:42Z: real Settings with
+English,640x48016bits,GeForce, and OK/Quit controls. This is progress
 past allocation failure to startup settings; no menu, player-controlled
 gameplay, audio, FPS or performance result is claimed. Next step is root review
 of the settings capture and the ordinary settings/launch input route.
@@ -129,3 +130,19 @@ stop/delete it. Evidence:
 `scratch/arx-allocation-fixed-20261007/remote-bx_d8nw3e8t/` contains both
 screens, owner rows,357pins, producer manifest, logs and terminal receipts.
 Root owns integration and publishing; shared HEAD/index were untouched.
+
+## Final highest-address correction
+
+Root review caught a real semantic distinction: guest MEM_TOP_DOWN must start
+at the address-space ceiling even when the internal descending cursor is
+lower. The guest API now selects highest-gap mode2; internal reservations
+retain cursor mode1. The new regression allocates topA/topB, releases topA,
+and requires topC==topA while topB remains live. Pre-review commit3c48c2f5
+fails that exact assertion; corrected source passes.
+
+The final mandatory build and all ten suites pass again. All twelve process
+groups (including the named negative control) exited0 and were verified absent.
+Final module SHA256 `7c6864f8e224a0d42c6743b3c088ce79349101182295b79b1e4fa8a4c3911cc0`, 1720920 bytes;
+logs/receipts `scratch/arx-crt-origin-20261007/validation/attempt3/`.
+The earlier ordinary settings capture above used the pre-review module; final
+module remote validation is queued behind Q2 and is not yet claimed.
