@@ -385,3 +385,39 @@ The next source question remains the normal SETUPL load and actual DialogBox102
 selection/return. Repeating the same early32-frame interval would not answer
 it. This capture neither establishes missing DialogBox execution nor a modal
 failure, and supplies no gameplay qualification.
+
+### 2026-10-07: actual DialogBox102 resource miss
+
+Attempt8's reviewed selective parser validated241 frames/2638 scalars, retaining
+three causal frames before the owning destruction import closed tracing. It
+had no unknown scalar, partial frame, or exhausted cap. Actual numeric USER87
+entry supplied hInstance0087/template102 and returnEIP0017313f. Resource trace
+(type5, ID102) returned found0; the paired dispatch return was AXffff at that
+exact EIP with ESPdelta16. This is the source-defined immediate resource-miss
+return, not a completed modal dialog. DS108a/108c still contained0087 at entry.
+The previously authenticated task DGROUP derivation applies; its below0100
+handle-table label must not be mistaken for invalidity.
+
+`scratch/new-game-antara-20261007/attempt8/analysis.json` records the source
+interpretation and `hashes.json` covers44 artifacts. Raw observer SHA is
+`a2f44f7058c07d8cb2b5cfd52fada764917fd41ecf4c7551b149e62a6115bfef`.
+All139 full served-source hashes matched; private Worker was57acc41a and module
+remained992a8b02. The personally reviewed screenshot shows a gray Sierra
+On-Line Setup parent, black area below, and no child controls; no input was
+sent. Both contexts acknowledged trace cleanup. Ordinary close13:02:53.034Z
+had no errors/pending streams, browser/server/recorder closed, driver2687564
+and Chrome2687583 absent, session95723 exit0. No gameplay qualification.
+
+There is now a concrete source candidate for the wrong resource owner. Original
+segment3:10b5 calls GetModuleHandle("setupl.dll"): relocation10b6 is imported
+module1/ordinal47. A nonzero AX skips the LoadLibrary call at10cc (relocation
+10cd, ordinal95), stores the value at object+de, and copies it into DS108c at
+10f6. The frozen emulator's named GetModuleHandle fallback returns current DS
+for an unknown or unloaded module. That can manufacture0087 and suppress the
+normal load. A separate branch at1136 calls LoadLibrary directly. The selected
+trace retained no KERNEL95 during its covered interval, but omitted ordinary
+KERNEL47 frames and did not cover all earlier initialization. Thus the observed
+resource miss is established; this particular branch/cause is not yet proven
+by a captured named lookup. A generic fix requires authentic unknown-name,
+loaded-module, task-name and null/integer-handle controls, not a game-specific
+resource redirect or guessed SETUPL handle.
