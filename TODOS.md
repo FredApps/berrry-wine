@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual LoadResource file-open receives EMPTY path and returns failure; no seek/read, so prior C-root path hypothesis is not the observed cause. Antara prepares bounded descriptor/module/start-record capture; next remote after Tiberian actual cleanup. WM_PAINT reaches original callback; no generic fix or gameplay yet. Evidence 20261007T225022Z-antara-resource-outcomes.
+  Next: Actual module-context capture shows C:\SETUPL.DLL open fails while the original task path remains intact. Worker implements stable resident-module resource paths with lifetime and embedded-NUL checks; focused build/regressions queued after paging yields. Then ordinary remote installer/gameplay validation. Evidence 20261007T230333Z-antara-module-context.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1270,6 +1270,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI tiberian-paint
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Ordinary original run proves persistent blank main menu despite CPU progress; findings dc7bc18e7. Fresh tiberian-paint investigates actual template226 control creation and first painting contracts, then demonstrated generic fix/tests and ordinary gameplay. Remote after Antara; no blind rerun.
+  Next: Remote composition capture proves six menu buttons exist in DX frame but are obscured by grey shared GDI overlay. Worker prepares generic overlay chronology repair and focused regression, followed by ordinary remote gameplay validation. Evidence 20261007-tiberian-composition-preparation; no gameplay qualification yet.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
