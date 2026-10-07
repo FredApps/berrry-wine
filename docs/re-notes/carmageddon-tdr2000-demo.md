@@ -190,3 +190,39 @@ Ordinary attempt3 passed hardware IntegrityCheck, then Sound Settings OK, launch
 Source efb1dba0/tree de4e9522 (same as coordinator62ab2a22), full-gated module d4256f3cd6b085a4acbd8192df7e9d0de8625beb82d10060ac2f27a51d8add74. Private original registration/index overlays only, no diagnostic callbacks or forced guest state. Immutable run: scratch/wt-tdr2000-demo-20261007/scratch/tdr2000-preparation/browser/attempt3. Start13:58:21.615Z, ordinary close14:04:28.221Z; browser/server closed, Chromeexit0, streams0, driver2754631/Chrome2754670 absent. Eleven screenshots3785609B. Request errors remain (aborts/optional lookups); do not call cleanup.errors empty.
 
 All312 complete200 responses match pinned source/original hashes;1204 partial206 and5 recorded404 retained.31 raw artifacts hashed in accompanying handoff. Server-read hashes do not establish client consumption. Earlier preflight-only failure at1.93GB created no browser/output; regrant followed disk recovery without lowering thresholds. Durable local registration/manifest is next; no public deployment.
+
+## 2026-10-07 durable local corpus registration
+
+The registry now points to the stable original installed tree under
+`test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D-installed`, with
+Tdr2000Demo.exe and Mss32.dll explicit. The local candidate list and selector
+option expose the route locally; public DESKTOP_APPS membership is absent.
+The generator excludes those explicit mounts and emits 2,963 companions:
+148 TXT/INI/CFG files required, 2,815 known-size data files lazy. No original
+settings or payload bytes were changed. Gameplay evidence remains commit
+`2e834347` and browser/attempt3 above; this registration adds no gameplay claim.
+
+The earlier 19:26 metadata operation matched the tested rows, but its disk
+preflight failed below 2GiB and the shell continued into the metadata write.
+That was a guard failure, not a successful capacity check; the earlier receipt
+must not be interpreted as proving the disk floor passed. The generator now
+checks available capacity immediately before each metadata write and throws
+on capacity below 2GiB or an unreadable capacity probe. Regression tests mock
+both failures and verify the existing manifest bytes remain unchanged.
+
+Fresh sequential JavaScript orchestration throws on every failed disk check or
+child test before any subsequent step or success receipt. Focused registration,
+app-file policy, and all 11 lazy-loading checks passed; the installed generator
+`--only=carmageddon_tdr2000_demo --check` passed. Exact row comparison against
+the gameplay-tested preparation/browser-manifest.json passed after normalizing
+only URL `./` prefixes and drive-letter case; paths, sizes and modes agree.
+Available capacity was 3,399,299,072 bytes before and after the batch. Receipt:
+preparation/registration-validation-fail-closed.json. The broader selector
+suite fails on 20 unrelated missing local options, reproduced on unchanged HEAD;
+TDR's option is asserted in the focused test. No build or browser ran.
+
+Root must review/integrate this scoped commit into main. Any public release
+still needs explicit distribution/deployment authorization and release asset
+review. FPS, audio quality, independent steering proof and a completed race
+remain unqualified. Future browser validation must use a separate temporary
+box under the current user policy.
