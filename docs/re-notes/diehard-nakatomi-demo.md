@@ -233,3 +233,36 @@ required before interpreting later zeros. Targets distinguish an unconsumed
 queue, session rejection, world-load rejection and committed-session transition.
 Normal quit290s, TERM300s, KILL315s and bounded head/tail logs remain; no runtime
 has been launched for this next plan. Source/pin/guard validation passed.
+
+### 2026-10-07: engine queue consumed; phase attribution still needed
+
+The12-counter diagnostic ran session52046/PID2472917 from09:51:59.902 to
+09:54:23.735Z, stopped by ordinary quit, exit0/streams drained/PID absent/8137
+free. Actual EXE entry4bda68 and cshell basef5f000 matched the source plan.
+Counts: menu constructor477; cshell load setup1; native enqueue4071c6=2;
+update40d5a2=290; consumer40cdfb=2; selected setup failure40cf31=0;
+post-setup40cf51=1; world-load46aaaa=1; selected world-error40cf77/40cfa9=0;
+session commit40d193=1; explicit success return40d22a=1.
+
+Those totals prove queue consumption and one success path somewhere in this
+run, but two requests and only one selected success mean startup versus Easy
+attribution is unresolved. Do not label Easy's load successful or infer the
+other request's error from zeros. The final personally reviewed image remains
+the difficulty screen, without world/control qualification. menu.png is an
+initial black frame; menu-ready.png is main menu, difficulty.png still main
+menu, difficulty-ready.png is the actual difficulty screen.
+
+Evidence root is `scratch/wt-diehard-20261007/scratch/engine-load-diagnostic/attempt1`;
+19 artifact hashes in validation.json, SHA256
+`89c7081c19dbc1ad52ccfc296f7473b58d69f262b452f94d75bc558865060ad9`.
+The full1,491,771-byte log was retained, SHA256
+`44cac5bbb0420c5e98f9078198d07eaab551fb8c4746697629bdead7d9d4dc57`.
+Same8eb module/counter debug-tier caveat; no performance claim.
+
+Existing CLI controlEval at test/run.js:6790 exposes actual `exports` and
+`tickState`; `exports.get_count(i)` is a read of shared counter memory, not a
+CPU-register/shadow query or guest callback. Next preparation can take12
+read-only counter snapshots at the reviewed main menu, immediately before Easy,
+and after Easy/Enter to attribute increments without clearing counters or
+writing guest state. This capability is source-verified, not yet exercised in
+this diagnostic. No further runtime is authorized by these findings.
