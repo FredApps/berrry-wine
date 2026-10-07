@@ -421,3 +421,39 @@ resource miss is established; this particular branch/cause is not yet proven
 by a captured named lookup. A generic fix requires authentic unknown-name,
 loaded-module, task-name and null/integer-handle controls, not a game-specific
 resource redirect or guessed SETUPL handle.
+
+## 2026-10-07: ordinary combined-build installer reaches version error
+
+Ordinary attempt9 used combined source efb1dba0 (served tree3e876257 adds
+validation documentation only), module
+`d4256f3cd6b085a4acbd8192df7e9d0de8625beb82d10060ac2f27a51d8add74`
+(1,719,494 bytes), and only a private app-registration overlay. There were no
+trace/Worker overrides, forced guest calls, or ordinary inputs. Original SETUP
+produced a visible Main Menu and a clipped Setup Version Mismatch dialog with
+OK/Help controls and blank body. Root independently reviewed the screenshot.
+This is installer progression, not gameplay or completed installation.
+
+Evidence: `scratch/new-game-antara-20261007/attempt9/installer-settled.png`,
+its read-only window state, `analysis.json`, and `hashes.json` (17 artifacts).
+All139 complete served source responses matched pins. Session92449 exited0;
+ordinary cleanup13:55:16.974Z closed browser/server, errors[], pendingstreams0,
+Chromeexit0; driver2749016 and Chrome2749135 were absent. No retry occurred.
+
+Authenticated original source narrows the next failure. Original _SETUP SHA
+`a11e70704b15c12424e771a1b7c331396f69644d7cb1f53a7a5b3999f9309bb4`
+segment5 reads SetupVer via KERNEL128 (not a measured runtime argument);
+the exact call opcode is5:340a, relocation5:340b. SIERRA.INF declares3.3.0.0.
+Function5:38b0 initializes its output to0.0.0.1, calls imported VER6 at38ec
+and VER7 at3917, and preserves the fallback when either fails. Comparison
+5:3446..3466 emits string IDs61/62 when the requested string sorts higher.
+Original SOL_ENG resource61 says a newer Sierra Setup is required;62 is the
+observed title. These static strings do not claim the blank body was rendered.
+
+Original _SETUP NE RT_VERSION type16/id1 is at file417648,432 bytes. Its ANSI
+VS_VERSION_INFO root has fixed-info signature at offset20 and actual file
+version3.3.0.0. Current Win16 VER6/7 delegates ordinary named files to
+file_version_resource, whose signature check accepts only PE. That is a
+concrete generic NE resource-reader gap; actual runtime filename/operands
+remain unobserved. Next work is bounded NE version-resource support with
+real-module VER6/7 and existing PE regression coverage, not a forced version
+or skipped comparison.
