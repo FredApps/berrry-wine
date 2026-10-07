@@ -24,3 +24,5 @@ TDR lane completed mainb7cdb5fd: durable original-media corpus registration plus
 Antara version-resource/query repair pushed c7f8c5b4 after full mandatory build/eight suites; fresh antara-browser worker takes remote-only ordinary installer followup after Arx. Comanche readonly diagnostic identified possible upper-EAX loss on16bit seek return; worker validates regression before fix.
 
 Arx remote diagnostic completed with352pins verified and clean browser shutdown; root reviewed startup screenshot. Pointer7ef0b780 is outside all4 published heap arenas; fresh allocation worker investigates actual allocation call/flags. Temporary box retained for Antara.
+
+Comanche repairs pushed4091453a; false memory error removed, later execution source work continues in fresh comanche-startup. Antara remote fb1 retest reaches blank Main Menu without version dialog; root-reviewed, no gameplay, source followup queued (worker stopped). Fresh q2-gl-validation prepares GL27 ordinary world-movement evidence for remote slot after Arx.

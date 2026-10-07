@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-browser (scratch/fresh-workers-20261007)
+  worker: coordinator source queue (no worker running)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic NE resource/query fix pushed mainc7f8c5b4; authenticated original, focused negative control, mandatory build +8NE/PE suites PASS; modulefb1be916. Fresh worker prepares original installer remote-only retest after Arx browser closes. No version override/gameplay claim.
+  Next: Corrected fb1 module remote test passed visible version error but stopped at blank Main Menu with no controls. Root reviewed screenshot; cleanclosure/evidence2e359f00. No installedgame/input/gameplay. Source analysis of post-version-check control creation queued behind active Arx/Comanche lanes.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1239,8 +1239,16 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche (scratch/fresh-workers-20261007)
+  worker: fresh CLI comanche-startup (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Fresh worker takes final AH5A coherent-handle fix/native regressions and bounded readonly original-installer memory-accounting diagnostic. Local native slot follows Antara build completion; Arx remote browser independent. No capacity override.
+  Next: AH5A, coherenthandles and upper-register return repair pushed4091453a; actual memory error gone. Prior dispatch cap covered only4.996guest seconds, so blackscreen is not proven hang. Fresh worker diagnoses later original execution, bounded longer correctness run when Arx releases local slot.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
+
+- [ ] Quake II WebGL ordinary world movement validation
+  id: GLD3D-QUAKE2-TRAVERSAL-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI q2-gl-validation (scratch/fresh-workers-20261007)
+  Next: Prepare pinned current-module original registry route; remote browser follows Arx allocation worker release. Validate ordinary newgame and forward/reverse/idle world displacement, retain captures/cleanup; no weapon-bob-only qualification.
+  Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
