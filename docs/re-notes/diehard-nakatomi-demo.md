@@ -297,3 +297,34 @@ its slot0 destructor with flag1 at40d244 and clears the pointer only at40d246.
 A source-backed next probe should distinguish that destructor's entry/return
 from later allocation/setup, preserving existing wait/thread evidence; no
 engine change is justified yet.
+
+### Easy stalls inside the previous session's nested-object destructor
+
+Session8587/PID2497891 ran10:11:37.780–10:13:39.480Z, normal quit0, streams
+drained/PID absent/8137 free.16-counter phase deltas after Easy establish entry
+to40d233,410c74,40fbe7 and the return landings40fbfb and40fc25. Return40fc40
+and all later destructor returns stayed0, including settled batch309010.
+The interval contains a slot0 call at40fc3e on session+40, after the previous
+manager-detach and451953 calls returned. Final personally reviewed image is
+still difficulty, not gameplay. Evidence root:
+`scratch/wt-diehard-20261007/scratch/early-consumer-diagnostic/attempt1`;
+23 artifact hashes manifest SHA256
+`4c690da96db1288974be402ea65ce007aba508d34b9d2b86918c27ad985e8b24`.
+Full1,470,003-byte log SHA256
+`e159b80b1773b2b6d9a327fb3035979c4f563cfe7bb44ff247d533214609bcc8`.
+Same module/debug instrumentation limitations apply.
+
+Source identity:40fe44 creates the session+40 object via468e2a; its final
+vtable4dfbcc has slot0=46c054, which invokes46c070→469303. This is static
+identity, not yet a live pointer capture.46931d calls440dc5 early in teardown.
+440dc5 conditionally SetEvent(object+bc), calls virtual offset1c, then closes
+the event handle. The native IAT identifies4dd0a4=SetEvent,
+4dd0ac=WaitForMultipleObjects,4dd0b0=CloseHandle.
+
+Final existing thread summary reports T1 at440df9 and T5 at440e2a, both yield1
+and waitH2. Native440e2a calls WaitForMultipleObjects(2, stack array containing
+object+bc and object+6c, FALSE, INFINITE). Thus2 is a handle count, not evidence
+of invalid handle2. The next causal question is stop-event identity/signaling
+and the virtual1c join ownership; current counters alone do not prove a lost
+signal, wrong wait result or thread-manager defect. Preserve this boundary and
+obtain bounded actual event/wait evidence before changing engine behavior.
