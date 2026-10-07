@@ -191,3 +191,26 @@ re-run of the 44 apps above (`scratch/runs/20261006T1715Z-threads-slice-parity/`
 40 unchanged, Hype reaches its main menu, `dungeons_of_dredmor_release` and
 `ut2004_demo` now match their coop picture, `liquid_war` goes blank to content,
 and nothing gained a crash, an exit or lost audio.
+
+## October 7 reconciliation of later evidence
+
+The 271-app table is the dated startup sweep, not an all-gameplay pass.
+`e4145fe2` fixed the Hype CLI worker-slice mismatch; its 44-app rerun above
+remains the supporting evidence. Later investigation of the picture-only
+splits is retained in
+`scratch/runs/20261006T1850Z-threads-picture-splits-w6/result.json`:
+
+- Equal-batch CLI captures of icy_tower, deus_ex_demo and
+  dungeons_of_dredmor_release agree; equal wall time captured different boot
+  progress. NFS II reached its menu on the follow-up.
+- The cooperative no-capture cases exhausted disk with PCM output before
+  writing their PNGs. `e5dd0201` adds bounded audio capture and records batch
+  counts; `f25d2208` repairs Range handling in the browser probe server.
+- The retained page checks show Threads-on Deus Ex, Icy Tower and NFS II,
+  plus cooperative Tile World and the Dredmor beta launcher. Dredmor release
+  was not page-checked in that run. These are startup/rendering checks.
+
+The old feed and CreatePipe prerequisites must not be reimplemented: the
+feed and full sweep landed, and WinBoard now has real pipe/child support.
+Browser gameplay, sound correctness beyond the limited sweep signal and
+rows with missing fixtures remain separate obligations.

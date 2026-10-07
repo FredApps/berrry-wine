@@ -15,3 +15,18 @@ The original 27-file payload was mounted and the normal `-cp -fcp GNUChess -scp 
 Source audit against main a15d5e46 confirms CreatePipe and PeekNamedPipe are crash stubs (src/09a0b-handlers-base-late.wat). CreateProcessA there launches through host_shell_execute with no STARTUPINFO standard-handle transport or inheritance processing, then returns fixed process/thread identities. DuplicateHandle handles console/file cases, not a real anonymous-pipe endpoint namespace. The source-known prerequisite is broader than the first observed trap; no claim is made that these later APIs were reached.
 
 Prerequisite PROCESS-PIPE-STDIO-WINBOARD: implement real anonymous pipe endpoints, ordered byte transfer, blocking/wakeup, partial reads, EOF/broken-pipe and endpoint refcounts; integrate ReadFile/WriteFile/CloseHandle/GetFileType/DuplicateHandle, inheritance flags and genuine child launch STARTUPINFO std handles/process lifetime. Validate cross-process parent/child roundtrip and closure in both supported thread backends, sparse output/error/ABI contracts, then normal WinBoard human move and authentic GNUChess reply. Do not substitute protocol answers, remove GNUChess, or return success for missing transport. This architectural prerequisite is separate from game screenshot coverage.
+
+## October 6 follow-up: real engine play and browser repaint
+
+The blocked October 5 observation above is historical. Pipe endpoints and
+child stdio/process support subsequently landed. Retained CLI evidence at
+`scratch/runs/20261006T0820Z-winboard-move2/result.json` records ordinary
+`1.e4` and an authentic GNUChess reply. The later Threads-on browser route
+(`scratch/runs/20261006T1420Z-winboard-web-threads/result.json`) shows
+`1.e4 e6`; its `board.png` has an empty e2 square, the white pawn on e4 and
+Black's last-move highlight on e7/e6. The child is the original GNUChess
+process with piped standard handles, not an injected engine response.
+
+Commit `2dab96f8` fixes the remaining cross-Worker SendMessage/repaint wait.
+The retained screenshot and result were reviewed again on October 7. No new
+run or FPS measurement was performed during that reconciliation.

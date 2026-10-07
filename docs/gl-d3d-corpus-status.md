@@ -6,6 +6,12 @@ it (task GLD3D-CORPUS-27-20261006). The D3DRM family's fixes and reruns belong t
 w4 (claude:65967384, `docs/re-notes/plus98-dx-screensavers.md`); its rows here
 point at that work.
 
+Reconciled on **2026-10-07** against main `30f1e268`. This preserves the dated
+measurements below; it is not a new full-corpus run. Tomb Raider III and
+Half-Life Uplink have later retained browser evidence that supersedes their
+earlier failures. Menu, loading, excluded and unmeasured rows still do not
+prove the user's full software-and-WebGL gameplay goal.
+
 ## How the set was measured
 
 `node tools/gfx-app-census.js --family=gl,d3drm,d3dim,d3d8,d3d9 --list` (fixed in
@@ -33,10 +39,11 @@ screenshot cited was looked at.
   browser or headless-GL verification from the app's re-notes and are not a
   measurement at this build. The DirectAnimation saver scr_corbis also draws
   its photo grid on WebGL there.
-- **Tomb Raider III in the page:** the title renders on WebGL, and the
-  route's Enter presses reach the guest (WM_KEYDOWN 0x0D logged) after a focus
-  click, yet the page never leaves the title the way the CLI does. That is an
-  input difference, not a rendering one; left as a follow-up.
+- **Tomb Raider III follow-up:** the later page route reaches Jungle and
+  ordinary Up input moves Lara toward the cave. The earlier title-only result
+  was route timing: Enter must reach the title ring before its attract demo,
+  then wait for the passport animation. See `48ffb5e5` and
+  `scratch/runs/20261006T2030Z-tr3-web-title-input/result.json`.
 - Each run is capped at 120 s, so "menu" or "loading" for a slow game means the
   cap, not a defect, unless a blocker is named.
 
@@ -46,7 +53,7 @@ screenshot cited was looked at.
 |---|---|---|---|---|
 | blood2_demo | D3DIM (Device3) | **gameplay** | **gameplay** (2026-10-06, browser; in-level, HUD 100/50; `scratch/runs/20261006T1840Z-gld3d-webgl`) | — |
 | tomb_raider_2_demo | D3DIM (Device2) | **gameplay** | **gameplay** (2026-10-06, browser; Venice alley) | — |
-| tomb_raider_3_demo | D3DIM (Device2) | **gameplay** | title (2026-10-06, browser, D3DIM on WebGL); Enter reaches the guest but the page route does not leave the title -- input, not rendering (see note) | — |
+| tomb_raider_3_demo | D3DIM (Device2) | **gameplay** | **gameplay** (2026-10-06, later browser route; Jungle and ordinary movement, `scratch/runs/20261006T2030Z-tr3-web-title-input`) | Earlier title result superseded by route timing correction `48ffb5e5`; no input repair needed. |
 | gta2_demo | D3DIM (Device3) | **gameplay** | **gameplay** (2026-10-06, browser; city map, HUD) | — |
 | mw3 | D3DIM (Device3) | **gameplay** (cockpit) | menu (2026-10-06, browser, no input; an Escape in the page's timing QUITS the demo, exit 3); gameplay (2026-09-20) | route: Escape at batches 10-41 skips the Zipper intro |
 | diablo2_demo | D3DIM (Device3) | menu (hero select) | menu (2026-10-06, browser; Single Player / Exit) | gameplay needs > 120 s |
@@ -56,7 +63,7 @@ screenshot cited was looked at.
 | mcm | D3DRM over Device2 | **gameplay** (race) | gameplay (2026-09-20); not re-run (long route) | w4 |
 | dx_globe / dx_viewer | D3DRM | **renders** | **renders** (2026-10-06, browser) | globe texture seam (w4) |
 | scr_architec, fallingl, geometry, jazz, oasaver, rockroll, scifi | D3DRM | **renders** (w4 rerun at `--tick-ms-per-batch=2`) | **7 savers render** (2026-10-06, browser; fallingl dark leaves and oasaver green field as on software) | fallingl black leaves, oasaver stray box: w4 |
-| halflife_uplink | OpenGL | **gameplay** (corridor + HUD) | **black at 60 s** (2026-10-06, browser: 640x480 window + 320x240 child, main thread idle in GetMessage); gameplay (2026-09-23) -- regression to chase, follow-up row | route: clicks at 8000/9500 on this box |
+| halflife_uplink | OpenGL | **gameplay** (corridor + HUD) | **gameplay** (2026-10-06, lazy-file browser route after `5f4bac8c`; `scratch/runs/20261006T2100Z-hl-uplink-lazy-mci/4-gameplay-webgl-lazy.png`) | MCI lazy park now waits for IO; subclassed dialog buttons receive queued mouse input. Earlier black result superseded. |
 | simgolf_demo | OpenGL | **gameplay** | **gameplay** (2026-10-06, browser; course + build bar) | — |
 | quake2_demo | OpenGL (ref_gl) | menu | menu (2026-10-06, browser, no route); gameplay (2026-09-23, browser) | level load ~300 s, past the cap |
 | warcraft3_demo | OpenGL | **menu** after `579ee802` (was blank) | **menu** (2026-10-06, browser) | fixed today: a second SetPixelFormat of the same format was refused, so WC3 never made its real context |
@@ -107,11 +114,19 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
    (~110 batches here), so a press must be held across several frames.
 3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
    reach gameplay only past the 120 s cap on the software arm.
-4. **WebGL column at this build**: needs browser grants, one app at a time.
+4. **Remaining WebGL coverage**: the October 6 spot checks and later TR3/Uplink
+   follow-ups are retained above. Pirates is unmeasured, heavy titles remain
+   excluded, and several rows only prove menus or rendering. Do not reopen
+   completed spot checks or mark the overall gameplay goal complete.
+5. **D3DIM PBO warning**: `D3DIM-ASYNC-PBO-WARN-20261006` remains ready. The
+   MW3 warning needs a live readPixels/fence/readback trace before any buffer
+   reuse repair; it is not proof of visible corruption. Performance comparisons
+   belong on a separate boat.
 
 Outside the 3D set but found here: the DirectDrawFactory IID typo (fixed
 `fa4be36a`; the theme savers then run the existing DirectAnimation shim, frames
 unverified until their JPGs can be decoded: skia-canvas's native binary is
-missing on this box, browser check requested); aoe2's Unicode IDirectPlay4
+missing on this box at the software sweep; the later browser photo-grid
+check is recorded above); aoe2's Unicode IDirectPlay4
 QueryInterface (handed to the AoE lane on the board); `PathAppendA` for
 dungeons_of_dredmor (fixed by w5 `5ca54afc`).

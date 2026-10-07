@@ -73,8 +73,11 @@ was waiting for input), which is the normal state of a GUI app at rest.
 
 ## Open, with what is known
 
-- **winboard** — `CreatePipe`: no pipe object exists in the emulator; WinBoard
-  wants anonymous pipes to a chess-engine child. Needs a real pipe handle type
-  with ReadFile/WriteFile/PeekNamedPipe, not a stub.
+- **WinBoard follow-up resolved on October 6:** the CreatePipe row above is
+  historical. Real anonymous pipes, inherited child standard handles and
+  process support landed; the original GNUChess responds to an ordinary human
+  move. The later Threads-on browser capture shows `1.e4 e6` with no stale e2
+  pawn (`2dab96f8`, `scratch/runs/20261006T1420Z-winboard-web-threads/result.json`).
+  Do not restart the removed CreatePipe prerequisite from the early sweep.
 - `exit:0` rows were not reviewed; installers exiting 0 at startup may be
   legitimate (already-installed checks).

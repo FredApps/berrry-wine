@@ -1151,3 +1151,17 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Host-write repair on maina1710870; focused before/candidate, fullbuild gates and existing Worker regression PASS. First Threads-on browser attempt failed in test-server setup (allowlist omitted registered drakan.exe and stdole2.tlb; assets are present), no guest input. Source launch-closure correction and one fresh600sec Threads-on retry authorized; Threads-off acceptance follows separately. No public deployment.
   Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
   Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
+
+
+## GL/D3D reconciliation — October 7
+
+- [ ] GL/Direct3D corpus: every 3D app works on software and WebGL
+  id: GLD3D-CORPUS-27-20261006
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
+  created: 2026-10-06T02:09:48.337Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: October7 reconciliation: later main48ffb5e5 TR3 Jungle/movement and5f4bac8c Uplink lazy/WebGL gameplay supersede stale failures; root reviewed retained images. Keep aggregate active: menus/loading/excluded/unmeasured rows do not prove full software+WebGL gameplay. Remaining Pirates WebGL/resource route, heavy titles/Winamp fixture identification, longer gameplay routes, and separate D3DIM PBO warning. No redundant sweep or screenshot run.
+  Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
+  Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
