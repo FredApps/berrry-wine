@@ -7652,6 +7652,15 @@
     (i32.store (local.get $wa) (i32.const 0x02A50))                         ;; dwDevCaps
     (call $fill_primcaps (i32.add (local.get $desc) (i32.const 4)))          ;; dpcLineCaps
     (call $fill_primcaps (i32.add (local.get $desc) (i32.const 60)))         ;; dpcTriCaps
+    ;; DX7 texture-stage filters have distinct MINF/MAGF bits. The legacy
+    ;; 0xFF filter mask alone advertises none of them. Both the software sampler
+    ;; and GPU fixed-function descriptor implement point/linear; do not claim
+    ;; anisotropic or mip-stage support. Leave legacy D3D1/2/3 caps unchanged.
+    ;; MINFPOINT | MINFLINEAR | MAGFPOINT | MAGFLINEAR = 0x03000300.
+    (i32.store offset=40 (local.get $wa)
+      (i32.or (i32.load offset=40 (local.get $wa)) (i32.const 0x03000300)))
+    (i32.store offset=96 (local.get $wa)
+      (i32.or (i32.load offset=96 (local.get $wa)) (i32.const 0x03000300)))
     (i32.store (i32.add (local.get $wa) (i32.const 116)) (i32.const 0xD00))  ;; DeviceRenderBitDepth
     (i32.store (i32.add (local.get $wa) (i32.const 120)) (i32.const 0x500))  ;; DeviceZBufferBitDepth
     (i32.store (i32.add (local.get $wa) (i32.const 124)) (i32.const 1))      ;; dwMinTextureWidth

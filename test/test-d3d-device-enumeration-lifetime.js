@@ -68,12 +68,14 @@ const extraWat=String.raw`
       if(version!==7) {
         const guid=e.guest_read32(sp+4), hw=e.guest_read32(sp+16), hel=e.guest_read32(sp+20);
         assert.strictEqual(e.guest_read32(hw),252);assert.strictEqual(e.guest_read32(hel),252);
+        for(const desc of [hw,hel]) for(const offset of [80,136]) assert.strictEqual(e.guest_read32(desc+offset),0xFF,'legacy filter caps unchanged');
         assert.strictEqual(e.guest_read32(guid)>>>0,{ramp:0xf2086b20,rgb:0xa4665c60,hal:0x84e63de0}[item.name]);
         assert.strictEqual(e.guest_read32(hw+8),item.name==='hal'?2:0);
         assert.strictEqual(e.guest_read32(hel+8),item.name==='hal'?0:item.name==='ramp'?1:2);
       } else {
         const caps=e.guest_read32(sp+12);
         if(item.name==='hal')assert.strictEqual(e.guest_read32(caps),0x8aea0);
+        for(const offset of [40,96]) assert.strictEqual(e.guest_read32(caps+offset),0x030003FF,'D3D7 callback point/linear stage filter caps');
       }
       e.resume(sp,version,cycle%2?0:1);
     }
@@ -108,6 +110,13 @@ const extraWat=String.raw`
     emit(outerCb,[
       0x8b,0x44,0x24,outerArg, // mov eax,[esp+context]
       0xff,0x00,              // inc dword [eax]
+      // Read the actual callback descriptor before nested enumeration can run:
+      // DX7 caps arg is +12; legacy hardware descriptor arg is +16.
+      0x8b,0x54,0x24,outer===7?12:16, // mov edx,[esp+caps]
+      0x8b,0x8a,...le32(outer===7?40:80), // mov ecx,[edx+line filter]
+      0x89,0x48,0x0c,         // mov [context+12],ecx
+      0x8b,0x8a,...le32(outer===7?96:136),
+      0x89,0x48,0x10,         // mov [context+16],ecx
       0x89,0x60,0x04,         // mov [eax+4],esp (before nested call)
       ...callEnum(inner,innerCb,innerCtx),
       0x8b,0x44,0x24,outerArg,
@@ -134,6 +143,7 @@ const extraWat=String.raw`
     assert.strictEqual(e.guest_read32(outerCtx),outerCount,label+' outer callbacks');
     assert.strictEqual(e.guest_read32(innerCtx),outerCount*(cancel?1:count(inner)),label+' inner callbacks');
     assert.strictEqual(e.guest_read32(outerCtx+4),e.guest_read32(outerCtx+8),label+' nested stack');
+    for(const offset of [12,16]) assert.strictEqual(e.guest_read32(outerCtx+offset),outer===7?0x030003FF:0xFF,label+' actual x86 callback filter caps');
     assert.strictEqual(e.live(),guestBaseline,label+' allocation balance');
   }
   console.log('PASS 32 real x86 nested enumeration cases through COM and continuation thunks');
