@@ -196,3 +196,40 @@ Module remains prior reviewed8eb283c1 (1,719,085bytes), with the fixed JS bridge
 and local registration; no rebuild or claim of latest-main module. Counter
 instrumentation changes debug/chaining behavior even without --no-uop; this was
 an activation diagnostic, never a performance measurement.
+
+### Deferred engine load contract (source-only, same original binaries)
+
+Original lithtech.exe SHA256
+`e2e236582ee26d81ace32017c366abc380ca3a4b9b0e45c0d3338d9966295e24`
+(1,114,170bytes) has preferred base400000; the diagnostic's actual PE entry
+4bda68 agrees. Engine table initialization406b6c stores4071c6 at offset20.
+4071c6 sets the object at global4fe3e4's first DWORD to1, copies0x47e DWORDs
+(0x11f8bytes) from its sole caller-cleaned request argument into object+4, and
+returns EAX0. This is enqueueing, not successful world initialization. The live
+indirect target still needs a positive entry observation; static assignment is
+not a captured target value.
+
+The cshell request constructor10024440 initializes type4.10024620–100246a4
+builds world name `worlds/39-1` at offset4 (prefix at1006a0f8); offsets11e8/11ec
+hold game-data pointer/length0x98, and11f0/11f4 hold `GameStartPoint0` pointer
+and16bytes including its terminator. The request is copied before returning,
+so the native engine does not retain this particular stack structure.
+
+Update40d5a2 checks the queued flag at40d964 and invokes40cdfb at40d96e.
+The consumer clears the flag at40ce16; session setup40fcd5 has a nonzero failure
+path40cf31. A nonempty world name reaches46aaaa at40cf6e. Its nonzero result
+takes40cf77, gathers an error string, reports code31, and reaches40cfa9.
+The original diagnostic strings are `error loading world`, `LT_SERVERERROR`,
+and `CClientMgr::StartShell`. The alternate path40d193 installs the session;
+40d22a explicitly produces return0. Those branches have not yet been observed
+in the game. No missing asset or emulator repair follows from static code alone.
+
+Fresh source-only diagnostic READY is
+`scratch/wt-diehard-20261007/scratch/engine-load-diagnostic/READY.json`.
+Launcher08df07e9 uses12 counters (supported maximum16), same registered app,
+unchanged8eb module and ordinary route; no observer or guest writes. Positive
+menu constructor, queue entry and matching fresh EXE/cshell relocation are
+required before interpreting later zeros. Targets distinguish an unconsumed
+queue, session rejection, world-load rejection and committed-session transition.
+Normal quit290s, TERM300s, KILL315s and bounded head/tail logs remain; no runtime
+has been launched for this next plan. Source/pin/guard validation passed.
