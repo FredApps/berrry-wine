@@ -13,3 +13,7 @@ Correction to initial log skim: the log includes NUL print bytes, so text search
 Original inner MZ image offset05ed plus original CS0385 yields the code image; actual CS0540 matches the retained trace. Static continuation 7538 calls75ee (free-space/seek), then7543 computes available memory. Startup4798 calls745e and47a2 calls843c. At8474 a subtraction updates dword[3538]; carry at8479 branches to840d, which selects error string36e5. These are authenticated original instructions, not captured branch execution or runtime operand values. A next diagnostic should capture the owning real-mode data values around this subtraction, rather than change XMS capacity or repeat inputs.
 
 Contract reference: https://www.pcjs.org/documents/books/mspl13/msdos/encyclopedia/section5/ (Function5AH).
+
+Fresh origin/main-based review and native validation now confirm a separate
+generic interrupt word-return defect behind the later memory error. See
+[the tested repair and remaining installer blocker](comanche3-memory-repair-20261007.md).
