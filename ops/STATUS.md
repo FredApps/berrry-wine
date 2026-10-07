@@ -1,13 +1,13 @@
-updated: 2026-10-07T22:11:56.855Z
+updated: 2026-10-07T22:20:37.286Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: fresh arx-fault, antara-dialog and toyvm-paging-integrate. Arx intro exits unhandledAV beforemenu; next actual owning fault capture. Antara original modal caller authenticated; next dialogproc/message/asset analysis. Root Winamp ordinary playback/Start opens MilkDrop then illegaloperation, no visualization; remote released22:10:25 to Arx then Antara. Paging full integration remains active, foundation alone not merged.
+Current workers: antara-dialog, darkstone-gameplay and toyvm-paging-integrate. Arx diagnostic worker stopped after automated safety rejection; root collected existing output and verified remote cleanup, no rejected-work retry. Antara receives browser, corrected root Winamp follows, then Darkstone. Paging full integration continues; root reproduced softwareINT14 error-frame bug for worker correction.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
 Quake II WebGL ordinary Game/Easy/forward/reverse/idle traversal qualified main2534731b3, root personally reviewed worldlandmarks. Sixscreens/38artifacts self-contained; Telegram860/861 sent. FPS/audio/network unqualified,16ancillaryVLANrefusals preserved. GL27 stillincomplete: softwareQ2menu, otherlongroutes/heavytitles/Winamphost remain. Fresh toyvm-paging worker replaces finishedQ2thread and owns nextlocalcorrectness slot; CR3 baseline actualguesttest preserved3007158e9.
 
-Two new-game lanes: Arx fault investigation and Antara dialog initialization. Previous workers exited0 with findings7fa62abf7/0951fac87; fresh successors launched. Neither has gameplay qualification. TDR2000 remains completed; no new FPS/audio claims.
+Two new-game lanes: Antara callback investigation and Darkstone ordinary-gameplay refill. Darkstone is nonpublic and current task unqualified; fresh worker must audit latest evidence before runtime. Arx held after rejected diagnostic, introAV unresolved. TDR2000 completed; no new FPS/audio claims.
 
 Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
 

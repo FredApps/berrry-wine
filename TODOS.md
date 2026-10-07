@@ -1217,11 +1217,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Arx Fatalis demo (original local MSI/CAB media)
   id: NEW-GAME-ARX-FATALIS-DEMO-20261007
-  status: active
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI arx-fault (scratch/fresh-workers-20261007)
+  worker: none; arx-fault exited1
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Allocation repaired; ordinary intro now exits unhandledAV0xC000DE05 beforemenu. Fresh actual-owning SEH fault capture then generic fix; remote after Winamp release. Findings7fa62abf7; no gameplay.
+  Next: Automated possible-cybersecurity-risk rejection stopped diagnostic; no retry/rephrase. Root cleaned remote and preserved scratch/runs/20261007-arx-diagnostic-interrupted. Prior introAV unresolved; Darkstone refills lane.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
