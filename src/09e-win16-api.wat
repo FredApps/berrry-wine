@@ -2715,15 +2715,53 @@
         (call $win16_res_desc_from_handle (call $win16_arg16 (i32.const 0)))))
     (call $win16_api_return (i32.const 4)))
 
+  ;; Return a stable guest pathname for a resident dynamic module. The host
+  ;; recorded the selected VFS file at staging; a WinExec task also has its
+  ;; private saved filename. Neither needs the shared Win32 scratch buffer.
+  (func $win16_res_file_path (param $module i32) (result i32)
+    (local $id i32) (local $path i32)
+    (if (i32.eqz (i32.and (local.get $module) (i32.const 0x10000)))
+      (then (return (i32.const 0))))
+    (local.set $id (i32.and (local.get $module) (i32.const 0xFFFF)))
+    (local.set $path (call $win16_dll_path_guest (local.get $id)))
+    (if (local.get $path) (then (return (local.get $path))))
+    (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
+                 (i32.eq (local.get $id) (global.get $win16_task_module)))
+      (then
+        (local.set $path (i32.sub
+          (i32.add (call $win16_task_start_slot (global.get $win16_task_slot)) (i32.const 0x98))
+          (global.get $GUEST_BASE)))
+        (if (call $gl8 (local.get $path)) (then (return (local.get $path))))))
+    (i32.const 0))
+
+  (func $win16_path_copy (param $src i32) (param $dst i32) (param $size i32) (result i32)
+    (local $i i32) (local $c i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $size)))
+      (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $c))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0))
+    (local.get $i))
+
   ;; Build C:\NAME.DLL for an app-local module into a guest buffer. The name
   ;; is the same Pascal string the loader registered for LoadLibrary.
   (func $win16_res_module_path (param $module i32) (param $path i32) (result i32)
     (local $id i32) (local $slot i32) (local $n i32) (local $i i32)
+    (local $source i32)
     (if (i32.eqz (i32.and (local.get $module) (i32.const 0x10000)))
       (then (return (i32.const 0))))
     (local.set $id (i32.and (local.get $module) (i32.const 0xFFFF)))
     (if (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
       (then (return (i32.const 0))))
+    (local.set $source (call $win16_res_file_path (local.get $module)))
+    (if (local.get $source)
+      (then
+        (drop (call $win16_path_copy (local.get $source) (local.get $path) (i32.const 260)))
+        (return (i32.const 1))))
     ;; A task WinExec started is an EXE, not NAME.DLL, and was started from
     ;; wherever its command line said (Civ2's PEDIA\GET_INFO.EXE).
     (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
@@ -2775,13 +2813,16 @@
     (if (i32.and (i32.ne (local.get $desc) (i32.const 0))
           (i32.ne (call $win16_res_desc_find (local.get $desc)) (i32.const 0)))
       (then
-        (local.set $path (global.get $GUEST_STACK))
-        (if (i32.eqz (call $win16_res_module_path (local.get $module) (local.get $path)))
+        (local.set $path (call $win16_res_file_path (local.get $module)))
+        (if (i32.eqz (local.get $path))
           (then
-            (call $win16_call32_begin (i32.const 3))
-            (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
-              (i32.const 0) (i32.const 0) (i32.const 0))
-            (call $win16_call32_end)))
+            (local.set $path (global.get $GUEST_STACK))
+            (if (i32.eqz (call $win16_res_module_path (local.get $module) (local.get $path)))
+              (then
+                (call $win16_call32_begin (i32.const 3))
+                (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
+                  (i32.const 0) (i32.const 0) (i32.const 0))
+                (call $win16_call32_end)))))
         (call $win16_call32_begin (i32.const 2))
         (call $handle__lopen (local.get $path) (i32.const 0)
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -2856,9 +2897,13 @@
             (if (local.get $sel)
               (then
                 (local.set $buf (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
-                (if (call $win16_res_module_path (local.get $module) (global.get $GUEST_STACK))
+                (local.set $path (call $win16_res_file_path (local.get $module)))
+                (if (i32.eqz (local.get $path))
                   (then
-                    (local.set $path (global.get $GUEST_STACK))
+                    (if (call $win16_res_module_path (local.get $module) (global.get $GUEST_STACK))
+                      (then (local.set $path (global.get $GUEST_STACK))))))
+                (if (local.get $path)
+                  (then
                     (call $win16_call32_begin (i32.const 2))
                     (call $handle__lopen (local.get $path) (i32.const 0)
                       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -2982,6 +3027,7 @@
     (local.get $i))
 
   (func $win16_GetModuleFileName
+    (local $path i32)
     (local $buf i32) (local $size i32) (local $raw_mod i32) (local $mod i32) (local $id i32)
     (local $slot i32) (local $n i32) (local $i i32)
     (local $index i32) (local $rec i32) (local $base i32)
@@ -3038,6 +3084,13 @@
     (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
+        (local.set $path (call $win16_dll_path_guest (local.get $id)))
+        (if (local.get $path)
+          (then
+            (i32.store offset=0 (global.get $reg_base)
+              (call $win16_path_copy (local.get $path) (local.get $buf) (local.get $size)))
+            (call $win16_api_return (i32.const 8))
+            (return)))
         (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
                      (i32.eq (local.get $id) (global.get $win16_task_module)))
           (then

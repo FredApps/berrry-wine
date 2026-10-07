@@ -3636,11 +3636,13 @@ class WineAssembly {
   // _loadWin16Dlls fetched. False is a LoadLibrary failure, not an error.
   _stageWin16Module(name, id) {
     let bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
+    let resolvedPath = null;
     if (!bytes && typeof VfsSeed !== 'undefined' && VfsSeed.residentWin16Module) {
       const vfs = this._helpCtx && this._helpCtx.vfs;
       const resident = VfsSeed.residentWin16Module(vfs, name);
       if (resident) {
         bytes = resident.bytes;
+        resolvedPath = resident.path;
         if (resident.format === 'w32inst') return (bytes.length | 0x80000000) >>> 0;
       }
     }
@@ -3652,6 +3654,17 @@ class WineAssembly {
     if (bytes.length > room) return false;
     const base = exports.win16_dll_staging(id);
     const memory = new Uint8Array(this.memory.buffer);
+    if (resolvedPath && exports.win16_dll_path_alloc) {
+      // Preserve the file the loader actually selected; resource reopening
+      // must not guess C:\NAME.DLL or borrow another thread's scratch buffer.
+      if (resolvedPath.length >= 260 || resolvedPath.includes(String.fromCharCode(0))) return false;
+      const encoded = Uint8Array.from(resolvedPath, c => c.charCodeAt(0));
+      if (Array.from(resolvedPath).some(c => c.charCodeAt(0) > 255)) return false;
+      const pathBase = exports.win16_dll_path_alloc(id);
+      if (!pathBase || pathBase + 260 > memory.length) return false;
+      memory.fill(0, pathBase, pathBase + 260);
+      memory.set(encoded, pathBase);
+    }
     memory.fill(0, base, base + room);
     memory.set(bytes, base);
     return bytes.length;
