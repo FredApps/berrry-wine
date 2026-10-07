@@ -162,7 +162,10 @@ class UopOnly {
   sample() {}
   resume() { return 0; }
 
-  at(ip, codeBase, mask, d32, ip32) { return this.siteOf(ip, codeBase, mask, d32, ip32).go; }
+  at(ip, codeBase, mask, d32, ip32) {
+    if (this.vm.exports.get_cr0() < 0) return null;
+    return this.siteOf(ip, codeBase, mask, d32, ip32).go;
+  }
 
   siteOf(ip, codeBase, mask, d32, ip32) {
     // Building the two string keys and hashing them cost CONTAGIO 6.7% of its
@@ -298,6 +301,7 @@ class UopOnly {
       }
       // A µop program changes no segment, mode or flag TF: only a fallback can.
       if (!s.rec && (ex.get_flags() & TF)) { st.why.mode++; return left; }
+      if (ex.get_cr0() < 0) { st.why.mode++; return left; }
       // A mode switch (`mov cr0` setting or clearing PE, A20, a V86 entry)
       // goes on at the next instruction under the new mode's key, read the
       // way the session's step() reads it. Handing back instead was not only

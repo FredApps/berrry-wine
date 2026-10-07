@@ -442,6 +442,7 @@ class LiveJit {
   // complete.
   async install(prepared) {
     const vm = this.vm;
+    if (vm.exports.get_cr0?.() < 0) { this.declined = 'paged execution uses the interpreter'; return false; }
     const old = vm.exports;
     // THE TAIL MUST NOT HAVE MOVED UNDER THE PREPARED MODULE. `--tree-fold`
     // appends to the same handler table between slices, and this module was

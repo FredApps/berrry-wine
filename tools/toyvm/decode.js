@@ -961,6 +961,10 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         if (!m.isReg) return null;
         words.push(op2 === 0x20 ? H.mov_r_cr : H.mov_cr_r,
           (m.rm & 7) | ((m.reg & 7) << 4));
+        if (op2 === 0x22) {
+          words.push(wip(start + n));
+          endsBlock = m.reg === 3;
+        }
         break;
       }
       return null;

@@ -441,6 +441,7 @@ class UopLive {
   // 630, as L1 alone does. Only the step right after the exit, and only at
   // the exit's own ip (an interrupt delivered in between moves it).
   resume(ip, codeBase, d32, ip32) {
+    if (this.vm.exports.get_cr0() < 0) { this.exit = null; return 0; }
     const x = this.exit;
     if (!x || !this.resumeExits) return 0;
     this.exit = null;
@@ -457,6 +458,7 @@ class UopLive {
 
   // The program to run standing at (codeBase, ip), or null.
   at(ip, codeBase, mask, d32, ip32) {
+    if (this.vm.exports.get_cr0() < 0) { this.exit = null; return null; }
     if (!this.heads.size) return null;
     this.keep();
     const key = d32 ? `${codeBase}d` : (ip32 ? `${codeBase}w` : codeBase);

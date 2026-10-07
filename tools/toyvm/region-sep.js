@@ -55,7 +55,8 @@ function regionModuleWat(decls, regions) {
   const d = { ...decls, globals: new Map(decls.globals), funcs: new Map(decls.funcs) };
   // Registers are register-file slots, not globals, by the time the
   // interpreter is compiled; the same pass lowers the region bodies here.
-  regions = regions.map(r => ({ ...r, body: lowerRegs(r.body) }));
+  regions = regions.map(r => ({ ...r, body: lowerRegs(
+    '(if (call $pg_on) (then (call $slice_exit) (return)))\n' + r.body) }));
   const text = regions.map(r => r.body).join('\n');
   const usedG = new Set(), usedF = new Set(['next']);
   for (const m of text.matchAll(/global\.[gs]et \$([\w.]+)/g)) usedG.add(m[1]);

@@ -68,7 +68,13 @@ function helpers(isa) {
 ;; reads are ordinary RAM only. Video apertures require device semantics and
 ;; are outside this helper's supported metadata/stack contract.
 (func $pm_ram (param $p i32) (param $n i32) (result i32)
-  (local $end i64)
+  (local $end i64) (local $i i32)
+  (if (call $pg_on) (then
+    (loop $page
+      (drop (call $pg_address (i32.add (local.get $p) (local.get $i)) (i32.const 0) (i32.const 0)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $page (i32.lt_u (local.get $i) (local.get $n))))
+    (return (i32.const 1))))
   (local.set $end (i64.add (i64.extend_i32_u (local.get $p))
     (i64.extend_i32_u (local.get $n))))
   (i32.and
@@ -210,8 +216,11 @@ function helpers(isa) {
       (global.set $pm_ss_limit (call $pm_limit (local.get $d)))
       (global.set $pm_ss_access (i32.load8_u offset=5 (local.get $d)))
       (global.set $pm_ss_valid (i32.const 1))))
-  (call $wr8b (i32.const 0) (i32.add (local.get $d) (i32.const 5))
-    (i32.or (i32.load8_u offset=5 (local.get $d)) (i32.const 1))))
+  (if (call $pg_on)
+    (then (call $pg_write (i32.add (local.get $d) (i32.const 5)) (i32.const 1)
+      (i32.or (i32.load8_u offset=5 (local.get $d)) (i32.const 1)) (i32.const 0)))
+    (else (call $wr8b (i32.const 0) (i32.add (local.get $d) (i32.const 5))
+      (i32.or (i32.load8_u offset=5 (local.get $d)) (i32.const 1))))))
 (func $pm_read (param $w i32) (param $off i32) (result i32)
   ;; All reads were preflighted as ordinary RAM. Do not use $off_add's
   ;; historical 64KiB-page wrap for a dword on a 32-bit stack boundary.

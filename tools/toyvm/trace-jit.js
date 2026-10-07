@@ -1538,8 +1538,10 @@ ${accessors}
 ${machineAccessors()}
 ${helpers()}
 (func (export "spin") (param $k i32) ${LOCALS} ${locals}
+  (if (call $pg_on) (then (return)))
 ${pro}
   (block $done (loop $l
+    (br_if $done (call $pg_on))
     (br_if $done (i32.eqz (local.get $k)))
 ${body}
     (local.set $k (i32.sub (local.get $k) (i32.const 1)))

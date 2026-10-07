@@ -1489,6 +1489,7 @@ function enterOver(vm, p, low, { run, target, install }, stats) {
   const dv = new DataView(vm.memory.buffer);
   const ex = vm.exports;
   return (vm2, left) => {
+    if (vm2.exports.get_cr0() < 0) return left;
     if (resident.get(vm.memory) !== token || (low.resident && scribbles() !== seen)) put();
     ex.set_steps(left);
     let steps = left | 0;
@@ -1686,6 +1687,7 @@ class E1Arena {
   // this.last is the program the run left from.
   enter(rec, left) {
     const vm = this.vm, ex = vm.exports, w = this.w, outv = this.outv;
+    if (ex.get_cr0() < 0) return left;
     ex.set_steps(left);
     this.lineExit = false;
     let steps = left | 0;

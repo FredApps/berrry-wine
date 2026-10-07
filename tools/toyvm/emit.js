@@ -114,6 +114,9 @@ function wideAccessors(b, p, a, setL) {
     s += `
 (func $rd${w}${b} ${p} (param $off i32) (result i32)
   (local $l i32)
+  (if (call $pg_on) (then (return (call $pg_read
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const ${n}) (call $pg_user)))))
   ${setL}
   (if ${plain}
     (then (return (${load} (local.get $l)))))
@@ -124,6 +127,9 @@ function wideAccessors(b, p, a, setL) {
 
 (func $wr${w}${b} ${p} (param $off i32) (param $v i32)
   (local $l i32)
+  (if (call $pg_on) (then (call $pg_write
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const ${n}) (local.get $v) (call $pg_user)) (return)))
   ${setL}
   (if (i32.and ${plain} (i32.eqz ${code}))
     (then (${store} (local.get $l) (local.get $v)) (return)))
@@ -137,17 +143,20 @@ function wideAccessors(b, p, a, setL) {
 
 function memAccessors() {
   let s = '';
-  for (const b of ['', 'b']) {
-    const p = b ? '(param $base i32)' : '(param $seg i32)';
+  for (const b of ['', 'b', 'phys']) {
+    const p = b === 'phys' ? '' : b ? '(param $base i32)' : '(param $seg i32)';
     const a = b ? '(local.get $base)' : '(local.get $seg)';
     // The ONLY difference between the families. $lin is `(sbase(seg)+off) & linmask`,
     // so passing the base in already resolved leaves exactly the same address.
-    const setL = b
+    const setL = b === 'phys' ? '(local.set $l (local.get $off))' : b
       ? '(local.set $l (i32.and (i32.add (local.get $base) (local.get $off)) (global.get $linmask)))'
       : '(local.set $l (call $lin (local.get $seg) (local.get $off)))';
     s += `
 (func $rd8${b} ${p} (param $off i32) (result i32)
   (local $l i32)
+  ${b === 'phys' ? '' : `(if (call $pg_on) (then (return (call $pg_read
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const 1) (call $pg_user)))))`}
   ${setL}
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
@@ -156,6 +165,9 @@ function memAccessors() {
 
 (func $wr8${b} ${p} (param $off i32) (param $v i32)
   (local $l i32)
+  ${b === 'phys' ? '' : `(if (call $pg_on) (then (call $pg_write
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const 1) (local.get $v) (call $pg_user)) (return)))`}
   ${setL}
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
@@ -195,7 +207,7 @@ function memAccessors() {
 ;;     and puts every byte under the same VGA key compare as the first,
 ;;   and, for a store, no byte is already compiled (the CODE_BITMAP bits,
 ;;     at most two bitmap bytes apart; the bitmap is padded to 64K after).
-${wideAccessors(b, p, a, setL)}
+${b === 'phys' ? '' : wideAccessors(b, p, a, setL)}
 `;
   }
   return s;
@@ -1005,8 +1017,9 @@ function genExtras() {
 `);
   h('pop_m16', 2, `
   ${ops(2)}
+  (local.set $t7 (call $pop16))
   ${EA_SETUP_PRE}
-  (call $wr16 (local.get $t5) (local.get $t4) (call $pop16))
+  (call $wr16 (local.get $t5) (local.get $t4) (local.get $t7))
 `);
   h('push_i16', 1, `
   ${ops(1)}
@@ -1030,8 +1043,9 @@ function genExtras() {
 `);
   h('pop_m32', 2, `
   ${ops(2)}
+  (local.set $t7 (call $pop32))
   ${EA_SETUP_PRE}
-  (call $wr32 (local.get $t5) (local.get $t4) (call $pop32))
+  (call $wr32 (local.get $t5) (local.get $t4) (local.get $t7))
 `);
   h('push_i32', 1, `
   ${ops(1)}
@@ -1539,10 +1553,14 @@ function genExtras() {
       ${GO_LOOKUP('int')})
     (else
       (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
+      (if (call $pg_on) (then (return)))
       (if (i32.eq (global.get $exitwhy) (i32.const ${EXIT_WHY.int}))
         (then (global.set $halt (i32.const 0)) ${GO_LOOKUP('int')}))))
 `);
   h('iret', 0, `
+  (if (call $pg_on) (then
+    (global.set $pg_vector (i32.const -2)) (global.set $pg_return (i32.const 2))
+    (global.set $halt (i32.const 1)) (return)))
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (call $flags_put (i32.or
@@ -1577,6 +1595,9 @@ function genExtras() {
   // set is guarded on being in protected mode and not already in V86 -- without
   // that guard the guest's own IRETs would drop it back out on the first one.
   h('iret32', 0, `
+  (if (call $pg_on) (then
+    (global.set $pg_vector (i32.const -2)) (global.set $pg_return (i32.const 4))
+    (global.set $halt (i32.const 1)) (return)))
   (local.set $t0 (call $pop32))
   (local.set $t1 (call $pop32))
   (local.set $t2 (call $pop32))
@@ -1717,6 +1738,7 @@ function genStrings() {
   (block $slow
     (local.set $t1 (call ${count}))
     (br_if $slow (i32.eqz (local.get $t1)))
+    (br_if $slow (call $pg_on))
     ${decl(0, '(i32.eqz (global.get $rep_fast))')}
     ${decl(1, bit(F.DF))}
     ${decl(2, '(i32.ge_u (local.get $t1) (i32.const 0x10000000))')}
@@ -1755,6 +1777,7 @@ function genStrings() {
       ${body(w, sz)}
       (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (if (call $pg_on) (then (call $pg_checkpoint)))
       (br $l)))`;
         }
         for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
@@ -1767,6 +1790,7 @@ function genStrings() {
       ${body(w, sz)}
       (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (if (call $pg_on) (then (call $pg_checkpoint)))
       ${isCompare ? `(br_if $done (i32.ne ${bit(F.ZF)} (i32.const ${zWant})))` : ''}
       (br $l)))
 `);
@@ -2912,10 +2936,10 @@ function gen386() {
   // bits split across bytes 0-1 and the low nibble of byte 6, scaled by a page
   // when the granularity bit above them is set. The low twelve bits read back
   // as 1s in that case, which is why a 4GB segment reports 0xFFFFFFFF.
-  const GRAN = '(i32.and (i32.load8_u offset=6 (local.get $t7)) (i32.const 0x80))';
+  const GRAN = '(i32.and (call $pg_read (i32.add (local.get $t7) (i32.const 6)) (i32.const 1) (i32.const 0)) (i32.const 0x80))';
   const LSL_LIMIT = `(i32.or
-    (i32.shl (i32.or (i32.load16_u (local.get $t7))
-                     (i32.shl (i32.and (i32.load8_u offset=6 (local.get $t7))
+    (i32.shl (i32.or (call $pg_read (local.get $t7) (i32.const 2) (i32.const 0))
+                     (i32.shl (i32.and (call $pg_read (i32.add (local.get $t7) (i32.const 6)) (i32.const 1) (i32.const 0))
                                        (i32.const 0x0F))
                               (i32.const 16)))
              (select (i32.const 12) (i32.const 0) ${GRAN}))
@@ -2971,7 +2995,7 @@ function gen386() {
     // $t7 holds the second descriptor dword for LAR, the whole descriptor
     // address for LSL; $t3 holds the selector.
     const load = nm === 'lar'
-      ? '(local.set $t7 (i32.load offset=4 (local.get $t7)))'
+      ? '(local.set $t7 (call $pg_read (i32.add (local.get $t7) (i32.const 4)) (i32.const 4) (i32.const 0)))'
       : '';
     const body = (src, dst) => `
   (local.set $t3 ${src})
@@ -3012,7 +3036,7 @@ function gen386() {
 `);
 
   // MOV CRn, r32. Retain CR2 and CR3 through real/protected-mode transitions.
-  // A later paging integration must end cached execution on CR0/CR3 changes.
+  // End cached execution on a paging transition or CR3 write.
   //
   // Setting PE does NOT reload any segment register, and that is not an
   // omission: a real 386 keeps running on the descriptors already cached in
@@ -3021,13 +3045,22 @@ function gen386() {
   // descriptors whose bases equal the real-mode segments it was just using, so
   // the instructions between MOV CR0 and the far jump address the same bytes
   // either side of the switch.
-  h('mov_cr_r', 1, `
-  ${ops(1)}
+  h('mov_cr_r', 2, `
+  ${ops(2)}
+  (local.set $t3 (local.get $t1))
   (local.set $t1 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
   (local.set $t2 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))
+  (local.set $t4 (i32.and (i32.xor (global.get $cr0) (local.get $t2)) (i32.const 0x80000000)))
   (if (i32.eqz (local.get $t1)) (then (global.set $cr0 (local.get $t2))))
   (if (i32.eq (local.get $t1) (i32.const 2)) (then (global.set $cr2 (local.get $t2))))
   (if (i32.eq (local.get $t1) (i32.const 3)) (then (global.set $cr3 (local.get $t2))))
+  (if (i32.or (i32.eq (local.get $t1) (i32.const 3))
+    (i32.and (i32.eqz (local.get $t1)) (i32.ne (local.get $t4) (i32.const 0)))) (then
+    (global.set $gip (local.get $t3))
+    (global.set $pg_epoch (i32.add (global.get $pg_epoch) (i32.const 1)))
+    (global.set $rtop (i32.const 0))
+    (global.set $edgelook (i32.const 0))
+    (call $slice_exit)))
 `);
 
   // LGDT/LIDT. Six bytes: a 16-bit limit then a 32-bit base, of which a
@@ -3041,8 +3074,7 @@ function gen386() {
   ${EA_SETUP_PRE}
   (global.set ${gl} (call $rd16 (local.get $t5) (local.get $t4)))
   (global.set ${gb} (i32.and
-    (call $rd32 (local.get $t5) (i32.and (i32.add (local.get $t4) (i32.const 2))
-                                         (i32.const 0xFFFF)))
+    (call $rd32 (local.get $t5) (call $off_add (local.get $t4) (i32.const 2)))
     (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'})))
 `);
       // The store side. Not a curiosity: SGDT is how a real-mode program asks
@@ -3055,7 +3087,7 @@ function gen386() {
   ${EA_SETUP_PRE}
   (call $wr16 (local.get $t5) (local.get $t4) (global.get ${gl}))
   (call $wr32 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))
+    (call $off_add (local.get $t4) (i32.const 2))
     (i32.or (i32.and (global.get ${gb}) (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'}))
             (i32.const ${w === 32 ? '0' : '0xFF000000'})))
 `);
@@ -3817,6 +3849,11 @@ function analyzeFlags(bodies) {
       const at = close[o] >= 0 ? close[o] : m.index;
       const sure = depthAt[m.index] <= 2 && !bails;
       if (m[1]) {
+        // Cached/folded code runs with PG clear. Paged execution uses oneInsn
+        // without flag elimination, and a CR0/CR3 transition ends the slice.
+        // Restart-storage reads must not make a nonpaged memory op observe
+        // otherwise dead flags or diverge from the uop flag-liveness model.
+        if (m[1].startsWith('pg_')) continue;
         if (m[1] === 'slice_exit' || m[1] === 'jlook_edge' || m[1] === 'jlook_syn') { ev.push({ t: 'X', at }); continue; }
         if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
         if (!bodies.has(m[1])) continue;              // import, or $next
@@ -4878,6 +4915,7 @@ function helpers() {
 ;; already in satisfies both, branch-free: identical to the old mask for any
 ;; offset that fits in 16 bits.
 (func $off_add (param $off i32) (param $n i32) (result i32)
+  (if (call $pg_on) (then (return (i32.add (local.get $off) (local.get $n)))))
   (i32.or
     (i32.and (i32.add (i32.and (local.get $off) (i32.const 0xFFFF)) (local.get $n))
              (i32.const 0xFFFF))
@@ -5455,6 +5493,11 @@ ${memAccessors()}
 ;; not.
 (func $fault (param $vec i32) (param $ip i32)
   (local $v i32) (local $g i32)
+  (if (call $pg_on) (then
+    (global.set $pg_vector (local.get $vec))
+    (global.set $pg_return (local.get $ip))
+    (global.set $halt (i32.const 1))
+    (global.set $left (global.get $steps)) (return)))
   (global.set $intno (local.get $vec))
   (local.set $g (call $idtgate (local.get $vec)))
   ;; A trap taken while the CPU is in virtual-8086 mode is not the same
@@ -5624,6 +5667,7 @@ ${memAccessors()}
 ;; because the handler has to be able to decode it -- hence the third operand.
 (func $faultsw (param $vec i32) (param $next i32) (param $ip i32)
   (local $g i32)
+  (if (call $pg_on) (then (call $fault (local.get $vec) (local.get $next)) (return)))
   (if (global.get $vm86)
     (then
       (local.set $g (call $idtgate (local.get $vec)))
@@ -5799,10 +5843,12 @@ ${memAccessors()}
   (i32.const 1))
 ${JMP_SYN_BUDGET_TEST ? '' : JLOOK_SYN_FN}${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
   s += pmTransfer.helpers(isa);
-  // WIP primitive, exercised through exportAll. Memory access integration and
-  // restartable #PF delivery remain separate work; $lin does not call this yet.
-  s += paging.helpers(isa);
-  return s;
+  s += paging.helpers(isa, true);
+  s += paging.runtime(isa, [...STATE, ...MACHINE_STATE, ...FPU_STATE, 'errc',
+    'fop', 'fa', 'fb', 'fu', 'fr', 'fw', 'fcf'],
+    Array.from({length: 8}, (_, i) => `st${i}`));
+  return paging.systemLoads(s, n => n.startsWith('pm_') ||
+    ['descbase', 'descaddr', 'segd32', 'idtgate', 'v86_to_monitor'].includes(n), isa);
 }
 
 // --- x87 --------------------------------------------------------------------
@@ -6325,6 +6371,7 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 // take the next interrupt through the real-mode vector table instead of the
 // guest's own IDT -- silently, and only in a protected-mode program.
 const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'cr2', 'cr3', 'vm86',
+  'pg_epoch', 'pg_pending', 'pg_vector', 'pg_return',
   'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr',
   // Hidden bases are lowered into REGFILE_SEGB, not separate WASM globals.
   // Replay of selectors cannot reconstruct a cache after descriptor mutation.
@@ -6598,7 +6645,9 @@ function elemNames(opts) {
 }
 function regionFuncs(opts, tail) {
   return extraHandlers(opts)
-    .map(x => `(func $${x.name} ${LOCALS} ${x.locals || ''}\n${x.body}\n${tail})\n`).join('');
+    .map(x => `(func $${x.name} ${LOCALS} ${x.locals || ''}\n
+  (if (call $pg_on) (then (call $slice_exit) (return)))
+${x.body}\n${tail})\n`).join('');
 }
 
 function emitTailcall(opts = {}) {
@@ -6707,6 +6756,8 @@ function emitSwitch() {
 function runExport() {
   return `
 (func (export "run") (param $entry i32) (param $budget i32)
+  (if (i32.and (call $pg_on) (i32.eqz (global.get $pg_authorized)))
+    (then (global.set $halt (i32.const 1)) (return)))
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
   (global.set $slice_budget (local.get $budget))

@@ -1307,7 +1307,9 @@ class DosSession {
     // cs:gip is the handler and every line would name the same two numbers.
     const cs = this.hooks.onIrq ? this.vm.get('cs') : 0;
     const ip = this.hooks.onIrq ? this.vm.get('gip') : 0;
-    this.vm.exports.raise_irq(vec);
+    if (this.vm.exports.get_cr0() < 0) {
+      require('./paging-exec').exception(this.vm, vec, 0, this.vm.get('gip'), false, this.vm.get('gip'), true);
+    } else this.vm.exports.raise_irq(vec);
     this.irqs++;
     const ik = `irq ${src}`;
     this.exitKinds.set(ik, (this.exitKinds.get(ik) || 0) + 1);
@@ -1377,11 +1379,16 @@ class DosSession {
     // flags the guest gets back (CF for a DOS error, ZF for "no key"), so it is
     // edited in place on the stack rather than in the live register.
     const ss = vm.get('ss'), sp = vm.get('sp');
-    const lin = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
-    const rd = (of) => vm.mem[lin(of)] | (vm.mem[lin(of + 1)] << 8);
+    const paging = vm.exports.get_cr0?.() < 0;
+    const lin = (of) => paging ? ((vm.exports.get_ssb() >>> 0) + ((sp + of) & 0xffff)) >>> 0
+      : ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
+    const rd = (of) => paging ? machine.guestRd(lin(of)) | (machine.guestRd(lin(of + 1)) << 8)
+      : vm.mem[lin(of)] | (vm.mem[lin(of + 1)] << 8);
     const wr = (of, v) => {
-      vm.mem[lin(of)] = v & 0xFF;
-      vm.mem[lin(of + 1)] = (v >> 8) & 0xFF;
+      if (paging) {
+        machine.guestWrite(lin(of), [v & 0xff]);
+        machine.guestWrite(lin(of + 1), [v >>> 8 & 0xff]);
+      } else { vm.mem[lin(of)] = v & 0xff; vm.mem[lin(of + 1)] = v >>> 8 & 0xff; }
     };
     // DOS/BIOS return 16-bit register words even when the guest uses a
     // 386 real-mode extender. VM.set initializes a whole register; using it
@@ -1466,7 +1473,15 @@ class DosSession {
 
     const cs = vm.get('cs'), ip = vm.get('gip');
     if (cs === STUB_SEG) {
-      this.serviceInterrupt();
+      if (vm.exports.get_cr0() < 0) {
+        vm.exports.pg_checkpoint();
+        try { this.serviceInterrupt(); }
+        catch (err) {
+          const pending = vm.exports.pg_pending();
+          if (!pending || pending === 3) throw err;
+          require('./paging-exec').exception(vm, 14, vm.exports.pg_error(), ip);
+        }
+      } else this.serviceInterrupt();
       return 'int';
     }
 
@@ -1479,6 +1494,22 @@ class DosSession {
     // change under the guest's feet when it switches to protected mode or opens
     // A20, and both decide which bytes get decoded.
     const codeBase = vm.exports.get_csb();
+    const paging = vm.exports.get_cr0() < 0;
+    const epoch = vm.exports.pg_epoch();
+    if (this.pagingEpoch !== epoch || this.pagingActive !== paging) {
+      if (this.uop) {
+        this.uop.exit = null;
+        if (this.uop.heads && this.uop.release) {
+          for (const h of this.uop.heads.values()) this.uop.release(h);
+          this.uop.heads.clear();
+        }
+      }
+      this.cache.flush();
+      this.cache.benign.clear(); this.cache.patchMisses.clear(); this.cache.siteRange.clear();
+      this.cache.volPara.fill(0); this.cache.volHits.fill(0); this.cache.volList.length = 0;
+      this.cache.volState.clear();
+      this.pagingEpoch = epoch; this.pagingActive = paging;
+    }
     const mask = vm.exports.get_linmask();
     // A 32-bit code segment. The D bit changes the default operand and address
     // size of every instruction in the segment and widens EIP past 0xFFFF, so
@@ -1498,23 +1529,9 @@ class DosSession {
     // Where the limit is 64K or less this changes nothing: the guest cannot be
     // above 0xFFFF in the first place.
     const ip32 = d32 || ((vm.exports.get_cr0() & 1) !== 0 && !vm.exports.get_vm86());
-    // A CS that names no descriptor while PE is set. $segbase deliberately
-    // reads such a selector as a real-mode paragraph, which is right for a DATA
-    // segment in an extender running unreal -- but a real CPU cannot execute
-    // through one at all, it faults, and here the fallback quietly hands the
-    // decoder a plausible base pointing at whatever happens to be there.
-    // COUNTDWN.EXE spent 60M dispatches and 700MB of arena walking the zeros
-    // above 9BF00 that way, and the run looked slow rather than wrong. Stopping
-    // is the honest report: something earlier loaded a selector we got wrong.
-    // ...unless this is virtual-8086 mode, where a CS naming no descriptor is
-    // not a mistake, it is the definition: PE is set and segmentation is back
-    // to paragraphs. $segbase already reads it that way; the guard has to agree
-    // or every V86 guest stops on its first instruction.
-    if ((vm.exports.get_cr0() & 1) && !vm.exports.get_vm86() && (cs & 0xFFF8) !== 0
-        && (cs & 0xFFF8) > (vm.exports.get_gdtl() & 0xFFFF)) {
-      this.badSelector = `${cs.toString(16)}:${ip.toString(16)}`;
-      return 'badselector';
-    }
+    // CR0 changes retain the already loaded hidden CS cache. In particular,
+    // the first instruction after setting PE may be the far jump that loads
+    // a protected selector; the old real-mode CS need not index the new GDT.
     // F1 is ICEBP, and it is also the byte every IVT stub is made of -- chosen
     // precisely because the decoder refuses it, which is what puts control back
     // here when a vector is taken. The catch is that the decoder refuses it
@@ -1529,7 +1546,7 @@ class DosSession {
     // So: step over it and take vector 1 the way the hardware would. In
     // protected mode `raise` declines (see its comment) and stepping over is
     // all that happens, which is still the right answer for an unhooked INT 1.
-    if (cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
+    if (!paging && cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
       vm.set('gip', (ip + 1) & 0xFFFF);
       this.icebps++;
       this.raise(1, 'icebp');
@@ -1564,11 +1581,11 @@ class DosSession {
     const stepping = int1Hooked && (vm.get('flags') & (1 << isa.F.TF)) !== 0;
     // A µop program's head (uop-live.js): the program runs this slice instead
     // of the compiled code. Null when there is none, or it has been dropped.
-    const uopEnter = !stepping && this.uop ? this.uop.at(ip, codeBase, mask, d32, ip32) : null;
+    const uopEnter = !paging && !stepping && this.uop ? this.uop.at(ip, codeBase, mask, d32, ip32) : null;
     // Where a µop program left, the program it stands in for resumes: its
     // own edge to that block, not a fresh entry (uop-live.js resume).
-    const resumed = !uopEnter && !stepping && this.uop ? this.uop.resume(ip, codeBase, d32, ip32) : 0;
-    const entry = uopEnter ? 0 : resumed ? resumed : stepping
+    const resumed = !paging && !uopEnter && !stepping && this.uop ? this.uop.resume(ip, codeBase, d32, ip32) : 0;
+    const entry = paging ? 0 : uopEnter ? 0 : resumed ? resumed : stepping
       ? this.cache.stepOne(cs, ip, codeBase, mask, d32, ip32)
       : this.cache.entryFor(cs, ip, codeBase, mask, d32, ip32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
@@ -1808,7 +1825,13 @@ class DosSession {
       vm.exports.set_mousex(m.x); vm.exports.set_mousey(m.y); vm.exports.set_mousebtn(m.buttons);
       vm.exports.set_intfast(on ? (1 | (m.buttons ? 0 : 2)) : 0);
     }
-    if (uopEnter) vm.exports.set_steps(uopEnter(vm, budget));
+    if (paging) {
+      if (!require('./paging-exec').step(vm, budget)) {
+        this.cache.unimplemented.set(ip, true);
+        return 'unimplemented';
+      }
+    }
+    else if (uopEnter) vm.exports.set_steps(uopEnter(vm, budget));
     else vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
