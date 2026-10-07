@@ -23,3 +23,11 @@ The first two are the current new-game lanes. The coordinator reclaimed `NEW-GAM
 One browser at a time; CLI/browser leases require append-only CLAIM/RELEASE receipts. Heavy benchmarks run on separate boats. Source changes and explicit-path commits use new sparse worktrees off `origin/main`, never the shared HEAD/index. Original assets are read in place.
 
 Disk began near 2.6 GB free. Codex cleared approximately 251 MB of regenerable npm cache after checking that npm was not running; no fixtures or evidence were removed. Maintain at least 2 GiB free, including worktree, build and capture growth. The fleet watchdog remains paused so stopped Claude workers are not resumed accidentally; Codex coordinates its own workers directly.
+
+## Repairs integrated during this session
+
+- `a1710870`: Drakan owner-side read destination fence; real before-control fails on overwritten bytes, candidate and existing Worker regression pass, full build gates pass. Browser acceptance remains open.
+- `fe7cfb95`: Daggerfall mutable save files load eagerly; real host-loader/VFS regression and 11 existing loading-policy tests pass. Four original save files total 65,624 bytes; bulk assets remain lazy. Actual run 9 exposed this fault after the opening actor, not in dungeon gameplay.
+- `8cbd797c`: Die Hard draw validation admits the 16-bit formats its decoder already supports. Actual Bridge/software rendering checks opaque and transparent texels and outside-pixel canaries. Ordinary menu/gameplay validation remains next.
+
+The first Drakan browser check failed before input because its private server omitted the registered executable and a standard type library from its allowlist. The assets are present. Correct the test server before retrying; do not count this as a guest regression. Daggerfall READY10 and Die Hard ordinary menu validation remain queued behind serialized browser work.

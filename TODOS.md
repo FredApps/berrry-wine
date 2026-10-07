@@ -1122,7 +1122,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created: 2026-10-05T18:27:59.455Z
   accepted: 2026-10-05T18:27:59.455Z
   accepted-by: /root/coverage_audit
-  Next: Attempt9 reached opening actor via ordinary input, then owning Worker trapped in fs_set_end_of_file_result on async-only c:\arena2\mapsave.sav. Browser released cleanly; no dungeon. Repair generator loading contract: four original .SAV files (65624 bytes) required/eager, retain lazy bulk; actual normalizer/VFS regression, then fresh gameplay validation. No new IO_WAIT protocol.
+  Next: Mount-contract repair integrated mainfe7cfb95 (worker0dc59927); focused real loader/VFS regression and11 existing tests PASS. Four original save files65624B required/eager;1702bulk files remain lazy. Local manifestad3326a8 regenerated without payload changes. READY10 repinned,900sec ordinary dungeon route queued after Drakan; no gameplay/FPS qualification.
   Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
   Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
 
@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Observer and actual Present submission gate tests pass. First guest capture failed during harness setup: sparse fonts/System.fon missing; process returned0 despite error, no guest draws/PNG. Preserve failure; restore tracked font closure and run one fresh150sec diagnostic with final PNG, exact prior module8eb283c1. No gameplay or menu result yet.
+  Next: Texture admission repair integrated main8cbd797c (workercd063a37): formats24/25 already decoded but rejected. Original host fails real draw; candidate opaque/transparentpixels/canaries and D3D8 unavailable probe PASS. Attempt2 black/emblem baseline and compressedlog preserved. Prepare bounded ordinary menu/NewGame validation on fixed host; no gameplay result yet.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1148,6 +1148,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/corpus_categories
   created: 2026-10-06T20:57:00.000Z
-  Next: Owner-side pre-host-write fencing fixed and integrated remote maina1710870 (worker c87a2ea1). Actual-WASM/VFS before control reproduces overwritten file bytes; candidate, full build gates and existing real-Worker surface-fence regression PASS. Private production module0db725dd; canonical build untouched. Remaining: Threads on/off ordinary browser level and control acceptance; task remains active.
+  Next: Host-write repair on maina1710870; focused before/candidate, fullbuild gates and existing Worker regression PASS. First Threads-on browser attempt failed in test-server setup (allowlist omitted registered drakan.exe and stdole2.tlb; assets are present), no guest input. Source launch-closure correction and one fresh600sec Threads-on retry authorized; Threads-off acceptance follows separately. No public deployment.
   Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
   Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
