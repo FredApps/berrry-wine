@@ -1,7 +1,7 @@
-updated: 2026-10-07T21:36:40.565Z
+updated: 2026-10-07T21:40:19.779Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: three fresh CLI sessions. Arx allocation correction has passed a full mandatory build and ten regression suites; remote original-media capture now reaches settings (root reviewed), with zero critical-section waits. Main integration is held for a concrete MEM_TOP_DOWN highest-gap review finding, not user approval. Worker owns the remote browser; local build slot released.
+Current workers: three fresh CLI sessions. Arx allocation correction has passed a full mandatory build and ten regression suites; remote original-media capture now reaches settings (root reviewed), with zero critical-section waits. Root highest-gap review is fixed and tested; generic source integrated/pushed85c1f7c68+6e6a90a8e. Exactfinal7c6864f8 browser validation follows Q2, then Antara. Local build slot is free.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 

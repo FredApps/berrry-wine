@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI arx-allocation (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Original CRT reserve identified (NULL/1MiB/MEM_RESERVE), generic placement candidate fullbuild+10suites PASS; remote actualsettings rootreviewed/zeroCSwaits. Fix highest-gap MEM_TOP_DOWN review before main; then ordinary OK/newgame/player controls. No gameplay yet.
+  Next: Original CRT reserve identified (NULL/1MiB/MEM_RESERVE), generic placement candidate fullbuild+10suites PASS; remote actualsettings rootreviewed/zeroCSwaits. Highest-gap fix and fullreview pushed85c1f7c68+6e6a90a8e; exactfinal7c6864f8 ordinary OK/newgame/player controls nextremote afterQ2. No gameplay yet.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1256,6 +1256,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Implement generic 386 paging for original DOS extenders
   id: TOYVM-386-PAGING-20261007
+  handoff: ops/handoffs/toyvm-paging-implementation-20261007.md
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none (ready source work, next available fresh slot)
