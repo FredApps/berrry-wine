@@ -6501,39 +6501,49 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
-  ;; KERNEL.47 GetModuleHandle(lpModuleName) -> the module's handle.
-  ;;
-  ;; A module this emulator has loaded gets the same 0x00D1-over-id handle
-  ;; LoadLibrary hands out, so GetModuleFileName can tell afterwards which
-  ;; module was meant. Anything else is the task itself, whose handle is its
-  ;; own DGROUP selector — an hInstance and an hModule are the same thing for
-  ;; the task, which is why RegisterClass accepts either.
+  ;; KERNEL.47 queries already-loaded modules. A named miss must be zero:
+  ;; returning the task instance makes callers skip their normal LoadLibrary.
+  ;; Querying must not reserve a dynamic slot for a name that is not loaded.
   (func $win16_GetModuleHandle
-    (local $name i32) (local $id i32)
-    (local.set $name (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    ;; MAKEINTRESOURCE-style: a null selector means there is no name at all.
+    (local $name i32) (local $pstr i32) (local $id i32)
+    (local $i i32) (local $slot i32) (local $resident i32)
+    ;; Preserve the existing null-selector/current-instance compatibility path.
     (if (i32.eqz (call $win16_arg16 (i32.const 1)))
       (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)) (return)))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
-    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
-    ;; A module this emulator answers for has a handle too, and it has to be
-    ;; that module's — not the task's. Handing back DS meant the next
-    ;; GetProcAddress looked its name up in the running program: JigSawed
-    ;; asked "Gdi" for CreateRectRgn and was told the game does not export it.
-    ;; $win16_dll_loaded answers with the module's segment COUNT, not a flag,
-    ;; so it has to be normalised before it meets an i32.and — 1 & 4 is 0, and
-    ;; FIELD100.VBX has exactly four segments. Rattler Race asked for its
-    ;; handle, got the task's DS, and looked FLDERASE up in the game.
-    (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-                         (i32.ne (call $win16_dll_loaded (local.get $id))
-                                 (i32.const 0))))
+    (local.set $pstr (call $g2w (call $win16_name_scratch)))
+    ;; The NE resident-name table starts with the task's actual module name.
+    ;; This also covers a WinExec child, whose retained header is task-local.
+    (local.set $resident (i32.load16_u
+      (i32.add (global.get $win16_ne_off) (i32.const 0x26))))
+    (if (i32.and (i32.ne (local.get $resident) (i32.const 0))
+          (call $win16_pstr_eq_pstr (local.get $pstr)
+            (i32.add (global.get $win16_ne_off) (local.get $resident))))
+      (then
+        (call $win16_local_identity (i32.const 4)
+          (call $win16_index_to_sel (global.get $win16_auto_data)))
+        (return)))
+    (local.set $id (call $win16_system_module_id (local.get $pstr)))
+    (if (local.get $id)
       (then
         (call $win16_local_identity (i32.const 4)
           (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
         (return)))
-    (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)))
+    (block $not_found (loop $scan
+      (br_if $not_found (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
+      (local.set $id (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))
+      (if (i32.and (i32.ne (call $win16_dll_loaded (local.get $id)) (i32.const 0))
+                   (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot)))
+        (then
+          (call $win16_local_identity (i32.const 4)
+            (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $win16_local_identity (i32.const 4) (i32.const 0)))
 
   ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
   ;; NULL when there is none and the caller should start NETDDE.EXE.

@@ -112,7 +112,7 @@
   ;; Map a module name to the small id the API dispatcher uses. Unknown
   ;; modules get 0, which makes every call through them fail loudly rather
   ;; than silently returning into nothing.
-  (func $win16_module_id (param $pstr i32) (result i32)
+  (func $win16_system_module_id (param $pstr i32) (result i32)
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_KERNEL))   (then (return (i32.const 1))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_USER))     (then (return (i32.const 2))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_GDI))      (then (return (i32.const 3))))
@@ -125,6 +125,12 @@
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_DDEML))    (then (return (i32.const 10))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_NDDEAPI))  (then (return (i32.const 11))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_WIN87EM))  (then (return (i32.const 12))))
+    (i32.const 0))
+
+  (func $win16_module_id (param $pstr i32) (result i32)
+    (local $system i32)
+    (local.set $system (call $win16_system_module_id (local.get $pstr)))
+    (if (local.get $system) (then (return (local.get $system))))
     ;; Then the ones this task brought with it. A Win16 game is routinely three
     ;; several NE files -- Tetris alone imports ABOUTTET for its about box, and
     ;; the Entertainment Pack ships IWLIB and WEPUTIL beside the games -- and
