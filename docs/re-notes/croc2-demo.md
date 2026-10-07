@@ -89,3 +89,62 @@ Status 2026-10-06: parked (claude:d10ba697); TODOS NEW-GAME-CROC2-DEMO-20261006.
   InterlockedExchange + a critical section. Not followed up: the next step is
   to find what main is waiting on there (the T2 handshake is the first
   suspect).
+
+## 2026-10-07: ordinary Start/menu route resolved; control evidence incomplete
+
+Reclaimed the technical investigation using the original installed20-file
+closure (46,712,129 bytes), without editing payloads. The executable SHA-256
+is `074c0e4333c76635d3f214e6d89ab2f758fe233e6d4b718f7c5a7e0f11b7d24b`.
+Actual browser source was user-build `3b8189f5`, WASM
+`8eb283c1b595afe336c3e2407f722e19d47aad0739784de4864ba699c8b5712f`;
+this does not claim current main's later WAT was rebuilt. Private registration
+only supplied the documented InstallPath/CDPath, with a fresh browser profile.
+Old frozen Croc runtime registry artifacts were unavailable locally; the older
+registration excerpt is not proof that historical runs had no other bindings.
+
+Static source distinguishes controls. Initializer `41a310` defaults keyboard
+slot8 to Return/DIK1c and slot9 to P/DIK19. Joystick object-name callback
+`411d30` assigns a named Start button to slot9. Mapper `41a948..41a97c` uses
+mask table `4a7eb0`: Return becomes `0x1000`, P becomes `0x0008`.
+Generic frontend `4401a0` consumes these differently, but the **demo's actual
+menu** is `41db30 -> 41cb30`, receiving raw key dwords at `4b52ec`.
+`41cca1` tests raw Return at offset70 for1, then returns the selected index;
+index0 dispatch `41db67` schedules Jungle mode0xb if transition guard
+`4b6934` is zero. Consequently the earlier generic X-confirm inference was
+not a valid demo-menu selection contract.
+
+Menu caller `41993f` checks timer `4b6910` using `47aee0` against double40000
+at `4a3470` **before** polling/dispatching input. The expired branch schedules
+mode5; only the nonexpired branch reaches input update and the edge-triggered
+timer reset at `4199c4`. Attempt1 had operator gaps51.16 and66.55seconds
+between keys, so its attract/menu alternation cannot establish an engine or
+selection defect. P did visibly open the rendered Jungle/Mine/Options/Exit
+menu; Down highlighted Mine and Up restored Jungle. Immutable evidence:
+`scratch/runs/20261007-croc2-menu-input/result.json` and `hashes.json` (490
+artifacts). Optional icon403 and driverexit1 are retained; browser/server
+closed, streams0. No gameplay qualification from this run.
+
+Attempt2 replaced those review gaps with one bounded ordinary phase: P1000ms,
+capture and real Jungle-menu image match, Return100ms, all within5seconds.
+The actual Return release was1.299seconds after phase start. Pure-JS tests
+used five saved positive and five negative scenes; black/Demo/Mine each sent
+zero Return, capture overhead/exact deadline failed closed, and real helper
+keydown/up failures still attempted release. There was no guest state write,
+forced callback or engine modification.
+
+This reached a different rope-bridge scene without the Demo Mode overlay.
+Ordinary Down750ms changed Croc's orientation/location and camera geometry;
+root personally reviewed `attempt2/post-phase.png` and `player-back.png`.
+The subsequent Up750ms completed, but **its screenshot was not captured**:
+the mandatory2GiB disk floor read2,007,478,272 available bytes and stopped
+at09:21:12.896Z. Browser/server closed, streams0, Chromeexit0, driverexit1.
+Only1,267,587 capture bytes were written; free space recovered to2,582,630,400
+after cleanup, consistent with transient run storage but not an attributed
+cause. No reverse/idle evidence, no complete player-control qualification,
+no FPS/audio-quality claim. Exact route, inputs, cleanup and pins remain in
+`scratch/new-game-croc2-20261007/attempt2`.
+
+Next: retain the now-proven fast normal Start route, account for transient
+browser storage before another bounded capture, and obtain reviewed short
+movement/reversal/idle evidence. Do not patch the engine based on the older
+slow menu interactions or repeat the old Enter-only attract route.
