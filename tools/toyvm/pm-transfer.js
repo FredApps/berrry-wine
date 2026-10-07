@@ -23,6 +23,33 @@ function helpers(isa) {
   const pushParams = [...params].reverse().map(i => `
   (if (i32.gt_u (local.get $count) (i32.const ${i}))
     (then (call $pm_push (local.get $width) (local.get $p${i}))))`).join('');
+  const dataSegments = [[0, 'es'], [3, 'ds'], [4, 'fs'], [5, 'gs']];
+  // Intel SDM RET pseudocode uses DPL in the hidden segment-register cache.
+  // Never consult a subsequently modified descriptor table during outer RETF.
+  const dataCache = dataSegments.map(([index, name]) => `
+  (if (i32.eq (local.get $i) (i32.const ${index})) (then
+    (global.set $pm_${name}_valid (i32.const 0))
+    (if (i32.eqz (call $pm_active)) (then (return)))
+    (local.set $d (call $pm_desc (local.get $selector)))
+    (if (i32.eqz (local.get $d)) (then (return)))
+    (local.set $d (i32.sub (local.get $d) (i32.const 1)))
+    (if (i32.ne (call $pm_base (local.get $d)) (call $sbase (local.get $i))) (then (return)))
+    (local.set $a (i32.load8_u offset=5 (local.get $d)))
+    (if (i32.ne (i32.and (local.get $a) (i32.const 144)) (i32.const 144)) (then (return)))
+    (if (i32.and (i32.ne (i32.and (local.get $a) (i32.const 8)) (i32.const 0))
+      (i32.eqz (i32.and (local.get $a) (i32.const 2)))) (then (return)))
+    (global.set $pm_${name}_access (local.get $a))
+    (global.set $pm_${name}_valid (i32.const 1))))`).join('');
+  const clearData = dataSegments.map(([index, name]) => `
+  (local.set $a (global.get $pm_${name}_access))
+  (local.set $bad (i32.eqz (global.get $pm_${name}_valid)))
+  (if (i32.ne (i32.and (local.get $a) (i32.const 12)) (i32.const 12))
+    (then (local.set $bad (i32.or (local.get $bad)
+      (i32.lt_u (i32.and (i32.shr_u (local.get $a) (i32.const 5)) (i32.const 3)) (local.get $level))))))
+  (if (local.get $bad) (then
+    (i32.store (i32.const ${isa.REGFILE_SEL + index * 4}) (i32.const 0))
+    (i32.store (i32.const ${isa.REGFILE_SEGB + index * 4}) (i32.const 0))
+    (global.set $pm_${name}_valid (i32.const 0))))`).join('');
   return `
 ;; A stop is deliberately separate from architectural exception delivery.
 (func $pm_stop (param $why i32) (param $selector i32) (result i32)
@@ -111,8 +138,7 @@ function helpers(isa) {
 
 ;; Stack access validation, including expand-down bounds and B-bit upper end.
 ;; No access may straddle the top of the segment or wrap its linear address.
-(func $pm_span (param $base i32) (param $limit i32) (param $mask i32) (param $access i32)
-  (param $off i32) (param $n i32) (result i32)
+(func $pm_span (param $base i32) (param $limit i32) (param $mask i32) (param $access i32) (param $off i32) (param $n i32) (result i32)
   (local $end i64) (local $linear i64)
   (local.set $end (i64.add (i64.extend_i32_u (local.get $off)) (i64.extend_i32_u (local.get $n))))
   (if (i64.gt_u (local.get $end)
@@ -312,30 +338,12 @@ function helpers(isa) {
   (global.set $gip (local.get $offset))
   (i32.const 1))
 
-;; Outer RETF clears data selectors which the new CPL may no longer use.
-(func $pm_clear_data (param $level i32)
-  (local $i i32) (local $s i32) (local $d i32) (local $a i32) (local $bad i32)
-  (loop $next_data
-    (if (i32.or (i32.eqz (local.get $i)) (i32.ge_u (local.get $i) (i32.const 3))) (then
-      (local.set $s (call $sget (local.get $i)))
-      (local.set $d (call $pm_desc (local.get $s)))
-      (local.set $bad (i32.eqz (local.get $d)))
-      (if (local.get $d) (then
-        (local.set $a (i32.load8_u offset=5 (i32.sub (local.get $d) (i32.const 1))))
-        (local.set $bad (i32.or
-          (i32.ne (i32.and (local.get $a) (i32.const 144)) (i32.const 144))
-          (i32.and (i32.eq (i32.and (local.get $a) (i32.const 8)) (i32.const 8))
-            (i32.eqz (i32.and (local.get $a) (i32.const 2))))))
-        (if (i32.ne (i32.and (local.get $a) (i32.const 12)) (i32.const 12))
-          (then (local.set $bad (i32.or (local.get $bad)
-            (i32.or
-              (i32.lt_u (i32.and (i32.shr_u (local.get $a) (i32.const 5)) (i32.const 3)) (local.get $level))
-              (i32.lt_u (i32.and (i32.shr_u (local.get $a) (i32.const 5)) (i32.const 3)) (i32.and (local.get $s) (i32.const 3))))))))))
-      (if (local.get $bad) (then
-        (i32.store (i32.add (i32.const ${isa.REGFILE_SEL}) (i32.shl (local.get $i) (i32.const 2))) (i32.const 0))
-        (i32.store (i32.add (i32.const ${isa.REGFILE_SEGB}) (i32.shl (local.get $i) (i32.const 2))) (i32.const 0))))))
-    (local.set $i (i32.add (local.get $i) (i32.const 1)))
-    (br_if $next_data (i32.lt_u (local.get $i) (i32.const 6)))))
+(func $pm_cache_data (param $i i32) (param $selector i32) (local $d i32) (local $a i32)
+  ${dataCache})
+
+;; Outer RETF uses the hidden loaded access rights, not live table bytes.
+(func $pm_clear_data (param $level i32) (local $a i32) (local $bad i32)
+  ${clearData})
 
 (func $pm_retf (param $width i32) (param $imm i32) (result i32)
   (local $code i32) (local $selector i32) (local $offset i32)

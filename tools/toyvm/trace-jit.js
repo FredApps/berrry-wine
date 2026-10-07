@@ -1837,6 +1837,11 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
       if (ex[`mset_${g}`]) ex[`mset_${g}`](v);
     }
     for (const [g, v] of Object.entries(snapshotRegs)) if (ex[`set_${g}`]) ex[`set_${g}`](v);
+    // Restore hidden caches as captured, including bases: selector replay may
+    // consult descriptor bytes which changed after the original segment load.
+    for (const [g, v] of Object.entries(hot.machineSnapshot || {})) {
+      if (ex[`mset_${g}`]) ex[`mset_${g}`](v);
+    }
     if (arm.afterSeed) arm.afterSeed();
   };
 

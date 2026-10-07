@@ -35,6 +35,13 @@ async function one(dir, spec) {
   if (spec.mutate) spec.mutate(fixture.bytes.subarray(fixture.blobOffset));
   const file = path.join(dir, spec.name + '.COM');
   fs.writeFileSync(file, fixture.bytes);
+  let carryModule;
+  if (spec.carryAtCallee) {
+    const { buildModule } = require(path.join(root, 'tools/toyvm/vm'));
+    const built = await buildModule('tailcall');
+    carryModule = await WebAssembly.compile(built.bytes);
+  }
+  let carried = false;
   const original = DosSession.prototype.step;
   let initialized = false;
   const observed = [];
@@ -69,6 +76,24 @@ async function one(dir, spec) {
     }
     if (initialized) {
       const now = state(vm);
+      if (carryModule && !carried && now.cs === 8 && now.ip === fixture.CALLEE) {
+        const { MACHINE_STATE } = require(path.join(root, 'tools/toyvm/emit'));
+        const { carryState } = require(path.join(root, 'tools/toyvm/region-live'));
+        const old = vm.exports;
+        const expected = Object.fromEntries(MACHINE_STATE.map(g => [g, old[`mget_${g}`]() ]));
+        const next = new WebAssembly.Instance(carryModule, { host: {
+          memory: vm.memory,
+          port_in() { throw Error('unexpected port during CPU-only cache fixture'); },
+          port_out() { throw Error('unexpected port during CPU-only cache fixture'); },
+          fmath() { throw Error('unexpected floating point during CPU-only cache fixture'); },
+        } });
+        carryState(old, next.exports);
+        for (const [g, value] of Object.entries(expected)) {
+          assert.equal(next.exports[`mget_${g}`](), value, 'backend carry preserves ' + g);
+        }
+        vm.rebind({ exports: next.exports, regionBase: vm.regionBase });
+        carried = true;
+      }
       if (observed.length < 12 && (now.cs === 0x43 || (now.cs === 8 && now.ip === fixture.CALLEE))) {
         observed.push(now);
       }
@@ -98,6 +123,7 @@ async function one(dir, spec) {
   console.log(JSON.stringify({ case: spec.name, initialized, stage: row.stage,
     checkFailed: row.checkFailed, stopped: row.stopped, moduleSha256: row.moduleSha256 }));
   assert.equal(initialized, true, spec.name + ': checked setup');
+  if (spec.carryAtCallee) assert.equal(carried, true, 'actual second-instance carry executed');
   assert.equal(row.checkFailed, 0, spec.name + ': real guest frame assertion');
   if (!spec.stop) {
     assert(observed.some(s => s.cs === 8 && s.ip === fixture.CALLEE && s.csb === fixture.BLOB),
@@ -146,6 +172,14 @@ async function main() {
       await one(dir, { name: 'ldt-cache-after-table-write', ring3: true, parameters: 2, useLdt: true, mutateCache: 'ldt' });
       await one(dir, { name: 'ss-cache-after-table-write', ring3: false, parameters: 2, mutateCache: 'ss' });
       await one(dir, { name: 'tr-cache-after-table-write', ring3: true, parameters: 2, mutateCache: 'tr' });
+      for (const mutateCache of ['ss', 'tr', 'ldt']) await one(dir, {
+        name: `backend-carry-${mutateCache}-after-table-write`,
+        ring3: mutateCache !== 'ss', parameters: 2, mutateCache,
+        useLdt: mutateCache === 'ldt', carryAtCallee: true,
+      });
+      for (const mutateData of ['clear', 'retain']) await one(dir, {
+        name: `data-cache-${mutateData}-after-table-write`, ring3: true, parameters: 2, mutateData,
+      });
       const rejected = [
         ['gate-not-present', 'notPresent', b => { b[0x45] = 0x6c; }],
         ['gate-privilege', 'privilege', b => { b[0x45] = 0x8c; }],

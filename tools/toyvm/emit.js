@@ -4580,7 +4580,8 @@ function helpers() {
   (if (i32.eq (local.get $i) (i32.const ${isa.SEG.indexOf('ss')}))
     (then (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)
       (call $segd32 (local.get $v))))
-      (call $pm_cache_ss (local.get $v)))))\n`;
+      (call $pm_cache_ss (local.get $v))))
+  (call $pm_cache_data (local.get $i) (local.get $v)))\n`;
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -6277,6 +6278,14 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 (global $tr (mut i32) (i32.const 0))
 ;; Checked protected transfers retain SS/TR metadata at load time. Existing
 ;; general instruction protection remains separate; no exception is fabricated.
+(global $pm_es_valid (mut i32) (i32.const 0))
+(global $pm_es_access (mut i32) (i32.const 0))
+(global $pm_ds_valid (mut i32) (i32.const 0))
+(global $pm_ds_access (mut i32) (i32.const 0))
+(global $pm_fs_valid (mut i32) (i32.const 0))
+(global $pm_fs_access (mut i32) (i32.const 0))
+(global $pm_gs_valid (mut i32) (i32.const 0))
+(global $pm_gs_access (mut i32) (i32.const 0))
 (global $pm_ss_valid (mut i32) (i32.const 0))
 (global $pm_ss_limit (mut i32) (i32.const 0))
 (global $pm_ss_access (mut i32) (i32.const 0))
@@ -6311,6 +6320,11 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 // guest's own IDT -- silently, and only in a protected-mode program.
 const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
   'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr',
+  // Hidden bases are lowered into REGFILE_SEGB, not separate WASM globals.
+  // Replay of selectors cannot reconstruct a cache after descriptor mutation.
+  'esb', 'csb', 'ssb', 'dsb', 'fsb', 'gsb',
+  'pm_es_valid', 'pm_es_access', 'pm_ds_valid', 'pm_ds_access',
+  'pm_fs_valid', 'pm_fs_access', 'pm_gs_valid', 'pm_gs_access',
   'pm_ss_valid', 'pm_ss_limit', 'pm_ss_access',
   'pm_tr_valid', 'pm_tr_base', 'pm_tr_limit', 'pm_tr_access',
   'pm_ldt_valid', 'pm_ldt_limit', 'pm_ldt_access',
