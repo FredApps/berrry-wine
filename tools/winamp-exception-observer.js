@@ -30,6 +30,7 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
     for (let i = 0; i < size; i++) {
       if (!withinBounds()) return null;
       const wa = translate((ga + i) >>> 0, ex.get_image_base() >>> 0, memory);
+      if (!withinBounds()) return null;
       if (wa === 0xf0 || wa < 0 || wa >= memory.buffer.byteLength) return null;
       bytes.push(new Uint8Array(memory.buffer)[wa]);
     }
