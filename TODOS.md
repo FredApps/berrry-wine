@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic named GetModuleHandle fix passes exact before/candidate realNE controls and actual WinExec childboot identity test. Worker prepares targeted full mandatory build closure; no fixed-game rerun yet. Actual resource102miss documented0713557f.
+  Next: Generic named module-query fix pushed4de7421d with full combined gates and real-child regression evidence9cac6422. Ordinary original SETUP browser9 running on d4256f3c; inspect actual dialog before input, no diagnostic overrides.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Actual current-main capture proves valid13byte packedhandle misclassified as FILE: mode4 tests high entrypointer byte7e &20. Mainba0d12e4. Root investigates generic allocation placement/pending-reservation collision safety; no lock bypass, data corruption claim, or reduced-capacity production workaround.
+  Next: Actual packedhandle highpointer discriminator provenba0d12e4. Readonly published heap-arena observer prepared352pins on fullbuild d4256f3c, contractsPASS; queued behind ordinary Antara/TDR browser runs. Genericallocation policy investigation, no capacity reduction/forcedlocks.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1232,7 +1232,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Actual ordinary Start fails IntegrityCheck; source maps D3D7 EnumDevices descriptor to missing per-stage filter flags. Worker prepared9line truthful point/linear caps fix +actualcallback regression, serialized120sec before/candidate test granted. No race/gameplay; evidencec2e62340.
+  Next: Truthful D3D7 point/linear caps fix pushed3f04bf41; fullbuild and realcallback regressions PASS9cac6422. Ordinary original launch attempt3 pinned d4256f3c; queued after Antara. No race/gameplay yet.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
@@ -1242,5 +1242,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Generic EXEC/MCB repair integrated51e3e748 +browserbundlesa94e97b3;20contracts+4native tests+browser-shaped COMPASS. Authenticinstaller nowopens INSTALL.BIN; next AH5A temp-file call unsupported despite successful XMS. Separate14d0abbf AH5A candidate passes12contracts, rootreview and native retry next.
+  Next: Main EXEC/MCB repair51e3e748. Private AH5A corrected13contracts/files/ioctl PASS; authentic installer now returns validhandle7 and successfulseek, but later reports memory error/childexit1. Reviewonly dea9b6e0 not integrated; worker fixes sharedhandle write coherence and traces actual later memory-accounting branch.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.

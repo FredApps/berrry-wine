@@ -1,9 +1,9 @@
-updated: 2026-10-07T13:26:56.709Z
+updated: 2026-10-07T13:55:07.228Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: four active investigations. Comanche3 generic EXEC/MCB repair and browser bundles pushed51e3e748/a94e97b3 after20contracts,4native regressions and actual browser-shaped COM. AH5A next candidate passes12contracts. Antara generic module-query fix passes realNE and childboot tests; fullbuild pending. TDR2000 D3D7 per-stage filter caps fix in focused validation. Arx valid packed handle is misclassified because of high-address placement; generic allocation-policy work next. No new gameplay qualification.
+New-game pipeline: four active lanes. Antara module query and TDR2000 D3D7 caps fixes pushed main9cac6422 with full mandatory build/five regression suites PASS; ordinary Antara9 live, TDR3 queued. Comanche private AH5A now returns a valid temporary handle and successful seek; later memory-accounting failure under investigation, shared-handle coherence followup before integration. Arx readonly heap-arena observer ready on d4256f3c. No new gameplay qualification.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
