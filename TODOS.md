@@ -1168,13 +1168,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] D3DIM async-flip PBO trips Chrome "READ-usage buffer written again before being read back"
   id: D3DIM-ASYNC-PBO-WARN-20261006
-  status: active
+  status: blocked
   note: 2026-10-06T21:25Z parked at WIND-DOWN, not started. Next: page probe on MW3 menu wrapping the D3DIM executor's readPixels/fenceSync/getBufferSubData (lib/d3dim-gpu.js asyncFlip path) to find which PBO is written again before its readback; likely reuse of one PIXEL_PACK_BUFFER across flips while an earlier read is inflight -> ring of PBOs or wait on the fence before reuse.
   note: 2026-10-06T20:25Z claude:1863d2b5 claimed: code read finds no write-before-read path; next a page probe wrapping readPixels/fenceSync/getBufferSubData on MW3's live context (browser queue).
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Early PBO59867 closed11:16:31 exit0/Chrome0/streams0; first9 complete buffer6 cycles ordered, aggregate143 writes142 reads.169 warnings remain;256 detailed-event cap dropped3739 later events. Add bounded per-buffer pending-write/read/fence invariants with first-violation retention, test actual observer before another guest. No engine fix or performance claim. Receipt ops/handoffs/pbo-early-buffer-capture-20261007.json (main b0e24b85).
+  Next: Warning isolated outside emulator: Chrome151 standalone4x4 WebGL2 yields six identical warnings despite8 correct pixel readbacks/GL_NO_ERROR. Matching browser source retains readback shadow allocation in GetBufferSubDataCHROMIUM path. Emulator trace216writes215reads has zero overwrite violations; one pending at capture end. No speculative renderer fix. Browser warning remains; no user input required. Recheck after browser-side correction; performance impact unmeasured. Receipt ops/handoffs/pbo-chrome151-reproduction-20261007.json.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
