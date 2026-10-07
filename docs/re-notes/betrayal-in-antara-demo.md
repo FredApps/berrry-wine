@@ -302,3 +302,49 @@ All 139 full served-source responses matched pins; raw observer SHA-256 is
 receipts remain unchanged. The scene was black, with no installer input.
 Ordinary close at 11:39:58.550Z completed with exit 0, no errors, zero pending
 streams, browser/server closed and both PIDs absent. No gameplay claim.
+
+### 2026-10-07 owning trace arm; first scalar not retained
+
+Attempt6 (`scratch/new-game-antara-20261007/attempt6`) authenticated the actual
+child instance before its first run: task slot0/module15, entry FFFE1600,
+original stack parameter0 and inherited trace flag0. At the later USER452
+CreateWindow import it authenticated the original CS152f push span and far
+return47:1567, rechecked the task-start record, then enabled the existing bounded
+Win16 diagnostic flag. This is declared instrumentation, not a passive getter
+or a performance run. It did not modify installer state or send input.
+
+The parser stopped on its **first unknown scalar**, leaving zero decoded frames.
+The exact rejected value was unfortunately **not retained**. No DialogBox call,
+absence or return can be inferred from this rejection. The frozen CreateWindow
+source has a concrete omitted frame, `CA16A9E6` followed by HWND/class/procedure/
+class-lookup (four scalar payloads), after the host CreateWindow call. That is a
+source-backed parser omission, not proof that the uncaptured scalar was E6.
+Saved console output does not recover the numeric value. The separate proposed
+`dialog-trace7.js` retains a bounded rejected value/index and recognizes that
+exact source frame; its21 pure-JS tests include actual source payload widths,
+marker-valued payloads and nontrace interleaving. No subsequent guest run has
+been authorized or performed for that revision.
+
+At arm, DS was0087 and both DS:108a/108c contained0087. This is meaningful but
+must not be mislabeled an invalid module handle. The authenticated original
+segment2 ran at selector0047 (index8), giving module segment-index base6.
+The original child's NE automatic-data segment is10; the loader therefore
+selects `((6+10)<<3)|7 = 0087` for its DGROUP. The resource resolver recognizes
+the task DGROUP **before** trying the narrowed-handle table. The probe's
+`sentinel/unmapped handle` label merely says no dynamic-table entry was read
+for this below0100 value. Thus both globals held the valid task instance at
+this earlier boundary. They may change during creation callbacks; there is
+still no actual USER87 hInstance/resource-selection observation.
+
+All139 full served-source responses matched the frozen pins, including private
+Worker `b4a46a3b831052492616f62a7e9d2f1d89b3ebb00413160a9d0d6fe29f7cfb53`
+and private module
+`992a8b021897e52d2ec1b5f3604f5f89098f02ee2e4748e5340ff4d960f5e880`.
+Raw observer SHA-256:
+`316e32330a3aa35fc17e85d33f6e1b31510500dc82e2b15407fd356c5d941fde`.
+`analysis.json` records the inference and38 artifact hashes are in `hashes.json`.
+The personally reviewed `dialog-boundary.png` is black. Owning stop replies
+reported both current contexts closed and trace ownership cleared; ordinary
+cleanup at12:24:55.627Z had exit0, no errors, zero pending streams, browser/server
+closed and driver2645450/Chrome2645465 absent. This remains installer diagnosis,
+not gameplay qualification or a completed modal-dialog result.
