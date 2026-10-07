@@ -393,3 +393,25 @@ Evidence: scratch/wt-diehard-20261007/scratch/thread-poll-confirmation/attempt1.
 28-artifact manifest SHA256 a9cca0b2083547c919e3415e19276b51dca4a463f76350bf3a3ea33685f90cf3.
 Full68086-byte log SHA256
 fe5c9d023331f01acdc1ef9cef4e7925a235274cf9f5703e45c5b793c95e95df.
+
+### Narrow ordinary player movement accepted
+
+Fresh600s ordinary session73508/PID2551328 ran10:58:22.131–11:06:33.714Z,
+early normal quit0, streams drained/PID absent/8137 free. Same pinned8eb WASM
+and patched ThreadManager236e8; no counters, API/FS trace or custom observer.
+Normal New Game/Easy completed loading and narrated intro into full player HUD,
+crosshair and weapons. Original autoexec.cfg scan17 Forward/scan31 Reverse
+supported ordinary W/S. W800ms changed camera perspective toward ropes/wall;
+S800ms partially reversed it. Both key releases were recorded. Immediate500ms
+post-input PNGs were stale; later separately captured settled images provide
+the reviewed response. Final reverse-settled and5s idle-settled PNGs are identical
+SHA25692385758bd5c087d16d5282b1454306257790bfafa5a151445dd88ccbd415269.
+Root personally reviewed and accepted narrow player movement, not FPS/audio,
+sustained level, full game or exact return to starting position.
+
+Published run: scratch/runs/20261007-diehard-nakatomi-player-control.
+result.json SHA2568c6ab63667ef96a5314a4fae57619be0dc2c41fe02d5cbee0b33b7fc9fdeea2d;
+34-artifact validation.json SHA256beb17d626da495e0fa323d995b2c4cb0ad906cee745e5cf48b162b048434576c.
+Live8098 reader recognizes all4 gameplay images; at publication its older corpus
+view warns candidate not in corpus despite committed local registration. No
+backend restart or public desktop promotion was performed by this lane.
