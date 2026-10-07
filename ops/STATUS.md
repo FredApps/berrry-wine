@@ -1,9 +1,9 @@
-updated: 2026-10-07T10:26:00.206Z
+updated: 2026-10-07T10:28:19.371Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc2 ordinary Jungle controls complete. Antara loader repair3880d93d passed production gates and authentic-DLL tests; ordinary installer browser probe granted after cache-only recovery, conditional disk preflight. DieHard previous-session nested teardown remains stalled; source identifies actual loader join and manual-reset stop event, read-only handle/state capture preparation active. Antara has next sole browser lease; no other runtime authorized.
+New-game pipeline: Croc2 ordinary Jungle controls complete. Antara repaired original installer probe closed10:27:05 with browser/streams/PIDs clean; runexit1 preserves refused CARDS module searches. Initial setup then black, no ordinary input/gameplay. Child Worker logs a visible window omitted by main-only census; source audit of child ownership and exact asset closure next. DieHard authenticated stop-event capture tests pass, runtime readiness pending. All guests stopped; no other runtime granted.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 

@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic additive FAR_ADDR repair3880d93d passes full production gates,2881 NE checks and authentic DLL regression. Sole ordinary original installer browser probe granted conditional2.9GB launch floor with production992a8b02 and679df2b3 helper. Reproducible npm cache cleanup recovered117MB; receipt scratch/new-game-antara-20261007/npm-cache-recovery.json. Preserve2GiB runtime floor. No installer/gameplay qualification yet.
+  Next: Ordinary original installer probe13179 closed10:27:05 clean browser/process cleanup; runexit1 retains ten refused CARDS search probes. Initial setup then black, no inputs or gameplay. Aux Worker logs visible child SierraSetup hwnd18001, omitted by main-only window census. Audit actual child renderer/window ownership and exact optional-probe closure before next run; no inferred repaired-loader failure. Production992a8b02/repair3880d93d retained.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
