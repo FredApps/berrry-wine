@@ -55,6 +55,34 @@ assert.deepStrictEqual(pixel(0, 0), [255, 0, 0, 255],
 assert.deepStrictEqual(pixel(3, 3), [0, 255, 0, 255],
   'native child pixels must composite over DirectDraw inside its window rect');
 
+// The guest can later replace the whole primary with a custom-painted menu.
+// Retaining the shared canvas must not keep its old child background on top.
+// A lazy flush can update the window's stamp without receiving a new upload.
+gdi._waCanonicalPresentation = { writeSeq: 1 };
+top._gdiWriteSeq = 99;
+renderer._drawPresentedCanvas(dx, 0, 0, 8, 8);
+renderer._compositeExclusiveSharedChildren(top, null, 2);
+assert.deepStrictEqual(pixel(3, 3), [255, 0, 0, 255],
+  'a newer primary must cover old shared GDI child pixels despite a later flush');
+top._dxFrameLayer = { canvas: dx, writeSeq: 2 };
+for (const stack of [[top], null]) {
+  const source = renderer._buildExclusivePresentationSource(top, stack, 2);
+  assert.deepStrictEqual(Array.from(source.getContext('2d').getImageData(3, 3, 1, 1).data),
+    [255, 0, 0, 255], 'post-processing must also omit overwritten shared child pixels');
+}
+gdi._waCanonicalPresentation.writeSeq = 3;
+renderer._drawPresentedCanvas(dx, 0, 0, 8, 8);
+renderer._compositeExclusiveSharedChildren(top, null, 2);
+assert.deepStrictEqual(pixel(3, 3), [0, 255, 0, 255],
+  'a native control repaint after the primary must remain visible');
+for (const stack of [[top], null]) {
+  const source = renderer._buildExclusivePresentationSource(top, stack, 2);
+  assert.deepStrictEqual(Array.from(source.getContext('2d').getImageData(3, 3, 1, 1).data),
+    [0, 255, 0, 255], 'post-processing must retain newer native control pixels');
+}
+delete top._dxFrameLayer;
+delete gdi._waCanonicalPresentation;
+
 child.visible = false;
 renderer._drawPresentedCanvas(dx, 0, 0, 8, 8);
 renderer._compositeExclusiveSharedChildren(top, null);

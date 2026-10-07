@@ -214,3 +214,37 @@ collector error and missing UI icon `icons/apps/tiberian_sun_demo.png` are
 retained. Independent 23:14:41 checks find PIDs 24030/24042 absent, no Chrome,
 and unchanged listeners. All 355 pins verify before removal of only the owned
 runtime prefix at 23:14:58. No missing guest fixture/DLL/TLB path was observed.
+
+## 2026-10-07 demonstrated covering layer and candidate generic repair
+
+The 23:19:16–23:20:05 original run captures native OffscreenCanvas layers via
+`OffscreenCanvas.prototype.convertToBlob`, bypassing host flush wrappers.
+The personally reviewed ordinary screenshot still has the grey menu slab,
+but `surface-65537-dxFrame.png` shows the complete, correctly captioned menu.
+`surface-65537-gdiChild.png` contains the grey slab at that same location.
+The canonical DirectDraw backing (`surface-65537-back.png`) has title artwork.
+This demonstrates that original guest menu painting succeeds and the retained
+shared GDI child overlay covers the final DirectDraw frame. Numerical layer
+write ordering was not captured; no timestamp claim is made from these images.
+
+The ordinary and post-processing compositors already omit separate child
+surfaces overwritten by a newer primary present, but always composite shared
+GDI child regions afterward. The candidate applies the same ordering rule to
+shared regions. Accepted GDI uploads receive a per-presentation write sequence;
+lazy canvas flushes cannot revive old uploads. A newer native control upload
+still composites. No application name, HWND, dimensions, or guest state is
+special-cased. The focused pixel regression fails on the original renderer at
+the exact overwritten-child assertion and passes with the candidate, covering
+ordinary output and both post-processing routes. The existing nine GDI checks
+also pass, including upload-versus-flush order and empty-upload behavior.
+This source candidate awaits a newly built, identified module and ordinary
+runtime/gameplay validation; it is not a completed new-game lane.
+
+Contained evidence is
+`scratch/runs/20261007-tiberian-composition-preparation/investigation.json`
+and `analysis.json`, with 49 indexed artifacts including all three reviewed
+raw layers, the ordinary screenshot, complete original pinned package, and
+the baseline regression failure. Ordinary quit closes browser/server with
+Chrome exit 0, no cleanup errors and streams 0. Independent 23:20:53 checks
+find actual PIDs 34442/34454 absent, no Chrome and original listeners. All 355
+runtime pins verify before removing only the owned prefix at 23:21:07.

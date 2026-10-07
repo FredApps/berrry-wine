@@ -130,7 +130,9 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
   const memory = new ArrayBuffer(64 * 1024);
   const bytes = new Uint8Array(memory);
   const bits = 0x1000;
-  const { host, gdi } = createHostImports({ getMemory: () => memory, exports: {} });
+  let writeSeq = 0;
+  const renderer = { nextSurfaceWriteSeq: () => ++writeSeq };
+  const { host, gdi } = createHostImports({ getMemory: () => memory, exports: {}, renderer });
   bytes.set([0x66, 0x55, 0x44], bits); // bottom row, first pixel
   bytes.set([0x33, 0x22, 0x11], bits + 12 + 3); // top row, second pixel
   assert.strictEqual(host.gdi_surface_create(0x1234, 3, 2, 24, bits, 12, 0, 0, 0), 1);
@@ -139,10 +141,20 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
     [0x11, 0x22, 0x33, 0xFF],
     'new presentation cache must start from canonical pixels');
   assert.strictEqual(host.gdi_surface_upload(0x1234, 0, 0, 3, 2), 1);
+  const presentation = gdi.surfacePresentations.get(0x1234);
+  assert.strictEqual(presentation.writeSeq, 1,
+    'the actual guest upload must establish the surface write order');
+  renderer.nextSurfaceWriteSeq(); // a later DirectDraw present
   assert.deepStrictEqual(Array.from(canvas.getImageData(1, 0, 1, 1).data),
     [0x11, 0x22, 0x33, 0xFF]);
   assert.deepStrictEqual(Array.from(canvas.getImageData(0, 1, 1, 1).data),
     [0x44, 0x55, 0x66, 0xFF]);
+  assert.strictEqual(presentation.writeSeq, 1,
+    'a deferred presentation read/flush must not reorder the guest upload');
+  assert.strictEqual(host.gdi_surface_upload(0x1234, 0, 0, 0, 2), 1);
+  assert.strictEqual(presentation.writeSeq, 1, 'empty uploads must not revive stale pixels');
+  assert.strictEqual(host.gdi_surface_upload(0x1234, 0, 0, 3, 2), 1);
+  assert.strictEqual(presentation.writeSeq, 3, 'a later real GDI upload must become current');
   assert.strictEqual(host.gdi_surface_delete(0x1234), 1);
   assert.strictEqual(gdi.surfacePresentations.has(0x1234), false);
 
