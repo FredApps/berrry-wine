@@ -1111,9 +1111,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Each game has a reviewed actual-gameplay screenshot and valid scene-qualified FPS evidence, or an explicit per-game blocker with exact missing paths; menus, intros and raw Flip event rates are not gameplay FPS.
   Evidence: ops/handoffs/migration-core-ready-20261003.md
 
-- [ ] New-game lane: original Daggerfall ordinary player-controlled dungeon
+- [x] New-game lane: original Daggerfall ordinary player-controlled dungeon
   id: NEW-GAME-DAGGERFALL-20261005
-  status: active
+  status: done
   reclaimed: 2026-10-07T07:42:56.312Z
   candidate: gog-free-elder-scrolls-daggerfall
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
@@ -1122,7 +1122,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created: 2026-10-05T18:27:59.455Z
   accepted: 2026-10-05T18:27:59.455Z
   accepted-by: /root/coverage_audit
-  Next: Mount-contract repair integrated mainfe7cfb95 (worker0dc59927); focused real loader/VFS regression and11 existing tests PASS. Four original save files65624B required/eager;1702bulk files remain lazy. Local manifestad3326a8 regenerated without payload changes. READY10 repinned,900sec ordinary dungeon route queued after Drakan; no gameplay/FPS qualification.
+  Next: Qualified narrow ordinary dungeon movement on October7; documentation integrated remote main 724637d9, save repair fe7cfb95. Root reviewed forward/reverse/idle wall geometry in scratch/runs/20261007-daggerfall-dungeon-controls/result.json (708 artifact hashes). Runtime source3b8189/module8eb; optional bundle403 and driver exit1 preserved, clean process closure. No FPS, audio or sustained-play claim; worker refills lane.
   Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
   Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
 

@@ -1,10 +1,12 @@
-updated: 2026-10-07T08:33:22.401Z
+updated: 2026-10-07T08:46:24.124Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Drakan reaches the actual level with Threads on using the repaired private module; owning Worker confirmed, no observed trap, clean browser/server close. Movement remains unqualified; Threads-off acceptance is still queued. Repair a1710870 is on main.
+Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-Two new-game lanes: Daggerfall attempt10 is live with the eager-save repair fe7cfb95 (browser deadline08:44:34Z); Die Hard texture repair8cbd797c passed actual rendering tests and its worker prepares local-candidate registration while ordinary game validation waits for the runtime slot. No new dungeon/DieHard gameplay or FPS claim.
+New-game pipeline: Die Hard Nakatomi demo is the live lane (/root/restore_evidence). The texture fix now renders its actual menu; ordinary New Game input is under bounded validation through 08:46:26Z. Registration draft remains local and uncommitted. /root/coverage_audit is selecting the next nonpublic, not-already-qualified title to replace completed Daggerfall; this selection is not yet a claimed game lane.
 
-GL/D3D and sweep docs reconciled on mainf3dab354: later TR3, Uplink, WinBoard and Hype evidence resolves stale follow-ups, but menus/excluded/unmeasured rows do not fulfill the whole goal. D3DIM PBO warning is under source-only audit.16of17 formerly missing executable paths now exist; Baldur interactive BGDemo.exe remains absent (exactpath in task evidence). No full sweep rerun.
+Drakan reached its actual level with Threads on, without an observed trap; ordinary movement was not qualified. The pinned Threads-off check is ready and next after Die Hard cleanup (/root/corpus_categories).
 
-Claude remains stopped; Telegram stays with its orchestrator and Heroes II with the laptop. One runtime at a time; disk above2GiB; heavy benchmarks on separate boats. Shared HEAD/index untouched; no public deployment.
+GL/D3D and sweep evidence reconciled on main f3dab354/e710d101. PBO audit on main 737cc38c finds normal collect-before-write ordering; warning cause remains unproven and needs identity evidence, not a speculative rewrite. Sixteen of seventeen formerly missing executable entrypoints now exist, but complete closure and gameplay are not implied; Baldur interactive BGDemo.exe remains absent.
+
+Claude remains stopped; Telegram stays with its orchestrator and Heroes II with the laptop. One runtime at a time, disk above 2GiB, heavy benchmarks on separate boats. Shared HEAD/index untouched; no public deployment.
