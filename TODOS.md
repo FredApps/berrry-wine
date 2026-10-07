@@ -1174,7 +1174,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Root resumed preparation:216 frozen historical sourcefiles/58 originalfixtures pinned without payloadcopies; observer8/8, controls4/4 and actualasset-handler tests pass. Driver latestscene/deadline/disk bounds hardened. Source receipt53750e17; final lifecycle review/browser observation pending capacity and serialized runtime. Engine unchanged; Chrome warning unresolved, no performanceclaim.
+  Next: Historical MW3 browser72053 reproduced256 startup READ-usage warnings, but later idle-menu10sec observer saw context1/no buffercalls. Cleanexit0/Chrome0/streams0/PIDsabsent10:53:43. Raw findings ops/handoffs/pbo-startup-warning-20261007.json. Early factory hook nowtested3/3 and216 privately frozen sourcefiles prepared; capture first10sec beforeguestdraws, no enginefix/performanceclaim.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
@@ -1199,7 +1199,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   created: 2026-10-07T09:08:16.475Z
   requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
-  Next: Native gate-input run closed10:33:25 cleanly. ActualTR23/TSS188f0 ESP0fc SS030 captured; original-file matching cannot map retained code, exact far transfer remains unknown. Evidence/design mainf5b848ff. Build actual instruction regression for correct callgate/privilege stack/RETF, synthetic architectural setup explicitly scoped to unitfixture; no productionCPU change yet. Arena still needs real CD/drive contracts; U4 story only.
+  Next: Four actual CALL gate baseline cases reproduce wrongtarget aftervalidatedsetup; sameCPL andring3-to0 params0/2 allfail atCS43:4567/base8-or20008, ring3 SSunchanged. Evidence mainb1cb9e27 preserves earlierharnessfailures separately. Worker implements propervalidatedgate/TSS/frame/RETF semantics onisolatedbranch, no productionmergeorCPUsuccessyet; invalidfaultdelivery must remainhonest. ArenaCDcontracts/U4worldstillopen.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Repaired-loader blackscreen traced to unresolved shared-renderer child HWND lifecycle. Source observerREADY2 captures create/show/destroy32records/15sec with original forwarding; exact10 optionalCARDS absent probes corrected with negativepins. Sole browser granted after DieHard RELEASE10:47:48 conditional2.9GB launch headroom. No installer/gameplay qualification.
+  Next: Actual child creation/show/destruction73ms captured, width8707; same renderer not lostwindow. OriginalCreateWindowEx Pascal argumentlayout agrees, so no assumedABIbug. OwningWorker readonly SS:BP/object/returncode probe READY3, boundaryguards underfinalreview; exact20 CARDS base/part000 absentprobes pinned. Awaitserializedbrowser afterDieHard; no installer/gameplayqualification.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
