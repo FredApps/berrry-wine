@@ -986,7 +986,7 @@
         (return)))
     ;; Ordinary calls inspect the named file, including freshly extracted DLLs.
     (call $file_version_info_size_named
-      (local.get $arg0) (local.get $arg1) (i32.const 0))
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 1))
     (drop (local.get $entry))
     (drop (local.get $size))
 
@@ -1034,7 +1034,7 @@
   ;; UTF-16 filename instead of treating its low bytes as an ANSI path.
   (func $handle_GetFileVersionInfoSizeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $file_version_info_size_named
-      (local.get $arg0) (local.get $arg1) (i32.const 1))
+      (local.get $arg0) (local.get $arg1) (i32.const 1) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_GetFileVersionInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1046,21 +1046,39 @@
   ;; padding relative to the resource start. Walk real keys: returning one
   ;; canned ProductName for every string query rejects NFS III's FileVersion.
   ;; Offsets and reads stay guest-relative, including across sparse pages.
+  ;; Original Win16 VERSION nodes have two WORD lengths and ANSI keys;
+  ;; Win32 nodes add wType and encode keys as UTF-16. Detect only the exact
+  ;; bounded root key, never infer format from a child value.
+  (func $version_is_ne (param $block i32) (result i32)
+    (if (i32.lt_u (call $gl16 (local.get $block)) (i32.const 20))
+      (then (return (i32.const 0))))
+    (i32.eqz (i32.or
+      (i32.or
+        (i32.xor (call $gl32 (i32.add (local.get $block) (i32.const 4))) (i32.const 0x565F5356))
+        (i32.xor (call $gl32 (i32.add (local.get $block) (i32.const 8))) (i32.const 0x49535245)))
+      (i32.or
+        (i32.xor (call $gl32 (i32.add (local.get $block) (i32.const 12))) (i32.const 0x495F4E4F))
+        (i32.xor (call $gl32 (i32.add (local.get $block) (i32.const 16))) (i32.const 0x004F464E))))))
+
   (func $version_value_offset (param $block i32) (param $node i32) (param $limit i32) (result i32)
     (local $end i32) (local $p i32) (local $bytes i32)
-    (if (i32.gt_u (i32.add (local.get $node) (i32.const 6)) (local.get $limit))
+    (local $ne i32) (local $header i32) (local $step i32)
+    (local.set $ne (call $version_is_ne (local.get $block)))
+    (local.set $header (select (i32.const 4) (i32.const 6) (local.get $ne)))
+    (local.set $step (select (i32.const 1) (i32.const 2) (local.get $ne)))
+    (if (i32.gt_u (i32.add (local.get $node) (local.get $header)) (local.get $limit))
       (then (return (i32.const 0))))
     (local.set $end (i32.add (local.get $node) (call $gl16 (i32.add (local.get $block) (local.get $node)))))
     (if (i32.or (i32.gt_u (local.get $end) (local.get $limit))
-          (i32.lt_u (local.get $end) (i32.add (local.get $node) (i32.const 8))))
+          (i32.lt_u (local.get $end) (i32.add (local.get $node) (i32.add (local.get $header) (local.get $step)))))
       (then (return (i32.const 0))))
-    (local.set $p (i32.add (local.get $node) (i32.const 6)))
+    (local.set $p (i32.add (local.get $node) (local.get $header)))
     (block $key_done (loop $key
-      (if (i32.gt_u (i32.add (local.get $p) (i32.const 2)) (local.get $end))
+      (if (i32.gt_u (i32.add (local.get $p) (local.get $step)) (local.get $end))
         (then (return (i32.const 0))))
-      (local.set $p (i32.add (local.get $p) (i32.const 2)))
-      (br_if $key_done (i32.eqz (call $gl16
-        (i32.add (local.get $block) (i32.sub (local.get $p) (i32.const 2))))))
+      (local.set $p (i32.add (local.get $p) (local.get $step)))
+      (br_if $key_done (i32.eqz (call $fmt_get
+        (i32.add (local.get $block) (i32.sub (local.get $p) (local.get $step))) (i32.eqz (local.get $ne)))))
       (br $key)))
     (local.set $p (i32.and (i32.add (local.get $p) (i32.const 3)) (i32.const -4)))
     ;; A text value may start exactly at the node end (empty value), but
@@ -1068,7 +1086,7 @@
     (if (i32.gt_u (local.get $p) (local.get $end))
       (then (return (i32.const 0))))
     (local.set $bytes (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 2)))))
-    (if (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1))
+    (if (i32.and (i32.eqz (local.get $ne)) (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1)))
       (then (return (local.get $p))))
     (if (i32.gt_u (i32.add (local.get $p) (local.get $bytes)) (local.get $end))
       (then (return (i32.const 0))))
@@ -1083,7 +1101,8 @@
     (local $end i32) (local $bytes i32)
     (local.set $end (i32.add (local.get $node) (call $gl16 (i32.add (local.get $block) (local.get $node)))))
     (local.set $bytes (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 2)))))
-    (if (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1))
+    (if (i32.and (i32.eqz (call $version_is_ne (local.get $block)))
+          (i32.eq (call $gl16 (i32.add (local.get $block) (i32.add (local.get $node) (i32.const 4)))) (i32.const 1)))
       (then (local.set $bytes (i32.shl (local.get $bytes) (i32.const 1)))))
     (if (i32.gt_u (i32.add (local.get $value) (local.get $bytes)) (local.get $end))
       (then (local.set $bytes (i32.sub (local.get $end) (local.get $value)))))
@@ -1093,6 +1112,10 @@
     (local $node i32) (local $limit i32) (local $value i32) (local $child i32)
     (local $end i32) (local $bytes i32) (local $chars i32) (local $i i32)
     (local $step i32) (local $match i32) (local $c i32)
+    (local $ne i32) (local $key_header i32) (local $key_step i32)
+    (local.set $ne (call $version_is_ne (local.get $block)))
+    (local.set $key_header (select (i32.const 4) (i32.const 6) (local.get $ne)))
+    (local.set $key_step (select (i32.const 1) (i32.const 2) (local.get $ne)))
     (local.set $limit (call $gl16 (local.get $block)))
     (local.set $step (i32.add (local.get $wide) (i32.const 1)))
     (if (i32.eq (call $fmt_get (local.get $path) (local.get $wide)) (i32.const 92))
@@ -1120,10 +1143,10 @@
         (local.set $match (i32.const 1))
         (local.set $i (i32.const 0))
         (block $compared (loop $compare
-          (if (i32.ge_u (i32.add (local.get $child) (i32.add (i32.const 6) (i32.shl (local.get $i) (i32.const 1)))) (local.get $value))
+          (if (i32.ge_u (i32.add (local.get $child) (i32.add (local.get $key_header) (i32.mul (local.get $i) (local.get $key_step)))) (local.get $value))
             (then (local.set $match (i32.const 0)) (br $compared)))
-          (local.set $c (call $gl16 (i32.add (local.get $block)
-            (i32.add (local.get $child) (i32.add (i32.const 6) (i32.shl (local.get $i) (i32.const 1)))))))
+          (local.set $c (call $fmt_get (i32.add (local.get $block)
+            (i32.add (local.get $child) (i32.add (local.get $key_header) (i32.mul (local.get $i) (local.get $key_step))))) (i32.eqz (local.get $ne))))
           (if (i32.eq (local.get $i) (local.get $chars))
             (then (local.set $match (i32.eqz (local.get $c))) (br $compared)))
           (if (i32.ne (call $tolower (local.get $c)) (call $tolower (call $fmt_get
@@ -1143,13 +1166,34 @@
       (br $component))
     (i32.const 0))
 
-  ;; ANSI queries use the existing conversion workspace; W queries and binary
-  ;; values point directly into the caller's unchanged resource buffer.
+  ;; Native-encoding queries and binary values point into the caller's buffer.
+  ;; NE wide text uses the caller-owned trailer reserved by the Win32 size
+  ;; APIs, so answers from different blocks retain the lifetime of each block.
+  ;; Win16 keeps the original resource size and only uses native ANSI queries.
+  ;; ANSI nodes have no wType; only StringFileInfo descendants are text.
+  (func $version_ne_text_path (param $path i32) (param $wide i32) (result i32)
+    (local $i i32) (local $step i32) (local $expected i32)
+    (local.set $step (i32.add (local.get $wide) (i32.const 1)))
+    (if (i32.eq (call $fmt_get (local.get $path) (local.get $wide)) (i32.const 92))
+      (then (local.set $path (i32.add (local.get $path) (local.get $step)))))
+    (loop $key
+      (if (i32.lt_u (local.get $i) (i32.const 8))
+        (then (local.set $expected (i32.and (i32.wrap_i64 (i64.shr_u
+          (i64.const 0x6966676e69727473) (i64.extend_i32_u (i32.shl (local.get $i) (i32.const 3))))) (i32.const 255))))
+        (else (local.set $expected (i32.and (i32.wrap_i64 (i64.shr_u
+          (i64.const 0x6f666e69656c) (i64.extend_i32_u (i32.shl (i32.sub (local.get $i) (i32.const 8)) (i32.const 3))))) (i32.const 255)))))
+      (if (i32.ne (call $tolower (call $fmt_get (i32.add (local.get $path)
+            (i32.mul (local.get $i) (local.get $step))) (local.get $wide))) (local.get $expected))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $key (i32.lt_u (local.get $i) (i32.const 14))))
+    (i32.eq (call $fmt_get (i32.add (local.get $path)
+      (i32.mul (i32.const 14) (local.get $step))) (local.get $wide)) (i32.const 92)))
   (global $version_query_scratch (mut i32) (i32.const 0))
   (func $version_query (param $block i32) (param $path i32)
       (param $out i32) (param $length i32) (param $wide i32) (result i32)
     (local $node i32) (local $value i32) (local $count i32) (local $i i32)
-    (local $off i32) (local $text i32) (local $avail i32)
+    (local $off i32) (local $text i32) (local $avail i32) (local $ne i32)
     (if (local.get $length) (then (call $gs32 (local.get $length) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $block)) (i32.eqz (local.get $path)))
       (then (return (i32.const 0))))
@@ -1159,7 +1203,37 @@
     (local.set $off (call $version_value_offset
       (local.get $block) (i32.sub (local.get $node) (local.get $block)) (call $gl16 (local.get $block))))
     (local.set $value (i32.add (local.get $block) (local.get $off)))
-    (local.set $text (i32.eq (call $gl16 (i32.add (local.get $node) (i32.const 4))) (i32.const 1)))
+    (local.set $ne (call $version_is_ne (local.get $block)))
+    (if (local.get $ne)
+      (then (local.set $text (call $version_ne_text_path (local.get $path) (local.get $wide))))
+      (else (local.set $text (i32.eq (call $gl16 (i32.add (local.get $node) (i32.const 4))) (i32.const 1)))))
+    (if (local.get $ne)
+      (then
+        (local.set $avail (call $version_value_bytes (local.get $block)
+          (i32.sub (local.get $node) (local.get $block)) (local.get $off)))
+        (if (i32.gt_u (local.get $count) (local.get $avail))
+          (then (return (i32.const 0))))
+        (if (i32.and (local.get $text) (local.get $wide))
+          (then
+            (block $ansi_nul (loop $ansi_scan
+              (br_if $ansi_nul (i32.ge_u (local.get $i) (local.get $count)))
+              (if (i32.eqz (call $gl8 (i32.add (local.get $value) (local.get $i))))
+                (then (local.set $count (i32.add (local.get $i) (i32.const 1))) (br $ansi_nul)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ansi_scan)))
+            (if (local.get $wide)
+              (then
+                (local.set $text (i32.add (i32.add (local.get $block) (call $gl16 (local.get $block)))
+                  (i32.shl (local.get $off) (i32.const 1))))
+                (local.set $i (i32.const 0))
+                (block $ansi_copied (loop $ansi_copy
+                  (br_if $ansi_copied (i32.ge_u (local.get $i) (local.get $count)))
+                  (call $gs16 (i32.add (local.get $text) (i32.shl (local.get $i) (i32.const 1)))
+                    (call $tt_cp1252_to_unicode (call $gl8 (i32.add (local.get $value) (local.get $i)))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ansi_copy)))
+                (local.set $value (local.get $text))))))
+        (call $gs32 (local.get $out) (local.get $value))
+        (call $gs32 (local.get $length) (local.get $count))
+        (return (i32.const 1))))
     (if (local.get $text)
       (then
         ;; Report characters through the terminating NUL, bounded by the node:
@@ -2336,6 +2410,75 @@
 
   ;; Load the named PE's RT_VERSION blob into a temporary guest allocation.
   ;; The parser reads only headers, the resource section, and the final blob.
+  ;; NE resources use a bounded table of shifted file ranges, not PE RVAs.
+  ;; Return the original ANSI VERSION bytes: Win16 callers also inspect the
+  ;; fixed-info structure directly, so converting this blob would break them.
+  (func $version_ne_resource (param $handle i32) (param $file_size i32)
+      (param $ne_off i32) (param $count_g i32) (param $size_out_wa i32) (result i32)
+    (local $header i32) (local $table i32) (local $blob i32)
+    (local $start i32) (local $end i32) (local $size i32) (local $shift i32)
+    (local $p i32) (local $type i32) (local $count i32)
+    (local $offset64 i64) (local $size64 i64) (local $ok i32)
+    (block $done
+      (br_if $done (i32.gt_u (local.get $ne_off) (local.get $file_size)))
+      (br_if $done (i32.lt_u (i32.sub (local.get $file_size) (local.get $ne_off)) (i32.const 64)))
+      (local.set $header (call $heap_alloc (i32.const 64)))
+      (br_if $done (i32.eqz (local.get $header)))
+      (br_if $done (i32.eqz (call $version_read_exact (local.get $handle)
+        (local.get $ne_off) (i32.const 64) (local.get $header) (local.get $count_g))))
+      (local.set $start (call $gl16 (i32.add (local.get $header) (i32.const 0x24))))
+      (local.set $end (call $gl16 (i32.add (local.get $header) (i32.const 0x26))))
+      (br_if $done (i32.lt_u (local.get $start) (i32.const 64)))
+      (br_if $done (i32.le_u (local.get $end) (local.get $start)))
+      (br_if $done (i32.gt_u (local.get $end)
+        (i32.sub (local.get $file_size) (local.get $ne_off))))
+      (local.set $size (i32.sub (local.get $end) (local.get $start)))
+      (br_if $done (i32.lt_u (local.get $size) (i32.const 4)))
+      (local.set $table (call $heap_alloc (local.get $size)))
+      (br_if $done (i32.eqz (local.get $table)))
+      (br_if $done (i32.eqz (call $version_read_exact (local.get $handle)
+        (i32.add (local.get $ne_off) (local.get $start)) (local.get $size)
+        (local.get $table) (local.get $count_g))))
+      (local.set $shift (call $gl16 (local.get $table)))
+      (br_if $done (i32.gt_u (local.get $shift) (i32.const 31)))
+      (local.set $p (i32.const 2))
+      (loop $types
+        (br_if $done (i32.gt_u (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
+        (local.set $type (call $gl16 (i32.add (local.get $table) (local.get $p))))
+        (br_if $done (i32.eqz (local.get $type)))
+        (br_if $done (i32.gt_u (i32.add (local.get $p) (i32.const 8)) (local.get $size)))
+        (local.set $count (call $gl16 (i32.add (local.get $table)
+          (i32.add (local.get $p) (i32.const 2)))))
+        (local.set $p (i32.add (local.get $p) (i32.const 8)))
+        (br_if $done (i32.gt_u (local.get $count)
+          (i32.div_u (i32.sub (local.get $size) (local.get $p)) (i32.const 12))))
+        (if (i32.and (i32.eq (local.get $type) (i32.const 0x8010))
+                     (i32.ne (local.get $count) (i32.const 0)))
+          (then
+            (local.set $offset64 (i64.shl (i64.extend_i32_u (call $gl16
+              (i32.add (local.get $table) (local.get $p)))) (i64.extend_i32_u (local.get $shift))))
+            (local.set $size64 (i64.shl (i64.extend_i32_u (call $gl16
+              (i32.add (local.get $table) (i32.add (local.get $p) (i32.const 2)))))
+              (i64.extend_i32_u (local.get $shift))))
+            (br_if $done (i64.eqz (local.get $size64)))
+            (br_if $done (i64.gt_u (i64.add (local.get $offset64) (local.get $size64))
+              (i64.extend_i32_u (local.get $file_size))))
+            (local.set $blob (call $heap_alloc (i32.wrap_i64 (local.get $size64))))
+            (br_if $done (i32.eqz (local.get $blob)))
+            (br_if $done (i32.eqz (call $version_read_exact (local.get $handle)
+              (i32.wrap_i64 (local.get $offset64)) (i32.wrap_i64 (local.get $size64))
+              (local.get $blob) (local.get $count_g))))
+            (i32.store (local.get $size_out_wa) (i32.wrap_i64 (local.get $size64)))
+            (local.set $ok (i32.const 1))
+            (br $done)))
+        (local.set $p (i32.add (local.get $p) (i32.mul (local.get $count) (i32.const 12))))
+        (br $types)))
+    (call $heap_free (local.get $header))
+    (call $heap_free (local.get $table))
+    (if (i32.eqz (local.get $ok))
+      (then (call $heap_free (local.get $blob)) (return (i32.const 0))))
+    (local.get $blob))
+
   (func $file_version_resource (param $filename_g i32) (param $wide i32)
       (param $size_out_wa i32) (result i32)
     (local $handle i32) (local $file_size i32) (local $count_g i32)
@@ -2380,6 +2523,12 @@
       (br_if $load (i32.eqz (call $version_read_exact
         (local.get $handle) (local.get $pe_off) (i32.const 24)
         (local.get $headers_g) (local.get $count_g))))
+      (if (i32.eq (call $gl16 (local.get $headers_g)) (i32.const 0x454E))
+        (then
+          (local.set $blob_g (call $version_ne_resource (local.get $handle)
+            (local.get $file_size) (local.get $pe_off) (local.get $count_g) (local.get $size_out_wa)))
+          (local.set $ok (i32.ne (local.get $blob_g) (i32.const 0)))
+          (br $load)))
       (br_if $load (i32.ne (call $gl32 (local.get $headers_g))
         (i32.const 0x00004550)))
       (local.set $num_sections (call $gl16
@@ -2538,15 +2687,26 @@
     (local.get $blob_g))
 
   (func $file_version_info_size_named
-      (param $filename_g i32) (param $handle_out_g i32) (param $wide i32)
-    (local $scratch_g i32) (local $blob_g i32)
+      (param $filename_g i32) (param $handle_out_g i32) (param $wide i32) (param $reserve_wide i32)
+    (local $scratch_g i32) (local $blob_g i32) (local $size i32) (local $wide_size i32)
     (if (local.get $handle_out_g)
       (then (call $gs32 (local.get $handle_out_g) (i32.const 0))))
     (local.set $scratch_g (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (local.get $scratch_g) (i32.const 0))
     (local.set $blob_g (call $file_version_resource
       (local.get $filename_g) (local.get $wide) (call $g2w (local.get $scratch_g))))
-    (i32.store offset=0 (global.get $reg_base) (call $gl32 (local.get $scratch_g)))
+    (local.set $size (call $gl32 (local.get $scratch_g)))
+    ;; A WORD bounds the NE tree. Reserve a disjoint UTF-16 slot at twice
+    ;; each byte offset after it; the original (possibly padded) size bounds
+    ;; the tree and the total reservation without changing the resource bytes.
+    (if (i32.and (i32.and (i32.ne (local.get $blob_g) (i32.const 0)) (local.get $reserve_wide))
+          (i32.ge_u (local.get $size) (i32.const 20)))
+      (then (if (call $version_is_ne (local.get $blob_g))
+        (then
+          (local.set $wide_size (i32.mul (call $gl16 (local.get $blob_g)) (i32.const 3)))
+          (if (i32.gt_u (local.get $wide_size) (local.get $size))
+            (then (local.set $size (local.get $wide_size))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $size))
     (call $heap_free (local.get $blob_g)))
 
   (func $file_version_info_named

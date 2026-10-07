@@ -2301,8 +2301,13 @@
         (call $win16_api_return (i32.const 8))
         (return)))
     (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetFileVersionInfoSizeA (local.get $file) (local.get $handle)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    ;; Win16 queries ANSI in-place and requires only the original resource.
+    ;; The Win32 size APIs also reserve a caller-owned wide conversion trailer.
+    (if (call $name_is_static_dx_dll (local.get $file))
+      (then (call $handle_GetFileVersionInfoSizeA (local.get $file) (local.get $handle)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $file_version_info_size_named (local.get $file) (local.get $handle)
+        (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
     (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
     (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
