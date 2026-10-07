@@ -106,3 +106,30 @@ at the default 200 ms the guest clock runs ~15 guest hours per 275k batches.
   those are sane, check the software rasterizer's handling of XYZRHW + TEX1
   with SRCALPHA blending on a 16-bit device, e.g. by drawing one such quad in
   `test/test-d3d8-16bit-mode.js`.
+
+## 2026-10-07: host texture admission rejects supported 16-bit formats
+
+A bounded150-second CLI run on module
+`8eb283c1b595afe336c3e2407f722e19d47aad0739784de4864ba699c8b5712f`
+(runtime sources equivalent between3b8189f5 and8de5d0b3) repeatedly reported
+`invalid texture resource stage=0 ... kind=3 levels=1 lod=0 format=25`.
+The final640x480 image remained black apart from the lower-left gold emblem.
+No gameplay or independent menu-state qualification follows from that image.
+
+The bridge's admission list omitted24/25 although its existing decoder already
+implemented X1R5G5B5 and A1R5G5B5. Admit exactly these two formats; no WAT or
+decoder change. The expanded real-WASM16-bit test uploads native managed
+textures and draws an XYZRHW/diffuse/specular/TEX1 fan through the production
+Bridge/software backend. It verifies opaque X1 with bit15clear, opaque A1,
+transparent A1 preserving the blue target, and untouched outside pixels.
+The original host fails the real draw with D3DERR_INVALIDCALL; the candidate
+and existing D3D8 unavailable/ABI probe pass. Ordinary game validation is next.
+
+Retained evidence: `scratch/wt-diehard-20261007/scratch/menu-contract/`,
+`attempt2/final.png`, `attempt2/capture.json`, and
+`contract2/{before,candidate,unavailable}.log`. The107,442,011-byte production
+log is retained losslessly as `attempt2-driver.log.gz`; its decompressed SHA256
+is `11e974a0dcd602f523a6498fd1d855d982cb26d22c6f16b441a49fc969fdd9c1`.
+The late draw gate did not arm because rejected draws never reached it;
+there are no captured vertex alpha/RHW conclusions. Earlier attempt1 lacked
+sparse bundled fonts and is a harness error despite the runner's exit0.

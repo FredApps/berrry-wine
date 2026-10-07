@@ -74,6 +74,22 @@ const call = (name, args) => `
       (call $handle_IDirect3DDevice8_CopyRects (local.get $d) (local.get $src) (local.get $rects)
         (local.get $n) (local.get $dst) (i32.const 0))
       (i32.load offset=0 (global.get $reg_base)))
+    (func (export "menu_fvf") (param $p0 i32) (param $p1 i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 122679296))
+      (call $handle_IDirect3DDevice8_SetVertexShader (local.get $p0) (local.get $p1) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))
+    (func (export "menu_rs") (param $p0 i32) (param $p1 i32) (param $p2 i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 122679296))
+      (call $handle_IDirect3DDevice9_SetRenderState (local.get $p0) (local.get $p1) (local.get $p2) (i32.const 0) (i32.const 0) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))
+    (func (export "menu_texture") (param $p0 i32) (param $p1 i32) (param $p2 i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 122679296))
+      (call $handle_IDirect3DDevice9_SetTexture (local.get $p0) (local.get $p1) (local.get $p2) (i32.const 0) (i32.const 0) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))
+    (func (export "menu_draw") (param $p0 i32) (param $p1 i32) (param $p2 i32) (param $p3 i32) (param $p4 i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 122679296))
+      (call $handle_IDirect3DDevice9_DrawPrimitiveUP (local.get $p0) (local.get $p1) (local.get $p2) (local.get $p3) (local.get $p4) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))
   ` });
   productionImport = createHostImports({ getMemory: () => memory.buffer, exports: e,
     d3d9Bridge: { call: (...args) => bridge.call(...args) } }).host.gpu_gl_call;
@@ -229,6 +245,35 @@ const call = (name, args) => `
   assert.strictEqual(e.surf_unlock(alphaImage) >>> 0, OK);
   assert.strictEqual(e.surf_release(alphaImage) >>> 0, 0);
   assert.strictEqual(e.create_image(dev, 4, 4, 0x31545844, out) >>> 0, INVALIDCALL, 'DXT1 is still no image format');
+
+
+  // Production Bridge validation must admit formats it already decodes. Use
+  // real managed textures, native locks and native DrawPrimitiveUP, not a
+  // synthetic post-validation snapshot. D3D8 aliases this Draw method to D3D9.
+  assert.strictEqual(e.menu_fvf(dev,0x1c4)>>>0,OK);
+  for(const [state,value] of [[7,0],[14,0],[22,1],[137,0],[27,1],[19,5],[20,6]])
+    assert.strictEqual(e.menu_rs(dev,state,value)>>>0,OK);
+  const menuVertices=alloc(128),menuView=new DataView(memory.buffer,e.guest_to_wasm(menuVertices),128);
+  for(const [i,x,y] of [[0,1,1],[1,6,1],[2,6,6],[3,1,6]]){
+    const at=i*32;for(const [offset,value]of [[0,x],[4,y],[8,0],[12,1],[24,0.5],[28,0.5]])menuView.setFloat32(at+offset,value,true);
+    menuView.setUint32(at+16,0xffffffff,true);menuView.setUint32(at+20,0,true);
+  }
+  for(const [format,texel,expected,label] of [[24,0x7c00,0xffff0000,'X1 RGB ignores top bit'],[25,0xfc00,0xffff0000,'A1 opaque red'],[25,0x7c00,0xff0000ff,'A1 transparent preserves blue']]){
+    assert.strictEqual(e.managed_texture(dev,format,out)>>>0,OK);const texture=read(out);
+    assert.strictEqual(e.surface_level(texture,out)>>>0,OK);const surface=read(out);
+    assert.strictEqual(e.surf_lock(surface,locked,0,0)>>>0,OK);
+    for(let i=0;i<64;i++)write16(read(locked+4)+i*2,texel);
+    assert.strictEqual(e.surf_unlock(surface)>>>0,OK);
+    assert.strictEqual(e.surf_lock(back,locked,0,0)>>>0,OK);
+    for(let i=0;i<64;i++)write16(read(locked+4)+i*2,0x001f);
+    assert.strictEqual(e.surf_unlock(back)>>>0,OK);
+    assert.strictEqual(e.menu_texture(dev,0,texture)>>>0,OK);
+    assert.strictEqual(e.menu_draw(dev,6,2,menuVertices,32)>>>0,OK,label+' accepted by real Bridge');
+    assert.strictEqual(e.surf_lock(back,locked,0,0x10)>>>0,OK);
+    assert.strictEqual(x8(read16(read(locked+4)+(3*8+3)*2)),expected,label+' raster pixel');
+    assert.strictEqual(x8(read16(read(locked+4))),0xff0000ff,label+' outside quad canary');
+    assert.strictEqual(e.surf_unlock(back)>>>0,OK);
+  }
 
   console.log('PASS test-d3d8-16bit-mode');
 })().catch(err => { console.error(err); process.exit(1); });
