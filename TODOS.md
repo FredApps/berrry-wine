@@ -1225,22 +1225,22 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
-- [~] Additional game lane: Carmageddon TDR2000 demo
+- [x] Additional game lane: Carmageddon TDR2000 demo
   id: NEW-GAME-TDR2000-DEMO-20261007
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI tdr (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Ordinary race and forward/reverse/brake screenshots reviewed and sent. Fresh worker finalizes durable local-only registry/2963-file manifest and focused tests, exact scoped commit; no public deployment/FPS/audio claim.
+  Next: Completed mainb7cdb5fd: durable local-only registry/manifest, exact2963rows (148required/2815lazy), focused tests and fail-closed diskguard. Ordinary actualrace forward/reverse/brake screenshots reviewed; evidence1124777f, sentTelegram851/852. FPS/audio unmeasured; no public deployment.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root/restore_evidence
+  worker: fresh CLI comanche (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Main EXEC/MCB repair51e3e748. Private AH5A corrected13contracts/files/ioctl PASS; authentic installer now returns validhandle7 and successfulseek, but later reports memory error/childexit1. Reviewonly dea9b6e0 not integrated; worker fixes sharedhandle write coherence and traces actual later memory-accounting branch.
+  Next: Fresh worker takes final AH5A coherent-handle fix/native regressions and bounded readonly original-installer memory-accounting diagnostic. Local native slot follows Antara build completion; Arx remote browser independent. No capacity override.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
