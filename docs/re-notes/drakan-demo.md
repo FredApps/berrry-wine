@@ -56,3 +56,41 @@ Evidence: `scratch/runs/20261006T1600Z-drakan_demo-gameplay`.
   `0x407bf0` sets it, shutdown `0x410cf0` clears it); with it 0 the frame only
   draws a resource image through `0x40f990` when `[[0x47b660]+4]` is set.
 - `0x407bf0` set-state; `0x410cf0` shutdown (set-state 0, PostQuitMessage).
+
+
+## October 7 browser Threads ON/OFF lazy-read correctness acceptance
+
+The owner-side ReadFile-family destination/count fence repair (`c87a2ea1`,
+integrated as `a1710870`) preserves freshly read file bytes when an armed GPU
+surface later materializes. The earlier page-shadow bypass (`d3ec2640`) is
+unchanged. Actual-WASM/VFS before-control failed on overwritten file bytes;
+the candidate and existing lazy-surface fence regression passed, followed by
+all production build gates. This does not claim real GPU coverage from the
+mocked-GL regression.
+
+Both ordinary browser modes subsequently reached the rainy outdoor dragon
+level with enemies and HUD through beta OK → New Game → Normal. Worker and
+root personally reviewed these screenshots and matching mode/running state:
+
+- Threads ON: `scratch/drakan-host-write-20261007/browser/threads-on-attempt2/story-wait.png`.
+  `worker:true`, `threadsWanted:true`, `running:true`. Browser/server closed
+  08:28:03.697Z, Chrome exited 0, no retained processes.
+- Threads OFF: `scratch/drakan-host-write-20261007/browser/threads-off-attempt1/story-wait-3.png`,
+  captured 08:52:19.802Z. `worker:false`, `threadsWanted:false`, `running:true`.
+  Browser/server closed 08:52:42.892Z; Chrome exited 0 at 08:52:43.137Z;
+  cleanup errors and pending streams were empty and both PIDs were absent.
+
+Both used frozen source `c87a2ea192f912f19a7f7114b58d1c37e21e091e` and the
+full-gated private production module
+`0db725dd0c7cd4a2826159b9802e586f8fe97c70028cc1521416d76e095a2a08`
+(1,719,323 bytes). Actual served-module hashes match. No canonical build or
+public deployment was changed by these browser runs. The first ON attempt
+was a preserved setup-only allowlist failure, not a guest regression.
+
+This completes the narrow both-mode level acceptance for the lazy-read
+correctness repair. It is not a new title qualification: October 6 already
+has controlled CLI gameplay. The ON scene later returned to a menu before
+movement inputs, with cause unknown; OFF stopped after level review. No new
+movement, FPS, sound-quality or PBO-warning-resolution claim is made.
+`ops/handoffs/drakan-threads-acceptance-20261007.json` records source/run
+receipts and the immutable artifact inventories.
