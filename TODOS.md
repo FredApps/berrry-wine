@@ -1094,7 +1094,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Two active source lanes: Croc2 (/root/coverage_audit) prepares short ordinary menu route after identifying timeout-confounded input; DieHard (/root/restore_evidence) diagnoses difficulty activation after finite held click/Enter failed to start level. Daggerfall qualified ordinary dungeon control on DOSBox route only. Native DOS compatibility is separate user-priority worker; runtime currently free, no duplicate old-qualified screenshots.
+  Next: Two active lanes: Antara (/root/coverage_audit) READY4 owner-probe retry; Arx Fatalis (/root/restore_evidence), NEW-GAME-ARX-FATALIS-DEMO-20261007, source-only original MSI/CAB inventory and faithful install plan. DieHard now qualified ordinary forward/partial-reverse/idle, result scratch/runs/20261007-diehard-nakatomi-player-control; no FPS/audio claim. No new Arx runtime/extraction grant.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1126,18 +1126,18 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
   Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
 
-- [ ] New-game lane: Die Hard: Nakatomi Plaza demo (Piranha/Fox 2002, LithTech, Direct3D)
+- [x] New-game lane: Die Hard: Nakatomi Plaza demo (Piranha/Fox 2002, LithTech, Direct3D)
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
-  status: active
+  status: done
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Generic thread-poll repair236e8be9 confirmed past stuck menu: ordinary Easy loads actual3D narrated level intro. Oldloader e1005 replaced e1006 with new stop event. Same8eb WASM/JS-only delta, no counters. Run55241 closed10:47:48 exit0/PIDabsent; original300sec bound. Root reviewed cutscene, sent photo842. No player-control/FPS/audio qualification; publish immutable evidence and continue ordinary cutscene-to-controls route.
+  Next: Narrow ordinary player-control qualified and root accepted2026-10-07. No further gameplay retry required; FPS/audio/sustained-level remain separate coverage obligations. Refill lane Arx Fatalis source preparation.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
   candidate: test/binaries/win98-games-a-d/Diehard nacatomi demoD3D.exe (local, no download)
   Earlier: 2026-10-06T20:00Z -- installs headless (03e2f5f3 LoadLibrary system path); boots past every emulator blocker so far: 33e4ff16 (_EH_prolog EBP), b15fa588 (__p___argv/argc), 0dbe4ab6 (D3D8 16-bit mode + back-buffer view, Reset, CopyRects, A1R5G5B5/X1R5G5B5 textures; A/B on other D3D8 apps clean). lithtech.exe initializes D3D8 at 640x480x16, presents, and is on its loading screen decompressing rez data at 1.8M batches (~7 min). Notes 16191cf9 docs/re-notes/diehard-nakatomi-demo.md. Waiting on orchestrator: long local run vs boat. Then registration (apps.js + corpus-categories + manifest) and gameplay input.
   Done: registered app, reviewed gameplay screenshot with input evidence, result.json (candidateId = app id), commit on main, manifest generator command posted.
-  Evidence: board 2026-10-06T18:40Z
+  Evidence: main236e8be9 thread-zero-poll fix; localregistration mainfea60cb9; scratch/runs/20261007-diehard-nakatomi-player-control (34hashes, four reviewed gameplay images); docs0be37005 pending root publication.
 
 - [x] USER REPORT: Drakan demo crashes in the browser (Threads on): 'render endpoint is closed' + fs_read_file_result threw in notifyGuestWrite
   id: DRAKAN-WEB-THREADS-LAZY-CRASH-20261006
@@ -1214,3 +1214,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
+- [ ] New-game lane: Arx Fatalis demo (original local MSI/CAB media)
+  id: NEW-GAME-ARX-FATALIS-DEMO-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/restore_evidence
+  candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
+  Next: Source-only MSI File/Media/Directory inventory and exact install plan; three required PAKs remain compressed in original Setup1/2/3.cab. No extraction or runtime grant yet. Preserve original loose bytes despite stale MSI sizes, inspect EAX custom action dependency.
+  Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
+  Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
