@@ -1282,3 +1282,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: HELD: automated cybersecurity-risk rejection terminated Winamp diagnostic worker at23:52:06. No retry/rephrasing/delegation of rejected diagnostic. Root recovered14 existing outputs and verified driver/browser exited; no exception cause or visualization qualification.
   Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
   Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
+
+- [~] Validate original Quake II OpenGL workload on emulator software backend
+  id: GLD3D-QUAKE2-SOFTWARE-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI q2-software
+  Next: Source/JS preparation for ordinary Game/Easy and forward/reverse/idle gameplay; prove emulator software backend with original ref_gl, no guest ref_soft substitution. Browser queued behind Antara and Tiberian input lanes; no native/build grant below2.8GB preflight.
+  Done: Reviewed ordinary gameplay/input evidence, exact backend/source/module/original identity, scoped GL table update on main; FPS/audio separate.
+  Evidence: Existing WebGL route scratch/runs/20261007T213620Z-quake2-ordinary-traversal is reference only; new software evidence pending.
