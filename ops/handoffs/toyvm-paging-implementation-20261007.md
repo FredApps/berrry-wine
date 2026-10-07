@@ -68,3 +68,15 @@ native correctness uses the serialized local slot. Keep disk above 2 GiB.
 No Heroes II work, Claude-pane driving, shared HEAD/index mutation, public
 deployment, binary patches or forced guest state. Commit exact paths from an
 isolated worktree; root reviews and integrates.
+
+## Executable starting regression
+
+Root prepared `scratch/runs/20261007-toyvm-cr3-regression/cr3.js`, which runs
+real guest `MOV CR3,EAX` / `MOV EAX,CR3`, stores the answer and exits normally
+through DOS. Pass a source checkout as its argument. On the current main ToyVM
+source (byte-identical to `4091453a`) it fails the named round-trip assertion:
+written `00020000`, observed zero. The child exited1 for the assertion with no
+timeout and was verified absent; the guest itself exited0. The self-contained
+folder retains the COM bytes, driver, observation, output and terminal receipt.
+Use this as the first before/after regression, not the acceptance suite for full
+paging. It deliberately has not been added as a failing test to the main gate.
