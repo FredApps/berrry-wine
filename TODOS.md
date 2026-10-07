@@ -1197,10 +1197,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: TOYVM-DOS-NATIVE-GAMEPLAY-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root/corpus_categories
+  worker: /root
   created: 2026-10-07T09:08:16.475Z
   requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
-  Next: Candidate protected CALL gate/RETF plus hidden segment cache correction pushed feature90dd5d20;36 actual instruction/cache tests PASS, no main CPU integration yet. Sole120sec CPU/VM86 regression stage granted after Arx release; full backend install and bundle checks still pending separate leases. Daggerfall paging/earlier invalid stack, Arena CD contracts and U4 world remain open; none native gameplay-qualified.
+  Next: Reviewed CALL gate/RETF and hidden segment cache repair integrated4f1e083b/fcd391dd, fallback tests/bundlesc2cded63.36 targeted cases,16 real/VM86 cases, four existingCPU suites, full backend-install and bundle checks PASS;92 integrated source pins match tested tree. Recheck original Daggerfall extender next with bounded correctness run; paging/earlier invalid stack remain unresolved, ArenaCD/U4world still open. No native gameplay qualification.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
