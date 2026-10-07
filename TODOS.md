@@ -1268,8 +1268,8 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI darkstone-gameplay (replacement: Tiberian Sun)
+  worker: fresh CLI tiberian-paint
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Audit current original menu/campaign route and full loader closure, resolve demonstrated caption/painting defect, then ordinary mission control with reviewed screenshot. Remote after Antara and corrected Winamp. Previous missing-boat blocker is cleared by serialized temporary box; no local browser.
+  Next: Ordinary original run proves persistent blank main menu despite CPU progress; findings dc7bc18e7. Fresh tiberian-paint investigates actual template226 control creation and first painting contracts, then demonstrated generic fix/tests and ordinary gameplay. Remote after Antara; no blind rerun.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.

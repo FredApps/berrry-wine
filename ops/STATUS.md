@@ -1,7 +1,7 @@
 updated: 2026-10-07T22:23:01.829Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: antara-dialog, darkstone-gameplay (reassigned to Tiberian Sun after historical Darkstone qualification audit), and toyvm-paging-integrate. Antara callback capture finished: bitmap resource is found but LoadResource returns zero; actual file-open/read cause remains under investigation. Tiberian Sun has the next remote grant to fit the temporary box lifetime; corrected root Winamp follows its release. Arx held after automated safety rejection; no retry. Paging softwareINT14 frame correction is in WIP, full guest tests and original Comanche acceptance still required.
+Current workers: antara-dialog, fresh tiberian-paint (replaces completed ordinary-run worker), and toyvm-paging-integrate. Antara has the next remote resource-path diagnostic grant on a fresh temporary box. Tiberian Sun first-menu painting remains broken despite active CPU; fresh worker investigates actual creation/paint contracts. Corrected Winamp complete DLL closure still produces MilkDrop illegal-operation error; evidence preserved and browser closed. Paging software-origin guest regressions now pass; final gates and original Comanche acceptance remain. Arx held; no retry.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
