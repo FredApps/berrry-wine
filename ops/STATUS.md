@@ -1,9 +1,9 @@
-updated: 2026-10-07T13:55:07.228Z
+updated: 2026-10-07T20:53:33.760Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: four active lanes. Antara module query and TDR2000 D3D7 caps fixes pushed main9cac6422 with full mandatory build/five regression suites PASS; ordinary Antara9 live, TDR3 queued. Comanche private AH5A now returns a valid temporary handle and successful seek; later memory-accounting failure under investigation, shared-handle coherence followup before integration. Arx readonly heap-arena observer ready on d4256f3c. No new gameplay qualification.
+New-game pipeline: four active lanes. Antara module query and TDR2000 D3D7 caps fixes pushed main9cac6422 with full mandatory build/five regression suites PASS; ordinary Antara9 now reaches Setup Version Mismatch (reviewed, no gameplay); TDR3 regranted after host snapshot finished and disk recovered above2.9GB. Comanche private AH5A now returns a valid temporary handle and successful seek; later memory-accounting failure under investigation, shared-handle coherence followup before integration. Arx readonly heap-arena observer ready on d4256f3c. No new gameplay qualification.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
@@ -16,3 +16,5 @@ New user priority: direct ToyVM/dedicated-DOS gameplay. Reviewed CALL gate/RETF 
 Deployment boundary: new registry entries and native evidence updates are committed/pushed to main. Active8098 reader uses WINE_EMULATOR_ROOT=/home/user/wine-assembly-web, whose registry still lacks Croc/DieHard; those main registrations are not yet live there. No public deployment or live checkout mutation performed.
 
 User added two parallel game lanes: Carmageddon TDR2000 (/root/corpus_categories) and Comanche3 selection/closure audit (/root/restore_evidence). Antara remains with coverage_audit; root takes Arx. Source investigations parallel, runtime tests serialized. DOS regressions completed; root owns native follow-up. Comanche3 is original DOS media and will use direct ToyVM, not a Windows DOSBox wrapper.
+
+Resume: three fresh CLI workers with short briefs (built-in thread slots cannot be recycled): Antara owns local NE version build/tests; TDR finalizes durable corpus registration after reviewed driving; Arx owns remote browser diagnostic on temporary bx_d8nw3e8t. All future browsers remote. Four verified archived worktrees removed; about3.8GB free. Comanche memory diagnostic queued after local build slot. Config unchanged; batch checks and one board line per real result.

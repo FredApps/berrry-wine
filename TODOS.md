@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root/coverage_audit
+  worker: fresh CLI antara (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic named module-query fix pushed4de7421d with full combined gates and real-child regression evidence9cac6422. Ordinary original SETUP browser9 running on d4256f3c; inspect actual dialog before input, no diagnostic overrides.
+  Next: Fresh worker owns generic NE version-resource/query correctness, focused before/candidate and mandatory build regressions; no version override. Ordinary9 reviewed Setup Version Mismatch. Local build slot assigned; all browser retests remote only.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1219,9 +1219,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ARX-FATALIS-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root
+  worker: fresh CLI arx-remote (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Actual packedhandle highpointer discriminator provenba0d12e4. Readonly published heap-arena observer prepared352pins on fullbuild d4256f3c, contractsPASS; queued behind ordinary Antara/TDR browser runs. Genericallocation policy investigation, no capacity reduction/forcedlocks.
+  Next: Fresh worker transfers pinned read-only arena diagnostic to temporary box bx_d8nw3e8t using permitted API; remote browser only. Observe actual heap membership, retrieve screenshot/context/closure. No allocation or binary bypass.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1229,10 +1229,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TDR2000-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: /root/corpus_categories
+  worker: fresh CLI tdr (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Truthful D3D7 point/linear caps fix pushed3f04bf41; fullbuild and realcallback regressions PASS9cac6422. Ordinary original launch attempt3 pinned d4256f3c; queued after Antara. No race/gameplay yet.
+  Next: Ordinary race and forward/reverse/brake screenshots reviewed and sent. Fresh worker finalizes durable local-only registry/2963-file manifest and focused tests, exact scoped commit; no public deployment/FPS/audio claim.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
