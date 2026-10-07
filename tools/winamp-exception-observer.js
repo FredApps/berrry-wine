@@ -24,9 +24,11 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
     return true;
   };
   const read = (ga, size = 4) => {
+    if (!withinBounds()) return null;
     const ex = getExports();
     const bytes = [];
     for (let i = 0; i < size; i++) {
+      if (!withinBounds()) return null;
       const wa = translate((ga + i) >>> 0, ex.get_image_base() >>> 0, memory);
       if (wa === 0xf0 || wa < 0 || wa >= memory.buffer.byteLength) return null;
       bytes.push(new Uint8Array(memory.buffer)[wa]);
@@ -34,8 +36,10 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
     return size === 4 ? (bytes[0] | bytes[1]<<8 | bytes[2]<<16 | bytes[3]<<24) >>> 0 : bytes;
   };
   const state = () => {
+    if (!withinBounds()) return null;
     const ex = getExports(), registers = {};
     for (const name of ['eip','dbg_prev_eip','esp','ebp','eax','ecx','edx','ebx','esi','edi','fs_base']) {
+      if (!withinBounds()) return null;
       if (typeof ex['get_'+name] === 'function') registers[name] = ex['get_'+name]() >>> 0;
     }
     const chain = [], seen = new Set();
@@ -54,7 +58,7 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
       scopeWords:Array.from({length:9},(_,i)=>read(0x446af8+i*4))};
   };
   const record = event => {
-    if (!active) return;
+    if (!withinBounds()) return;
     count++;
     ring.push({seq:count,time:now(),tid,...event});
     if (ring.length > 128) ring.shift();
@@ -71,7 +75,7 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
       if (api === 'MessageBoxA' || api === 'MessageBoxW' || api === 'RaiseException') {
         if (!withinBounds()) return;
         record({kind:'checkpoint',name:api,state:state()});
-        for (const event of ring) emit(event);
+        for (const event of ring) { if (!withinBounds()) break; emit(event); }
         ring=[];
       }
     } else if (name === 'log_i32') {
@@ -79,12 +83,12 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
       if (value === 0xcae8c000) {
         exceptionWords=2;
         record({kind:'exception-marker',value,state:state()});
-        for (const event of ring) emit(event);
+        for (const event of ring) { if (!withinBounds()) break; emit(event); }
         ring=[];
       } else if (exceptionWords) {
         record({kind:exceptionWords===2?'exception-code':'exception-eip',value});
         exceptionWords--;
-        for (const event of ring) emit(event);
+        for (const event of ring) { if (!withinBounds()) break; emit(event); }
         ring=[];
       } else record({kind:'integer',value,api:pending});
     } else {

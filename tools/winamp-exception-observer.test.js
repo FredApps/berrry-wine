@@ -68,3 +68,17 @@ for (const cap of ['events','deadline']) {
   assert.equal(Buffer.from(memory.buffer).toString('hex'),before);
 }
 console.log('PASS real observer event/deadline closure: zero post-cap reads/snapshots/output, one terminal cap, exact retained-wrapper forwarding and restoration');
+
+{
+  let time=0,reads=0,forwards=0;
+  const output=[],slowHost={log_i32(){forwards++;return 73;}};
+  const slow=createWinampExceptionObserver({host:slowHost,getExports:()=>ex,memory,
+    translate:ga=>{assert.equal(time,0);reads++;time=20;return translate(ga);},
+    now:()=>time,maxMs:20,emit:e=>output.push(e)});
+  slow.activate({startAddr:0x440330,tid:4});
+  assert.equal(slowHost.log_i32(0xcae8c000),73);
+  assert.equal(reads,1);assert.equal(forwards,1);
+  assert.deepEqual(output.map(e=>e.kind),['armed','cap']);
+  slow.finish();assert.equal(output.length,2);
+}
+console.log('PASS deadline crossing during a snapshot: subsequent byte reads and diagnostic events stop immediately');
