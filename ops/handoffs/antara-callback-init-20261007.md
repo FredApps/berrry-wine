@@ -8,7 +8,7 @@ The ordinary original SETUP launch uses source `096889e174488a97529b8e73076d3a1e
 
 Original caller NE segment 2:313a passes dialog procedure 2:2ca0. The actual USER87 `dialog_loaded` import arms before initialization, with child tid 2, HWND 98306 / Win16 HWND `0117`, parent 98305, procedure `0047:2ca0`, segment base `170000` and limit 55093. The original procedure receives `WM_INITDIALOG` (`0110`), wParam/lParam zero, resolves object `0087:655a`, and dispatches vtable slot `+70h` to actual `004f:d530`. The callback then installs ordinary subclass `0047:12f2` via USER136. That adapter's ordinary dispatch slot `+58h` enters actual `0047:1c2e` for window-position and move messages.
 
-All 86 captured callback blocks and four virtual entries match original code with relocation operands authenticated. The scalar stream contains 100 complete frames / 1060 values with no unknown marker, partial frame or observer error. The capture ends at the 512-hook-arrival bound before WM_PAINT; no paint dispatch observation is claimed. The original zero-item dialog resource remains insufficient evidence for missing controls.
+All 86 captured callback blocks and four virtual entries match original code outside the exact original relocation operand spans. The comparison records each relocated byte and its original relocation entry; it does not independently prove every resolved relocation target. The scalar stream contains 100 complete frames / 1060 values with no unknown marker, partial frame or observer error. The capture ends at the 512-hook-arrival bound before WM_PAINT; no paint dispatch observation is claimed. The original zero-item dialog resource remains insufficient evidence for missing controls.
 
 ## Measured resource failure
 
