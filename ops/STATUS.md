@@ -1,7 +1,7 @@
-updated: 2026-10-07T23:22:52.099Z
+updated: 2026-10-07T23:29:30.638Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: antara-dialog, tiberian-paint, and toyvm-paging-integrate. Tiberian raw surfaces show the six-button menu is drawn in the DX frame but covered by a grey shared GDI overlay; generic rendering repair in progress. Antara implements stable resident-module resource paths after measured failed C:\SETUPL.DLL open, with path-validation review and native regressions pending. Paging reports 47 groups passing; bounded original Comanche acceptance runs before yielding native to Antara. No new gameplay qualification. Winamp plugin error remains; Arx held.
+Current workers: antara-dialog, tiberian-paint, and fresh winamp-exception. Tiberian raw surfaces show the six-button menu is drawn in the DX frame but covered by a grey shared GDI overlay; generic rendering repair in progress. Antara implements stable resident-module resource paths after measured failed C:\SETUPL.DLL open, with path-validation review and native regressions pending. Paging integrated main72e306790 after47 groups and authenticated original Comanche copy/IVT acceptance; installation/gameplay unverified. Antara owns native validation, Tiberian next. Winamp prepares exception capture source-only. No new gameplay qualification. Winamp plugin error remains; Arx held.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 

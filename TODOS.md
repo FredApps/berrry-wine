@@ -1254,13 +1254,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Completed main2534731b3: fb1be916 ordinary Game/Easy/W/S/idle worldtranslation personally reviewed byroot. Sixscreens/38artifacts contained and present; Telegramphotos860/861 sent. Actualbrowser/driver cleanclosure,16ancillaryVLANAPIrefusals retained; FPS/audio/network unqualified.
   Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
 
-- [ ] Implement generic 386 paging for original DOS extenders
+- [x] Implement generic 386 paging for original DOS extenders
   id: TOYVM-386-PAGING-20261007
   handoff: ops/handoffs/toyvm-paging-implementation-20261007.md
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI toyvm-paging-integrate (scratch/fresh-workers-20261007)
-  Next: Continue isolated WIP5afd1bd foundation through full guest paging integration, architectural fault restart and cache semantics, actual guest acceptance tests and unchanged Comanche. Previous foundation worker exited0;28groups pass only isolated helper/CRstate, no guest translation yet. Fresh integration worker owns implementation; no partial repair claim.
+  worker: none (fresh toyvm-paging-integrate completed)
+  Next: Complete main72e306790 with foundation4b0955e79. All47 correctness groups passed; root verified1495 artifacts and integrated source pins. Original authenticated16KiB copy maps correctly and preservesIVT, progresses Loading Install for75s without CPU faults; installation/gameplay remain separate.
   Evidence: docs/re-notes/comanche3-later-execution-20261007.md; scratch/runs/20261007-comanche3-paging-diagnostic/evidence-index.json; source emit.js dropsCR3 and maskslinear24bits.
   Done: Generic paging correctness reviewed with fault semantics and original Comanche startup progressing beyond paged copy; no gameplay claim without ordinary control evidence.
 
@@ -1273,3 +1273,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Remote composition capture proves six menu buttons exist in DX frame but are obscured by grey shared GDI overlay. Worker prepares generic overlay chronology repair and focused regression, followed by ordinary remote gameplay validation. Evidence 20261007-tiberian-composition-preparation; no gameplay qualification yet.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
+
+- [~] Diagnose original Winamp MilkDrop exception and validate visualization
+  id: GLD3D-WINAMP-EXCEPTION-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI winamp-exception
+  Next: Source-only actual exception diagnostic preparation; complete loader closure already reproduces illegal-operation(2). Native/browser queued behind Antara and Tiberian; require resource grant.
+  Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
+  Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
