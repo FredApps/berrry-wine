@@ -28,7 +28,8 @@ is not guest compatibility evidence. Other unlisted stdole2.tlb and native DLL
 probe refusals remain in the second run's raw errors; builtin DLL fallbacks
 are logged. Their causal relevance has not been established or ruled out.
 
-The second browser/server closed with no cleanup errors or pending streams;
+The second browser/server closed with no pending streams; its receipt also
+retains asset request errors, so it is not an error-free run.
 driver 94255 and Chrome 94267 were absent at 22:10:25 UTC. No local browser,
 benchmark, fixture modification or public deployment occurred. Next capture the
 actual plugin exception and relevant loader/API outcomes on unchanged originals,
@@ -50,3 +51,20 @@ new download or registry override is needed. Shell32/Ole32 lack URL mappings in
 this graph; that is distinct from the two available native DLLs omitted by the
 harness. Receipts: `dependency-audit.json` in the run and
 `scratch/winamp-visualization-20261007/loader-closure.json`.
+
+## Complete loader closure rerun
+
+At 22:43–22:45 UTC, a fresh remote session served all 15 original fixtures,
+including COMCTL32, MSVCRT and stdole2, with 341 verified source/fixture pins
+and the same module. Ordinary Repeat / Play / Ctrl+P / Visualization /
+MilkDrop / Start again produced the illegal-operation `(2)` dialog. Eleven
+screenshots were personally reviewed. The omitted DLLs were therefore not
+the sole cause; the actual exception address and API cause remain unknown.
+
+An immediate Ctrl+P chord did not open preferences; holding the ordinary
+chord for 350 ms did. No guest state or callback return was changed.
+Evidence: `scratch/runs/20261007-winamp-milkdrop-complete-closure/` (39 hashed
+artifacts plus index/result). Four shell32 fallback URL errors remain in the
+raw receipt. Browser and server closed, Chrome exited zero, streams drained,
+and actual driver 123703 / Chrome 123715 were absent at 22:45:59 UTC. No
+visualization, FPS or audio-quality qualification follows from this run.
