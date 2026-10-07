@@ -36,9 +36,14 @@ not exported by this diagnostic; do not invent it. If the original raises no
 CPU marker, inspect RaiseException/history/checkpoints before adding WAT logs.
 
 Bounds: 20 seconds from visualization-worker initialization, 512 recorded
-events, last 128 events retained, eight exception snapshots, eight SEH frames,
+events (including exception words), last 128 events retained, all pre-cap exception snapshots, eight SEH frames,
 32 stack words, 32 instruction bytes. A timer restores owned wrappers and emits
 summary/history; count/time caps and foreign-wrapper conflicts are explicit.
+Closure checks precede any memory/register reads or diagnostic output. Event
+closure immediately restores owned wrappers; deadline closure occurs on the
+first import at/after the deadline or the existing timer. Retained wrapper
+references remain inert and forward the original exactly once. One final cap
+contains any unflushed history; timer/finish calls cannot emit a second summary.
 No blocking breakpoints, forced return values, guest state edits or render calls.
 
 Prepared bundle:

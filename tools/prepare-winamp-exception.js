@@ -79,7 +79,7 @@ write('READY.json',{status:'source-only ready; no native/build/remote execution'
   fixtureCount:verified.filter(f=>f.rel.startsWith('test/binaries/')).length,
   diagnosticWorkerSha256:sha(Buffer.from(worker)),originalWorkerSha256:originalWorker.sha256,
   bounds:{transferSeconds:120,browserSeconds:240,cleanupReserveSeconds:90,workerSeconds:20,
-    workerEvents:512,apiHistory:128,exceptions:8,sehFrames:8,stackWords:32},
+    workerEvents:512,apiHistory:128,exceptions:'all within event/deadline bounds',sehFrames:8,stackWords:32},
   request:'separate parent remote grant after priority lanes release; fresh actual sandbox/TTL >= 8min/no active browser/disk floor; unchanged original module and 15 fixtures; private JS observer only',
   artifacts:artifacts.map(f=>f.path)});
 console.log(JSON.stringify({out,pins:verified.length,fixtures:verified.filter(f=>f.rel.startsWith('test/binaries/')).length,

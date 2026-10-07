@@ -5,8 +5,24 @@
 function createWinampExceptionObserver({host, getExports, memory, translate, emit,
   now = Date.now, maxEvents = 512, maxMs = 20000}) {
   let active = false, started = 0, count = 0, dropped = 0, tid = null;
-  let ring = [], pending = null, exceptionWords = 0, reported = false, exceptions = 0;
+  let ring = [], pending = null, exceptionWords = 0, closed = false;
   const originals = {}, wrappers = {};
+  const finish = reason => {
+    if (closed) return {count,dropped,foreign:[]};
+    closed=true; active=false;
+    const foreign=[];
+    for (const name of Object.keys(originals)) {
+      if (host[name]===wrappers[name]) host[name]=originals[name]; else foreign.push(name);
+    }
+    if (tid !== null) emit({kind:reason==='cap'?'cap':'summary',tid,count,dropped,maxMs,maxEvents,remaining:ring,foreign});
+    ring=[]; pending=null; exceptionWords=0;
+    return {count,dropped,foreign};
+  };
+  const withinBounds = () => {
+    if (!active || closed) return false;
+    if (now()-started >= maxMs || count >= maxEvents) { finish('cap'); return false; }
+    return true;
+  };
   const read = (ga, size = 4) => {
     const ex = getExports();
     const bytes = [];
@@ -39,17 +55,12 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
   };
   const record = event => {
     if (!active) return;
-    if (now()-started > maxMs || count >= maxEvents) {
-      dropped++;
-      if (!reported) { reported=true; emit({kind:'cap',tid,count,dropped,maxMs,maxEvents}); }
-      return;
-    }
     count++;
     ring.push({seq:count,time:now(),tid,...event});
     if (ring.length > 128) ring.shift();
   };
   const observe = (name,args) => {
-    if (!active) return;
+    if (!withinBounds()) return;
     if (name === 'log') {
       const bytes = new Uint8Array(memory.buffer,args[0],Math.min(args[1],256));
       let api=''; for (const b of bytes) {if (!b) break; api+=String.fromCharCode(b);}
@@ -58,6 +69,7 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
       record({kind:'api',name:api,eip:ex.get_eip()>>>0,esp,
         returnAddress:read(esp),args:Array.from({length:8},(_,i)=>read((esp+4+i*4)>>>0))});
       if (api === 'MessageBoxA' || api === 'MessageBoxW' || api === 'RaiseException') {
+        if (!withinBounds()) return;
         record({kind:'checkpoint',name:api,state:state()});
         for (const event of ring) emit(event);
         ring=[];
@@ -65,14 +77,15 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
     } else if (name === 'log_i32') {
       const value=args[0]>>>0;
       if (value === 0xcae8c000) {
-        if (++exceptions > 8) { dropped++; return; }
         exceptionWords=2;
         record({kind:'exception-marker',value,state:state()});
         for (const event of ring) emit(event);
         ring=[];
       } else if (exceptionWords) {
-        const event={kind:exceptionWords===2?'exception-code':'exception-eip',value,time:now(),tid};
-        exceptionWords--; emit(event);
+        record({kind:exceptionWords===2?'exception-code':'exception-eip',value});
+        exceptionWords--;
+        for (const event of ring) emit(event);
+        ring=[];
       } else record({kind:'integer',value,api:pending});
     } else {
       const ex=getExports();
@@ -84,26 +97,19 @@ function createWinampExceptionObserver({host, getExports, memory, translate, emi
     if (typeof host[name] !== 'function') continue;
     originals[name]=host[name];
     wrappers[name]=function(...args) {
-      try { observe(name,args); } catch(error) { try { emit({kind:'observer-error',error:String(error),tid}); } catch (_) {} }
+      try { observe(name,args); if (active && count >= maxEvents) finish('cap'); }
+      catch(error) { if (active) try { emit({kind:'observer-error',error:String(error),tid}); } catch (_) {} }
       return originals[name].apply(this,args);
     };
     host[name]=wrappers[name];
   }
   return {
     activate(identity) {
-      if ((identity.startAddr>>>0)!==0x440330) return;
+      if (closed || active || (identity.startAddr>>>0)!==0x440330) return;
       active=true; tid=identity.tid; started=now();
       emit({kind:'armed',tid,startAddr:identity.startAddr>>>0,maxMs,maxEvents});
     },
-    finish() {
-      if (active) emit({kind:'summary',tid,count,dropped,remaining:ring});
-      active=false;
-      const foreign=[];
-      for (const name of Object.keys(originals)) {
-        if (host[name]===wrappers[name]) host[name]=originals[name]; else foreign.push(name);
-      }
-      return {count,dropped,foreign};
-    },
+    finish:()=>finish('summary'),
   };
 }
 if (typeof module !== 'undefined') module.exports={createWinampExceptionObserver};
