@@ -158,8 +158,8 @@ pendingWaitMemory[pendingWaitHandlesWA >>> 2] = pendingWaitEvent;
 pendingWaitMemory[(pendingWaitHandlesWA >>> 2) + 1] = pendingWaitHandle;
 assert.strictEqual(
   pendingWaitTm.waitSingle(pendingWaitHandle, 0),
-  0xFFFF,
-  'a thread handle remains unsignaled while its worker instance is pending'
+  0x102,
+  'a zero-timeout poll reports WAIT_TIMEOUT while its worker instance is pending'
 );
 assert.strictEqual(
   pendingWaitTm.waitMultiple(2, pendingWaitHandlesWA, false, 0),
