@@ -113,3 +113,66 @@ driver/Chrome PIDs absent and no remaining Chrome or owned port 39265 at
 after evidence collection; the box was retained for the coordinator's Winamp
 run. Shared HEAD/index, local native/build ownership, Arx and public deployment
 were untouched.
+
+## Coherent creation and bitmap observation, October 7 22:58 UTC
+
+After Antara's explicit release and the coordinator's next-slot grant, an
+independent preflight verified actual prior PIDs absent, no Chrome, the
+released socket baseline and 49.7 GB free on temporary box `bx_7qga8j7x`.
+The box had no `/home/user/wine-assembly/node_modules/puppeteer`; the harness
+used the retained handoff dependency at
+`/home/user/antara-resource-tools-20261007/node_modules/puppeteer`.
+All 355 runtime pins and 29 fixture aliases verified before launch. Original
+module `7c6864f8` / source `0cbc1c6ff` stayed intact.
+
+Private Worker SHA-256 is
+`b426f3f20413c578629ac59abe514846f89e1bfcc78cc979dcf685f9632fe52b`.
+The observer forwards original imports, receivers, arguments and results,
+changing only existing diagnostic trace flags. Register/stack samples occur
+synchronously inside the owning Worker at block-entry imports, without guest
+writes or separate RPC getter calls. Unit tests and the transformed Worker's
+actual init/slice/receipt/close RPC tests pass.
+
+`CreateDialogIndirectParamA` receives the original menu's in-memory template
+at guest `0x00e89050`, with caller EBP 226. At `dialog_loaded`, HWND `0x10002`
+has six correct button IDs, styles, geometry and captions. USER window-title
+copies and native ButtonState text agree: `0x10003` / 1006 is “Exit Game”,
+`0x10004` / 1559 is “New Campaign”, then 1561 “Load Mission”, 1562
+“Multiplayer Game”, 1003 “Intro / Sneak Peek” and 1372 “Options”. The
+creation-time caption displacement is not reproduced; later text mutations
+remain unmeasured. `$title_table_set` owns a copied heap buffer, so freeing the
+parser's temporary string is not itself a defect.
+
+Original DLGPROC `0x4dea40` receives WM_INITDIALOG. Ordinary SetWindowLongA
+installs `0x57e790`; both callback entries' 64 bytes match immutable original
+SUN text. The callback cap is reached during startup/custom message `0x497`,
+before a WM_PAINT/DRAWITEM callback is captured. This is not proof of owner-draw
+paint delivery.
+
+Bitmap helper `0x422c20` has a signed-positive guard at `0x423064` before storing
+the row counter at `[ESP+0x30]`. Coherent samples observe a 202-row limit,
+back-edge counters 201, 200, 199 and 170, then counter 0 at `0x423117` and
+`0x42312b`, completing that call. A 12-row call also completes. These observed
+loops do not underflow or remain stuck. Direct-window-only snapshots omit high
+sparse bitmap objects, including pointers near `0x08bfb000`. Actual destination
+pixels and presentation targets remain unmeasured.
+
+The personally reviewed screenshot still shows title artwork and a blank grey
+299×202 main-menu rectangle. No gameplay/input qualification or generic repair
+is claimed. Next: callback entries rather than startup block flooding, sparse
+bitmap objects, actual GDI geometry/target/pixel samples and raw renderer canvas
+layers. A composition explanation remains a hypothesis.
+
+Self-contained evidence:
+`scratch/runs/20261007-tiberian-paint-preparation/investigation.json` and
+`analysis.json`, with 43 verified indexed artifacts, including the complete
+original runtime/fixture package, `diagnostic/paint.json` and reviewed
+`diagnostic/01-first-paint.png`. Runtime was 22:58:18–22:59:17 UTC under a
+180-second guard. The 15-second observer ends without errors after 2048 bitmap /
+256 callback hook caps. Close RPC on the initial blank page logs one collector
+`ReferenceError: runningApps is not defined`; the observer had already closed.
+Browser/server cleanup still succeeds with Chrome exit 0 and streams 0.
+Independent 23:00:00 checks find actual PIDs 35864/35876 absent, no Chrome and
+the original socket baseline. All 355 pins verify again before the owned remote
+prefix is removed at 23:00:24; dependency tools remain for Antara's next grant.
+No production repair or local native/build run was performed.
