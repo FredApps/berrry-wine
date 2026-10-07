@@ -180,3 +180,72 @@ not a wildcard. The old response evidence is unchanged. Ordinary cleanup at
 10:50:04.890 closed browser/server, streams 0, Chrome exit 0, both PIDs absent.
 Overall exit 1 retains those ten refused fallback requests. No installer input
 or gameplay was claimed.
+
+### 2026-10-07: owning caller frames authenticated; width boundary unresolved
+
+Attempt 3 served the private Worker but lost its probe records: the private
+sender used `t:'log'`, which the actual WorkerLink does not handle. This was a
+diagnostic transport failure, not absence of guest calls. A regression through
+the real WorkerLink handler and page-console collector demonstrated the old
+drop and the corrected bounded call/end delivery before attempt 4.
+
+`scratch/new-game-antara-20261007/attempt4/owner-probe.json` retains ten raw
+console records, including duplicate delivery through the existing log paths.
+Both main and child end records report no observer errors. The child creation
+frame has SS=0087, BP=6338 and candidate object 0037:0418. Both the wrapper
+argument at BP+14h and its copied local at BP-16h contain **640**; height is
+480. The actual host import receives width **8707 (2203h)**. This narrows the
+discrepancy but does not yet identify the write or incorrectly read argument.
+
+The captured caller return is 0047:9a63. Its 48-byte span corresponds to
+original segment 2 and the call at 9a5e to creation wrapper 148e. The destruction
+frame returns to 004f:0615, immediately after virtual method +34h in original
+segment 3. Both spans match the original after its explicit relocations.
+The first comparison retained two unexplained bytes in each span because its
+offline parser stopped each relocation chain at 512 links. The complete
+segment-bounded, cycle-checked traversal resolves these as selector-only
+relocations: segment 2 site 9a61, chain index 526, target segment 2/selector
+0047; segment 3 site 0629, chain index 630, target segment 3/selector 004f.
+The original comparison is preserved beside `caller-code-comparison-v2.json`
+and the reproducible `authenticate-callers.js`; no captured bytes were edited.
+This authenticates these small caller spans, not the entire mapped image.
+
+Raw EIP 0017152f at creation is **not** the USER.452 call instruction.
+`win16_far_transfer` dispatches imported calls without setting EIP to the
+import or callsite; the basic-block start can remain visible. Original 2:152f
+starts the argument pushes, and the static USER.452 instruction is 2:1562.
+The wrapper's BP-relative locals therefore cannot replace a capture of the
+actual Pascal argument stack. The normal 16-bit push path uses segmented
+effective addresses, reads each word before decrementing ESP, and pushes 17
+argument words followed by the four-byte far return. For this exact wrapper,
+the expected API stack starts at BP-4ch; its width word is at BP-3ch. Neither
+was covered by the old probe starting at BP-28h.
+
+The source bridge reads width from Pascal word 6 into a local before changing
+ESP, writes it to Win32 scratch ESP+28, and the shared CreateWindowEx handler
+loads that into its own local before the host import. Coordinate conversion
+preserves 640. No ordinary normalization in that path changes it to 8707.
+The bridge uses the shared GUEST_STACK top, but contention or corruption there
+is only a hypothesis: this capture has neither the pushed Pascal words nor
+the bridge scratch words. The smallest next observation is those two bounded
+spans at the same owning import, plus the existing last-module/ordinal getters
+and mapped 2:152f..1566 bytes. This distinguishes a bad pushed argument from a
+later bridge discrepancy without a hot instruction trace or guest mutation.
+
+Candidate object 0037:0418 changes its first far pointer from 004f:2488 at
+creation to 004f:2438 at destruction. The captured destruction return belongs
+to the original 3:0552 routine's path after a comparison against 0481h; it
+clears object+5ah and invokes virtual method +34h. The return span proves that
+callsite, not the earlier comparison result, dynamic vtable target, or reason
+for shutdown. Those remain unknown; zero object HWND in this late observation
+must not be interpreted as the input to USER.53.
+
+Attempt 4 used module
+`992a8b021897e52d2ec1b5f3604f5f89098f02ee2e4748e5340ff4d960f5e880`,
+private Worker `33d4d06190c0d45d9f0edc72a1375c63bd2b9d32f3b84b9944069e72a7395649`
+and WorkerLink `06738ee3c2b0fcf52ca3ea98c614be83decf88a8e3d85384ffed0718f8f9757f`.
+It received no installer input and still showed black after the startup
+window. Ordinary close completed at 11:18:29.093Z, exit 0, errors empty,
+streams pending 0, browser/server closed and driver/Chrome PIDs absent.
+There is no installer-success or gameplay claim, and no engine fix follows
+from the width discrepancy alone.
