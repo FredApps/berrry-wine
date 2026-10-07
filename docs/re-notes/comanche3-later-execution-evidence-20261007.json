@@ -3,7 +3,7 @@
   "sourceCommit": "4091453a20663f749e76f13cc5b839840446e047",
   "sourceFiles": 94,
   "sourcePinsSha256": "352211a689c530f7482c8191e1ab431009e438edc485d7a104aac2592f3d1831",
-  "artifactRoot": "/home/user/wt-comanche-startup-20261007/scratch/comanche-startup",
+  "artifactRoot": "/home/user/wine-assembly/scratch/runs/20261007-comanche3-paging-diagnostic",
   "media": [
     {
       "name": "-INSTALL.BAT",

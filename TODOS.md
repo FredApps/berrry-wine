@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: coordinator source queue (no worker running)
+  worker: fresh CLI antara-menu (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Corrected fb1 module remote test passed visible version error but stopped at blank Main Menu with no controls. Root reviewed screenshot; cleanclosure/evidence2e359f00. No installedgame/input/gameplay. Source analysis of post-version-check control creation queued behind active Arx/Comanche lanes.
+  Next: Fresh Antara worker launched as Comanche lane refill.501pinned remote-harness files and bounded actual main/child owner collector ready/tested. Remote after Q2 then Arx finalrelease; diagnose blank Main Menu on original fb1 version-corrected module, then ordinary gameplay.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1237,12 +1237,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
-  status: active
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche-startup (scratch/fresh-workers-20261007)
+  worker: none (fresh comanche-startup completed)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Main4091453a repairs false memory error. Root-granted six-guest-second sampler clean60.1M instructions but blackscreen/noexit/no fault, originalmedia unchanged. Worker owns local slot to diagnose later startup; not gameplay.
+  depends-on: TOYVM-386-PAGING-20261007
+  Next: Authenticated paging dependency: original REP copies linear10000000 to physical0 because CR3/pagewalking absent, corrupting IVT. Findings2acadd964; root independently matched16KiB original/readbuffer/IVT hashes. No more budget-only runs; resume after generic paging, then original installer/gameplay.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1252,3 +1253,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI q2-gl-validation (scratch/fresh-workers-20261007)
   Next: Current pinned fb1 WebGL ordinary newgame route prepared; remote follows Arx terminal release. Validate forward/reverse/idle world displacement with reviewed captures, not weapon-bob-only evidence.
   Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
+
+- [ ] Implement generic 386 paging for original DOS extenders
+  id: TOYVM-386-PAGING-20261007
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (ready source work, next available fresh slot)
+  Next: Retain CR3 and implement architectural PDE/PTE translation/page faults consistently for instruction fetch, scalar/REP access, descriptors/interrupt reads and cache invalidation. Regression highlinearcopy must not alias IVT; cover crosspage/protection/missingpages/CR3changes, then unchanged Comanche installer. Coordinate native resource; no partial walker/binary bypass.
+  Evidence: docs/re-notes/comanche3-later-execution-20261007.md; scratch/runs/20261007-comanche3-paging-diagnostic/evidence-index.json; source emit.js dropsCR3 and maskslinear24bits.
+  Done: Generic paging correctness reviewed with fault semantics and original Comanche startup progressing beyond paged copy; no gameplay claim without ordinary control evidence.

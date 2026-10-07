@@ -121,3 +121,5 @@ installed payload, launch or gameplay is claimed. All evidence and exact
 per-attempt observer drivers remain local in the artifact directory above.
 The small committed evidence index is
 `comanche3-later-execution-evidence-20261007.json`.
+
+Root review: exact16KiB source/read-buffer/IVT hashes independently verified. All 28 indexed files hash-verified and preserved under `scratch/runs/20261007-comanche3-paging-diagnostic/`; original worker files retained. Source confirms CR3 writes dropped and linear masking without paging.
