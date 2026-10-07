@@ -16,6 +16,27 @@ async function main() {
   assert.equal(parseOnly([]), null);
   assert.deepEqual(parseOnly(['--only=ultima4']), ['ultima4']);
   for (const arg of ['--only=', '--only', '--only=,', '--only=ultima4,']) assert.throws(() => parseOnly([arg]), /nonempty/);
+  const previous = { schemaVersion: 1, metadata: 'retained', titles: cfg.titles.map(t => ({ id: t.id, preserve: t.id })) };
+  const replacement = { id: 'ultima4', updated: true };
+  const merged = mergeSelectedManifest(previous, { titles: [replacement] }, ['ultima4']);
+  assert.equal(merged.titles.length, 5); assert.equal(merged.metadata, 'retained');
+  for (const t of previous.titles) assert.equal(merged.titles.find(x => x.id === t.id), t.id === 'ultima4' ? replacement : t);
+  assert.throws(() => mergeSelectedManifest(previous, { titles: [] }, ['ultima4']), /unknown selected/);
+
+  const synthetic = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-required-synthetic-'));
+  try {
+    fs.mkdirSync(path.join(synthetic, 'support'));
+    fs.writeFileSync(path.join(synthetic, 'support', 'TEST.SAV'), Buffer.from([1, 2, 3]));
+    const t = { id: 'fixture', requiredOriginalFiles: [{ path: 'support/TEST.SAV', guestPath: 'TEST.SAV' }] };
+    assert.deepEqual(requiredOriginalFiles(t, synthetic, []), ['support/TEST.SAV']);
+    assert.throws(() => requiredOriginalFiles(t, synthetic, ['test.sav']), /collision/);
+    assert.throws(() => requiredOriginalFiles({ id: 'bad', requiredOriginalFiles: [{ path: '../TEST.SAV', guestPath: 'TEST.SAV' }] }, synthetic, []), /invalid/);
+  } finally { fs.rmSync(synthetic, { recursive: true }); }
+  if (!fs.existsSync(path.join(base, '__support/save/PARTY.SAV'))) {
+    if (process.argv.includes('--negative-control')) throw Error('negative control requires original U4 fixture; refusing to skip');
+    console.log('PASS selector/merge/synthetic path contracts; SKIP original U4 payload-dependent mount/write coverage (fixture absent)');
+    return;
+  }
   const paths = requiredOriginalFiles(title, base, ['ULTIMA.COM', 'PARTY.NEW']);
   assert.deepEqual(paths.map(p => path.posix.basename(p)), expected);
   const before = Object.fromEntries(paths.map(p => [p, hash(fs.readFileSync(path.join(base, p)))]));
@@ -29,12 +50,6 @@ async function main() {
     fs.symlinkSync(path.join(base, paths[0]), path.join(temporary, 'DNGMAP.SAV'));
     assert.throws(() => requiredOriginalFiles({ id: 'escape', requiredOriginalFiles: [{ path: 'DNGMAP.SAV', guestPath: 'DNGMAP.SAV' }] }, temporary, []), /outside/);
   } finally { fs.rmSync(temporary, { recursive: true }); }
-  const previous = { schemaVersion: 1, metadata: 'retained', titles: cfg.titles.map(t => ({ id: t.id, preserve: t.id })) };
-  const replacement = { id: 'ultima4', updated: true };
-  const merged = mergeSelectedManifest(previous, { titles: [replacement] }, ['ultima4']);
-  assert.equal(merged.titles.length, 5); assert.equal(merged.metadata, 'retained');
-  for (const t of previous.titles) assert.equal(merged.titles.find(x => x.id === t.id), t.id === 'ultima4' ? replacement : t);
-  assert.throws(() => mergeSelectedManifest(previous, { titles: [] }, ['ultima4']), /unknown selected/);
 
   const fileNames = process.argv.includes('--negative-control') ? ['PARTY.NEW'] : ['PARTY.NEW', ...paths];
   const view = await titleView(root, 'ultima4');
