@@ -421,3 +421,57 @@ resource miss is established; this particular branch/cause is not yet proven
 by a captured named lookup. A generic fix requires authentic unknown-name,
 loaded-module, task-name and null/integer-handle controls, not a game-specific
 resource redirect or guessed SETUPL handle.
+
+### 2026-10-07: tested generic NE version resource and query support
+
+Ordinary installer findings remain in the separately available commit
+`da757ef9`: the original installer reaches Setup Version Mismatch, and its
+original `_SETUP.EXE` contains version 3.3.0.0 in an ANSI NE resource.
+The generic file reader now accepts NE RT_VERSION tables as well as PE
+resources. It bounds the NE header/table reads and each record count, computes
+shifted file ranges in i64, and releases temporary allocations and file handles
+on success and failure. The returned resource bytes retain their original
+encoding and padding. Win16 VER6 still reports the original 432-byte resource;
+VER7 copies only the caller's capacity, including short and zero-byte requests.
+
+The query walker distinguishes the bounded ANSI root from the PE UTF-16 root,
+uses the appropriate node header/key widths, and bounds values by their node.
+ANSI queries return in-buffer pointers and declared byte lengths. Wide queries
+convert StringFileInfo text using CP1252 (the default emulated ANSI page);
+fixed-info and translation values retain their binary pointers and byte counts.
+The Win32 size APIs reserve a caller-owned conversion trailer, with separate
+slots for each value. Answers survive later queries on both the same block and
+other blocks; freeing or reusing the caller's block ends their lifetime.
+The Win16 size adapter omits this trailer and preserves its static DirectX
+fallback. Layout/length semantics were checked against Wine's
+[kernelbase version implementation](https://github.com/wine-mirror/wine/blob/master/dlls/kernelbase/version.c).
+
+`test/test-ne-file-version.js` drives real NE import relocations and VER6/7/11
+far-call returns against a real VFS. It covers original-byte copies, root/text/
+translation queries, far-pointer identity, malformed shifts/counts/ranges,
+absent files, PE controls, CP1252 conversion, embedded NUL byte counts, empty
+values, retained answers, and closed file handles. Its optional authenticated
+original-file argument verifies the exact recovered 432 bytes and fixed version.
+The default invocation compiles the test-only wide/size exports; a production
+module argument additionally validates the ordinary Win16 ABI on that module.
+No private fixture or generated image is required or committed.
+
+Evidence in this worktree: `scratch/antara-ne-version-worker/`.
+Pinned `focused-attempt6-supervisor/result.json` passed in 7.411 seconds, with
+the process group clear. The HEAD control failed the exact NE resource-size
+assertion; the final candidate and existing PE version suite passed. Earlier
+attempts preserve an obsolete harness address, test-export/read-helper errors,
+and a corrected tombstone assertion; none is counted as validation.
+`production-attempt1` stopped at a missing sparse-checkout build input. Missing
+tracked inputs were restored from this worktree's HEAD, without changing gates.
+`production-attempt2-supervisor/result.json` passed in 24.885 seconds, with
+closed output and process group clear. Mandatory `bash tools/build.sh`, NE file
+version (including the authenticated original), PE file version, Win16 version,
+NE loader (2881 checks), NE image extent, additive far relocation, module query,
+and static DirectX version regressions all passed. Production WASM is 1,720,492
+bytes, SHA-256 `fb1be916c309bf619a9331c8fd46c4319f9051af76b05b236d3c362bb632638f`.
+Both supervisors enforce deadlines, output caps and a 2 GiB disk floor.
+
+The generic fix is ready for root integration. Ordinary installer progression
+on this version fix remains untested; no browser was run. Next validation is
+the original installer on a separate temporary browser box after integration.
