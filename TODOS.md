@@ -1165,3 +1165,15 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: October7 reconciliation: later main48ffb5e5 TR3 Jungle/movement and5f4bac8c Uplink lazy/WebGL gameplay supersede stale failures; root reviewed retained images. Keep aggregate active: menus/loading/excluded/unmeasured rows do not prove full software+WebGL gameplay. Remaining Pirates WebGL/resource route, heavy titles/Winamp fixture identification, longer gameplay routes, and separate D3DIM PBO warning. No redundant sweep or screenshot run.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
+
+- [ ] D3DIM async-flip PBO trips Chrome "READ-usage buffer written again before being read back"
+  id: D3DIM-ASYNC-PBO-WARN-20261006
+  status: active
+  note: 2026-10-06T21:25Z parked at WIND-DOWN, not started. Next: page probe on MW3 menu wrapping the D3DIM executor's readPixels/fenceSync/getBufferSubData (lib/d3dim-gpu.js asyncFlip path) to find which PBO is written again before its readback; likely reuse of one PIXEL_PACK_BUFFER across flips while an earlier read is inflight -> ring of PBOs or wait on the fence before reuse.
+  note: 2026-10-06T20:25Z claude:1863d2b5 claimed: code read finds no write-before-read path; next a page probe wrapping readPixels/fenceSync/getBufferSubData on MW3's live context (browser queue).
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/corpus_categories
+  prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
+  created: 2026-10-06T20:20:00Z
+  Next: October7 source-only audit of pending PBO lifecycle while serialized gameplay runs continue. Determine whether Chrome warning follows discarded inflight read or incorrect reuse; inspect existing tests and propose precise instrumentation. No engine change, new runtime or performance claim authorized in this stage; benchmarks must use separate boats. Preserve Drakan acceptance source/module pins until Threads-off check completes.
+  Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console

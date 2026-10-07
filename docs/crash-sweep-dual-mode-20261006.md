@@ -214,3 +214,11 @@ The old feed and CreatePipe prerequisites must not be reimplemented: the
 feed and full sweep landed, and WinBoard now has real pipe/child support.
 Browser gameplay, sound correctness beyond the limited sweep signal and
 rows with missing fixtures remain separate obligations.
+
+A read-only entrypoint audit on October 7 found 16 of the 17 previously
+missing executable paths present in the current registry checkout. The one
+absent entrypoint is
+`test/binaries/candidates/baldurs-gate-interactive-demo/installed-extracted/MinimumData/BGDemo.exe`.
+This checks file existence only, not dependencies or launch success; it does
+not rewrite the dated sweep outcomes. Exact paths, sizes and registry hash:
+`scratch/sweep-reconciliation-20261007/entrypoint-availability.json`.
