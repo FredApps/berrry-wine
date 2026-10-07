@@ -1122,7 +1122,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created: 2026-10-05T18:27:59.455Z
   accepted: 2026-10-05T18:27:59.455Z
   accepted-by: /root/coverage_audit
-  Next: Attempt9 live: driver2328917/Chrome2328929, absolute deadline2026-10-07T08:04:53.151Z. Ordinary scene-reviewed creator to dungeon route; source3b8189f5/module8eb283c1, current main runtime equivalent. Original assets in place; no gameplay/FPS qualification yet. Worker owns sole browser lease.
+  Next: Attempt9 reached opening actor via ordinary input, then owning Worker trapped in fs_set_end_of_file_result on async-only c:\arena2\mapsave.sav. Browser released cleanly; no dungeon. Repair generator loading contract: four original .SAV files (65624 bytes) required/eager, retain lazy bulk; actual normalizer/VFS regression, then fresh gameplay validation. No new IO_WAIT protocol.
   Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
   Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
 
@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Main611837ab surface fix retained; menu still black. Observer forwarding/error/cap tests PASS; bounded draw preload and150sec diagnostic command prepared in isolated8de worktree. Guest CLI queued after Daggerfall browser release; no runtime result yet. Correlate shape-matched draws with actual MAINMENU before drawing conclusions.
+  Next: Observer and actual Present submission gate tests pass. First guest capture failed during harness setup: sparse fonts/System.fon missing; process returned0 despite error, no guest draws/PNG. Preserve failure; restore tracked font closure and run one fresh150sec diagnostic with final PNG, exact prior module8eb283c1. No gameplay or menu result yet.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1148,6 +1148,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/corpus_categories
   created: 2026-10-06T20:57:00.000Z
-  Next: Merged d3ec2640 page-shadow bypass preserved. Audit and repair remaining owner-side host-write destination fencing before ReadFile/RPC; real regression must prove later GPU readback cannot overwrite file bytes. Then Threads on/off browser gameplay checks. Isolated8de5d0b3 worktree, no runtime yet.
+  Next: Owner-side pre-host-write fencing fixed and integrated remote maina1710870 (worker c87a2ea1). Actual-WASM/VFS before control reproduces overwritten file bytes; candidate, full build gates and existing real-Worker surface-fence regression PASS. Private production module0db725dd; canonical build untouched. Remaining: Threads on/off ordinary browser level and control acceptance; task remains active.
   Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
   Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)

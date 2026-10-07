@@ -1,6 +1,8 @@
-updated: 2026-10-07T07:50:54.840Z
+updated: 2026-10-07T08:07:16.668Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Codex resumed with three workers; the Claude fleet remains stopped. Two new-game lanes are active: Daggerfall is running an ordinary-input dungeon route (browser lease ends 08:04:53Z); Die Hard is preparing a bounded draw capture for its black menu after the merged 16-bit surface fix. Die Hard diagnostic forwarding/error/cap checks passed; no gameplay qualification yet. A third worker is implementing Drakan's remaining owner-side file-read fence, with tests pending.
+Drakan host-write repair is on remote main a1710870: before-control reproduced overwritten file bytes; candidate, full build and existing surface-fence tests pass. Threads on/off browser gameplay remains open.
 
-TR3 gameplay and the DOS/ToyVM dashboard already landed and will not be redone. Reconciliation handoff a5b82111 is on main. Runtime tests are serialized, heavy benchmarks use separate boats, and disk must remain above 2 GiB. Shared HEAD/index are preserved; code commits use isolated worktrees. Telegram remains with the Claude orchestrator, Heroes II stays laptop-owned, and no public deployment is authorized.
+Two new-game lanes continue. Daggerfall reached the opening actor, then trapped when truncating a lazy-mounted save file; the worker is correcting the manifest to preload only mutable save data. No dungeon qualification. Die Hard diagnostic checks pass; its first guest attempt failed on a missing harness font before execution, and a fresh bounded menu capture follows the font correction. No new gameplay screenshot or FPS claim.
+
+Claude remains stopped; Telegram stays with its orchestrator and Heroes II with the laptop. Runtime tests are serialized, disk stays above2GiB, heavy benchmarks use separate boats, shared HEAD/index are untouched, and no public deployment is authorized.
