@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Texture admission repair integrated main8cbd797c (workercd063a37): formats24/25 already decoded but rejected. Original host fails real draw; candidate opaque/transparentpixels/canaries and D3D8 unavailable probe PASS. Attempt2 black/emblem baseline and compressedlog preserved. Prepare bounded ordinary menu/NewGame validation on fixed host; no gameplay result yet.
+  Next: Texture repair main8cbd797c now verified in actual150sec run: readable menu and held-mouse New Game reaches difficulty, no gameplay. Local-candidate registration/category/Program selector and40-file manifest generator integrated mainfea60cb9; manifestf80a3de7 generated locally, structural/selector/dependency tests PASS. Worker prepares registered --app ordinary Easy-to-level route, queued after Drakan; no FPS/release-ready claim. Evidence scratch/wt-diehard-20261007/scratch/ordinary-menu/attempt1/review.json and manifest-install-receipt.json.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1148,7 +1148,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/corpus_categories
   created: 2026-10-06T20:57:00.000Z
-  Next: Host-write repair on maina1710870; focused before/candidate, fullbuild gates and existing Worker regression PASS. First Threads-on browser attempt failed in test-server setup (allowlist omitted registered drakan.exe and stdole2.tlb; assets are present), no guest input. Source launch-closure correction and one fresh600sec Threads-on retry authorized; Threads-off acceptance follows separately. No public deployment.
+  Next: Host-write repair maina1710870 passes focused before/candidate, full build gates and Worker regression. Actual Threads-on browser level accepted with owning Worker, no observed trap, clean closure; movement unqualified. Threads-off sole browser live driver2392122/Chrome2392161, original deadline08:57:37Z. Review actual level and cleanup, then commit acceptance. No public deployment.
   Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
   Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
 
