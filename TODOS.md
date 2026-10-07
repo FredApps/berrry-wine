@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Main5a7427dd records bounded diagnostic: matching cshell base, positive menu/Easy/start/load/return counters; normal close09:38:33Z. Difficulty remains, no gameplay. Worker now identifies engine load-request target at100246a4 and downstream return/error contract; caller ignores EAX, so return is not success. No repeat input run without new hypothesis. Evidence scratch/wt-diehard-20261007/scratch/difficulty-activation/attempt1.
+  Next: Read-only phase snapshots attribute successful world setup to startup, while Easy enters early prior-session cleanup. Fresh16counter probe closed10:13:39 exit0; nested destructor interval40fc25-to40fc40 stalls. Source identifies stop-event SetEvent(object+bc), virtual join and WaitForMultipleObjects(count2,waitAny,INFINITE); finalwaitH2 is count, not invalid handle. Investigate actual event identities/signaled state and wait ownership before proposing repair. No gameplay; source worker active, no runtime held.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Authentic recovered SMACKW16 proves additive FAR_ADDR offsets0056/0074 were discarded. Isolated before/candidate actual-load_ne regression passed: baseline fails expected023e, candidate passes real DLL wrapper targets, selector/wrap/chained/OFFSET16 controls. Scoped WAT fix awaits full production gates; two attempts stopped on missing sparse tracked fonts/bundles, not candidate failures. Completing tracked dependency closure before fresh bounded build; no ordinary installer/gameplay qualification yet.
+  Next: Additive FAR_ADDR loader repair3880d93d is on main; actual-loader before/candidate and authentic SMACKW16 tests pass, full production gates and2881 NE checks pass. Exact production module992a8b02 retained. Prepare ordinary original SETUP.EXE browser route with23 original media files; no installer/gameplay qualification yet. Restore browser disk headroom via reproducible own-checkout cleanup, preserving all original files and evidence.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 

@@ -1,9 +1,9 @@
-updated: 2026-10-07T10:10:31.546Z
+updated: 2026-10-07T10:16:42.332Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc2 completed reviewed ordinary Jungle movement/reversal/idle and local registration (20bdd9c6/600be49b/310ef2c2); FPS/audio/sustained play remain open. Antara worker recovered authentic SMACKW16 and found additive FAR_ADDR relocation losing its offset addend, redirecting initialization to the wrong entry; scoped actual-loader baseline/candidate regression now passes including authentic DLL; full production gates pending complete tracked checkout after two missing-input failures. DieHard diagnostic closed09:54:23 cleanly: two queues consumed and one success path, but startup/Easy attribution unresolved. Read-only phase snapshots now attribute success to startup and isolate Easy inside early prior-session cleanup; next16-counter helper tests pass, runtime not yet granted. Runtime currently free while Antara build prerequisites are completed.
+New-game pipeline: Croc2 ordinary Jungle controls are complete and recorded. Antara generic loader repair3880d93d is merged after full production gates,2881 existing NE checks and authentic-DLL regression; ordinary installer/browser route next, awaiting disk headroom. DieHard phase diagnostics isolate nested session teardown; source identifies stop-event/join with WaitForMultipleObjects count2, requiring actual event-state proof. Last runtime closed10:13:39 cleanly. Native MOVCR3 diagnostic fixture also passed matching baseline/candidate architectural state; no native game probe yet. All guests currently stopped, source preparation active.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
