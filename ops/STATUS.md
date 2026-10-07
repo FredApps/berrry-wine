@@ -1,11 +1,11 @@
-updated: 2026-10-07T21:40:19.779Z
+updated: 2026-10-07T21:46:44.500Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: three fresh CLI sessions. Arx allocation correction has passed a full mandatory build and ten regression suites; remote original-media capture now reaches settings (root reviewed), with zero critical-section waits. Root highest-gap review is fixed and tested; generic source integrated/pushed85c1f7c68+6e6a90a8e. Exactfinal7c6864f8 browser validation follows Q2, then Antara. Local build slot is free.
+Current workers: three fresh CLI sessions: Arx, Antara, ToyVM paging. Arx allocation correction has passed a full mandatory build and ten regression suites; remote original-media capture now reaches settings (root reviewed), with zero critical-section waits. Root highest-gap review is fixed and tested; generic source integrated/pushed85c1f7c68+6e6a90a8e. Exactfinal7c6864f8 browser validation follows Q2, then Antara. Local build slot is free.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
-Quake II worker has prepared the current pinned WebGL new-game route and awaits Arx remote release. Acceptance requires ordinary forward/reverse/idle world displacement, not weapon bob. GL/D3D27 remains incomplete. Existing reviewed TR3/Uplink fixes and dated crash-sweep reconciliation stand; Chrome151 PBO warning isolated with exact pixel tests, no speculative engine fix.
+Quake II WebGL ordinary Game/Easy/forward/reverse/idle traversal qualified main2534731b3, root personally reviewed worldlandmarks. Sixscreens/38artifacts self-contained; Telegram860/861 sent. FPS/audio/network unqualified,16ancillaryVLANrefusals preserved. GL27 stillincomplete: softwareQ2menu, otherlongroutes/heavytitles/Winamphost remain. Fresh toyvm-paging worker replaces finishedQ2thread and owns nextlocalcorrectness slot; CR3 baseline actualguesttest preserved3007158e9.
 
 Two new-game lanes remain active: Arx and fresh antara-menu worker (Comanche refill). Antara501pins/actual-owning-child collector prepared and tested; remote follows Q2 then Arx finalvalidation. No Antara gameplay. TDR2000 remains complete onmainb7cdb5fd, reviewed ordinary driving screenshots; FPS/audio unmeasured.
 

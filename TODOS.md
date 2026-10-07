@@ -1163,7 +1163,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
   created: 2026-10-06T02:09:48.337Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: October7 reconciliation: later main48ffb5e5 TR3 Jungle/movement and5f4bac8c Uplink lazy/WebGL gameplay supersede stale failures; root reviewed retained images. Keep aggregate active: menus/loading/excluded/unmeasured rows do not prove full software+WebGL gameplay. Remaining Pirates WebGL/resource route, heavy titles/Winamp fixture identification, longer gameplay routes, and separate D3DIM PBO warning. No redundant sweep or screenshot run.
+  Next: October7 Q2 WebGL ordinarytraversal completed2534731b3 (softwarearm stillmenu); later main48ffb5e5 TR3 Jungle/movement and5f4bac8c Uplink lazy/WebGL gameplay supersede stale failures; root reviewed retained images. Keep aggregate active: menus/loading/excluded/unmeasured rows do not prove full software+WebGL gameplay. Remaining Pirates WebGL/resource route, heavy titles/Winamp fixture identification, longer gameplay routes, and separate D3DIM PBO warning. No redundant sweep or screenshot run.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
 
@@ -1248,18 +1248,18 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Quake II WebGL ordinary world movement validation
   id: GLD3D-QUAKE2-TRAVERSAL-20261007
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI q2-gl-validation (scratch/fresh-workers-20261007)
-  Next: Current pinned fb1 WebGL ordinary newgame route prepared; remote follows Arx terminal release. Validate forward/reverse/idle world displacement with reviewed captures, not weapon-bob-only evidence.
+  worker: none (fresh q2-gl-validation completed)
+  Next: Completed main2534731b3: fb1be916 ordinary Game/Easy/W/S/idle worldtranslation personally reviewed byroot. Sixscreens/38artifacts contained and present; Telegramphotos860/861 sent. Actualbrowser/driver cleanclosure,16ancillaryVLANAPIrefusals retained; FPS/audio/network unqualified.
   Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
 
 - [ ] Implement generic 386 paging for original DOS extenders
   id: TOYVM-386-PAGING-20261007
   handoff: ops/handoffs/toyvm-paging-implementation-20261007.md
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (ready source work, next available fresh slot)
+  worker: fresh CLI toyvm-paging (scratch/fresh-workers-20261007)
   Next: Retain CR3 and implement architectural PDE/PTE translation/page faults consistently for instruction fetch, scalar/REP access, descriptors/interrupt reads and cache invalidation. Regression highlinearcopy must not alias IVT; cover crosspage/protection/missingpages/CR3changes, then unchanged Comanche installer. Coordinate native resource; no partial walker/binary bypass.
   Evidence: docs/re-notes/comanche3-later-execution-20261007.md; scratch/runs/20261007-comanche3-paging-diagnostic/evidence-index.json; source emit.js dropsCR3 and maskslinear24bits.
   Done: Generic paging correctness reviewed with fault semantics and original Comanche startup progressing beyond paged copy; no gameplay claim without ordinary control evidence.
