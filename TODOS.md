@@ -1130,7 +1130,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
   status: active
   reclaimed: 2026-10-07T07:42:56.312Z
-  Next: Registered launch mainfea60cb9 reaches actual menu and difficulty.300sec bounded run stopped normally early09:13:51Z after finite settled1200ms Easy click plus Enter both stayed on difficulty; no gameplay. Worker investigates actual native activation callback/loader or input routing before another run. No runtime held, original40-file manifest/payload unchanged; evidence scratch/wt-diehard-20261007/scratch/ordinary-registered-next/attempt1.
+  Next: Main5a7427dd records bounded diagnostic: matching cshell base, positive menu/Easy/start/load/return counters; normal close09:38:33Z. Difficulty remains, no gameplay. Worker now identifies engine load-request target at100246a4 and downstream return/error contract; caller ignores EAX, so return is not success. No repeat input run without new hypothesis. Evidence scratch/wt-diehard-20261007/scratch/difficulty-activation/attempt1.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   created: 2026-10-06T18:40:00.000Z
@@ -1188,7 +1188,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
   created: 2026-10-06T05:27:48.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Ordinary P opens real menu and Down/Up changes Mine/Jungle highlight, but no player control. Browser closed09:10:23Z, streams0/processes absent; optional icon403 and exit1 retained. Source identifies40sec menu timeout before input dispatch; prior51/66sec action gaps confound transitions. Worker prepares finite previously-reviewed P→menu→Return route within2–5sec, preserves original evidence, no engine fix inferred. Source3b/module8eb;20 originals present.
+  Next: Fast ordinary P-to-menu-to-Return route reached player scene; Down changed orientation/camera. Disk guard stopped attempt2 before reverse/idle screenshot, so qualification incomplete (main472f9e09). Finite control phase tests pass. Prepare local registration while native U4 uses runtime; next Croc browser requires2.9GB preflight and2GiB runtime floor, unchanged original source3b/module8eb/payload. Capture reviewed reverse and idle evidence before qualification.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
 
