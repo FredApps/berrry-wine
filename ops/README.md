@@ -280,6 +280,25 @@ capture API: use your existing shell, browser-control, and test tools.
 
 ### Agent capture workflow
 
+`scratch/runs/<id>/` is the durable evidence location. Any other directory
+under `scratch/` is a disposable work directory after 48 hours: preserve needed
+evidence in the run folder before then. This retention rule does not authorize
+deleting active workers' files or a symlink's target.
+
+Before publishing a bundle, run `node ops/check-run-evidence.js` (or pass the
+checkout root as its argument). The check exits nonzero for artifact references
+outside their own run directory, including absolute paths, traversal and symlinks.
+It covers screenshots, diagrams, gameplay screenshots, artifact arrays/object
+maps, explicit evidence, and build source-manifest/patch files. Missing local
+artifacts are reported separately; containment does not prove completeness.
+Historical commands and source working-directory metadata remain unchanged.
+Run its regression tests with `node --test ops/run-evidence.test.js`.
+For existing bundles, `node ops/check-run-evidence.js --localize ROOT` copies
+only named external files, verifies their bytes and rewrites the corresponding
+references atomically. Originals are retained; work directories are never moved.
+Unavailable external files stay reported as failures until recovered or explicitly
+recorded as missing evidence, with the unavailable artifact field set to `null`.
+
 1. Choose the exact `candidateId` from `test/candidate-corpus/manifest.json`.
    App registry IDs and EXE basenames are not necessarily candidate IDs. If the
    app has no manifest entry, keep the evidence in your existing investigation
