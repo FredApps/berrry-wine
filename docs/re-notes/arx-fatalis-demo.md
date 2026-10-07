@@ -59,3 +59,15 @@ implied by this inventory. No fabricated saves, config overrides or EAX success.
 Detailed receipts (ignored local evidence):
 `scratch/wt-diehard-20261007/scratch/arx-fatalis-preparation/install-plan.json`,
 `msi-tables.json` and three `SetupN.cab.listing.txt` files.
+
+## 2026-10-07: static installation and first bounded browser observations
+
+The three exact CAB members were decoded and rehashed successfully (182,718,870 bytes). Twelve original installed files were materialized as hardlinks, 188,916,135 logical bytes, with saved loose-file hashes and compressed-member receipt hashes checked before and after linking. Host originals were never written. The private browser manifest uses the MSI target directory, working directory and original `Folder` registry value. No EAX custom action, configuration or save was fabricated.
+
+The first browser baseline exposed a missing harness allowlist entry for the real `test/binaries/tlbs/stdole2.tlb`; it stopped after window creation, without proving that warning caused the startup wait. The corrected second run fetched that original 15,088-byte type library successfully (SHA256 `db456130e4b131aff27a6a3179464a28c9452f06eb6f2081d2aea38128d31895`). Its actual served WASM was `8eb283c1b595afe336c3e2407f722e19d47aad0739784de4864ba699c8b5712f`, 1,719,085 bytes: the retained earlier runtime baseline, not a claim of latest-main compilation. Private JS includes the validated thread-zero-timeout fix. Chrome ran headful with the established SwiftShader flags.
+
+All twelve files mounted; original `ARX Fatalis` window creation occurred. Four personally reviewed captures, through approximately 259 seconds, retained one renderer window HWND65537 at x0/y0, 940×710, `visible:false`. The host reported running/Worker true; those page mirrors do not establish the owning CPU's progress or wait state. No menu appeared, and no guest input was sent. The original 300-second deadline closed browser/server at 11:57:20.648Z, Chrome exited0, both PIDs disappeared, and HTTP streams drained with zero errors. A final capture requested after the guard was not executed.
+
+OLE32/SHELL32 are listed as app-local native candidates, absent from this original media; the loader reported its existing builtin fallback. Neither that fallback nor the missing installer EAX action has been established as the cause. Do not force the hidden window visible or seed state. Next work is original startup-path inspection and bounded **owning Worker** evidence after CreateWindow; another unchanged quiet launch would not identify the boundary.
+
+Evidence: `scratch/wt-diehard-20261007/scratch/arx-fatalis-preparation/browser-attempt2/{finding,identity,cleanup,validation}.json`, four PNG/state pairs and command log. Validation SHA256 `c1b72ea582b1e61ba4d6a6ef5459b8f86d433a1c58d2d537266ffa915b17e00c` covers15 artifacts. No gameplay, input-response, audio or FPS qualification.
