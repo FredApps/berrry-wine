@@ -165,3 +165,27 @@ Discriminating outcomes: a same-resource second write with no completed collecti
 ### Winamp fixture identity, October 7
 
 Static PE resource inspection identifies `test/binaries/winamp.exe` as 2.9.1.0. The registry mounts `plugins/candidates/vis_milk.dll` (430,592 bytes), not the separate `vis_milk2.dll` (425,472 bytes, Winamp 5.6.6 strings). No Winamp 5 executable was found in the `test/binaries` filename inventory. The registered plugin itself mentions a feature requiring Winamp 2.90 or later; that does not prove its full host requirement. The older “needs Winamp 5” table entry is therefore an unverified prerequisite, not an established missing-file blocker. Next inspect the exact registered plugin initialization/version gate before acquiring a different host. No runtime result is implied. Exact hashes and resources: `scratch/sweep-reconciliation-20261007/winamp-fixture-identity.json`.
+
+### October 7 PBO executor regression follow-up
+
+The binding-aware `test/test-d3dim-gpu-async-flip.js` now passes on unchanged
+executor SHA-256 `e3370b31c0a63aff9420dc89f044f121c87bb2140a7683f4917f199a17680b8f`.
+It proves same-PBO two-frame collection ordering and distinct DIB contents,
+correct currently bound buffer despite another allocation, reversed collection
+of independent contexts, rejection of a foreign-context PBO, and dead-target
+discard/removal without a subsequent flip reusing that target. The GPU and
+surface metadata are fixture objects; this is the actual JavaScript executor,
+not actual Chrome/GPU execution. Resize/recreation is not newly covered.
+
+Under the explicit pure-JS lease, candidate PID 2407020 exited 0 and private
+in-memory `--negative-control` PID 2407027 exited 1 at the intended first-frame
+byte assertion: actual `[17,17,17,17]`, expected `[48,32,16,255]`. The control
+removes only collection before reuse, so setup or missing exports cannot
+explain that expected failure. Both processes completed within 46.221 ms total
+at 08:58:53.624Z; this duration is a cleanup receipt, not a benchmark.
+
+Receipt/logs: `scratch/d3dim-pbo-audit-20261007/test-validation.json`,
+`candidate.log`, `negative-control.log`. Test SHA-256:
+`f9cfd55d29972759b7595aedea386bb4cb106d390d5fa4aeb05919b6a6dba13e`.
+No engine change or claim that Chrome's warning is fixed. The bounded live
+context/PBO lifecycle observer above remains the next causal diagnostic.
