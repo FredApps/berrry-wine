@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Reclaimed replacement for completed Croc lane. Reconcile latest main NE DLL initialization against preserved SMACKW16 LibMain far-call-before-initialization finding (docs/re-notes/betrayal-in-antara-demo.md); verify exact original fixture and retained installer output, then fix or prepare a bounded confirming probe. Source work first; no runtime granted while native DOS/DieHard own serialized slots. No prior gameplay qualification found.
+  Next: Authentic recovered SMACKW16 proves additive FAR_ADDR offsets0056/0074 were discarded. Isolated before/candidate actual-load_ne regression passed: baseline fails expected023e, candidate passes real DLL wrapper targets, selector/wrap/chained/OFFSET16 controls. Scoped WAT fix awaits full production gates; two attempts stopped on missing sparse tracked fonts/bundles, not candidate failures. Completing tracked dependency closure before fresh bounded build; no ordinary installer/gameplay qualification yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
