@@ -1168,13 +1168,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] D3DIM async-flip PBO trips Chrome "READ-usage buffer written again before being read back"
   id: D3DIM-ASYNC-PBO-WARN-20261006
-  status: ready
+  status: active
   note: 2026-10-06T21:25Z parked at WIND-DOWN, not started. Next: page probe on MW3 menu wrapping the D3DIM executor's readPixels/fenceSync/getBufferSubData (lib/d3dim-gpu.js asyncFlip path) to find which PBO is written again before its readback; likely reuse of one PIXEL_PACK_BUFFER across flips while an earlier read is inflight -> ring of PBOs or wait on the fence before reuse.
   note: 2026-10-06T20:25Z claude:1863d2b5 claimed: code read finds no write-before-read path; next a page probe wrapping readPixels/fenceSync/getBufferSubData on MW3's live context (browser queue).
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: Historical MW3 browser72053 reproduced256 startup READ-usage warnings, but later idle-menu10sec observer saw context1/no buffercalls. Cleanexit0/Chrome0/streams0/PIDsabsent10:53:43. Raw findings ops/handoffs/pbo-startup-warning-20261007.json. Early factory hook nowtested3/3 and216 privately frozen sourcefiles prepared; capture first10sec beforeguestdraws, no enginefix/performanceclaim.
+  Next: Early PBO59867 closed11:16:31 exit0/Chrome0/streams0; first9 complete buffer6 cycles ordered, aggregate143 writes142 reads.169 warnings remain;256 detailed-event cap dropped3739 later events. Add bounded per-buffer pending-write/read/fence invariants with first-violation retention, test actual observer before another guest. No engine fix or performance claim. Receipt ops/handoffs/pbo-early-buffer-capture-20261007.json (main b0e24b85).
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
 
 - [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
