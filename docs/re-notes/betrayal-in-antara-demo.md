@@ -90,3 +90,54 @@ Status: generic loader repair validated; ordinary installer progression and
 player-controlled Antara gameplay are still unverified. Next run the original
 SETUP.EXE with original media and normal installer input on the pinned repaired
 runtime. Do not skip LibMain, force function pointers, or label setup as gameplay.
+
+
+### 2026-10-07: repaired-loader ordinary installer probe
+
+The additive FAR_ADDR repair was integrated as `3880d93d`. The ordinary original
+`SETUP.EXE` probe used the private, fully gated `cedfa0ae` closure and WASM
+`992a8b021897e52d2ec1b5f3604f5f89098f02ee2e4748e5340ff4d960f5e880`
+(1,719,337 bytes), not a claim that the live dashboard was redeployed.
+Evidence is `scratch/new-game-antara-20261007/attempt1/`: `findings.json`,
+`hashes.json` (21 artifacts), `responses.json`, and four PNG/state pairs.
+All 139 completed served source hashes matched the frozen identities.
+
+At 10:25:29 UTC the original Sierra setup window was visible. It hid at
+10:25:29.956; thread 1 then started at the Win16 task sentinel `0xfffe1600`.
+The console records another Sierra setup window and `ShowWindow(0x18001,1)`
+at 10:25:30.012. Three later images were identically black; their renderer
+census retained only the two hidden original HWNDs. No ordinary input was
+sent to the black screen. This neither proves nor disproves execution of the
+repaired SMACKW16 initializer. Installer completion and gameplay remain unproved.
+
+Source ownership narrows the next observation. `win16_task_boot` in
+`src/08c-ne-loader.wat` initializes the new task on its thread. This is not a
+separate browser Wine process. Frozen `host.js` `_maybeStartGuestWorker` passes
+`_mainImports.host` to the broker, without `hostImportsForSlot`; `create_window`
+and `show_window` address the same Wine renderer. Thus HWND `0x18001` should
+be represented there after successful creation. Its later absence cannot be
+explained merely by calling the existing census “main-only.” The captured
+console has no explicit guest trap, broker exception, or thread-exit report.
+`destroy_window` removes renderer entries without a console line, leaving
+creation/removal timing unresolved. The census uses the actual plain-object
+`renderer.windows` (`renderer.js:70`), not a Map. Its 24-entry cap returned
+only two entries, so truncation does not explain the missing child.
+`GuestThreadHost.spawnThread` reuses the same broker and shared memory; it
+does not fork a renderer for the Win16 task. The next bounded diagnostic should retain
+original forwarding and capture create/show/destroy arguments, immediate
+renderer entry identity before/after, originating broker slot/thread identity,
+and read-only shared HWND state. No broad instruction trace or guest mutation
+is warranted by these images.
+
+The strict harness exited 1 despite complete resource cleanup because it
+refused ten CARDS filename probes. These are legitimate optional searches:
+`host.js` `_loadWin16Dlls` accepts absent candidates, and `dll-loader.js`
+`win16StageableModules` includes compiled-in CARDS independently of imports.
+The original SETUP module table contains only KERNEL, GDI, USER, LZEXPAND and
+TOOLHELP. The exact absent filenames are `CARDS.DLL`, `CARDS.dll`, `CARDS.VBX`,
+`CARDS.vbx`, `CARDS.EXE`, `cards.DLL`, `cards.dll`, `cards.VBX`, `cards.vbx`,
+`cards.EXE`, all below the original media directory. Declare only these missing
+probes as expected 404 on a future harness; do not broaden file access or alter
+the old 403 receipt. `optional-cards-probes.json` records that correction.
+Browser/server closed at 10:27:05.715, streams pending 0, Chrome exit 0;
+driver 2512853 and Chrome 2512867 were absent afterward. No retry occurred.
