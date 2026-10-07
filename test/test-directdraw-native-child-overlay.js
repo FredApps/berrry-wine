@@ -9,6 +9,7 @@
 const assert = require('assert');
 const { createCanvas } = require('../lib/canvas-compat');
 const { Win98Renderer } = require('../lib/renderer');
+const { createHostImports } = require('../lib/host-imports');
 
 const hwnd = 0x10010;
 const childHwnd = 0x10013;
@@ -16,8 +17,8 @@ const screen = createCanvas(8, 8);
 const renderer = new Win98Renderer(screen);
 const wasm = { exports: {
   get_dx_exclusive_hwnd: () => hwnd,
-  wnd_window_screen_x: target => target === childHwnd ? 2 : target === 0x10020 ? 4 : 0,
-  wnd_window_screen_y: target => target === childHwnd ? 3 : target === 0x10020 ? 5 : 0,
+  wnd_window_screen_x: target => target === childHwnd ? 2 : target === 0x10014 ? 5 : target === 0x10020 ? 4 : 0,
+  wnd_window_screen_y: target => target === childHwnd || target === 0x10014 ? 3 : target === 0x10020 ? 5 : 0,
 } };
 const top = renderer.windows[hwnd] = {
   hwnd, x: 0, y: 0, w: 8, h: 8, visible: true, isChild: false, wasm,
@@ -83,6 +84,7 @@ for (const stack of [[top], null]) {
 delete top._dxFrameLayer;
 delete gdi._waCanonicalPresentation;
 
+
 child.visible = false;
 renderer._drawPresentedCanvas(dx, 0, 0, 8, 8);
 renderer._compositeExclusiveSharedChildren(top, null);
@@ -92,6 +94,43 @@ assert.deepStrictEqual(pixel(3, 3), [255, 0, 0, 255],
 assert.strictEqual(renderer.detachWindowSurface(hwnd, gdi), true);
 assert.strictEqual(top._exclusiveGdiChildCanvas, null,
   'deleting the GDI surface must release the saved child overlay');
+
+child.visible = true;
+// A partial repaint of A must not revive the old shared background of B.
+// Exercise the real upload contract, including overlapping rectangle updates.
+const memory = new ArrayBuffer(65536), bytes = new Uint8Array(memory), bits = 0x1000;
+const paintBytes = (x, y, w, h, color) => {
+  for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) {
+    bytes.set([...color, 255], bits + row * 32 + col * 4);
+  }
+};
+renderer.scheduleRepaint = () => {};
+const { host, gdi: state } = createHostImports({ getMemory: () => memory, exports: {}, renderer });
+assert.strictEqual(host.gdi_surface_create(0x610001, 8, 8, 32, bits, 32, 1, 0, 0), 1);
+assert.strictEqual(host.gdi_surface_attach(0x610001, hwnd), 1);
+paintBytes(0, 0, 8, 8, [192, 192, 192]);
+assert.strictEqual(host.gdi_surface_upload(0x610001, 0, 0, 8, 8), 1);
+const primarySeq = renderer.nextSurfaceWriteSeq();
+top._dxFrameLayer = { canvas: dx, writeSeq: primarySeq };
+renderer.windows[0x10014] = { hwnd: 0x10014, x: 5, y: 3, w: 2, h: 2,
+  visible: true, isChild: true, parentHwnd: hwnd, wasm };
+paintBytes(2, 3, 3, 2, [0, 255, 0]);
+assert.strictEqual(host.gdi_surface_upload(0x610001, 2, 3, 5, 5), 1);
+state.surfacePresentations.get(0x610001).flush();
+renderer._drawPresentedCanvas(dx, 0, 0, 8, 8);
+renderer._compositeExclusiveSharedChildren(top, null, primarySeq);
+assert.deepStrictEqual(pixel(3, 3), [0, 255, 0, 255], 'new child A upload must show');
+assert.deepStrictEqual(pixel(6, 3), [255, 0, 0, 255], 'old child B background must stay covered');
+for (const stack of [[top], null]) {
+  const source = renderer._buildExclusivePresentationSource(top, stack, primarySeq);
+  const read = (x, y) => Array.from(source.getContext('2d').getImageData(x, y, 1, 1).data);
+  assert.deepStrictEqual(read(3, 3), [0, 255, 0, 255], 'source retains new A pixels');
+  assert.deepStrictEqual(read(6, 3), [255, 0, 0, 255], 'source must not revive old B pixels');
+}
+delete renderer.windows[0x10014];
+delete top._dxFrameLayer;
+assert.strictEqual(host.gdi_surface_delete(0x610001), 1);
+child.visible = false;
 
 // A post-processing source must retain the whole exclusive screen when a
 // smaller popup sits at a nonzero origin (Diablo's Replay Intro notice).

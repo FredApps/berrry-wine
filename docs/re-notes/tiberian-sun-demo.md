@@ -230,12 +230,21 @@ write ordering was not captured; no timestamp claim is made from these images.
 The ordinary and post-processing compositors already omit separate child
 surfaces overwritten by a newer primary present, but always composite shared
 GDI child regions afterward. The candidate applies the same ordering rule to
-shared regions. Accepted GDI uploads receive a per-presentation write sequence;
-lazy canvas flushes cannot revive old uploads. A newer native control upload
-still composites. No application name, HWND, dimensions, or guest state is
+shared regions. Accepted GDI uploads retain non-overlapping rectangles with
+their write sequences; a new upload splits previously recorded coverage only
+where it overlaps. Lazy canvas flushes cannot revive old uploads. Only the
+intersection of visible native child regions and uploads newer than the
+primary composites. A newer control upload cannot revive another child's old
+background. No application name, HWND, dimensions, or guest state is
 special-cased. The focused pixel regression fails on the original renderer at
 the exact overwritten-child assertion and passes with the candidate, covering
-ordinary output and both post-processing routes. The existing nine GDI checks
+ordinary output and both post-processing routes. Root review identified a
+whole-canvas freshness flaw in initial candidate `5c5b128e1`: repainting child A
+also revives stale child B. A real host-upload two-child pixel regression
+reproduces that exact failure and passes with rectangle coverage tracking,
+including both post-processing paths. Its contained first-candidate failure
+is `scratch/runs/20261007-tiberian-repair-preparation/whole-canvas-regression-result.json`.
+The existing nine GDI checks
 also pass, including upload-versus-flush order and empty-upload behavior.
 This source candidate awaits a newly built, identified module and ordinary
 runtime/gameplay validation; it is not a completed new-game lane.
