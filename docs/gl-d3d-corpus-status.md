@@ -130,3 +130,34 @@ missing on this box at the software sweep; the later browser photo-grid
 check is recorded above); aoe2's Unicode IDirectPlay4
 QueryInterface (handed to the AoE lane on the board); `PathAppendA` for
 dungeons_of_dredmor (fixed by w5 `5ca54afc`).
+
+
+### D3DIM asynchronous PBO warning: source audit, 7 October 2026
+
+No proven unsafe PBO reuse yet. Do not implement the old TODO's proposed ring or fence wait from the warning alone. No engine edits, tests, browser, build or performance measurements were performed. Drakan's acceptance fixture remains unchanged.
+
+## Exact evidence
+
+`source-receipt.json` hashes the source copies and original MW3 console. The console contains 145 instances of the shadow-copy-discard warning. The relevant `lib/d3dim-gpu.js` at origin/main e710d101 is byte-identical to feature commit fcfa4989. The shared checkout is older: this audit deliberately uses Git object contents, not its working-tree file.
+
+In that source, `_flip` lines 457–498 collects an existing `t.inflight` at line 468 before writing the same PBO. `_completeInflight` lines 501–520 binds `t.pbo`, calls `getBufferSubData`, unbinds and deletes the fence. The normal path therefore orders readback before reuse. No explicit `clientWaitSync` exists; synchronous collection can still block.
+
+The dead-target branch at lines 362–365 discards an unread pending result, deletes its sync, destroys the device and removes the target. It does not itself reuse that PBO. Resizing at lines 207–212 fences before destroying/replacing the target. These branches need live identity evidence before attributing the warning to discarded reads. `_completeInflight` clears its JS pending record before GL collection; an exception would leave no retry record. A WebGL validation failure can also return normally without copying. Neither is established in the saved run.
+
+## What Chromium actually warns about
+
+Primary source is pinned to Chromium revision d03948c49f64c93042f36929fc9a89d1e688c6e6, **not claimed to match the installed browser revision**:
+
+- [GLES implementation](https://chromium.googlesource.com/chromium/src/+/d03948c49f64c93042f36929fc9a89d1e688c6e6/gpu/command_buffer/client/gles2_implementation.cc), `AllocateShadowCopiesForReadback`, lines 5908–5928: warning means `Buffer::Alloc` found an already allocated internal shadow for a written/unfenced buffer. It does not inspect our JavaScript `inflight` flag.
+- [Shadow tracker](https://chromium.googlesource.com/chromium/src/+/d03948c49f64c93042f36929fc9a89d1e688c6e6/gpu/command_buffer/client/readback_buffer_shadow_tracker.cc), lines 26–76: allocation persists until `Free`; successful unmap frees it. Readback validity additionally compares write/readback serials.
+- [WebGL2 implementation](https://chromium.googlesource.com/chromium/src/+/d03948c49f64c93042f36929fc9a89d1e688c6e6/third_party/blink/renderer/modules/webgl/webgl2_rendering_context_base.cc), lines 354–387: `getBufferSubData` validates, maps, copies and unmaps. Validation or mapping failure returns without that completed sequence. GLES unmap frees the shadow even when mapping used the synchronous fallback (lines 5442–5453). Consequently, merely omitting `clientWaitSync` does not prove why the *next write* warning occurs. A different warning explicitly diagnoses readback without waiting.
+
+## Existing coverage and minimal next proof
+
+`test/test-d3dim-gpu-async-flip.js` covers one queued flip, unrelated-range deferral, original-DIB collection, global collection, and synchronous fallback. It has no repeated-flip, discard/recreation or multiple-PBO identity case. Its mock `getBufferSubData` reads a variable last assigned by `bufferData`, rather than the currently bound buffer: extend that mock before trusting identity coverage.
+
+First proposed source-only tests, once authorized: actual executor with a binding-aware GL mock; two differently colored consecutive frames; assert collect-old before write-new and correct old/new DIB bytes. Two targets/contexts must never collect each other's buffer. Dead target discards once and recreation gets a fresh resource identity; size growth collects before deletion. Negative control removing the collect-before-reuse call must fail on overwritten old-frame bytes, not a missing helper. These prove application ordering, not Chrome shadow behavior.
+
+Then, only under a separate serialized browser grant: one short MW3 ordinary menu diagnostic, capped 10 seconds/256 detailed events with total counters and explicit dropped-event flag. Identify the actual executor and context, then assign stable WeakMap IDs to contexts, PBOs, syncs and targets. Wrap existing `bindBuffer`, `bufferData`, `readPixels`, `fenceSync`, `getBufferSubData`, `deleteSync`, `deleteBuffer` and executor target/collect lifecycle seams. Record args, bound pack-buffer identity, byte ranges, target/backing identity, entry/return/throw and warning timestamps. Forward exactly once with original receiver/arguments/results/errors. No extra readback, wait, flush, binding, getError or pixel mutation. Restore only own wrappers, report foreign replacement. Preserve observer overhead and unknown on cap/context mismatch.
+
+Discriminating outcomes: a same-resource second write with no completed collection supports a missed/discarded-read lifecycle; a complete ordered collect between writes refutes that simple explanation and requires checking actual Chromium revision, validation and context before a change. A returned JS call alone cannot certify successful GL copying. Do not infer GPU corruption or a performance gain from warning counts. Any performance A/B belongs on separate boats with matched useful work.

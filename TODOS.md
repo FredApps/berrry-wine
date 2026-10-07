@@ -1175,5 +1175,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
   created: 2026-10-06T20:20:00Z
-  Next: October7 source-only audit of pending PBO lifecycle while serialized gameplay runs continue. Determine whether Chrome warning follows discarded inflight read or incorrect reuse; inspect existing tests and propose precise instrumentation. No engine change, new runtime or performance claim authorized in this stage; benchmarks must use separate boats. Preserve Drakan acceptance source/module pins until Threads-off check completes.
+  Next: Source audit complete: ordinary reuse collects before write, so warning alone does not prove unsafe reuse. Findings and pinned Chromium references in docs/gl-d3d-corpus-status.md; scratch/d3dim-pbo-audit-20261007/source-receipt.json. Next add binding-aware repeated-flip/discard negative-control tests, then a separately serialized context/PBO identity observation. No speculative engine fix or performance claim. Preserve Drakan acceptance pins through Threads-off check; benchmarks on separate boats.
   Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
