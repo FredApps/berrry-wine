@@ -1221,7 +1221,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI arx-allocation (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Remote bx_d8nw3e8t readonly run verified352pins, twoowner rows/cleanclosure; rootreviewed startup only. Entry7ef0b780 matches noneof4 publishedheaparenas. Fresh worker identifies original allocation call/flags before generic placement fix; preserve capacity/concurrency, no bypass.
+  Next: Original CRT reserve identified (NULL/1MiB/MEM_RESERVE), generic placement candidate fullbuild+10suites PASS; remote actualsettings rootreviewed/zeroCSwaits. Fix highest-gap MEM_TOP_DOWN review before main; then ordinary OK/newgame/player controls. No gameplay yet.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
 
@@ -1242,7 +1242,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI comanche-startup (scratch/fresh-workers-20261007)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: AH5A, coherenthandles and upper-register return repair pushed4091453a; actual memory error gone. Prior dispatch cap covered only4.996guest seconds, so blackscreen is not proven hang. Fresh worker diagnoses later original execution, bounded longer correctness run when Arx releases local slot.
+  Next: Main4091453a repairs false memory error. Root-granted six-guest-second sampler clean60.1M instructions but blackscreen/noexit/no fault, originalmedia unchanged. Worker owns local slot to diagnose later startup; not gameplay.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1250,5 +1250,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI q2-gl-validation (scratch/fresh-workers-20261007)
-  Next: Prepare pinned current-module original registry route; remote browser follows Arx allocation worker release. Validate ordinary newgame and forward/reverse/idle world displacement, retain captures/cleanup; no weapon-bob-only qualification.
+  Next: Current pinned fb1 WebGL ordinary newgame route prepared; remote follows Arx terminal release. Validate forward/reverse/idle world displacement with reviewed captures, not weapon-bob-only evidence.
   Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
