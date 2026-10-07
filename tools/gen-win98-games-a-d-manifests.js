@@ -13,6 +13,15 @@ const ONLY = ONLY_ARG === undefined ? undefined : ONLY_ARG.slice(7);
 if (ONLY === '') throw new Error('--only requires a nonempty game id');
 const GAMES = [
   {
+    // Original CAB + authenticated installer loose overlays, no DX setup files.
+    id: 'carmageddon_tdr2000_demo',
+    root: 'Carmageddon TDR2000 demo-D3D-installed',
+    exe: 'Tdr2000Demo.exe',
+    exclude: ['Mss32.dll'], // Explicit app DLL, not a second VFS data mount.
+    requiredExtensions: ['.txt', '.ini', '.cfg'],
+    defaultLoadMode: 'lazy',
+  },
+  {
     // Original installed files mount at the paths used by the two installer seeds.
     id: 'croc2_demo',
     root: 'Croc2 demo-SW/installed',
@@ -317,6 +326,10 @@ function manifestFor(game, directory) {
     vfsPath: (game.vfsRoot || 'c:\\') + relative.split(path.sep).join('\\'),
     // Byte length: lets lib/app-files.js stream a large file with no HEAD.
     size: fs.statSync(path.join(directory, relative)).size,
+    ...(game.defaultLoadMode ? {
+      loadMode: (game.requiredExtensions || []).includes(path.extname(relative).toLowerCase())
+        ? 'required' : game.defaultLoadMode,
+    } : {}),
   }));
   for (const mediaRoot of game.media || []) {
     const mediaDirectory = path.join(directory, '..', mediaRoot);
@@ -365,6 +378,13 @@ for (const game of GAMES.filter(game => !ONLY || game.id === ONLY)) {
     if (actual !== wanted) throw new Error(`${game.id}: stale browser manifest`);
     console.log(`OK ${game.id}`);
   } else {
+    // Guard the mutation itself: a caller's shell may continue after a failed
+    // preflight. Missing/unreadable capacity information must also abort.
+    const disk = fs.statfsSync(directory, { bigint: true });
+    const available = disk.bavail * disk.bsize;
+    if (available < 2n * 1024n ** 3n) {
+      throw new Error(`${game.id}: disk floor 2GiB (${available} bytes available)`);
+    }
     fs.writeFileSync(destination, wanted);
     const count = JSON.parse(wanted).files.length;
     console.log(`WROTE ${game.id} (${count} companion files)`);
