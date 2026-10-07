@@ -1,9 +1,9 @@
-updated: 2026-10-07T09:34:44.191Z
+updated: 2026-10-07T09:40:59.474Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Croc2 reached a player scene and responded to Down; disk guard prevented reverse/idle capture, so control qualification remains incomplete. Finite control helper tests passed; next browser waits for 2.9GB launch headroom. DieHard remains at difficulty selection; native activation diagnostic is being prepared with graceful shutdown. No runtime currently held.
+New-game pipeline: Croc2 reached a player scene and responded to Down; reverse/idle capture remains incomplete. Its finite control helper passed; next browser follows native U4. DieHard diagnostic closed normally09:38:33: positive counters prove Easy activation, level-load call and return; unchanged difficulty is not simply missing input. Worker investigates post-load return path, no gameplay claim. Reproducible abandoned caches/archive cleanup restored ~88MB with hashes; all original payloads retained. Native U4 browser180sec now granted, all other runtimes queued.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
