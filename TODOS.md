@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic resident-module resource-path repair merged dad1f8c78 with focused native regressions and full build. Ordinary original remote validation now follows completed upload; first launch failed on missing harness apps.js before Chrome, preserved separately. No gameplay claim.
+  Next: Resource-path fix dad1f8c78 restores ordinary Sierra menu. Install click highlights Uninstall; coordinate cause not established, keyboard hwnd0 is intentional. Prepared read-only DOM/input mapping run after Winamp actual release; transfer240s/browser120s/cleanup90s. No installation/gameplay yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1270,7 +1270,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI tiberian-paint
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Candidate61ac72804 fixes shared GDI overlay chronology, partial-child repaint and obsolete coverage growth; focused pixel/fragmentation tests and full build pass. Ordinary non-diagnostic Worker browser validation is next after Antara actual cleanup. No gameplay qualification.
+  Next: Shared GDI composition repair merged3946d5f9c after focused pixel/fragmentation tests, full build and reviewed ordinary visible menu. New Campaign down/up reaches HWND10004 but does not advance; parent WM_COMMAND unproven. Worker prepares causal input investigation; no campaign/gameplay qualification.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
