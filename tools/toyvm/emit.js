@@ -25,6 +25,7 @@
 // $ip, advance it, use only locals $t0..$t7, and never dispatch.
 
 const isa = require('./isa');
+const pmTransfer = require('./pm-transfer');
 
 // ---------------------------------------------------------------------------
 // Handler table. Order IS the handler index -- the decoder emits these numbers.
@@ -646,7 +647,7 @@ const SLICE_EXIT = '(call $slice_exit)';
 // alone, so it costs nothing on a linked edge and moves no dispatch count.
 // `ifen` is jmp_ifen's refusal: the boundary after STI's shadow, reached with
 // $ifarm up (see CONT and jmp_ifen).
-const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10, ifen: 11 };
+const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10, ifen: 11, protectedTransfer: 12 };
 // Where dos.js parks every vector (its STUB_SEG:STUB_OFF+v), repeated here
 // because emit.js does not load the machine; dos-loop.js refuses to start if
 // the two ever disagree.
@@ -2485,23 +2486,26 @@ function genArithIO() {
   ${ops(4)}
   (local.set $t0 (call $rd16 (i32.const 1) (local.get $t3)))
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 2))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t1) (local.get $t2))) (then
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
-  (global.set $gip (local.get $t0))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t0))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf', 0, `
+  (if (i32.eqz (call $pm_retf (i32.const 2) (i32.const 0))) (then
   (global.set $gip (call $pop16))
-  (call $sset (i32.const 1) (call $pop16))
-  ${GO_INDIRECT}
+  (call $sset (i32.const 1) (call $pop16))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf_imm', 1, `
   ${ops(1)}
+  (if (i32.eqz (call $pm_retf (i32.const 2) (local.get $t0))) (then
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  ${GO_INDIRECT}
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   // The operand-size-32 far transfers. These are how a DOS extender enters and
   // leaves its 32-bit world, and until they existed the 66-prefixed forms were
@@ -2512,16 +2516,18 @@ function genArithIO() {
   // execute 200M dispatches of whatever it found there. The offset is a full
   // 32 bits; the selector is still 16, occupying the low half of its dword.
   h('retf32', 0, `
+  (if (i32.eqz (call $pm_retf (i32.const 4) (i32.const 0))) (then
   (global.set $gip (call $pop32))
-  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  ${GO_INDIRECT}
+  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf_imm32', 1, `
   ${ops(1)}
+  (if (i32.eqz (call $pm_retf (i32.const 4) (local.get $t0))) (then
   (global.set $gip (call $pop32))
   (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  ${GO_INDIRECT}
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('jmp_far32', 3, `
   ${ops(3)}
@@ -2535,11 +2541,13 @@ function genArithIO() {
   ${ops(4)}
   (local.set $t0 (call $rd32 (i32.const 1) (local.get $t3)))
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 4))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t1) (local.get $t2))) (then
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
-  (global.set $gip (local.get $t0))
-  (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $gip (local.get $t0))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then
+    (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
   // The target is a runtime value, so it is looked up in the jump-target cache
   // rather than baked in. A miss hands back exactly as before; a hit keeps a
@@ -2630,11 +2638,12 @@ function genArithIO() {
   (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
     (call $off_add (local.get $t4) (i32.const 2))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t3) (local.get $t2))) (then
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
-  (global.set $gip (local.get $t7))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t7))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
 
   // The operand-size-32 twins: `66 ff /5` and `66 ff /3` read a 48-bit far
@@ -2672,11 +2681,12 @@ function genArithIO() {
   (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
     (call $off_add (local.get $t4) (i32.const 4))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t3) (local.get $t2))) (then
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
-  (global.set $gip (local.get $t7))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t7))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
 
   // ENTER/LEAVE, the 186's stack-frame pair. Every C compiler of the era emits
@@ -2920,8 +2930,8 @@ function gen386() {
   for (const [nm, body] of [
     ['sldt', '(call $rset16 %R% (global.get $ldt))'],
     ['str', '(call $rset16 %R% (global.get $tr))'],
-    ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase %V%))'],
-    ['ltr', '(global.set $tr %V%)'],
+    ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase (global.get $ldt))) (call $pm_cache_ldt (global.get $ldt))'],
+    ['ltr', '(global.set $tr %V%) (call $pm_cache_tr (global.get $tr))'],
     ['verr', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
     ['verw', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
   ]) {
@@ -4569,7 +4579,8 @@ function helpers() {
     (then (global.set $d32 (call $segd32 (local.get $v)))))
   (if (i32.eq (local.get $i) (i32.const ${isa.SEG.indexOf('ss')}))
     (then (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)
-      (call $segd32 (local.get $v)))))))\n`;
+      (call $segd32 (local.get $v))))
+      (call $pm_cache_ss (local.get $v)))))\n`;
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -5785,6 +5796,7 @@ ${memAccessors()}
   (global.set $ip (local.get $a))
   (i32.const 1))
 ${JMP_SYN_BUDGET_TEST ? '' : JLOOK_SYN_FN}${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
+  s += pmTransfer.helpers(isa);
   return s;
 }
 
@@ -6262,7 +6274,21 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; Nothing switches tasks, so $tr is storage that STR can read back.
 (global $ldt (mut i32) (i32.const 0))
 (global $ldtb (mut i32) (i32.const 0))
-(global $tr (mut i32) (i32.const 0))`;
+(global $tr (mut i32) (i32.const 0))
+;; Checked protected transfers retain SS/TR metadata at load time. Existing
+;; general instruction protection remains separate; no exception is fabricated.
+(global $pm_ss_valid (mut i32) (i32.const 0))
+(global $pm_ss_limit (mut i32) (i32.const 0))
+(global $pm_ss_access (mut i32) (i32.const 0))
+(global $pm_tr_valid (mut i32) (i32.const 0))
+(global $pm_tr_base (mut i32) (i32.const 0))
+(global $pm_tr_limit (mut i32) (i32.const 0))
+(global $pm_tr_access (mut i32) (i32.const 0))
+(global $pm_ldt_valid (mut i32) (i32.const 0))
+(global $pm_ldt_limit (mut i32) (i32.const 0))
+(global $pm_ldt_access (mut i32) (i32.const 0))
+(global $pm_xfer_stop (mut i32) (i32.const 0))
+(global $pm_xfer_sel (mut i32) (i32.const 0))`;
 
 // The MACHINE's state, as opposed to the guest's.
 //
@@ -6284,7 +6310,11 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 // take the next interrupt through the real-mode vector table instead of the
 // guest's own IDT -- silently, and only in a protected-mode program.
 const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
-  'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr'];
+  'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr',
+  'pm_ss_valid', 'pm_ss_limit', 'pm_ss_access',
+  'pm_tr_valid', 'pm_tr_base', 'pm_tr_limit', 'pm_tr_access',
+  'pm_ldt_valid', 'pm_ldt_limit', 'pm_ldt_access',
+  'pm_xfer_stop', 'pm_xfer_sel'];
 
 // Emitted into BOTH modules, under names of their own so they cannot collide
 // with the hand-written get_cr0/get_linmask exports that already exist.

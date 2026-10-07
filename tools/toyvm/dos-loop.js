@@ -1270,7 +1270,8 @@ class DosSession {
   get done() {
     return this.machine.exited || this.machine.blockedOnKey || this.machine.stopHit
       || this.stuckAt !== null
-      || this.blockedOn32 !== undefined || this.badSelector !== undefined;
+      || this.blockedOn32 !== undefined || this.badSelector !== undefined
+      || this.protectedTransferStop !== undefined;
   }
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
@@ -1827,6 +1828,21 @@ class DosSession {
     const left = cut >= 0 ? cut : vm.raw('steps');
     this.dispatched += budget - left;
     this.handbacks++;
+    // The transfer helper validates before stack/register mutation. Ordinary
+    // protected exception delivery is not complete, so a rejected operation
+    // stops explicitly rather than fabricating a guest exception or continuing
+    // with a system descriptor misread as code. Do not deliver IRQ/TF after it.
+    if (vm.exports.mget_pm_xfer_stop && vm.exports.mget_pm_xfer_stop()) {
+      const reason = vm.exports.mget_pm_xfer_stop() >>> 0;
+      const names = require('./pm-transfer').STOP;
+      this.protectedTransferStop = {
+        reason, reasonName: Object.keys(names).find(k => names[k] === reason) || 'unknown',
+        selector: vm.exports.mget_pm_xfer_sel() >>> 0,
+        cs: vm.get('cs'), blockIp: vm.get('gip'),
+        exceptionDelivered: false,
+      };
+      return;
+    }
     // Did this handback reach the date the slice was cut to, or is it one the
     // guest caused on its way past -- an unresolved jump, a store into compiled
     // code, a port write? Only the first kind is a point on the clock, and only
@@ -2397,6 +2413,7 @@ class DosSession {
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,
+      protectedTransferStop: this.protectedTransferStop ?? null,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,
       deadFlagsDropped: this.cache.deadFlagsDropped,
       tracedBlocks: this.cache.tracedBlocks,
