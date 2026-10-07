@@ -1,9 +1,9 @@
-updated: 2026-10-07T08:56:04.074Z
+updated: 2026-10-07T08:58:16.086Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 Daggerfall reached the dungeon with ordinary forward/reverse input and stable idle, personally reviewed by root. Evidence is scratch/runs/20261007-daggerfall-dungeon-controls/result.json; main 724637d9 records the route and fe7cfb95 fixes eager loading of original mutable saves. Optional bundle403 and driver exit1 remain recorded despite clean process closure. FPS, audio and sustained play remain unmeasured.
 
-New-game pipeline: Die Hard Nakatomi demo (/root/restore_evidence), local registration/category/Program selector now on mainfea60cb9; registered ordinary difficulty-to-level run live through08:57:06Z, no gameplay yet. Croc 2 (/root/coverage_audit) source investigation found P/Start differs from Enter and is tracing frontend behavior before a runtime proposal. Both lanes active, one runtime.
+New-game pipeline: Die Hard Nakatomi demo (/root/restore_evidence), local registration/category/Program selector on mainfea60cb9; registered launch reaches menu and difficulty, but Easy-to-level remains unverified after150sec guard. Clean closure08:57:06Z. Worker prepares finite reviewed menu replay/source input diagnosis; no identical short retry. Croc 2 (/root/coverage_audit) traced P/Start action through actual frontend consumers, distinct from Enter/back; prepares fresh explicit registry/ordinary P route. Both source lanes active, runtime currently free.
 
 Drakan lazy-read repair is complete for its stated acceptance: full regression/build gates and actual browser level with Threads on and off. Root reviewed both scenes and clean closure. Repair maina1710870, acceptance mainea63ceed. No new movement/FPS/audio claim.
 
