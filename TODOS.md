@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual module-context capture shows C:\SETUPL.DLL open fails while the original task path remains intact. Worker implements stable resident-module resource paths with lifetime and embedded-NUL checks; focused build/regressions queued after paging yields. Then ordinary remote installer/gameplay validation. Evidence 20261007T230333Z-antara-module-context.
+  Next: Generic resident-module resource-path repair merged dad1f8c78 with focused native regressions and full build. Ordinary original remote validation now follows completed upload; first launch failed on missing harness apps.js before Chrome, preserved separately. No gameplay claim.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1270,7 +1270,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI tiberian-paint
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Remote composition capture proves six menu buttons exist in DX frame but are obscured by grey shared GDI overlay. Worker prepares generic overlay chronology repair and focused regression, followed by ordinary remote gameplay validation. Evidence 20261007-tiberian-composition-preparation; no gameplay qualification yet.
+  Next: Candidate61ac72804 fixes shared GDI overlay chronology, partial-child repaint and obsolete coverage growth; focused pixel/fragmentation tests and full build pass. Ordinary non-diagnostic Worker browser validation is next after Antara actual cleanup. No gameplay qualification.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
@@ -1278,7 +1278,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-WINAMP-EXCEPTION-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI winamp-exception
+  worker: fresh CLI winamp-runtime (observer cap review then queued remote diagnosis)
   Next: Source-only actual exception diagnostic preparation; complete loader closure already reproduces illegal-operation(2). Native/browser queued behind Antara and Tiberian; require resource grant.
   Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
   Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
