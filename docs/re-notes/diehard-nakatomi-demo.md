@@ -155,3 +155,44 @@ game. Generate its metadata only, without rewriting other games:
 The manifest lists40 unchanged assets beside the separately loaded executable.
 No fixture bytes are copied or rewritten. Empty/unknown selectors fail before
 any manifest writes; without a selector the existing all-games behavior remains.
+
+### 2026-10-07: Easy activation completes; no level yet
+
+The registered ordinary route now reaches the readable difficulty screen. In
+`scratch/wt-diehard-20261007/scratch/difficulty-activation/attempt1`, session43302
+ran09:35:29.560–09:38:33.663Z, then normal quit returned0; PID2449993 disappeared,
+port8137 was free and output streams drained. Held Easy click and normal Enter
+left the difficulty image visible; no world, gameplay or FPS qualification.
+`difficulty.png` is an early capture still showing the main menu;
+`newgame-later.png` is the actual difficulty gate.
+
+The retained native cshell.dll SHA256 is
+`fae70d13f2fe9ffb2416306e524294ddf508737a9fd3bfa310edeed036aef37e`.
+Its original base10000000 relocated to actual00f5f000 (head.log:372).
+Numeric counters armed before guest threads; shared HIT_COUNT_BASE and inherited
+per-instance count configuration include subsequent executing instances. Counts
+aggregate threads, not owning-thread identities. Original VA → count:
+
+- 10008ded menu-control constructor:477 (positive control).
+- 100113ea dispatcher:2; 10011668 Easy branch:1.
+- 10010f54 start:1; 10024517 load setup:1; 10010f8e return landing:1.
+
+This rules out missing Easy activation as the sole explanation. It does not prove
+successful loading. Static10010f54 passes `39-1`, `GameStartPoint0`, difficulty0
+and flag1 to10024517, but does not test its returned EAX. Inside10024517,
+100246a4 calls the engine function at `[global100720d0]+0x20` with a stack request;
+the next branch tests the original flag in EBX, not that result. The function
+continues through10025d41 and returns16bytes at10024798. Next source work must
+identify this engine target/request and the downstream state/error transition,
+not repeat menu inputs or invent a successful-load return contract.
+
+The full1,449,149-byte log is retained (SHA256
+`bc49fe7b3b6925b0ca7a4d2cb12cca441fbb911077bc107a600df764b9b971eb`).
+No literal39-1/GameStartPoint0 appeared in FS lines: archive reads expose REZ
+paths/offsets, so this is not missing-member evidence. Review/cleanup/source pins
+and19 artifact hashes are in attempt1; validation.json SHA256
+`ed9fd8a8ca039cc45a26f9a899b7da56b6c6e9b5f7ef6567ca40798338dad41a`.
+Module remains prior reviewed8eb283c1 (1,719,085bytes), with the fixed JS bridge
+and local registration; no rebuild or claim of latest-main module. Counter
+instrumentation changes debug/chaining behavior even without --no-uop; this was
+an activation diagnostic, never a performance measurement.
