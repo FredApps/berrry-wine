@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Two active lanes: Antara (/root/coverage_audit) READY4 owner-probe retry; Arx Fatalis (/root/restore_evidence), NEW-GAME-ARX-FATALIS-DEMO-20261007, source-only original MSI/CAB inventory and faithful install plan. DieHard now qualified ordinary forward/partial-reverse/idle, result scratch/runs/20261007-diehard-nakatomi-player-control; no FPS/audio claim. No new Arx runtime/extraction grant.
+  Next: Two active lanes: Antara (/root/coverage_audit) source-only bounded DialogBox/module trace preparation; Arx Fatalis (/root/restore_evidence) source-only startup continuation/owning Worker investigation after corrected300sec run remained hidden. Croc2/DieHard ordinary movement qualified; no FPS/audio claim. Runtime leases serialized by root.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1200,7 +1200,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   created: 2026-10-07T09:08:16.475Z
   requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
-  Next: Four actual CALL gate baseline cases reproduce wrongtarget aftervalidatedsetup; sameCPL andring3-to0 params0/2 allfail atCS43:4567/base8-or20008, ring3 SSunchanged. Evidence mainb1cb9e27 preserves earlierharnessfailures separately. Worker implements propervalidatedgate/TSS/frame/RETF semantics onisolatedbranch, no productionmergeorCPUsuccessyet; invalidfaultdelivery must remainhonest. ArenaCDcontracts/U4worldstillopen.
+  Next: Candidate protected CALL gate/RETF plus hidden segment cache correction pushed feature90dd5d20;36 actual instruction/cache tests PASS, no main CPU integration yet. Sole120sec CPU/VM86 regression stage granted after Arx release; full backend install and bundle checks still pending separate leases. Daggerfall paging/earlier invalid stack, Arena CD contracts and U4 world remain open; none native gameplay-qualified.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual child creation/show/destruction73ms captured, width8707; same renderer not lostwindow. OriginalCreateWindowEx Pascal argumentlayout agrees, so no assumedABIbug. OwningWorker readonly SS:BP/object/returncode probe READY3, boundaryguards underfinalreview; exact20 CARDS base/part000 absentprobes pinned. Awaitserializedbrowser afterDieHard; no installer/gameplayqualification.
+  Next: Attempt5 proves actual Pascal/host640x480 yet child destroyed9ms later; width discrepancy is not necessary cause. Original wrapper returns USER87/218 DialogBox AX to0481 predicate; original SOL_ENG.DLL contains resource102. Prepare bounded actual module handle/resource/modal-return trace, preserve redirect versus final-return distinction. No installer/gameplay qualification. Main3d5e8e4d.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1221,6 +1221,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
-  Next: Source-only MSI File/Media/Directory inventory and exact install plan; three required PAKs remain compressed in original Setup1/2/3.cab. No extraction or runtime grant yet. Preserve original loose bytes despite stale MSI sizes, inspect EAX custom action dependency.
+  Next: Original3CAB members decoded/hash verified and faithful12file hardlink mount prepared. Corrected attempt2 served stdole and pinned earlier module successfully; four reviewed captures through259sec show hidden ARX window, no menu/input.300sec run closed11:57:20.648Z cleanly. Worker investigates original startup continuation and owning Worker state before another runtime; cause unknown.
   Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
   Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
