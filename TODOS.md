@@ -1199,7 +1199,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   created: 2026-10-07T09:08:16.475Z
   requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
-  Next: Native U4 entered ordinary new-character story, no world yet (main785ee61f). Fresh native Arena exits6 with MSCDEX Driver not installed; Daggerfall stops30s at repeated protected-mode4b:142a decoding apparent error text. Worker publishes exact observed evidence and investigates real CD services/mapping and selector/control-flow handling; do not spoof successful services or infer generic extender causality. Native entry-attempt2 closed09:51:12; no runtime retained.
+  Next: Native CD/PM pair closed10:18:22 cleanly; evidence mainc1c33aa7. Arena actual AX1500 query is unhandled; requires real C:/D: readonly-CD mapping. Daggerfall CS4b is a32-bit call gate incorrectly loaded as code; target28 is DPL0 and predecessor5b DPL3. Capture precise transfer and actual TR/TSS stack inputs before implementing gate/return semantics; paging remains independent. U4 story reached, no native title gameplay-qualified.
   Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
@@ -1210,7 +1210,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Additive FAR_ADDR loader repair3880d93d is on main; actual-loader before/candidate and authentic SMACKW16 tests pass, full production gates and2881 NE checks pass. Exact production module992a8b02 retained. Prepare ordinary original SETUP.EXE browser route with23 original media files; no installer/gameplay qualification yet. Restore browser disk headroom via reproducible own-checkout cleanup, preserving all original files and evidence.
+  Next: Generic additive FAR_ADDR repair3880d93d passes full production gates,2881 NE checks and authentic DLL regression. Sole ordinary original installer browser probe granted conditional2.9GB launch floor with production992a8b02 and679df2b3 helper. Reproducible npm cache cleanup recovered117MB; receipt scratch/new-game-antara-20261007/npm-cache-recovery.json. Preserve2GiB runtime floor. No installer/gameplay qualification yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
