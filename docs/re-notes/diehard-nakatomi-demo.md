@@ -133,3 +133,25 @@ is `11e974a0dcd602f523a6498fd1d855d982cb26d22c6f16b441a49fc969fdd9c1`.
 The late draw gate did not arm because rejected draws never reached it;
 there are no captured vertex alpha/RHW conclusions. Earlier attempt1 lacked
 sparse bundled fonts and is a harness error despite the runner's exit0.
+
+### Ordinary menu validation and local registration
+
+With the texture-admission repair, a150-second ordinary CLI run rendered the
+Floor Directory main menu. A normal held mouse press at230,130 opened the
+Easy/Medium/Hard New Game menu. Easy was highlighted after pointer movement
+and a held press at347,115, but the run ended on that menu: no level or
+player-controlled gameplay is claimed. Evidence is in
+`scratch/wt-diehard-20261007/scratch/ordinary-menu/attempt1/` (review and validation
+JSON, input log, screenshots and clean process/port receipt).
+
+The local experimental route `diehard_nakatomi_demo` launches the original
+`lithtech.exe` with both original REZ arguments, the installed working directory,
+and explicit real MSVCRT/MSVCP60/MSS32/SoundMax DLLs. It is a Shooters corpus
+candidate and local selector entry, not a production desktop or release-ready
+game. Generate its metadata only, without rewriting other games:
+
+`node tools/gen-win98-games-a-d-manifests.js --only=diehard_nakatomi_demo`
+
+The manifest lists40 unchanged assets beside the separately loaded executable.
+No fixture bytes are copied or rewritten. Empty/unknown selectors fail before
+any manifest writes; without a selector the existing all-games behavior remains.

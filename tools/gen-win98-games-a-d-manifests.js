@@ -8,7 +8,17 @@ const ROOT = path.join(__dirname, '..');
 const CORPUS = path.join(ROOT, 'test/binaries/win98-games-a-d');
 const CHECK = process.argv.includes('--check');
 
+const ONLY_ARG = process.argv.find(arg => arg.startsWith('--only='));
+const ONLY = ONLY_ARG === undefined ? undefined : ONLY_ARG.slice(7);
+if (ONLY === '') throw new Error('--only requires a nonempty game id');
 const GAMES = [
+  {
+    // Original Wise installer output, unchanged game payload and configuration.
+    id: 'diehard_nakatomi_demo',
+    root: 'Diehard-nakatomi-demo-installed/program files/fox/die hard nakatomi plaza demo',
+    exe: 'lithtech.exe',
+    vfsRoot: 'c:\\program files\\fox\\die hard nakatomi plaza demo\\',
+  },
   {
     id: 'black_white_2_demo',
     root: 'Black and White 2-DX9-D3D/installed',
@@ -328,11 +338,13 @@ function manifestFor(game, directory) {
   return `${JSON.stringify({ schemaVersion: 1, files }, null, 2)}\n`;
 }
 
+if (ONLY && !GAMES.some(game => game.id === ONLY)) throw new Error(`unknown --only game: ${ONLY}`);
+
 if (!fs.existsSync(CORPUS)) {
   throw new Error(`missing extracted corpus: ${path.relative(ROOT, CORPUS)}`);
 }
 
-for (const game of GAMES) {
+for (const game of GAMES.filter(game => !ONLY || game.id === ONLY)) {
   const directory = path.join(CORPUS, game.root);
   const executable = path.join(directory, game.exe);
   const destination = path.join(directory, '.wine-assembly-browser.json');
