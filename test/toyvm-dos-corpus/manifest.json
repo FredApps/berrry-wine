@@ -24,7 +24,7 @@
  },
  "toyvmFacts": {
   "no-dpmi": {
-   "text": "ToyVM implements no DPMI host (INT 31h) and answers the DPMI presence check as absent.",
+   "text": "ToyVM implements no DPMI host (INT 31h); INT 2Fh AX=1687h discovery is unhandled, not a complete DPMI absence protocol.",
    "cite": "tools/toyvm/dos.js serviceCall (no 0x31); docs/dos-corpus-blockers.md \"We implement no DPMI (INT 31h)\""
   },
   "no-vcpi": {
@@ -40,8 +40,8 @@
    "cite": "tools/toyvm/dos.js lin() masks the offset to 16 bits"
   },
   "extenders-run": {
-   "text": "The only DOS extenders ToyVM has run are the demoscene productions' own (PMODE/W and unnamed 32-bit extenders); DOS/4GW and CauseWay have never been run.",
-   "cite": "docs/dos-corpus/notes.html; tools/toyvm (no DOS/4GW or CauseWay references)"
+   "text": "Native DOS/4GW/CauseWay gameplay remains unqualified. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.",
+   "cite": "ops/handoffs/toyvm-native-entry-probes-20261007/FINDINGS.md"
   },
   "flat-fs": {
    "text": "ToyVM resolves every DOS path by its basename in one flat directory; there are no subdirectories (no MKDIR/CHDIR).",
@@ -170,18 +170,14 @@
    ],
    "toyvm": {
     "status": "blocked",
-    "verdict": "Not expected to run on ToyVM: extender, flat-fs-collision. Not attempted.",
+    "verdict": "Observed native ToyVM startup (2026-10-07T09:51:12.205Z): Original FALL.EXE entered protected mode, then repeated CS4b:142a (cached base0x28; ASCII error-text decoder bytes) until the30s guard. Exact descriptor/control-flow cause unresolved, not proven DPMI absence. Gameplay unqualified; independent static limits remain.",
     "blockers": [
      {
-      "id": "extender",
-      "text": "FALL.EXE is a 32-bit program behind CauseWay (bound). ToyVM has no DPMI, VCPI or paging and has never run this extender, so it is not expected to start.",
-      "facts": [
-       "no-dpmi",
-       "no-vcpi",
-       "no-paging",
-       "extenders-run",
-       "pm-dos-16bit"
-      ]
+      "id": "observed-pm-decode-loop",
+      "text": "Native attempt2 entered protected mode but repeatedly failed decode at CS4b:142a/base0x28 until the30s guard; selector/control-flow cause requires diagnosis. This does not prove DPMI/VCPI caused the failure.",
+      "facts": [],
+      "sourceRun": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+      "observedAt": "2026-10-07T09:51:12.205Z"
      },
      {
       "id": "flat-fs-collision",
@@ -205,6 +201,17 @@
       "facts": [
        "no-browser-mouse"
       ]
+     },
+     {
+      "id": "remaining-capabilities-extender",
+      "text": "Static capability limits from the earlier assessment remain; the recorded startup boundary does not establish that these missing capabilities caused it.",
+      "facts": [
+       "no-dpmi",
+       "no-vcpi",
+       "no-paging",
+       "extenders-run",
+       "pm-dos-16bit"
+      ]
      }
     ],
     "flatFs": {
@@ -219,7 +226,14 @@
      ],
      "collisionCount": 6
     },
-    "evidence": []
+    "evidence": [
+     {
+      "run": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+      "at": "2026-10-07T09:51:12.205Z",
+      "reached": "protected-mode-decode-loop",
+      "summary": "Original FALL.EXE entered protected mode, then repeated CS4b:142a (cached base0x28; ASCII error-text decoder bytes) until the30s guard. Exact descriptor/control-flow cause unresolved, not proven DPMI absence."
+     }
+    ]
    },
    "load": {
     "policy": "preload-all",
@@ -310,14 +324,14 @@
    ],
    "toyvm": {
     "status": "blocked",
-    "verdict": "Not expected to run on ToyVM: cdrom. Not attempted.",
+    "verdict": "Observed native ToyVM startup (2026-10-07T09:51:12.205Z): Original ACD.EXE printed MSCDEX Driver not installed, executed unhandled INT2F AH15 and exited6 at110:21b. Gameplay unqualified; independent static limits remain.",
     "blockers": [
      {
-      "id": "cdrom",
-      "text": "The release's own launch mounts its directory as a CD-ROM drive; ToyVM has no MSCDEX.",
-      "facts": [
-       "no-mscdex"
-      ]
+      "id": "observed-mscdex-check",
+      "text": "Actual native attempt2 prints MSCDEX Driver not installed and exits6; INT2F AH15 is unhandled. Implement the queried CD service and real original-media mapping, not fake driver-presence success.",
+      "facts": [],
+      "sourceRun": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+      "observedAt": "2026-10-07T09:51:12.205Z"
      }
     ],
     "cautions": [
@@ -341,6 +355,13 @@
       "facts": [
        "no-browser-mouse"
       ]
+     },
+     {
+      "id": "remaining-capabilities-cdrom",
+      "text": "Static capability limits from the earlier assessment remain; the recorded startup boundary does not establish that these missing capabilities caused it.",
+      "facts": [
+       "no-mscdex"
+      ]
      }
     ],
     "flatFs": {
@@ -348,7 +369,14 @@
      "collisions": [],
      "collisionCount": 0
     },
-    "evidence": []
+    "evidence": [
+     {
+      "run": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+      "at": "2026-10-07T09:51:12.205Z",
+      "reached": "mscdex-driver-check-exit",
+      "summary": "Original ACD.EXE printed MSCDEX Driver not installed, executed unhandled INT2F AH15 and exited6 at110:21b."
+     }
+    ]
    },
    "load": {
     "policy": "preload-all",

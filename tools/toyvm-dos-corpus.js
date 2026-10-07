@@ -23,11 +23,11 @@ const DIR = path.join(ROOT, 'test', 'toyvm-dos-corpus');
 // What ToyVM does and does not implement, each with the source that says so
 // (origin/main as of 2026-10-05). A blocker cites these ids.
 const TOYVM_FACTS = {
-  'no-dpmi': { text: 'ToyVM implements no DPMI host (INT 31h) and answers the DPMI presence check as absent.', cite: 'tools/toyvm/dos.js serviceCall (no 0x31); docs/dos-corpus-blockers.md "We implement no DPMI (INT 31h)"' },
+  'no-dpmi': { text: 'ToyVM implements no DPMI host (INT 31h); INT 2Fh AX=1687h discovery is unhandled, not a complete DPMI absence protocol.', cite: 'tools/toyvm/dos.js serviceCall (no 0x31); docs/dos-corpus-blockers.md "We implement no DPMI (INT 31h)"' },
   'no-vcpi': { text: 'ToyVM implements no VCPI (INT 67h AX=DExx).', cite: 'tools/toyvm/dos.js INT 67h handler (EMS 4.0 only)' },
   'no-paging': { text: 'ToyVM has no paging; CR3 writes are dropped.', cite: 'tools/toyvm/emit.js MOV CRn (only CR0 kept)' },
   'pm-dos-16bit': { text: 'DOS calls made from protected mode are served with 16-bit offsets, so a flat-model caller passing 32-bit pointers is not served correctly.', cite: 'tools/toyvm/dos.js lin() masks the offset to 16 bits' },
-  'extenders-run': { text: 'The only DOS extenders ToyVM has run are the demoscene productions\' own (PMODE/W and unnamed 32-bit extenders); DOS/4GW and CauseWay have never been run.', cite: 'docs/dos-corpus/notes.html; tools/toyvm (no DOS/4GW or CauseWay references)' },
+  'extenders-run': { text: 'Native DOS/4GW/CauseWay gameplay remains unqualified. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.', cite: 'ops/handoffs/toyvm-native-entry-probes-20261007/FINDINGS.md' },
   'flat-fs': { text: 'ToyVM resolves every DOS path by its basename in one flat directory; there are no subdirectories (no MKDIR/CHDIR).', cite: 'tools/toyvm/dos.js hostPath; INT 21h 39h/3Bh absent' },
   'no-mscdex': { text: 'ToyVM implements no CD-ROM / MSCDEX (INT 2Fh AX=15xx) and cannot mount a disc image.', cite: 'tools/toyvm/dos.js int2f (43xx and 1600 only)' },
   'no-mpu401': { text: 'ToyVM has no MPU-401 MIDI device; ports 0x330/0x331 read 0xFF. Sound Blaster, OPL and GUS are implemented.', cite: 'tools/toyvm/dos.js port table; tools/toyvm/audio.js, opl.js, gus.js' },
@@ -100,6 +100,34 @@ function assess(t, files, scans) {
   return { status, verdict, blockers, cautions, flatFs: { filesInSubdirs: inSub.length, collisions: collisions.slice(0, 20), collisionCount: collisions.length } };
 }
 
+// Evidence changes the displayed observed boundary, never promotes gameplay or
+// erases independent filesystem/device limitations. Original payload hashing is
+// not needed to reconcile an already pinned run into its title metadata.
+function applyEvidence(t, assessment) {
+  const result = { ...assessment, blockers: assessment.blockers.map(b => ({ ...b })), cautions: assessment.cautions.map(c => ({ ...c })) };
+  result.evidence = (t.toyvmEvidence || []).map(e => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary }));
+  const last = (t.toyvmEvidence || []).at(-1);
+  if (!last) return result;
+  const observed = last.observedBlocker;
+  if (observed) {
+    if (![observed.id, observed.text, observed.replaces].every(x => typeof x === 'string' && x.length)
+        || typeof last.run !== 'string' || typeof last.summary !== 'string') throw Error('invalid observed native blocker');
+    const prior = result.blockers.find(b => b.id === observed.replaces);
+    if (prior?.facts?.length) result.cautions.push({
+      id: 'remaining-capabilities-' + observed.replaces,
+      text: 'Static capability limits from the earlier assessment remain; the recorded startup boundary does not establish that these missing capabilities caused it.',
+      facts: [...prior.facts],
+    });
+    result.blockers = result.blockers.filter(b => b.id !== observed.replaces);
+    result.blockers.unshift({ id: observed.id, text: observed.text, facts: [], sourceRun: last.run, observedAt: last.at });
+    result.status = 'blocked';
+  }
+  result.verdict = result.status === 'untested'
+    ? `No static blocker; furthest recorded ToyVM run: ${last.reached.replace(/-/g, ' ')} (${last.run}). Gameplay untested; not a claim that it works.`
+    : `Observed native ToyVM startup (${last.at}): ${last.summary} Gameplay unqualified; independent static limits remain.`;
+  return result;
+}
+
 // Explicit original support data is not an exemption for an entire wrapper
 // directory. Each required file has a safe source path and an unambiguous root
 // guest name, matching ToyVM's existing flat mount contract.
@@ -157,11 +185,7 @@ function build(only) {
     row.programs = [scans.entry, ...scans.others].filter(Boolean).map((s) => ({ name: s.name, bytes: s.bytes, mode: s.mode, extender: s.extender, packers: s.packers, newHeader: s.newHeader ? s.newHeader.signature : null }));
     const assessmentFiles = files.map(f => required.includes(f.path) ? { ...f, path: path.posix.basename(f.path) } : f);
     row.toyvm = assess(t, assessmentFiles, scans);
-    // Recorded ToyVM runs (titles.json toyvmEvidence). They can say how far a
-    // run got; the status stays 'untested' for gameplay until a reviewed
-    // gameplay scene exists, and a static blocker is never cleared by them.
-    row.toyvm.evidence = (t.toyvmEvidence || []).map((e) => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary }));
-    if (row.toyvm.evidence.length && row.toyvm.status === 'untested') row.toyvm.verdict = `No static blocker; furthest recorded ToyVM run: ${row.toyvm.evidence.at(-1).reached.replace(/-/g, ' ')} (${row.toyvm.evidence.at(-1).run}). Gameplay untested; not a claim that it works.`;
+    row.toyvm = applyEvidence(t, row.toyvm);
     row.load = { policy: 'preload-all', preloadFiles: files.length, preloadBytes: bytes, lazyFiles: 0, reason: TOYVM_FACTS['sync-reads'].text };
     row.fileList = `test/toyvm-dos-corpus/files/${t.id}.json`;
     fileLists[t.id] = { schemaVersion: 1, id: t.id, gameDir: t.gameDir, files };
@@ -180,7 +204,7 @@ function parseOnly(argv) {
   if (ids.some(id => !/^[a-z0-9][a-z0-9-]*$/.test(id))) throw new Error('expected nonempty --only title IDs');
   return ids;
 }
-module.exports = { build, assess, TOYVM_FACTS, requiredOriginalFiles, mergeSelectedManifest, parseOnly };
+module.exports = { build, assess, TOYVM_FACTS, requiredOriginalFiles, mergeSelectedManifest, parseOnly, applyEvidence };
 
 if (require.main === module) {
   const only = parseOnly(process.argv.slice(2));

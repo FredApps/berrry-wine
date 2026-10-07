@@ -26,7 +26,20 @@
         "cdrom": false,
         "midiMpu401": false
       },
-      "notes": "docs/re-notes/daggerfall-gog.md"
+      "notes": "docs/re-notes/daggerfall-gog.md",
+      "toyvmEvidence": [
+        {
+          "run": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+          "at": "2026-10-07T09:51:12.205Z",
+          "reached": "protected-mode-decode-loop",
+          "summary": "Original FALL.EXE entered protected mode, then repeated CS4b:142a (cached base0x28; ASCII error-text decoder bytes) until the30s guard. Exact descriptor/control-flow cause unresolved, not proven DPMI absence.",
+          "observedBlocker": {
+            "replaces": "extender",
+            "id": "observed-pm-decode-loop",
+            "text": "Native attempt2 entered protected mode but repeatedly failed decode at CS4b:142a/base0x28 until the30s guard; selector/control-flow cause requires diagnosis. This does not prove DPMI/VCPI caused the failure."
+          }
+        }
+      ]
     },
     {
       "id": "arena",
@@ -53,7 +66,20 @@
         "cdrom": true,
         "midiMpu401": true
       },
-      "notes": "docs/re-notes/elder-scrolls-arena-gog.md"
+      "notes": "docs/re-notes/elder-scrolls-arena-gog.md",
+      "toyvmEvidence": [
+        {
+          "run": "scratch/toyvm-dos-native-20261007/entry-attempt2",
+          "at": "2026-10-07T09:51:12.205Z",
+          "reached": "mscdex-driver-check-exit",
+          "summary": "Original ACD.EXE printed MSCDEX Driver not installed, executed unhandled INT2F AH15 and exited6 at110:21b.",
+          "observedBlocker": {
+            "replaces": "cdrom",
+            "id": "observed-mscdex-check",
+            "text": "Actual native attempt2 prints MSCDEX Driver not installed and exits6; INT2F AH15 is unhandled. Implement the queried CD service and real original-media mapping, not fake driver-presence success."
+          }
+        }
+      ]
     },
     {
       "id": "ultima4",
