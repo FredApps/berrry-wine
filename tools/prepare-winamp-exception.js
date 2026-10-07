@@ -50,6 +50,8 @@ const sourcePrefix='/home/user/winamp-visualization-20261007';
 const plan=JSON.parse(fs.readFileSync(path.join(previous,'attempt3-plan.json')));
 for(const key of Object.keys(plan.paths)) plan.paths[key]=plan.paths[key].replace(sourcePrefix,remote);
 plan.paths['lib/winamp-exception-observer.js']=remote+'/source/lib/winamp-exception-observer.js';
+plan.sourceHashes['lib/guest-worker.js']=sha(Buffer.from(worker));
+plan.sourceHashes['lib/winamp-exception-observer.js']=sha(fs.readFileSync(path.join(out,'winamp-exception-observer.js')));
 write('serve-plan.json',plan);
 const runtimeFiles=verified.map(f=>({local:f.local,remote:remote+'/source/'+f.rel,sha256:f.sha256}));
 const workerFile=runtimeFiles.find(f=>f.remote.endsWith('/lib/guest-worker.js'));
