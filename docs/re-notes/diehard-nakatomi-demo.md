@@ -328,3 +328,35 @@ of invalid handle2. The next causal question is stop-event identity/signaling
 and the virtual1c join ownership; current counters alone do not prove a lost
 signal, wrong wait result or thread-manager defect. Preserve this boundary and
 obtain bounded actual event/wait evidence before changing engine behavior.
+
+### Authenticated loader stop-event snapshot (Oct 7)
+
+Session72625/PID2517648 ran10:29:36.145–10:32:07.789Z, normal quit0,
+PID absent/8137 free/streams drained. Fixed read-only guest identities matched:
+provider506d50/vtable4df6d0/getter463f96, loader506d54/vtable4dfc8c,
+join slot1c=442d7d. Actual thread handle e1005, stop e0008, queue e0002.
+The actual exported synchronization table was07b10000; matching stop and queue
+rows were type1/manual-reset1/state0 at menu, before Easy, after Easy, after
+Enter and settled. Sparse guest fields were read bytewise; no guest calls,
+register reads or writes. The table snapshots are not atomic transition history.
+
+The same teardown interval stopped between40fc25 and40fc40. Final standard
+per-instance report again has T1 EIP440df9/wait-count2 and T5 EIP440e2a/count2.
+Disassembly separates these from the join:440dc5 ends with ret4 at440df6;
+440df9 starts a DIFFERENT function, the work-loop whose WaitForMultipleObjects
+call is440e2a. Authenticated join442d7d instead calls WaitForSingleObject on
+loader+24 at442d82. Thus the observed T1 location is not proof of being inside
+the join, and state0 is not proof that a SetEvent signal was lost. Source call
+46931d does target440dc5; its alive probe440ecb checks thread wait result102
+before SetEvent440dda. Actual execution through these branches remains unproven.
+Next evidence must authenticate that call/return and actual wait caller/stack,
+not repeat aggregate early teardown counters or patch event consumption.
+
+Evidence: scratch/wt-diehard-20261007/scratch/stop-event-diagnostic/attempt1;
+22-artifact manifest SHA256
+3e4f5e0678b21cf9498404e2aa7d5a2bde836f8af2fe48b71e246b2912b9dd59.
+Full1569808-byte log SHA256
+2afb1b8d598417d7016b72187d2e6779cc1a49346a00ea3544c82b3d69a37f56.
+Read-state synthetic tests/source layout receipt: sibling validation.json.
+Personally reviewed settled screenshot remains Easy/Medium/Hard, not gameplay;
+same8eb283c1 module and debug-counter timing limitations remain.
