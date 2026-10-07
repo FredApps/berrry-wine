@@ -37,7 +37,7 @@ const registryGroups = [
   ['puzzle-board', 'Puzzle / board games', ['fourstones','pawn','runenlegen','jigssawme','empipe','marbles','bricks']],
   ['collections', 'Collections / extras', ['winarc']],
   ['tools', 'Applications / tools', ['claass','xp_eos','tour98','welcome98','windows_installer_20']],
-  ['platform', 'Platform games', ['abedemo','captain_claw_demo']],
+  ['platform', 'Platform games', ['croc2_demo','abedemo','captain_claw_demo']],
   ['adventure', 'Adventure', ['broken_sword_demo','curse_monkey_island_demo','atlantis_demo','dark_earth_demo']],
   ['role-playing', 'Role-playing', ['darkstone_demo','diablo_demo','morrowind','anachronox_demo']],
   ['strategy', 'Strategy / tactics', ['aoe1','aoe2','black_white_2_demo','caesar3_demo','dungeon_keeper_demo','total_annihilation_demo','red_alert_95_demo','dark_colony_demo','disciples_demo','commandos_demo','age_of_wonders_demo','alpha_centauri_demo','dark_reign_demo','populous_tb_demo','anno1602_demo']],

@@ -13,6 +13,13 @@ const ONLY = ONLY_ARG === undefined ? undefined : ONLY_ARG.slice(7);
 if (ONLY === '') throw new Error('--only requires a nonempty game id');
 const GAMES = [
   {
+    // Original installed files mount at the paths used by the two installer seeds.
+    id: 'croc2_demo',
+    root: 'Croc2 demo-SW/installed',
+    exe: 'croc2.exe',
+    vfsRoot: 'c:\\program files\\fox\\croc 2 demo\\',
+  },
+  {
     // Original Wise installer output, unchanged game payload and configuration.
     id: 'diehard_nakatomi_demo',
     root: 'Diehard-nakatomi-demo-installed/program files/fox/die hard nakatomi plaza demo',
