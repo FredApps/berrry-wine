@@ -1139,16 +1139,16 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: registered app, reviewed gameplay screenshot with input evidence, result.json (candidateId = app id), commit on main, manifest generator command posted.
   Evidence: board 2026-10-06T18:40Z
 
-- [ ] USER REPORT: Drakan demo crashes in the browser (Threads on): 'render endpoint is closed' + fs_read_file_result threw in notifyGuestWrite
+- [x] USER REPORT: Drakan demo crashes in the browser (Threads on): 'render endpoint is closed' + fs_read_file_result threw in notifyGuestWrite
   id: DRAKAN-WEB-THREADS-LAZY-CRASH-20261006
-  status: active
+  status: done
   reclaimed: 2026-10-07T07:42:56.312Z
   note: 2026-10-06T21:25Z d3ec2640: invalidate_code_range runs with d3dim_lazy_bypass -- the page shadow no longer traps materializing a lazy D3DIM surface after a Worker ReadFile; Drakan reaches its main menu in the page with Threads on (scratch/runs/20261006T2120Z-drakan-threads-lazy). Next: fence the destination of host writes (ReadFile etc.) in the guest BEFORE the host writes so a later readback cannot overwrite file bytes read into an armed surface; regression test for that; Threads-off page check. Also: headless probe clicks/Enter do not dismiss the beta MessageBox in guest-Worker mode (renderer handleMouseDown via evalfile does) -- probe issue, pre-existing.
   note: 2026-10-06T21:00Z claude:1863d2b5 taking it.
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: /root/corpus_categories
   created: 2026-10-06T20:57:00.000Z
-  Next: Host-write repair maina1710870 passes focused before/candidate, full build gates and Worker regression. Actual Threads-on browser level accepted with owning Worker, no observed trap, clean closure; movement unqualified. Threads-off sole browser live driver2392122/Chrome2392161, original deadline08:57:37Z. Review actual level and cleanup, then commit acceptance. No public deployment.
+  Next: Completed October7: owner-side host-write fence maina1710870, actual-WASM/VFS negative control and candidate + Worker regression/full gates PASS; actual browser level personally reviewed with Threads on and off, clean process/server closure. Acceptance doc/hashes integrated mainea63ceed; ops/handoffs/drakan-threads-acceptance-20261007.json. No new movement, FPS, sound quality or PBO-warning-resolution claim.
   Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
   Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
 
