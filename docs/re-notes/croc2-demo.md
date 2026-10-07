@@ -148,3 +148,37 @@ Next: retain the now-proven fast normal Start route, account for transient
 browser storage before another bounded capture, and obtain reviewed short
 movement/reversal/idle evidence. Do not patch the engine based on the older
 slow menu interactions or repeat the old Enter-only attract route.
+
+## 2026-10-07: ordinary Jungle control accepted
+
+Attempt3 completes the previously missing reversal/idle evidence. The verified
+finite Start sequence used ordinary P1000 then Return100 within1.4seconds,
+followed by a personally reviewed player scene at the rope bridge. Down750
+(09:46:57.664–58.417Z) faces Croc toward the camera; Up750
+(09:46:58.499–59.254Z) reverses and progresses along the path. The1500ms idle
+and final screenshot retain the settled camera/position with character idle
+animation. Root personally reviewed all five player frames and accepted this
+narrow ordinary-control result. No Demo Mode overlay is present.
+
+Immutable evidence: `scratch/runs/20261007-croc2-jungle-controls/result.json`,
+`root-review.json`, `inputs.json`, `control-events.json`, `hashes.json`, and
+`player-ready.png`, `control-down.png`, `control-up.png`, `control-idle.png`,
+`controls-finished.png`. Initial result candidate metadata was corrected to
+registered identity `croc2_demo` after reader validation; the original result
+and hash manifest are retained under `*.pre-reader-candidate-correction.json`.
+Screenshots and source evidence did not change.
+
+Actual runtime remains build3b8189f5234328f4cb51673a7b543c8dbacdaaf8,
+WASM8eb283c1b595afe336c3e2407f722e19d47aad0739784de4864ba699c8b5712f,
+with the pinned private local registration24fd88f2. All124 fully served source
+files matched their expected hashes. The original20 payload files remain
+unchanged. Fresh profile seeds only documented InstallPath/CDPath. Registration
+commit4e3a1538 adds the matching local candidate/Program entry and platform
+category, without adding a public desktop icon or changing the runtime engine.
+
+The run started09:44:32.225Z and closed early at09:47:31.897Z, before its
+original300second deadline. Driver and Chrome exited0, browser/server/recorder
+closed, streams0, errors[]; captures totaled1,760,532bytes. Launch free space
+was3,024,199,680bytes; the2GiB runtime floor remained enforced. Prior failed
+runs remain intact. This is not a level-completion, audio-quality, sustained-play,
+FPS, distribution, or public-release qualification.
