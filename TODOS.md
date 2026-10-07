@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/coverage_audit
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Attempt6 authenticated child trace0 and DGROUP87 but parser rejected first uncaptured scalar; known CreateWindow frame omitted. Findings mainf1de9742, no DialogBox result. Browser7 READY71513c37 has all17 fixedframes/20writer sites,35pureJS PASS with actualWorker negativecontrol and exact rejectedvalue retention; next serialized boundedrun after source review.
+  Next: Browser7 validated32frames/330scalars then reached declared cap before USER87; no rejected scalar. Findings9bbd1cb5. Worker prepares selective validated capture of actual KERNEL95 SETUPL load and USER87/218 dialog, avoiding repeated early UI/profile frames. No gameplay; browser resources released.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1232,7 +1232,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/corpus_categories
   candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Faithful2965file installed view materialized via verifiedhardlinks, original CAB/setup and deleted obsolete files preserved. Original looseEXE/noargs matcheslauncher. Worker prepares full current-main f1de9742 build/first private launch; BUILD-READY runner05720121 pending serializedgrant. No guest gameplay yet.
+  Next: Faithful2965file installed view verified. Current-main f1de9742 full mandatory build passed19.637sec, module992a8b02. Worker prepares first private ordinary launch and served-source pins. No gameplay yet; build resources released.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [~] Additional game lane: Comanche 3 demo
@@ -1242,5 +1242,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: /root/restore_evidence
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
-  Next: Original native installer fails after EXEC child opens parent EXE from inherited environment trailer. Isolated genericrepair75958da6 passes11handler contracts; matched nestedTSR lifecycle assessment and actualterminate regression now granted<=90sec. Maincaa6eeaa holds beforeevidence; no productionrepair or originalinstallerretry yet.
+  Next: Generic EXEC environment candidate b6c999ba passes11contracts plus matched resident-retention regression: original overwrites32 resident bytes, candidate preserves them. Root reviews allocation lifecycle; worker prepares final-candidate actual terminate test and original native installer retry. No productionrepair or gameplay yet.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
