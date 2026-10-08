@@ -2227,3 +2227,35 @@ Chrome with exit 0 and streams 0; independent PIDs/socket/pins checked, all
 retained. See the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md)
 for exact source/media identity, cleanup receipts and transient local disk-floor
 violation; no original media or evidence was deleted.
+
+## Fresh original Prologue unit movement (2026-10-08)
+
+Run `20261008T0156Z-warcraft3-campaign-world-runtime` advances beyond the
+previous Campaign-only result on the same unchanged `f62ab3c9` reference and
+actual served module `4dc5ac2c`. The reviewed `b17bb614d` browser helper is
+unchanged. Original media, source and archives were reused through hardlinks;
+all 542 pins and 788 served full/range hashes match.
+
+Ordinary ABC/Create/Select/Campaign followed by the actual Prologue bullet at
+page (473,373) reaches Chapter One: Chasing Visions. The chapter subsequently
+says PRESS ANY KEY TO CONTINUE. Space enters the visible cinematic; Escape
+leads to the gameplay HUD. The first Thrall click at (255,524) shows his hover
+label; the next selects him with Level 1 Far Seer, health 500/500, mana 285/285.
+Right-click (375,430) moves him from the lower path to below the stone circle;
+right-click (220,480) moves him back left/down. Compare `thrall-selected.png`,
+`move-order.png`, `move-return.png` and the settled `gameplay-final.png`:
+the hut, circle, rocks and camera remain fixed. Worker reviewed these actual
+screenshots. Coordinator review/integration is pending at worker exit.
+
+Matching host AND owning OpenGL WebGL endpoints and Pointer Lock false are
+retained with every state; trusted ordinary inputs and host right DOWN/UP
+receipts are recorded. No guest-state or clock changes, engine fix, rebuild,
+native run or performance benchmark was made. FPS/audio/combat/completion and
+whole-game compatibility remain unmeasured. Ordinary quit at 02:15:53.697
+closed Chrome with exit 0 before the original 02:17:36.858 deadline; all 67
+actual files were SHA-checked, independent PID/socket/pin checks passed, and
+the scoped remote prefix was removed at 02:16:07.994. Root owns the adopted
+temporary box. The [scoped handoff](../../ops/handoffs/warcraft3-campaign-world-20261008.md)
+records exact screenshot/source identities, strict shell probe refusals,
+resource checks, and a preparation receipt hardlink mistake restored exactly
+against both prior sealed indices. No further phase follows in budget mode.
