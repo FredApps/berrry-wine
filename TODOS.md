@@ -1410,3 +1410,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Result: Added20 missing LOCAL_CANDIDATE_APPS options to the existing Local Candidates group in index.html. Dynamic picker derives its catalog from this select; existing eligibility filters remain unchanged. No public deployment or gameplay qualification.
   Validation: Existing test/test-app-selector-options.js failed before on20missing entries and passes after for all173apps across3lists, including duplicate/list-disjointness checks. No browser run required for this static option correction. Receipt scratch/picker-completeness-20261008/receipt.json.
+
+- [ ] Implement missing ANSI resource enumeration callback chain
+  id: WIN32-ENUM-RESOURCE-ANSI-20261008
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (coordinator static investigation; CLI worker usage exhausted)
+  Next: Implement generic EnumResourceTypesA and EnumResourceLanguagesA with nested NamesA callbacks and early-stop semantics, validate real dispatch/stack restoration on separate temporary box, then retest original Dungeon Siege startup. Observed block4362b4 reaches this absent API chain; exact trap instruction remains unproven.
+  Evidence: ops/handoffs/dungeon-siege-interrupted-recovery-20261008.md; scratch/runs/20261008T2329Z-dungeon-siege-static-fault/result.json. Original selected executable hash matches prior extraction.
+  Done: Generic contract and nesting tests pass, original runtime limitation is accurately updated, reviewed changes pushed main; no silent-success stub.
