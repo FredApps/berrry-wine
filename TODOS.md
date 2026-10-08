@@ -1268,7 +1268,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (current step completed; budget-mode queue)
+  worker: fresh CLI tiberian-paint-validation (sole worker)
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
   Next: Actual0152 selector1 followed by 236 repeated WM_PAINT cycles in earlier ShowWindow pump, not consumer frame. Root570 contained hashes pass. Next distinguish validation versus reinvalidation with owning paint evidence; queued under one-worker budget mode, no blanket fix or gameplay claim.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
@@ -1310,10 +1310,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
   Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
 
-- [ ] Warcraft III original Prologue ordinary WebGL gameplay
+- [x] Warcraft III original Prologue ordinary WebGL gameplay
   id: GLD3D-WARCRAFT3-PROLOGUE-20261008
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI warcraft3-campaign-world
-  Next: Original0134 profile/Create/Select/Campaign route sealed; root638hashes and campaignimage verified, findings2e756d6fb. Fresh campaign-world worker uses observed hover/5000ms route efficiently then actualPrologue/map/Thrall movement. Queue after Tiberian and nextAntara; gameplay stillunqualified.
+  worker: none (exited0; coordinator review passed)
+  Next: Complete scoped WebGL Prologue gameplay validation: root reviewed Thrall selection and two opposing ordinary right-click moves against fixed terrain; 675 contained artifact hashes pass. Run20261008T0156Z-warcraft3-campaign-world-runtime, referencef62/module4dc5. No FPS/audio/combat/campaign-completion claim.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.

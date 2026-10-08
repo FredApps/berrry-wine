@@ -1,13 +1,13 @@
-updated: 2026-10-08T02:08:19.508Z
+updated: 2026-10-08T02:24:57.219Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: Warcraft III campaign-world is the sole remaining worker. Antara and Tiberian completed their current steps; no refill. User budget mode overrides the two-worker target: one worker maximum, coordinator checks at least ten minutes apart, no routine board posts. Antara ordinary Install DOWN traps at EIP19db02 with final child receipt missing; Tiberian repeats WM_PAINT in an earlier ShowWindow pump. Neither qualifies gameplay. Root verified all 78 Antara and 570 Tiberian indexed artifacts.
+Current workers: Tiberian paint-validation is the next sole worker after Warcraft III exited0 at02:19:04. Budget mode remains one worker maximum, coordinator checks at least ten minutes apart, no routine board posts. Warcraft III Prologue ordinary unit movement is now coordinator-reviewed: Thrall selection plus two opposing right-click orders against fixed terrain, 675 contained artifact hashes verified. Referencef62/module4dc5; FPS/audio/combat/full campaign remain unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 
 Quake II ordinary forward/reverse/idle traversal is qualified on WebGL2534731b3 and software069662726 using the recorded reference modulefb1be916. Reviewed runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain backend/source identity and limits. FPS/audio/network remain unqualified. GL27 remains incomplete: Crimsonland WebGL Tutorial movement/aim is now qualified184b8ab5c; longer gameplay routes, heavy titles/Pirates and held Winamp exception remain.
 
-New-game backlog: Antara needs preserved owning trap evidence; Tiberian Sun needs paint validation/reinvalidation evidence. Both await the single worker slot after Warcraft III. Darkstone already has historical controlled Town evidence; no duplicate run. Arx held; TDR2000 completed. No new FPS/audio claims.
+New-game backlog: Antara needs preserved owning trap evidence; Tiberian Sun needs paint validation/reinvalidation evidence. Tiberian receives the single worker slot; Antara remains queued. Darkstone already has historical controlled Town evidence; no duplicate run. Arx held; TDR2000 completed. No new FPS/audio claims.
 
 Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
 
