@@ -99,8 +99,10 @@ native review at 15:46:34–15:46:37 UTC on temporary box `bx_997uef9b`.
 The expanded actual-allocation-failure regression exited 0 with Node24.18.1.
 Root matched both test and handler SHA-256 against commit8833a3c0e; the
 repair is pushed on main as `d72fc8abe`. Receipt retained at
-`/home/user/aow2-demo-20261008/scratch/aow2/native-review/remote-receipt.json`;
-continuation worker will seal its final review evidence before checkout retirement.
+`scratch/runs/20261008T1546Z-age-of-wonders2-demo-native-review/remote-receipt.json`.
+Root verified all10 sealed native-review artifact hashes before checkout retirement.
+Continuation source828f1d119 is archived on GitHub as archive/wt-aow2-demo-20261008;
+ignored work artifacts are preserved under scratch/retired-worktrees/aow2-demo-20261008.
 Root independently verified all35 before and80 after indexed hashes, all1063
 original extracted-file hashes, manifest freshness/1059 files, local-only registry,
 picker and explicit Borland packages. The broad A–D suite remains unverified
