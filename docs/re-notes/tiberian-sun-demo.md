@@ -1,5 +1,46 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8 accepted dialog module: original campaign still unchanged
+
+Matching source `b1d78b9f0`, accepted retained module `bd5c84ca…`, current
+committed hosts and immutable original SUN `f70dcf32…` run ordinarily after
+Crimsonland cleanup. All 125 checked build-source entries match the retained
+accepted closure; 478 runtime pins/29 aliases pass HTTP and remote hashes.
+There is no rebuild, guest/media mutation or emulator source change.
+
+Run `20261008T0108Z-tiberian-original-runtime` starts01:09:05 UTC. The reviewed
+six-button menu receives one ordinary current-scene New Campaign click306,455.
+The after-click screenshot remains the menu; no campaign/mission/gameplay is
+qualified. Owning GetWindowLongA at original return4dea72 obtains HWND10002
+extra-index8 selector074ff488, observed9. Four96-byte live DLGPROC spans match
+original4dea40 exactly. The broad observer consumes128rows/5088bytes without
+retaining the owning command message/branch; initial9 is not a command result.
+Earlier missing-UP/WM_COMMAND1559 hypotheses remain ruled out; actual command
+callback arguments, selector write and callback return remain unmeasured.
+
+Original prefilter58caa0 statically declines WM_COMMAND111 via58cd99/FALSE/ret8.
+Original DLGPROC then reads HWND extra8; command1559 selects4deae5, writes1 at
+4deae6 and returnsFALSE at4deaf3. Static interpretation is not dynamic proof.
+No further generic/game fix is justified by this incomplete receipt.
+
+Final read-only diagnostic filters to original4dea72/index8 and owning callback
+arguments at APIESP+50, retaining WM_COMMAND111. An actual old-helper control
+with500mock paints exhausts128rows and loses the command; final emits0paintrows
+and retains command1559 in3rows. Guard/error/cleanup and generated Worker/Link
+JS tests pass. Focused run `20261008T0113Z-tiberian-focused-runtime` retains
+tar-option/nonempty-directory extraction errors; both478-pin closures reverify
+unchanged. It preserves the original01:14:05.572 aggregate deadline, but the
+reviewed-input reserve expires before another click. No focused command outcome
+is claimed. Use a standard fresh-prefix baseline/full-overlay extraction next.
+
+First ordinaryquit01:11:42.983; focused deadline cleanup01:14:05.572. Independent
+01:14:42 verifies allfourPIDs absent/noChrome/baselinesockets/pins unchanged,
+Chromeexit0/errors0/streams0, durable22diagnostics and scopedprefix removal.
+Remote released to queuedAlienShooter; coordinator owns box/tools. Root15:40
+requests phase exit with immutable evidence; the lane remains incomplete.
+Full next boundary and preservation instructions:
+[original runtime handoff](../../ops/handoffs/tiberian-original-runtime-20261008.md).
+
 ## Generic subclassed-dialog continuation regression, October 8
 
 On coordinator base `ac8c4c8ff`, executable x86 subclass code calling
