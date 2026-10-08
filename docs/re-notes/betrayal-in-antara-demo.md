@@ -554,3 +554,41 @@ Source follow-up: keyboard `hwnd=0` is intentional when the owning Worker resolv
 Ordinary run `scratch/runs/20261007T235903Z-antara-input-map` now measures actual canvas 1:1/no exclusive transform, Main Menu `18002` style `90c800c0`, window origin `(0,0)` and client origin `(3,23)`. One visible Install click at `(411,167)` routes to that HWND with `_directMouseDown` origin `(0,0)`. The existing synchronous renderer trace captures both WM_NCHITTEST and WM_LBUTTONDOWN lParam `00a7019b` / `(411,167)`. Screen-relative NCHITTEST is correct; client-relative DOWN should be `00900198` / `(408,144)` under the [message contract](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttondown). This proves a host packet-coordinate defect; actual guest callback consumption is unmeasured. The popup/region origin-selection paths need the next generic regression/fix, with no game-specific offset or paint change.
 
 Menu screenshots remain identical after the performed click; the earlier Uninstall-white highlight does not recur. No installation/gameplay completes. Ordinary quit closes at 00:01:01 before the exact 120-second cap; errors/streams zero, Chrome exit 0. At 00:02:53 the two actual PIDs are absent, no Chrome/owned sockets remain, and all 503 remote pins match. The scoped prefix is removed and remote ownership released at 00:04:58. See [fresh input handoff](../../ops/handoffs/antara-input-client-origin-20261008.md) for full original runtime/media/build-source identity and causal limits. Root requested a fresh worker to implement the next fix after this handoff.
+
+## 2026-10-08 generic client-origin repair and ordinary installation attempt
+
+Source `2074c774e` (root integration `f73e6529d`) corrects captioned popup,
+captured and deep-child client mouse coordinates in the renderer and WAT.
+Published USER geometry precedes the bootstrap region shortcut; shaped
+whole-surface clients and borderless popup/menu clients retain their origins.
+MSG.pt converts client lParams back to screen coordinates and preserves screen
+hit-test, non-client and wheel coordinates. JS and compiled-WAT negative
+controls reproduce the old `(0,0)` rather than `(3,23)` origin. Fixed real USER
+capture/release/MSG.pt, child/owner/region/menu/dialog regressions pass. Full
+canonical build passes after root's independent ToyVM fixture gate repair;
+its four-variant paging regression also passes. Evidence:
+`scratch/runs/20261008-antara-client-origin-fix`.
+
+The ordinary original-media run
+`scratch/runs/20261008T002459Z-antara-client-origin-install` uses committed
+candidate `f62ab3c9f1223ab47cf623470f6343d508257878`, rebuilt module
+`4dc5ac2c477c71c64a42530562e4cf51e145bd966232e15330acfc01753d54de`,
+all 503 runtime/media/harness pins, original Worker and unchanged private
+registration. The current Main Menu is centered at window `(320,240)`, client
+`(323,263)`. One reviewed visible Install click `(731,408)` correctly queues
+WM_NCHITTEST `019802db` (screen `731,408`) and WM_LBUTTONDOWN `00910198`
+(client `408,145`). It remains on the same menu: ready/click/after/settled
+PNG hashes all match `ee3a3900524db99734c11df499ccab5c33affa193aacc5f461ae0cfd2396fb32`.
+No further input or guest override is used. The producer contract is corrected;
+actual guest callback consumption remains unmeasured, so no new cause is claimed.
+
+Ordinary quit closes at 00:26:12.551 before the 00:26:59.100 deadline,
+Chrome exit 0, errors/pending streams zero. Independent 00:26:51 check finds
+driver 42599 and Chrome 42621 absent, no Chrome, exact baseline sockets,
+all 503 post-run pins unchanged. All 22 diagnostic files and the full
+runtime/source/module archive are durably verified before removing only the
+owned prefix at 00:27:41. Installation and player-controlled gameplay remain
+incomplete. Next continuation should measure owning guest mouse callback/
+Win16 translation/application handling, without repeating the settled page
+coordinate diagnosis or introducing pixel offsets. See
+[repair handoff](../../ops/handoffs/antara-input-fix-20261008.md).

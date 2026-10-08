@@ -81,6 +81,39 @@ to 240 seconds; browser deadline is 120 seconds, followed by cleanup reserve.
 Read the sandbox skill before remote work. Inspect each actual scene before
 click/key commands, using the driver's existing scene receipt validation.
 
+## Ordinary attempt completed; next blocker
+
+The queued grant was consumed after independent actual Tiberian driver34328/
+Chrome34340 absence, no Chrome, baseline sockets, 49.67 GB free and expiry
+00:36:50 preflight. Lease claimed 00:23:35 on `bx_624jbk9k`; transfer verifies
+all503 pins at 00:24:55, original browser driver42599/Chrome42621 starts
+00:24:59.026 with deadline00:26:59.100. No Worker overlay, guest edit, CPU
+export or return override is used.
+
+Current visible Main Menu is centered at window `(320,240)`, client `(323,263)`.
+The reviewed visible Install click `(731,408)` queues correct screen hit-test
+`019802db` and correct client DOWN `00910198` / `(408,145)`. Four normal
+menu PNGs are identical (`ee3a3900524db99734c11df499ccab5c33affa193aacc5f461ae0cfd2396fb32`).
+No installation advance or gameplay occurs. Actual guest callback handling is
+unmeasured; the fixed producer contract does not establish guest consumption.
+Do not guess another coordinate fix. A fresh continuation should measure owning
+guest callback/Win16 translation/application handling, retaining original media
+and no forced guest state. The page coordinate diagnosis is settled.
+
+Actual ordinary quit completes 00:26:12.551, browser/serverclosed/Chromeexit0,
+errors0/streams0. Independent 00:26:51 actual PIDs absent, no Chrome, exact
+socket baseline, all503 postrun pins unchanged. Sole remote lease released
+00:27:10; owned prefix removed00:27:41 after all22 diagnostic copies and full
+runtime archive verify. Other prefixes, Puppeteer and root box lifecycle stay
+untouched; no native/browser job remains.
+
+Self-contained ordinary evidence:
+`/home/user/wine-assembly/scratch/runs/20261008T002459Z-antara-client-origin-install`.
+It includes original full503-pin runtime/source/module archive, raw captures/
+inputs/asset responses, build/tests/negative controls, actual preflight and
+cleanup/removal receipts. Regression preparation remains separately available.
+Sourcefix2074 was integrated by root; docs-only updates follow for integration.
+
 Installation and player-controlled gameplay remain unqualified. The prior
 ordinary menu click only measured the host packet; actual Antara guest callback
 consumption remains unmeasured. Next run must use this matching source/module,
