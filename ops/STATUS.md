@@ -1,16 +1,12 @@
-updated: 2026-10-08T13:38:11.085Z
+updated: 2026-10-08T14:01:20.402Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: one. Arcanum coverage worker is active for ordinary crash-site control, software/WebGL evidence and scene-qualified FPS. Its historical free roam means it is not counted as a new title. Comanche controlled flight plus normal registered launch is complete and pushed. Tiberian rejected diagnostic remains held without retry.
+One worker is active: Arcanum, validating ordinary crash-site control on software and WebGL plus scene-qualified FPS. It has historical gameplay, so it does not count as a new title. Current results await review.
 
-Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Normal registered ToyVM dashboard launch now passes; historical flight evidence is linked separately. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
+Comanche 3 controlled flight and normal ToyVM dashboard launch are complete on main. Reviewed flight images remain linked to their exact reference build. FPS, audio and mission completion are unverified. These changes have not been publicly deployed; the live dashboard checkout is older.
 
-Quake II ordinary forward/reverse/idle traversal is qualified on WebGL2534731b3 and software069662726 using the recorded reference modulefb1be916. Reviewed runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain backend/source identity and limits. FPS/audio/network remain unqualified. GL27 remains incomplete. Quake II, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue have reviewed control on both backends at their recorded reference builds. Longer gameplay routes, heavy titles/Pirates and held Winamp exception remain; qualification is not a current-main full-corpus validation.
+Next new-game candidates are Age of Wonders II and Dungeon Siege demos. Local installers are hash-verified; installation, launch and gameplay are still pending. They remain queued under the one-worker budget limit.
 
-New-game backlog: Comanche controlled flight is complete; normal corpus launch integration is complete. Arcanum and Deus Ex fixtures are present but lanes remain queued under the one-worker budget limit. Antara/Arx/Winamp diagnostics remain held; Heroes II is laptop-owned.
+Quake II, Crimsonland, Alien Shooter and Warcraft III have reviewed control on both rendering backends at recorded builds. The full GL/D3D goal and all-game FPS coverage remain incomplete.
 
-Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
-
-Other retained results: Drakan lazy-read repair accepted with browser level Threads on/off (a1710870/ea63ceed). Daggerfall DOSBox dungeon movement reviewed (724637d9/fe7cfb95), not nativeToyVM qualification; direct ToyVM/DOS priority remains open after CALLgate/RETF/cache fixes4f1e083b/fcd391dd/c2cded63.
-
-Constraints: all browsers and heavy benchmarks on separate temporary boxes; active lease and owner are recorded on messageboard; historical Warcraft and Haystack leases have ended. One browser globally; disk above2GiB and exact preflight before jobs. Fresh short worker briefs, batched checks, config unchanged. Claude fleet stopped, no pane driving; Heroes II laptop-owned. Shared HEAD/index untouched; explicit-path commits from coordinator worktree. No public deployment. Live8098 reader uses older wine-assembly-web checkout; main changes are not claimed live there.
+Tiberian, Antara, Arx and Winamp rejected diagnostics remain held without retry. Heroes II belongs to the laptop. Browsers and heavy work use temporary boxes; disk must stay above 2 GiB. No user decision is currently needed for the active lane.
