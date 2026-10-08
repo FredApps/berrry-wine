@@ -1292,11 +1292,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Reviewed ordinary gameplay/input evidence, exact backend/source/module/original identity, scoped GL table update on main; FPS/audio separate.
   Evidence: scratch/runs/20261008T000901Z-quake2-software-ordinary; ops/handoffs/quake2-software-ordinary-20261008.md
 
-- [~] Validate Crimsonland Tutorial control on WebGL
+- [x] Validate Crimsonland Tutorial control on WebGL
   id: GLD3D-CRIMSONLAND-WEBGL-20261008
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI crimsonland-relative-input
-  Next: Actual WebGL main menu then ordinary Enter precedes authenticated normal WinMain0/CRT shutdown; historical exception path ruled out for captured exit. Docs215699853/run20261008T0048Z-crimsonland-owning-exit-runtime. Fresh relative-input worker qualifies real pointer targeting before Play/Tutorial; queued after Antara. No gameplay yet.
+  worker: finishing handoff; runtime released
+  Next: Done scoped WebGL Tutorial movement and relative aiming; root reviewed3images and100contained hashes. Integrated6f4f74b19. Original referencef62/module4dc5; no engine patch. FPS/audio/combat/long-session qualification remain separate.
   Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
-  Evidence: Historical software route scratch/runs/20261006T0500Z-crimsonland-w4-survival; new WebGL evidence pending.
+  Evidence: scratch/runs/20261008T0105Z-crimsonland-relative-input; ops/handoffs/crimsonland-relative-input-20261008.md; Telegram879.
