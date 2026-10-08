@@ -102,3 +102,45 @@ after16MiB allowance above2GiB. This new four-step driver is **not browser teste
 Next fresh phase after Tiberian: ordinary four-step hovered Install with the
 reserved DOWN budget and original-code authentication. Installation/gameplay
 remain incomplete; root integrates/pushes the scoped commits.
+
+## Fresh four-step execution, 2026-10-08 02:02 UTC
+
+Fresh branch `findings/antara-four-step-action-20261008` starts at explicit
+coordinator `6a351eb09`, preserving prior `1f9630933`. Shared HEAD/index remain
+untouched. User granted the already reviewed0154 combined route,240/120/90,
+after Tiberian actual58:34 release. Independent34672/34701 ESRCH, no Chrome,
+exact baseline sockets, TTL02:16:47 and projected local32MiB floor passed.
+
+Actual `scratch/runs/20261008T0200Z-antara-four-step-runtime` executes the exact
+reviewed0154 driver (SHA equality with actual copied driver), four ordinary
+MOVE steps then fresh DOWN ACK from both existing Workers. All505 transferred
+pins passed before launch;163 complete served bodies match their expected
+hashes. Originalf62/module4dc5, Worker3fa2, Link268a and original media remain.
+The original browser deadline is02:04:08.232; it was never reset.
+
+The personally reviewed menu shows Install turning white after this click.
+Immediately after ordinary DOWN the child traps at02:02:37.167,
+EIP19db02/prev19db02/prev2 18125e/ESP205b1e, `unreachable`.
+UP activation consequently fails; ordinary mouse UP is still attempted.
+The later owner collector refuses `missing Worker identity`, closing the
+driver at02:02:46.959. This collector error is retained, not a clean execution
+claim. Browser/server close successfully, Chrome exit0, streams0.
+
+The published child callback receipt has zero rows and is stale: no final
+hover selection1, original Install API, or default4:24e8 authentication is
+possible from it. Main raw hover/DOWN caps are retained. If segment3 base is
+190000, the trap maps to original3:db02 within Install3:dad6, but this run lacks
+the actual segment base/caller bytes; that mapping is a static candidate only.
+Installation and player gameplay remain incomplete. No emulator fix follows.
+Next source work should preserve the owning callback evidence at an actual
+Worker trap and authenticate this boundary; substantive observer changes need
+root review before any fresh runtime. No repeat run was performed.
+
+Independent43751/43765 ESRCH/no Chrome/exact baseline sockets/all505 unchanged
+pins passed at02:03:33. All20 actual files were copied and SHA checked with
+75KiB chunks,20MiB total cap and32MiB projected local reserve. Prefix removal
+02:03:37.746 is within90seconds of close; actual release board02:03:50.
+Root owns bx_jk5sz7qx/Puppeteer and queued Warcraft follows; do not deleteboat.
+Prepared0154 evidence was never rewritten; mutable fresh receipts are copies,
+and only immutable source/media/archive bytes are hardlinked. Result is sealed
+last with actual errors and authentication limits. Root integrates/pushes.
