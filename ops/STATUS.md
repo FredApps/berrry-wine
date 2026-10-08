@@ -1,7 +1,7 @@
 updated: 2026-10-08T05:03:48.370Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: ToyVM held-key web repair is the sole assigned fresh worker after Comanche installed-gameplay exited0 at06:24:33. Original C3 renders Pilot/Duty Rosters and held Down changes pilot selection; root325 hashes and3 captures reviewed, but no mission/cockpit. Current web UI immediately taps keys and cannot express physical holds; fix input lifecycle and browser-test ordinary controls before claiming web launch qualification. Native menu return cause remains unknown. Budget mode one worker/checks10+minutes; FPS/audio unverified.
+Current workers: Comanche3 Haystack-selection is the sole assigned fresh worker after held-key web worker exited0 at07:08:27. Input lifecycle repair integrated/pushed d87b54eca; root180 hashes and browser held/released/mission-menu captures reviewed. Original C3 reaches Gallant Venture / Haystack; Enter remains at menu, no cockpit/gameplay. Next authenticate selection consumer and repair a demonstrated generic defect, using existing installed files and documented controls. Budget mode one worker/checks10+minutes; FPS/audio unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 
