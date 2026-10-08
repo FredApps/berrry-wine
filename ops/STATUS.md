@@ -1,7 +1,7 @@
 updated: 2026-10-07T23:58:05.293Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: antara-input-fix, tiberian-input, and fresh crimsonland-runtime. Antara generic client-coordinate fix f73e6529d passed full build and regressions; ordinary installer test queued after Tiberian callback capture. Quake II software traversal reviewed and integrated069662726; worker exited0, replaced with Crimsonland WebGL route preparation. Both new-game lanes remain incomplete. Winamp/Arx held, Heroes II laptop-owned.
+Current workers: fresh antara-win16-input, tiberian-input, and crimsonland-runtime. Antara ordinary run verifies repaired client coordinates but remains at installer menu; next owning Win16 callback investigation. Tiberian narrows capture to mouse-up after paint exhausted prior observer budget. Crimsonland runs on a separate temporary boat; Quake II software traversal is done in its scoped reference build. Both new-game lanes remain incomplete. Winamp/Arx held, Heroes II laptop-owned.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 

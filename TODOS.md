@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-input-fix (scratch/fresh-workers-20261007)
+  worker: fresh CLI antara-win16-input
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Generic captioned-popup client-coordinate fix f73e6529d integrated, regressions and full canonical build PASS. Ordinary original installer attempt queued after Tiberian actual browser release; matching module4dc5ac2c. Installation/gameplay still unverified.
+  Next: Correct client packet verified in ordinary original installer, but Install still leaves menu unchanged. Fresh worker traces owning Win16 callback/application handling; source fix and full build accepted. Latest evidence20261008T002459Z-antara-client-origin-install, docs3af62398d. No installation/gameplay yet.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
