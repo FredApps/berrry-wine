@@ -1,5 +1,57 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8: exact accepted Worker replay also fails before campaign loading
+
+Recovery worker on explicit `c89047dc3` reconciled the accepted0256 and0321
+raw inputs, viewport, observer source and owning pump receipts before launch.
+All125 accepted build-source hashes match the isolated checkout; all2090
+indexed artifacts in0256/0314/0317/0321 independently hash correctly.
+The two historical routes first diverge at the first post-selector
+PeekMessage:0256 returns0 and tears down the menu;0321 receives
+menu10002/WM_PAINT. Console EIP0 and recovered startup80040154 remain
+unqualified as the campaign fault/cause.
+
+`20261008T1100Z-tiberian-exact-route-recovery` reuses the **exact accepted0256
+Worker70912e0e…**, module6adb4387…, original SUNf70dcf32…, private registration,
+all478pins/29aliases and prior pump/paint observer. No new COM observer is
+installed. Fresh no-env bx_57v6b8fr is acquired only after Comanche RELEASE,
+reviewed cleanup and an additional independent predecessor process/socket
+check. Checked HTTP preflight precedes Chrome. All190 actual served full/range
+hashes match, including the Worker and module. A personally reviewed visible
+New Campaign receives the ordinary page306,455/native317,213 click. Selector1
+is recorded, then261 each Peek/Get/Dispatch menu10002/WM_PAINT results; no empty
+pump or dialog1000c occurs in the bounded receipt. The screenshot remains
+the menu. Enter is deliberately not sent without the campaign dialog.
+Thus the startup fault observer is **not necessary for this reproduced menu
+failure**; no universal observer-causality conclusion or engine repair follows.
+
+Timing remains a material limitation: this click is58.030s after menu
+ShowWindow, versus21.445s in0256. The exact replay initially shows a gray panel
+9.397s after ShowWindow, then captions in a later screenshot;0256's first
+reviewed menu has captions6.379s after ShowWindow. A distinct timed readiness
+check, `20261008T1118Z-tiberian-timed-route-recovery`, retains the same Worker
+and source, adding only a read-only page console clock to its driver. Its
+scheduled screenshot is still gray about14.1s after ShowWindow; a later image
+is also gray. A second screenshot request misses its20.5s timing guard and is
+refused. **There is no readiness sample at21.445s and no timed click.** These
+two startup captures establish an earlier observed readiness divergence, not
+its cause. No additional blind click, campaign attribution or paint/selector
+repair is justified by them.
+
+Both browsers quit ordinarily before fixed300s deadlines. Actual browser
+walls174.614s and96.128s sum270.742s, below the original1800s phase cap without
+reset. Transfers68.420s/55.551s fit240s;17/13 actual files are retrieved and
+hash-verified before owned-prefix removal,6.623s/5.591s after terminal quit.
+Independent four driver/Chrome PIDs and all Chrome/crashpad processes are
+absent; sockets match baseline and478pins remain unchanged. All five runtime
+images were personally reviewed. Original mission loading/control, gameplay,
+FPS and audio remain unqualified; no source build or engine patch occurred.
+
+Next evidence boundary is pre-click readiness parity with0256, followed by
+the first post-selector empty pump and1000c, before any campaign COM capture.
+This is an unresolved reproduction prerequisite, not a missing-media claim
+or proposed engine fix. See [recovery handoff](../../ops/handoffs/tiberian-campaign-recovery-20261008.md).
+
 ## October 8: campaign COM fault could not be reproduced on the fresh box
 
 Sole worker on explicit `a21a7c308` reused accepted module `6adb4387…`,
