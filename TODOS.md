@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Two active lanes: Antara (/root/coverage_audit) source-only bounded DialogBox/module trace preparation; Arx Fatalis (/root/restore_evidence) source-only startup continuation/owning Worker investigation after corrected300sec run remained hidden. Croc2/DieHard ordinary movement qualified; no FPS/audio claim. Runtime leases serialized by root.
+  Next: User budget mode supersedes simultaneous two-worker target: one worker only. Comanche3 resumes after merged paging repair; Tiberian reproduction queued; Antara/Arx held after automatic diagnostic rejection, no retry. Replace stale completed agent labels; actual gameplay/input/screenshots remain required.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1163,7 +1163,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
   created: 2026-10-06T02:09:48.337Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Q2 both-backend ordinary traversal, Crimsonland WebGL Tutorial and AlienShooter WebGL Mission01 now qualified on documented reference builds. Fresh WarcraftIII Prologue ordinary-browser lane reconciles retained history and original fixtures next. Winamp/Arx held; aggregate remains open for longer routes, heavy titles/Pirates and PBO cause. No redundant sweep.
+  Next: Quake II traversal, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue control are qualified on both backends at their recorded reference builds; Warcraft software review integrated0d9515322, no pending review. TR3/Uplink later gameplay retained. Do not repeat old Crimsonland splash/relative-input diagnosis. Budget-mode runtime slot belongs to Comanche; longer gameplay routes, Pirates/heavy titles and PBO causal diagnosis remain queued. Winamp diagnostic held. Overall goal remains active; FPS/audio/current-main validation are separate.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
 
@@ -1237,13 +1237,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
-  status: blocked
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (fresh comanche-startup completed)
+  worker: fresh CLI toyvm-held-key-web (sole worker; web-control prerequisite)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Authenticated paging dependency: original REP copies linear10000000 to physical0 because CR3/pagewalking absent, corrupting IVT. Findings2acadd964; root independently matched16KiB original/readbuffer/IVT hashes. No more budget-only runs; resume after generic paging, then original installer/gameplay.
+  Next: Native installed C3 startup and Pilot/Duty Rosters verified; root325 contained hashes and pilot-selection change reviewed. No mission/cockpit/gameplay. Fresh phase repairs missing real held-key web lifecycle, then authenticates operation selection; ordinary native physical-only input still returned/redrew menus, cause unresolved. Use verified installed files, no installer/paging replay.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1318,10 +1318,19 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Complete scoped WebGL Prologue gameplay validation: root reviewed Thrall selection and two opposing ordinary right-click moves against fixed terrain; 675 contained artifact hashes pass. Run20261008T0156Z-warcraft3-campaign-world-runtime, referencef62/module4dc5. No FPS/audio/combat/campaign-completion claim.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
 
-- [~] Warcraft III original Prologue software-backend gameplay
+- [x] Warcraft III original Prologue software-backend gameplay
   id: GLD3D-WARCRAFT3-SOFTWARE-20261008
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (worker exited0; root review PASS)
+  Next: Complete: root reviewed software Thrall selection/two opposing moves with matching host/owning OpenGL software backend;666 contained hashes and helper negative/review contracts PASS. Integrated0d9515322; run0400 referencef62/module4dc5. FPS/audio/combat/campaigncompletion/current-main runtime remain unverified.
+  Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.
+
+- [ ] Expose real held keyboard controls in ToyVM web sessions
+  id: TOYVM-HELD-KEY-WEB-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI warcraft3-software (sole worker)
-  Next: Reuse reviewed WebGL Prologue route with verified guest OpenGL software backend on a temporary box; validate ordinary Thrall selection/two move orders. No fallback or FPS/audio claim.
-  Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.
+  worker: fresh CLI toyvm-held-key-web (sole assigned worker)
+  Next: Current main web canvas forwards only keydown to LiveRun.key; Machine.pushKey immediately queues make and break, so a physical held key cannot remain pressed. Implement generic press/release with repeat and focus/stop cleanup while preserving BIOS key semantics and existing tap callers; wire dashboard and generated corpus site. Validate on a separate temporary browser, with real held input and visible original-game response. Coordinate tools/toyvm/dos.js/live.js ownership after current worker exits. Native held-key captures alone do not qualify the web launch route.
+  Evidence: tools/toyvm/dos.js pushKey; tools/toyvm/live.js key; ops/toyvm-live/live.js canvas keydown; tools/toyvm/site.js generated canvas handler; native Comanche roster response with held input.
+  Done: Meaningful key press/release and focus-loss tests plus reviewed browser held-input game response; scoped source/bundles/site changes pushed to main.

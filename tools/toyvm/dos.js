@@ -5047,6 +5047,47 @@ class Machine {
         r.setResultCf(false);
         return true;
       }
+      case 0x56: {                              // rename a closed guest-created file
+        const fail = code => { r.set('ax', code); r.setResultCf(true); return true; };
+        const readPath = (seg, off) => {
+          const at = this.lin(r, seg, r.get(off));
+          let name = '';
+          for (let i = 0; i < 128; i++) {
+            const b = this.guestRd(at + i);
+            if (!b) return name;
+            name += String.fromCharCode(b);
+          }
+          return null;
+        };
+        const source = readPath('ds', 'dx'), target = readPath('es', 'di');
+        // The mounted filesystem uses basename aliases, not a directory tree.
+        // Permit renaming within one directory; refuse directory moves rather
+        // than silently treating two distinct directories as the same place.
+        const parse = name => {
+          if (!name || /[*?]/.test(name) || /[\\/]$/.test(name)) return null;
+          const drive = /^([A-Za-z]):/.exec(name);
+          const rest = name.replace(/^[A-Za-z]:/, '').replace(/\//g, '\\');
+          const parts = rest.split('\\').filter(Boolean);
+          if (!parts.length || parts.some(p => p === '.' || p === '..') || rest.includes(':')) return null;
+          return { drive: drive ? drive[1].toUpperCase() : 'C',
+            directory: parts.slice(0, -1).join('\\').toLowerCase(), key: fileKey(name) };
+        };
+        const from = parse(source), to = parse(target);
+        if (!from || !to) return fail(3);
+        if (from.drive !== to.drive) return fail(17);
+        if (from.drive !== 'C' || from.directory !== to.directory) return fail(3);
+        const rec = this.tempFiles.get(from.key);
+        // Corpus files are read-only. A rename must never mutate the host or
+        // leave its old name still visible through hostPath's fallback.
+        if (!rec) return fail(this.hostPath(source) ? 5 : 2);
+        if (this.hostPath(source)) return fail(5);
+        if ((rec.attributes & 7) || [...this.files.values()].some(f => f.rec === rec)) return fail(5);
+        if (this.tempFiles.has(to.key) || this.hostPath(target)) return fail(5);
+        this.tempFiles.set(to.key, rec);
+        this.tempFiles.delete(from.key);
+        r.setResultCf(false);
+        return true;
+      }
       case 0x36: {                              // free disk space
         r.set('ax', 8);                         // sectors per cluster
         r.set('cx', 512);                       // bytes per sector
