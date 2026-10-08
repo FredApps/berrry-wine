@@ -1,5 +1,36 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Disabled detector candidate, 2026-10-08
+
+Separate optimization `perf/toyvm-disabled-progress-20261008`, explicit base
+`7dd9b0e8f538dfdb514d16cc3d39478cf6bdb959`, skips diagnostic work inside
+`DosSession.checkProgress` when the detector is disabled. Real execution
+regressions prove zero diagnostic register/console work, full guest-memory and
+exported-getter equivalence, and unchanged enabled progress/spin/refusal behavior.
+Both bundles are reproducible. Root review/integration is pending.
+
+Evidence: `scratch/runs/20261008T0911Z-toyvm-disabled-progress/`; handoff
+[`toyvm-disabled-progress-20261008.md`](../../ops/handoffs/toyvm-disabled-progress-20261008.md).
+Six alternating pairs of the original early startup prefix match memory SHA,
+reported registers and counters; median paired elapsed reduction14.87% applies
+only to that250,366-dispatch prefix. A separate BIOS no-op handback stress loop
+is explicitly excluded from useful-work qualification. Exact CPU917477 is
+unchanged, with control/candidate V8 and SpiderMonkey x64 native captures plus
+actual Node host-path review. Standalone V8 capture differs from the benchmark
+engine; timed tiers are adaptive. No ARM, loading-speed or gameplay claim.
+
+One finite candidate original run again reaches the ordinary Argon/Haystack
+briefing/map/loading route. Live C2M1_C.PCX output250,215 matches the independent
+original reference; temporary file reaches5,242,880bytes. All60 sampled code
+spans match original and12 window reads preserve exported getters. Final
+original2db40 sample has possible validated near-call returns2a6cb/2f4ac/cb317;
+the prior later palette milestone and cb403 mission loop are not claimed.
+At the unchanged prelaunch deadline, normal host stop ends1771.587wall /
+130.3641804guest seconds with reviewed loading art, no cockpit or controlled
+flight. No extra Enter during loading, entry/profiling hook or guest state
+forcing. Cleanup29.029seconds,89retrieved files verified before prefix removal,
+19owned PIDs absent/no Chrome/exact baseline sockets/16immutable pins unchanged.
+
 ## Authenticated resource and palette progress, 2026-10-08
 
 On explicit `83ef822fb4204145b642c507918739ba7c1626d5`, one fresh private
