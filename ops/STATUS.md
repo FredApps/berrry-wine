@@ -1,7 +1,7 @@
-updated: 2026-10-08T04:30:29.528Z
+updated: 2026-10-08T05:03:48.370Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: Comanche3 gameplay receives the sole fresh worker after Warcraft III software exited0 at04:20:08. Warcraft III Prologue selection/two opposing moves are now root-reviewed on both guest OpenGL software and WebGL;666 software hashes/helper contracts pass. FPS/audio/combat/campaigncompletion/current-main build remain unverified. Budget mode one worker/checks10+minutes.
+Current workers: Comanche3 installation-progress is the next sole fresh worker after gameplay worker exited0 at04:53:43. Original native ToyVM installer reaches destination prompt then MAKEICON.EXE3% copy with ordinary input; root reviewed screenshot/176 hashes. Installation/gameplay incomplete. Corrected attempt used235.9s of original900s total window; input waits/harness failures must not be mislabeled CPU cost. Budget mode one worker/checks10+minutes. Warcraft III both-renderer movement remains reviewed; FPS/audio unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 

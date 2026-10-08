@@ -1239,11 +1239,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche3-gameplay (sole worker)
+  worker: fresh CLI comanche3-install-progress (sole worker)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Paging dependency already fixed on main72e306790/4b0955e79; original copy/IVT and47 groups passed, installer reached Loading Install. Resume original native ToyVM installation/gameplay with ordinary input and reviewed screenshot; no repeated old paging diagnosis.
+  Next: Original native installer destination Enter + y reaches File Copy MAKEICON.EXE3%; root screenshot/176 hashes reviewed. Corrected attempt had235.9s execution/16.5guest seconds, not the full900s window. Next use atomic input and prompt handling, distinguish input wait from execution cost; complete installation or identify measured bottleneck before another timeout-only rerun. Gameplay unqualified.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
