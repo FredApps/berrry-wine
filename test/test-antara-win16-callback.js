@@ -1,6 +1,8 @@
 'use strict';
 const assert = require('assert'), fs = require('fs'), vm = require('vm');
 const {createObserver, install, overlay, linkOverlay, activateExisting} = require('../tools/antara-win16-callback');
+const {prepare}=require('../tools/antara-win16-callback-prepare');
+for(const prefix of [undefined,'/home/user/antara-owning-queue-20261008','/home/user/antara-install-x/../bad','/tmp/antara-install-x'])assert.throws(()=>prepare('/tmp/unused-antara','/tmp/unused-antara',prefix),/prefix/);
 let clock = 10, reads = 0; const switches = [], buffer = new ArrayBuffer(65536);
 const values = {get_current_thread_id: 2, get_eip: 0x2100, get_esp: 0x3100, get_ebp: 0x120, get_eax: 1, get_edx: 0, get_sreg_cs: 0x47, get_sreg_ss: 0x87, get_sreg_ds: 0x37, win16_last_module: 2, win16_last_ordinal: 76};
 const ex = {set_win16_trace: v => switches.push(v), guest_to_wasm: p => p, win16_seg_base: i => i === 8 ? 0x2000 : 0x3000, win16_seg_limit: () => 4096};

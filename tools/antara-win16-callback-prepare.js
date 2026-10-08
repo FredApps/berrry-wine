@@ -17,12 +17,13 @@ function tarFiles(bytes) {
   }
   return files;
 }
-function prepare(output, baseline) {
+function prepare(output, baseline, prefix) {
   output = path.resolve(output); baseline = path.resolve(baseline);
+  if(typeof prefix !== 'string' || !/^\/home\/user\/antara-install-[a-z0-9-]+$/.test(prefix))throw Error('fresh scoped Antara Install prefix required');
   if(fs.existsSync(output))throw Error('fresh output directory required');
   const archivePath = baseline+'/runtime-package.tar.gz', archive = fs.readFileSync(archivePath);
   if(sha(archive)!=='8007a9b5a3f1fb05a9ef8b861994ffeb936fdd1542688e2241c591d878420031')throw Error('accepted archive identity');
-  const members = tarFiles(zlib.gunzipSync(archive)), oldPrefix = '/home/user/antara-client-origin-20261008', prefix = '/home/user/antara-owning-queue-20261008';
+  const members = tarFiles(zlib.gunzipSync(archive)), oldPrefix = '/home/user/antara-client-origin-20261008';
   const pins = JSON.parse(fs.readFileSync(baseline+'/runtime-pins.json'));
   function member(rel) {const b = members.get(path.basename(oldPrefix)+'/'+rel); if(!b)throw Error('missing archive member '+rel);return b;}
   for(const p of pins) {const b=member(p.remote.slice(oldPrefix.length+1));if(b.length!==p.bytes||sha(b)!==p.sha256)throw Error('baseline member drift '+p.remote);}
@@ -88,5 +89,5 @@ function prepare(output, baseline) {
   const ready={at:new Date().toISOString(),status:'SOURCE/JS READY ONLY; requires next-phase root review and queued slot after Tiberian/Warcraft actual releases; no remote/native/browser performed',referenceSource:plan.builtSourceCommit,module:plan.sourceHashes['build/wine-assembly.wasm'],baselineArchive:sha(archive),baselinePins:pins.length,finalPins:finalPins.length,originalMedia:plan.criticalFiles.length,overlays:Object.fromEntries(['callback-worker.js','callback-link.js'].map(n=>[n,sha(changes.get(n))])),observer:sha(Buffer.from(helper)),remotePrefix:prefix,traceFlag:'Existing set_win16_trace explicit acknowledgment before ordinary hover, DOWN/UP across exactly two existing Workers; no mailbox/CPU/guest/control writes',bounds:{workers:2,rowsPerWorker:128,memoryBytesPerWorker:32768,phaseQuotas:{hover:{rows:32,bytes:8192,words:32768,cpuMs:50},down:{rows:32,bytes:8192,words:32768,cpuMs:50},up:{rows:64,bytes:16384,words:65536,cpuMs:100}},deadlineMs:8000,downAndUpReservedSeparately:true,transferMs:240000,browserMs:120000,cleanupReserveMs:90000},sourceCause:'unmeasured; route/API evidence requires original-code authentication; no production correction justified',gameplay:false};
   fs.writeFileSync(output+'/READY.json',JSON.stringify(ready,null,2));return ready;
 }
-if(require.main===module){try{console.log(JSON.stringify(prepare(process.argv[2],process.argv[3]),null,2));}catch(e){console.error(e);process.exitCode=1;}}
+if(require.main===module){try{console.log(JSON.stringify(prepare(process.argv[2],process.argv[3],process.argv[4]),null,2));}catch(e){console.error(e);process.exitCode=1;}}
 module.exports={prepare,tarFiles};
