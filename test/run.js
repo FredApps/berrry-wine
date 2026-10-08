@@ -367,6 +367,13 @@ const PRESENT_DISTINCT = {
   // GPU presents (D3D Present, SwapBuffers) are counted but not hashed: their
   // pixels live in a backend surface, not in a DirectDraw DIB.
   gpu: 0,
+  // A changed hash says only that SOMETHING moved. A game that writes its 3D
+  // view and then its HUD as two presents changes the hash twice per frame,
+  // so "every present is distinct" would still double-count. Per slot, keep
+  // the previous picture and histogram the bounding box of what each present
+  // changed: one recurring near-full box is one present per frame; a big box
+  // alternating with a small one is a split frame.
+  prevBytes: new Map(), rects: new Map(), seq: [],
 };
 // Present and composite after every batch, the way the browser does. Off by
 // default: nobody looks at a headless canvas between captures, and it is work a
@@ -2933,6 +2940,31 @@ async function main() {
       for (let i = 0; i < words.length; i++) hash = Math.imul(hash ^ words[i], 16777619);
       hash >>>= 0;
       const key = `${frame.slot >>> 0}:${hash}`;
+      const bytes = new Uint8Array(ctx.getMemory(), dib, pitch * h);
+      const prev = pd.prevBytes.get(frame.slot >>> 0);
+      if (prev && prev.length === bytes.length) {
+        let x0 = pitch, x1 = -1, y0 = h, y1 = -1;
+        for (let y = 0; y < h; y++) {
+          const row = y * pitch;
+          let first = -1, last = -1;
+          for (let x = 0; x < pitch; x++) {
+            if (bytes[row + x] !== prev[row + x]) { if (first < 0) first = x; last = x; }
+          }
+          if (first < 0) continue;
+          if (y < y0) y0 = y;
+          y1 = y;
+          if (first < x0) x0 = first;
+          if (last > x1) x1 = last;
+        }
+        // Byte columns, not pixels: bpp varies by slot and the question is
+        // which part of the surface moved, not its exact width.
+        const rect = y1 < 0 ? 'none' : `bytes x${x0}-${x1} rows ${y0}-${y1}`;
+        pd.rects.set(rect, (pd.rects.get(rect) || 0) + 1);
+        if (pd.seq.length < 24) pd.seq.push(rect);
+        prev.set(bytes);
+      } else {
+        pd.prevBytes.set(frame.slot >>> 0, bytes.slice());
+      }
       if (pd.last !== key) pd.changed++;
       pd.changedTimes.push(pd.last !== key);
       pd.last = key;
@@ -11105,6 +11137,13 @@ if (VERBOSE) {
       + ` ${pd.unique.size} unique frames, ${pd.unreadable} unreadable`
       + (pd.gpu ? `, ${pd.gpu} gpu (not hashed)` : '')
       + `; by slot ${[...pd.slots].map(([s, n]) => `${s}:${n}`).join(' ')}`);
+    if (pd.rects.size) {
+      const top = [...pd.rects].sort((a, b) => b[1] - a[1]).slice(0, 8);
+      console.log(`[present-distinct] region changed per present (vs the previous present of that slot),`
+        + ` ${pd.rects.size} distinct boxes:`);
+      for (const [rect, n] of top) console.log(`[present-distinct]   ${String(n).padStart(6)}  ${rect}`);
+      console.log(`[present-distinct] first ${pd.seq.length} in order: ${pd.seq.join(' | ')}`);
+    }
     // Rates between the first and last counted present, in GUEST seconds.
     const spanMs = pd.firstMs !== null ? pd.lastMs - pd.firstMs : 0;
     if (spanMs > 0 && pd.counted > 1) {

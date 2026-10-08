@@ -384,3 +384,37 @@ the public demo source and archive hash. The harness sets the game's supported
 environment override `THRASH_DRIVER=1` to select Glide. Without it, automatic
 selection chooses the unavailable PowerVR/SGL route and exits before racing.
 The benchmark does not patch the guest executable.
+
+## Release 2026-09-30 rerun
+
+Base `0a972f06` (release/2026-09-30), headful Chrome, serial, threads on, two
+30-second samples per case, load average 6-12 throughout (provisional, like
+every number above). All screenshots were checked to be mid-race.
+
+| Demo | Renderer | Sample fps | CPU ms/frame |
+| --- | --- | --- | --- |
+| NFS III (`nfs-renderer-bench.js`, seed 12345) | Glide (`voodooa.dll`) | 22.6, 22.3 | 88, 94 |
+| | D3D (`d3da.dll`) | 23.7, 24.6 | 95, 98 |
+| | software (`softtria.dll`) | 5.9, 8.1 | 364, 261 |
+| NFS II (`nfs2-renderer-bench.js`) | original software demo (TR03) | **13.9, 12.7** (69.5, 63.3 primary presents/s ÷ 5) | 150, 164 |
+| | SE Glide demo (TR04, post W-buffer fix) | 17.2, 18.4 | 134, 125 |
+
+NFS III: Glide and D3D are level within this box's noise (the 09-29 rerun had
+Glide ahead, 13.98 vs 10.53, before the D3D batching work), and both are about
+3x software. The desktop `nfs3_demo` entry used to set no `Thrash Driver` and
+so started on `softtria.dll`, the slowest renderer; it now starts on Direct3D
+(`b8382e31`). Distinct present hashes alone did not show that NFS II's count
+was a frame rate (every one of 760 presents hashed differently, yet each
+was one fifth of a frame); see the NFS II paragraph above.
+
+NFS II: **the software demo's counter is not a frame rate.** The bench counts
+DirectDraw primary presents for it, and the original demo writes each frame
+to the primary in five separate Lock/Unlock presents: three horizontal bands
+of the 3D view (rows 45-136, 137-212, 213-309), the right-hand dashboard
+area, then the clock (rows 5-57). Measured in the CLI with
+`--present-distinct`, which now histograms the region each present changed:
+over 420 presents in a race with the throttle held, the top-band box occurs
+exactly 84 times, one per frame. Divided by five, the software demo runs
+about 13 fps against the SE Glide demo's 17-18 (Glide buffer swaps, one per
+frame), so Glide is about 1.35x faster. Different editions and tracks still,
+so this is the cost of the complete workloads, not of the renderer alone.
