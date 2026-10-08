@@ -1,5 +1,30 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8: explicit validation repair passes the menu blocker
+
+Reserved owning host.invalidate evidence in `20261008T0251Z-tiberian-writer`
+finds alternate10003's original581010→581022 InvalidateRect(NULL,FALSE).
+All64 live code spans authenticate original SUNf70dcf32. Original5812cc
+ValidateRect(NULL) succeeds but retains full640×480 damage. USER limited NULL
+validation to host geometry and did not consume child paint requests.
+Generic repair6dd5f4bc7 clears the entire NULL update region and clears paint
+when validation empties it; partial rectangles preserve remaining damage.
+Real nested x86 callback regression fails before and passes after, including
+ESP/depth, ownership, partial damage and later invalidation; full build and
+existing paint-order suite pass. No prevalidation or application bypass.
+
+Actual candidate `20261008T0256Z-tiberian-validation-candidate`, source6dd5f4bc7,
+fresh module6adb43872bf4d48bbbbc09967b3e8e1baaf59be7d4ac6b1a414aad13d2a944e0,
+original SUN/media unchanged: ordinary reviewed New Campaign now empties the
+pump and shows dialog1000c. Ordinary Enter reaches Titan campaign loading,
+then the game's "unable to continue normally" error. Console _com_error
+obj074fefa8/EIP0 is unowned page evidence, not an authenticated fault address.
+Five inspected images,216 served hashes/zero drift,125 source checks/478pins,
+clean ordinary quit/independent PID/socket release. Gameplay/FPS/audio unknown.
+Next reserve owning first failing HRESULT and original callback/exception
+context during loading. Exact identities, integrity correction, tests and
+lifecycle: [renewing-writer handoff](../../ops/handoffs/tiberian-renewing-writer-20261008.md).
+
 ## October 8: native paint validation succeeds, full damage returns
 
 Fresh isolated paint investigation off explicit coordinator `0ab392bcd` uses

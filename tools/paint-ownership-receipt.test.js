@@ -83,3 +83,12 @@ writer.host.invalidate(0x10003);assert(writer.rows.some(r=>r.kind==='writer'&&r.
 for(let i=0;i<100;i++)writer.host.invalidate(0x10002);
 const wr=writer.observer.close();assert(wr.writer.writerCount<=64);assert(wr.writer.writerBytes<=32768);assert.equal(wr.writer.writerError,null);assert.deepEqual(writer.host,writer.original);
 console.log('PASS reserved invalidate writer ownership, alternate target, forwarding and independent flood limits');
+const writerTrap=fixture();writerTrap.observer.arm(0x10002);
+const receiver={identity:'original receiver'},args=[0x10002,123];
+// A trapped original import still propagates after retaining its owning row.
+// Reinstall with an original function that throws, rather than replacing a hook.
+writerTrap.observer.close();writerTrap.host.invalidate=function(...actual){assert.equal(this,receiver);assert.deepEqual(actual,args);throw Error('invalidate original trap')};
+const trappedWriter=installPaintOwnershipReceipt(writerTrap.host,()=>({exports:writerTrap.ex,memory:writerTrap.memory,slot:0}),()=>({update:1}),r=>writerTrap.rows.push(r));
+trappedWriter.arm(0x10002);assert.throws(()=>writerTrap.host.invalidate.apply(receiver,args),/invalidate original trap/);
+const trappedWriterReceipt=trappedWriter.close();assert.match(trappedWriterReceipt.writer.writerError,/original import trap/);assert(writerTrap.rows.some(r=>r.kind==='writer'));
+console.log('PASS invalidate original throw preserves owning evidence and exact receiver/arguments');
