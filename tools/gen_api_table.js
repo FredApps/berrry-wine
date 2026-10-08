@@ -142,6 +142,8 @@ const extra = [
   { name: 'EnumTimeFormatsA', nargs: 3 },
   { name: 'EnumResourceLanguagesW', nargs: 5 },
   { name: 'EnumResourceNamesA', nargs: 4 },
+  { name: 'EnumResourceTypesA', nargs: 3 },
+  { name: 'EnumResourceLanguagesA', nargs: 5 },
   { name: 'GetUserDefaultUILanguage', nargs: 0 },
   { name: 'CreateDialogIndirectParamA', nargs: 5 },
   { name: 'SetViewportExtEx', nargs: 4 },

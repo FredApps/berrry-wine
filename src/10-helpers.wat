@@ -3044,6 +3044,8 @@
       (br_if $done (i32.ge_u (local.get $j) (local.get $len)))
       (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa)
         (i32.mul (local.get $j) (global.get $rsrc_name_char_stride)))))
+      (if (i32.eq (global.get $rsrc_name_char_stride) (i32.const 1))
+        (then (local.set $ch_a (call $dpw_decode1252 (local.get $ch_a)))))
       (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; guest string shorter
       (local.set $ch_r (i32.load16_u (i32.add (local.get $name_wa)
         (i32.add (i32.const 2) (i32.mul (local.get $j) (i32.const 2))))))

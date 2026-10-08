@@ -963,17 +963,32 @@
         (call $heap_free (global.get $enum_rsrc_namebuf))
         (global.set $enum_rsrc_namebuf (i32.const 0)))))
 
-  ;; Complete EnumResourceNamesA after exhausting the directory or after its
+  ;; Complete an ANSI enumeration after exhausting the directory or after its
   ;; callback asks us to stop. The saved API return address is the one word
-  ;; left on the stack after ENUMRESNAMEPROC's RET 16.
+  ;; left on the stack after the callback's stdcall return.
   (func $enum_rsrc_finish (param $success i32)
+    (local $frame i32)
     (call $enum_rsrc_release_name)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (global.set $eip (global.get $enum_rsrc_ret))
-    (global.set $enum_rsrc_depth (i32.const 0))
+    (local.set $frame (global.get $enum_rsrc_frame))
+    (global.set $enum_rsrc_module (call $gl32 (i32.add (local.get $frame) (i32.const 4))))
+    (global.set $enum_rsrc_type (call $gl32 (i32.add (local.get $frame) (i32.const 8))))
+    (global.set $enum_rsrc_cb (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+    (global.set $enum_rsrc_lparam (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+    (global.set $enum_rsrc_ret (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+    (global.set $enum_rsrc_dir (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+    (global.set $enum_rsrc_index (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+    (global.set $enum_rsrc_count (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+    (global.set $enum_rsrc_namebuf (call $gl32 (i32.add (local.get $frame) (i32.const 36))))
+    (global.set $enum_rsrc_depth (call $gl32 (i32.add (local.get $frame) (i32.const 40))))
+    (global.set $enum_rsrc_kind (call $gl32 (i32.add (local.get $frame) (i32.const 44))))
+    (global.set $enum_rsrc_name (call $gl32 (i32.add (local.get $frame) (i32.const 48))))
+    (global.set $enum_rsrc_frame (call $gl32 (local.get $frame)))
+    (call $heap_free (local.get $frame))
     (i32.store offset=0 (global.get $reg_base) (local.get $success)))
 
-  ;; Invoke ENUMRESNAMEPROCA for the current type-directory entry. PE named
+  ;; Invoke the callback for the current directory entry. PE named
   ;; entries are length-prefixed UTF-16; Win32's A API instead supplies a
   ;; temporary NUL-terminated ANSI name. Integer IDs pass through unchanged.
   (func $enum_rsrc_dispatch
@@ -995,14 +1010,18 @@
         (local.set $len (i32.load16_u (local.get $name_wa)))
         (global.set $enum_rsrc_namebuf
           (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+        (if (i32.eqz (global.get $enum_rsrc_namebuf))
+          (then
+            (call $pop_rsrc_ctx)
+            (global.set $last_error (i32.const 8))
+            (call $enum_rsrc_finish (i32.const 0))
+            (return)))
         (block $copied (loop $copy
           (br_if $copied (i32.ge_u (local.get $i) (local.get $len)))
           (local.set $ch (i32.load16_u (i32.add (local.get $name_wa)
             (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 2))))))
-          ;; The embedded resources ScummVM enumerates use ASCII names. Keep
-          ;; the A conversion bounded and deterministic for other PE names.
-          (if (i32.gt_u (local.get $ch) (i32.const 0xff))
-            (then (local.set $ch (i32.const 0x3f))))
+          ;; Use the same Windows-1252 conversion as other ANSI entry points.
+          (local.set $ch (call $dpw_encode1252 (local.get $ch)))
           (call $gs8 (i32.add (global.get $enum_rsrc_namebuf) (local.get $i))
             (local.get $ch))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1013,13 +1032,19 @@
       (else
         (local.set $name (i32.and (local.get $eid) (i32.const 0xffff)))))
     (call $pop_rsrc_ctx)
-    ;; ENUMRESNAMEPROCA(hModule, lpType, lpName, lParam), stdcall.
+    ;; stdcall callbacks: module, [type, [name,]] enumerated value, lParam.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_rsrc_lparam))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $name))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_rsrc_type))
+    (if (i32.eq (global.get $enum_rsrc_kind) (i32.const 2))
+      (then
+        (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_rsrc_name))))
+    (if (global.get $enum_rsrc_kind)
+      (then
+        (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_rsrc_type))))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_rsrc_module))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -1027,67 +1052,123 @@
     (global.set $eip (global.get $enum_rsrc_cb))
     (global.set $steps (i32.const 0)))
 
-  ;; CACA0030: ENUMRESNAMEPROC returned. FALSE requests early termination;
-  ;; TRUE advances to the next name in the same type directory.
+  ;; CACA0030: callback returned. FALSE requests early termination;
+  ;; TRUE advances to the next entry in this invocation's directory.
   (func $enum_rsrc_continue
     (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
-      (then (call $enum_rsrc_finish (i32.const 0)) (return)))
+      (then
+        ;; Windows 98/XP report ERROR_SUCCESS for callback-requested stop.
+        (global.set $last_error (i32.const 0))
+        (call $enum_rsrc_finish (i32.const 0)) (return)))
     (global.set $enum_rsrc_index
       (i32.add (global.get $enum_rsrc_index) (i32.const 1)))
     (call $enum_rsrc_dispatch))
 
-  ;; EnumResourceNamesA(hModule, lpType, lpEnumFunc, lParam). Suspend the API
-  ;; frame while each guest callback runs, preserving Win32's integer-vs-name
-  ;; representation and callback-controlled early stop.
-  (func $handle_EnumResourceNamesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32) (local $subdir i32) (local $dir_wa i32) (local $count i32)
-    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
-    ;; A callback cannot safely replace the process-global state of an outer
-    ;; enumeration. Refuse that unusual re-entrant case without disturbing it.
-    (if (i32.or (i32.eqz (local.get $arg2)) (global.get $enum_rsrc_depth))
+  ;; Shared ANSI resource walk: kind 0=types, 1=names, 2=languages.
+  ;; Resolve the directory before invoking guest code; never retain the shared
+  ;; resource lookup context across callbacks. Each invocation owns its state.
+  (func $enum_rsrc_begin (param $kind i32) (param $module i32)
+      (param $type i32) (param $name i32) (param $cb i32)
+      (param $lparam i32) (param $ret i32)
+    (local $idx i32) (local $dir i32) (local $subdir i32)
+    (local $dir_wa i32) (local $count i32) (local $frame i32)
+    (local $stride i32) (local $error i32)
+    (global.set $eip (local.get $ret))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (i32.eqz (local.get $cb))
+      (then (global.set $last_error (i32.const 87)) (return)))
+    ;; push_rsrc_ctx intentionally falls back for unknown handles. Enumeration
+    ;; must reject those, and must not enumerate the EXE for a resource-less DLL.
+    (if (i32.and (i32.ne (local.get $module) (i32.const 0))
+                 (i32.ne (local.get $module) (global.get $image_base)))
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
-        (global.set $eip (local.get $ret))
-        (return)))
-    (call $push_rsrc_ctx (local.get $arg0))
-    (local.set $subdir
-      (call $rsrc_find_entry (call $r_rva) (local.get $arg1)))
-    (if (i32.eqz (i32.and (local.get $subdir) (i32.const 0x80000000)))
-      (then
-        (call $pop_rsrc_ctx)
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (global.set $last_error (i32.const 1813)) ;; ERROR_RESOURCE_TYPE_NOT_FOUND
-        (global.set $eip (local.get $ret))
-        (return)))
-    (global.set $enum_rsrc_dir (i32.add (call $r_rva)
-      (i32.and (local.get $subdir) (i32.const 0x7fffffff))))
-    (local.set $dir_wa (call $g2w
-      (i32.add (call $r_base) (global.get $enum_rsrc_dir))))
-    (local.set $count (i32.add
-      (i32.load16_u (i32.add (local.get $dir_wa) (i32.const 12)))
-      (i32.load16_u (i32.add (local.get $dir_wa) (i32.const 14)))))
+        (local.set $idx (call $find_dll_by_base (local.get $module)))
+        (if (i32.lt_s (local.get $idx) (i32.const 0))
+          (then (global.set $last_error (i32.const 6)) (return)))
+        (if (i32.eqz (i32.load (i32.add (global.get $DLL_RSRC_TABLE)
+              (i32.mul (local.get $idx) (i32.const 8)))))
+          (then (global.set $last_error (i32.const 1812)) (return)))))
+    (call $push_rsrc_ctx (local.get $module))
+    (local.set $stride (global.get $rsrc_name_char_stride))
+    (global.set $rsrc_name_char_stride (i32.const 1))
+    (block $resolved
+      (local.set $error (i32.const 1812))
+      (br_if $resolved (i32.eqz (call $r_rva)))
+      (local.set $dir (call $r_rva))
+      (if (local.get $kind)
+        (then
+          (local.set $error (i32.const 1813))
+          (local.set $subdir (call $rsrc_find_entry (local.get $dir) (local.get $type)))
+          (br_if $resolved (i32.eqz (i32.and (local.get $subdir) (i32.const 0x80000000))))
+          (local.set $dir (i32.add (call $r_rva) (i32.and (local.get $subdir) (i32.const 0x7fffffff))))))
+      (if (i32.eq (local.get $kind) (i32.const 2))
+        (then
+          (local.set $error (i32.const 1814))
+          (local.set $subdir (call $rsrc_find_entry (local.get $dir) (local.get $name)))
+          (br_if $resolved (i32.eqz (i32.and (local.get $subdir) (i32.const 0x80000000))))
+          (local.set $dir (i32.add (call $r_rva) (i32.and (local.get $subdir) (i32.const 0x7fffffff))))))
+      (local.set $dir_wa (call $g2w (i32.add (call $r_base) (local.get $dir))))
+      (local.set $count (i32.add (i32.load16_u offset=12 (local.get $dir_wa))
+                                (i32.load16_u offset=14 (local.get $dir_wa))))
+      (local.set $error (i32.add (i32.const 1813) (local.get $kind)))
+      (br_if $resolved (i32.eqz (local.get $count)))
+      (local.set $error (i32.const 0)))
+    (global.set $rsrc_name_char_stride (local.get $stride))
     (call $pop_rsrc_ctx)
-    (if (i32.eqz (local.get $count))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (global.set $last_error (i32.const 1813))
-        (global.set $eip (local.get $ret))
-        (return)))
-    (global.set $enum_rsrc_module (local.get $arg0))
-    (global.set $enum_rsrc_type (local.get $arg1))
-    (global.set $enum_rsrc_cb (local.get $arg2))
-    (global.set $enum_rsrc_lparam (local.get $arg3))
+    (if (local.get $error)
+      (then (global.set $last_error (local.get $error)) (return)))
+    (local.set $frame (call $heap_alloc (i32.const 52)))
+    (if (i32.eqz (local.get $frame))
+      (then (global.set $last_error (i32.const 8)) (return)))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 0)) (global.get $enum_rsrc_frame))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $enum_rsrc_module))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (global.get $enum_rsrc_type))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (global.get $enum_rsrc_cb))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (global.get $enum_rsrc_lparam))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (global.get $enum_rsrc_ret))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (global.get $enum_rsrc_dir))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (global.get $enum_rsrc_index))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (global.get $enum_rsrc_count))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (global.get $enum_rsrc_namebuf))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 40)) (global.get $enum_rsrc_depth))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 44)) (global.get $enum_rsrc_kind))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 48)) (global.get $enum_rsrc_name))
+    (global.set $enum_rsrc_frame (local.get $frame))
+    (global.set $enum_rsrc_namebuf (i32.const 0))
+    (global.set $enum_rsrc_dir (local.get $dir))
+    (global.set $enum_rsrc_module (local.get $module))
+    (global.set $enum_rsrc_type (local.get $type))
+    (global.set $enum_rsrc_name (local.get $name))
+    (global.set $enum_rsrc_kind (local.get $kind))
+    (global.set $enum_rsrc_cb (local.get $cb))
+    (global.set $enum_rsrc_lparam (local.get $lparam))
     (global.set $enum_rsrc_ret (local.get $ret))
     (global.set $enum_rsrc_index (i32.const 0))
     (global.set $enum_rsrc_count (local.get $count))
     (global.set $enum_rsrc_depth (i32.const 1))
     (global.set $last_error (i32.const 0))
-    ;; Retain the API caller below every callback frame until enumeration ends.
+    ;; Keep one saved return word below the callback's stdcall argument frame.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret))
     (call $enum_rsrc_dispatch))
+
+  (func $handle_EnumResourceTypesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+    (call $enum_rsrc_begin (i32.const 0) (local.get $arg0) (i32.const 0) (i32.const 0) (local.get $arg1) (local.get $arg2) (local.get $ret)))
+
+  (func $handle_EnumResourceNamesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+    (call $enum_rsrc_begin (i32.const 1) (local.get $arg0) (local.get $arg1) (i32.const 0) (local.get $arg2) (local.get $arg3) (local.get $ret)))
+
+  (func $handle_EnumResourceLanguagesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+    (call $enum_rsrc_begin (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $ret)))
 
   ;; 9: GetProfileStringA(appName, keyName, default, retBuf, nSize) → chars copied
   (func $handle_GetProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

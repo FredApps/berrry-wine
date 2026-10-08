@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. No worker is live: Dungeon Siege worker exhausted CLI usage and its final evidence needs owner resume of stopped bx_hgju4y2b; Age of Wonders II source-level diagnosis remains queued. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
+  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. No worker is live. Root validated the Dungeon Siege resource API chain fix; fresh original startup is ready, while historical bx_hgju4y2b evidence recovery still needs owner access. Age of Wonders II source-level diagnosis remains queued. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1396,11 +1396,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Dungeon Siege demo
   id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
-  status: blocked
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none (CLI usage limit; exited1 at2026-10-08T16:56:46.291Z)
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
-  Next: Recover preserved remote evidence from stopped bx_hgju4y2b:/home/user/dungeon-api-20261008; this API key cannot sandbox.resume (403). Owner resume or artifact retrieval needed. Original extraction/build passed but startup trapped; archived source31ccb5972 is not main/gameplay acceptance. See ops/handoffs/dungeon-siege-interrupted-recovery-20261008.md.
+  Next: Fresh ordinary startup validation from original installer using the tested ANSI resource enumeration fix; no live worker. Archive31ccb5972 remains unaccepted launch WIP. Historical evidence recovery is separate: stopped bx_hgju4y2b:/home/user/dungeon-api-20261008 still requires owner resume/retrieval and must not be bypassed. No gameplay qualification.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
@@ -1413,9 +1413,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Implement missing ANSI resource enumeration callback chain
   id: WIN32-ENUM-RESOURCE-ANSI-20261008
-  status: ready
+  status: review
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (coordinator static investigation; CLI worker usage exhausted)
-  Next: Implement generic EnumResourceTypesA and EnumResourceLanguagesA with nested NamesA callbacks and early-stop semantics, validate real dispatch/stack restoration on separate temporary box, then retest original Dungeon Siege startup. Observed block4362b4 reaches this absent API chain; exact trap instruction remains unproven.
-  Evidence: ops/handoffs/dungeon-siege-interrupted-recovery-20261008.md; scratch/runs/20261008T2329Z-dungeon-siege-static-fault/result.json. Original selected executable hash matches prior extraction.
+  worker: none (coordinator implemented and validated directly)
+  Next: Generic implementation and native regression/build pass; integrate source and retest original Dungeon Siege startup on a fresh temporary box. No gameplay claim.
+  Evidence: ops/handoffs/resource-enumeration-ansi-20261008.md; scratch/runs/20261008T2343Z-resource-enum-ansi/result.json. Unchanged-main control fails nested callback assertion; candidate passes full hash/thunk chain, actual LANGIDs, CP1252, nested/early-stop/error/DLL contracts and ESP restoration; canonical build and thread-resource-sync pass.
   Done: Generic contract and nesting tests pass, original runtime limitation is accurately updated, reviewed changes pushed main; no silent-success stub.

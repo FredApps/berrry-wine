@@ -3545,9 +3545,9 @@
   (global $enum_child_ret    (mut i32) (i32.const 0))
   (global $enum_child_depth  (mut i32) (i32.const 0))
 
-  ;; EnumResourceNamesA iteration state (CACA0030). Resource names may be
+  ;; ANSI resource enumeration state (CACA0030). Resource types/names may be
   ;; integer IDs or UTF-16 strings in the PE directory; the latter are copied
-  ;; to a temporary ANSI guest buffer for each ENUMRESNAMEPROC callback.
+  ;; to a temporary ANSI guest buffer for each callback.
   (global $enum_rsrc_thunk   (mut i32) (i32.const 0))
   ;; ReadFileEx completion queue belongs to this guest-thread instance.
   (global $io_apc_head (mut i32) (i32.const 0))
@@ -3568,6 +3568,11 @@
   (global $enum_rsrc_count   (mut i32) (i32.const 0))
   (global $enum_rsrc_namebuf (mut i32) (i32.const 0))
   (global $enum_rsrc_depth   (mut i32) (i32.const 0))
+  ;; Linked saved invocation state; nested resource callbacks must not replace
+  ;; the suspended caller's directory cursor or temporary ANSI name buffer.
+  (global $enum_rsrc_frame   (mut i32) (i32.const 0))
+  (global $enum_rsrc_kind    (mut i32) (i32.const 0))
+  (global $enum_rsrc_name    (mut i32) (i32.const 0))
 
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir

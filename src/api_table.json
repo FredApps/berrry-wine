@@ -37656,5 +37656,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2347731600
+  },
+  {
+    "id": 4476,
+    "name": "EnumResourceTypesA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3117921588
+  },
+  {
+    "id": 4477,
+    "name": "EnumResourceLanguagesA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1757009474
   }
 ]
