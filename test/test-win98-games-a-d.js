@@ -13,6 +13,7 @@ const localIds = new Set(LOCAL_CANDIDATE_APPS.map(([id]) => id));
 const publicIds = new Set(DESKTOP_APPS.map(([id]) => id));
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const expected = {
+  age_of_wonders2_demo: ['AoW2.exe', 1059],
   curse_monkey_island_demo: ['COMI.EXE', 11],
   atomic_bomberman_june_demo: ['BM95DEMO.EXE', 172],
   broken_sword_demo: ['winsword.exe', 63],

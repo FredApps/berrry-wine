@@ -13,6 +13,15 @@ const ONLY = ONLY_ARG === undefined ? undefined : ONLY_ARG.slice(7);
 if (ONLY === '') throw new Error('--only requires a nonempty game id');
 const GAMES = [
   {
+    // Original self-extracting ZIP payload; no installed-state fabrication.
+    id: 'age_of_wonders2_demo',
+    root: 'Age of Wonders2 demo-SW/extracted',
+    exe: 'AoW2.exe',
+    vfsRoot: 'c:\\aow2demo\\',
+    exclude: ['.original-package.json', 'vcl50.bpl', 'vclx50.bpl', 'Ml42ND50.bpl'],
+    defaultLoadMode: 'lazy',
+  },
+  {
     // Original CAB + authenticated installer loose overlays, no DX setup files.
     id: 'carmageddon_tdr2000_demo',
     root: 'Carmageddon TDR2000 demo-D3D-installed',
