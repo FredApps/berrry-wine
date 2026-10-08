@@ -42,3 +42,45 @@ with `relmousemove` and `di-mousedown`/`di-mouseup` for clicks, and
   `_output` state machine at `exe+0x5789a2`, at 0.37%.
 - **The remainder:** `declined:no-backedge` is 16.5%. It is call/ret-heavy
   straight-line code.
+
+## Registered browser gameplay qualification (2026-10-08)
+
+Fresh original `arcanum_demo` runs on software and WebGL both reached the
+crash site, completed the gnome dialogue and demonstrated player movement
+west of the corpse and wreck through ordinary relative mouse input and a
+ground click. Screenshots were personally reviewed. This reconciles the
+retained **28152-batch free roam** and **45k..54k gameplay census** above;
+Arcanum is an earlier-qualified title, not a never-qualified new game.
+The historical pixel-identical menu sweep remains menu evidence only.
+
+Both new arms use source `7e4ce05ce33b8689ffb6d96184cc319c3353de8a`,
+2953 verified source/fixture pins, and module
+`d8d4096f957ed51cecab589b5a1ec7bf402336f13959ce0710faf2f7d3c68960`.
+Chrome 151.0.7922.108 on a fresh no-env Linux boat, Ryzen 9 9950X,
+cooperative execution, native 800×600 game displayed at 560×420.
+The route is the registered original launch, Single Player, New Game,
+Pick Character, Next, Escape through the quest movie, Continue, three
+gnome responses, then free roam. No guest state was forced.
+
+WebGL idle crash-site measurement after movement records **434 actual
+visible game presentations / 20.127145 s = 21.5629 presentations/s**.
+Raw one-second samples and all 434 copy events are retained. The observer
+follows the selected DirectDraw layer through Canvas/OffscreenCanvas
+copies into a visible sink after successful `presentationFilter.present`.
+It excludes overwritten uploads, repeated composites, hidden desktop
+copies, no-op presentation, raw Flip/API calls and page RAF. This is an
+instrumented compositor submission rate, not physical scanout or unique
+pixel content. Live WebGL execution reports zero fallbacks/errors.
+
+**Software FPS remains unqualified.** Its initial DOM-only observer missed
+the distinct OffscreenCanvas prototype: write sequences advanced but no
+attributable sink events were observed. The raw zero is rejected, not
+reported as 0 FPS. The corrected observer passed focused contracts and
+the WebGL scene; no software rerun fit the remaining immutable browser
+budget. Both gameplay qualifications stand independently of this gap.
+Combat, mission progression, save/load and audio remain unqualified.
+
+Contained evidence: `scratch/runs/20261008T1431Z-arcanum-gameplay-qualified`;
+historical reconciliation:
+`scratch/runs/20261008T1349Z-arcanum-retained-gameplay-audit`.
+See [the execution and cleanup handoff](../../ops/handoffs/arcanum-gameplay-20261008.md).

@@ -58,7 +58,7 @@ screenshot cited was looked at.
 | mw3 | D3DIM (Device3) | **gameplay** (cockpit) | menu (2026-10-06, browser, no input; an Escape in the page's timing QUITS the demo, exit 3); gameplay (2026-09-20) | route: Escape at batches 10-41 skips the Zipper intro |
 | diablo2_demo | D3DIM (Device3) | menu (hero select) | menu (2026-10-06, browser; Single Player / Exit) | gameplay needs > 120 s |
 | darkstone_demo | D3DIM (Device2) | menu in dated sweep | menu (2026-10-06, browser) | Later retained Town before/after images show champion, HUD and substantial camera rotation; root reviewed them on October 8. Original backend, module and command log were not recovered, so neither backend is newly qualified. See `scratch/runs/20261007-darkstone-retained-gameplay-audit/result.json`; do not count this as a never-played new title. |
-| arcanum_demo | D3DIM (D3D7) | loading at 120 s | **menu** (2026-10-06, browser; past the software cap) | boot needs > 120 s |
+| arcanum_demo | D3DIM (D3D7) | **gameplay + player movement** (2026-10-08); FPS unqualified | **gameplay + player movement** (2026-10-08); idle crash-site 21.56 presentations/s | current source/module/backend pinned; 434 visible submissions / 20.127 s, not scanout; retained earlier gameplay, not a new never-qualified game; [handoff](../ops/handoffs/arcanum-gameplay-20261008.md) |
 | dx_boids / dx_flip3dtl / dx_tunnel / dx_twist | D3DIM | **renders** | **renders**, all four (2026-10-06, browser; `scratch/runs/20261006T1935Z-gld3d-webgl-recheck`) | — |
 | mcm | D3DRM over Device2 | **gameplay** (race) | gameplay (2026-09-20); not re-run (long route) | w4 |
 | dx_globe / dx_viewer | D3DRM | **renders** | **renders** (2026-10-06, browser) | globe texture seam (w4) |
