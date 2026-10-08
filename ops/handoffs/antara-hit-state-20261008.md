@@ -88,7 +88,7 @@ This correction is source/JS tested and **not browser tested**. The executed
 runtime evidence retains four-step identities. The next original boundary is
 4:2488→3:dad6 Install handling, or authenticated default4:24e8 with gate fields;
 ordinary DOWN handling remains unmeasured beyond its host packet. Static
-3:dad6 calls USER46 GetParent, USER42 EnableWindow, USER59 SetActiveWindow and
+3:dad6 calls USER46 GetParent, USER42 ShowWindow, USER59 and
 USER124 UpdateWindow, then internal5:32a4; those three extra USER imports are
 not retained by the current observer. Any further collector extension needs
 root review, precise caps and original-code authentication. No generic guest
