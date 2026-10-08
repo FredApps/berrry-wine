@@ -1,5 +1,15 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Fresh four-step execution02:02 UTC2026-10-08 highlights Install, then ordinary
+DOWN traps the owning child atEIP19db02 (`unreachable`). Both hover/DOWN ACKs
+pass; UP ACK fails after trap but ordinaryUP is attempted. Last published child
+receipt is stale/zero rows, so selection1 and Install3:dad6 APIs remain
+unauthenticated. A base190000 would map the trap to original3:db02; actual
+segment mapping is absent and this is only a static candidate. No enginefix,
+installation or gameplay claim. Evidence `scratch/runs/20261008T0200Z-antara-four-step-runtime`,
+details in the Install action handoff. Next preserve callback evidence at trap
+under root-reviewed bounded observer changes before any fresh execution.
+
 Actual Install action2026-10-08: reserved DOWN now proves correctclient408,144
 reached originaldefault4:24e8 with authenticatedframe/object008f:655a,
 gate011c, savedpoint28,277 and selection0. SingleordinaryMOVE retained only
