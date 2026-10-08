@@ -5,7 +5,7 @@ Arcanum now has reviewed crash-site movement on software and WebGL. The idle Web
 
 Comanche 3 controlled flight and normal ToyVM dashboard launch are complete on main. Reviewed flight images remain linked to their exact reference build. FPS, audio and mission completion are unverified. These changes have not been publicly deployed; the live dashboard checkout is older.
 
-One worker is active: dungeon-siege-original (PID421077), preparing original Dungeon Siege launch and ordinary gameplay from its identified embedded cabinet. Age of Wonders II is queued for source-level Worker message arbitration diagnosis: its follow-up produced a pre-input startup trap or title-only waits, with no gameplay qualification. Its BSTR fix and registration are on main; latest evidence preserves the earlier reviewed menu without claiming it was reproduced.
+One worker is active: dungeon-siege-api (PID434465), preparing original Dungeon Siege launch and ordinary gameplay from its identified embedded cabinet. The first worker stopped on SSH permission; root verified the supported non-SSH Boat execution API works and the continuation uses it. Age of Wonders II is queued for source-level Worker message arbitration diagnosis: its follow-up produced a pre-input startup trap or title-only waits, with no gameplay qualification. Its BSTR fix and registration are on main; latest evidence preserves the earlier reviewed menu without claiming it was reproduced.
 
 Arcanum, Quake II, Crimsonland, Alien Shooter and Warcraft III have reviewed control on both rendering backends at recorded builds. The full GL/D3D goal and all-game FPS coverage remain incomplete.
 
