@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker user budget supersedes simultaneous two-worker target. Comanche controlled flight and registered launch are complete; sole Arcanum worker now covers both backends and gameplay FPS. Tiberian/Antara/Arx/Winamp rejected diagnostics are held without retry. Arcanum and Deus Ex are queued with verified local fixtures; choose the next ready unqualified title after current integration, keeping live worker labels accurate.
+  Next: One-worker budget supersedes simultaneous workers. Arcanum is active coverage, not a new title; Comanche flight and registered launch are complete. Age of Wonders II and Dungeon Siege are the next queued new-game candidates with SHA-pinned local installers and no known prior qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1383,3 +1383,23 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json
   notes: Migration missing-file blocker cleared against current registered route: deus_ex_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
+
+- [ ] New-game lane: Age of Wonders II demo
+  id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget; Arcanum coverage currently active)
+  candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
+  Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
+  Evidence: Local original installer 101537511 bytes, SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
+  Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
+
+- [ ] New-game lane: Dungeon Siege demo
+  id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget; Arcanum coverage currently active)
+  candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
+  Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
+  Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
+  Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
