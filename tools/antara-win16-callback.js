@@ -13,9 +13,14 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
   let errors = 0, reason = null, unknown = 0, traceWords = 0;
   let flagRestoreError = null;
   const partial = [];
-  let token = null, released = false;
+  let token = null, released = false, hoverMode = false, pressed = false;
   const raw = {down: 0, up: 0}, cpu = {down: 0, up: 0};
   const rows = [], bytes = {down: 0, up: 0}, counts = {down: 0, up: 0}, omitted = {down: 0, up: 0}, half = Math.floor(maxBytes / 2);
+  const phaseShare = () => hoverMode && phase !== 'up' ? 0.5 : 1;
+  const byteQuota = () => Math.floor(half * phaseShare());
+  const rowQuota = () => Math.floor(maxRows / 2 * phaseShare());
+  const rawQuota = () => Math.floor(maxWords * phaseShare());
+  const cpuQuota = () => maxCpuMs * phaseShare();
   function stop(why) { const restore = active; active = false; if(pending)partial.push({phase,reason:why,...pending});pending = null; if(restore||reason===null)reason = why; if(restore)try{getExports().set_win16_trace(0);}catch(e){errors++;flagRestoreError=String(e);} }
   function live() { if (active && now() >= deadline) stop('deadline'); return active; }
   function guard() {if(!live())throw Error('observer deadline');}
@@ -25,7 +30,7 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
     for (const n of ['get_current_thread_id', 'get_eip', 'get_esp', 'get_ebp', 'get_eax', 'get_edx', 'get_sreg_cs', 'get_sreg_ss', 'get_sreg_ds', 'win16_last_module', 'win16_last_ordinal']) result[n] = checked(()=>e[n]()) >>> 0;
     const buffer=checked(getMemory);
     function span(guest, length) {
-      if (bytes[phase] + length > half) return {omitted: 'phase byte cap'};
+      if (bytes[phase] + length > byteQuota()) return {omitted: 'phase byte cap'};
       const wa = checked(()=>e.guest_to_wasm(guest)) >>> 0;
       if (wa < 256 || wa + length > checked(()=>buffer.byteLength)) throw Error('unmapped span');
       const copied = [];
@@ -83,17 +88,25 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
   }
   function add(record, heavy = false) {
     if (!live()) return;
-    if (counts[phase] >= Math.floor(maxRows / 2)) { omitted[phase]++; return; }
+    if (counts[phase] >= rowQuota()) { omitted[phase]++; return; }
     const row = {...record, slot, phase, at: now()};
-    if (heavy && bytes[phase] < half) { try { row.owner = snapshot(record); } catch (e) { errors++; row.error = String(e); } }
+    if (heavy && bytes[phase] < byteQuota()) { try { row.owner = snapshot(record); } catch (e) { errors++; row.error = String(e); } }
     rows.push(row); counts[phase]++;
   }
   function activate(id, nextPhase = 'down') {
     if (typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(id)) throw Error('activation token');
-    if (nextPhase === 'down' && ever) throw Error('activation already used');
-    if (nextPhase === 'up' && (!ever || token !== id || released || now() >= deadline || errors || flagRestoreError)) throw Error('release activation rejected');
-    if (nextPhase !== 'down' && nextPhase !== 'up') throw Error('activation phase');
-    if (nextPhase === 'down') {token=id;ever=true;deadline=now()+durationMs;} else released=true;
+    if (!['hover','down','up'].includes(nextPhase)) throw Error('activation phase');
+    const beginning = !ever && nextPhase !== 'up';
+    if (!beginning && nextPhase === 'hover') throw Error('activation already used');
+    if (!beginning && nextPhase === 'down' && (!hoverMode || pressed || token !== id || phase !== 'hover' || now() >= deadline || errors || flagRestoreError)) throw Error('DOWN activation rejected');
+    if (nextPhase === 'up' && (!ever || !pressed || token !== id || released || now() >= deadline || errors || flagRestoreError)) throw Error('release activation rejected');
+    if (beginning) {
+      token=id;ever=true;deadline=now()+durationMs;hoverMode=nextPhase==='hover';
+      if(hoverMode)for(const budget of [raw,cpu,bytes,counts,omitted])budget.hover=0;
+    }
+    if(nextPhase==='down')pressed=true;
+    if(nextPhase==='up')released=true;
+    if(pending)partial.push({phase,reason:'phase transition',...pending});
     phase=nextPhase; pending=null; context=false; lastCall=null; reason=null; active=true;
     try {guard();const e=checked(getExports);e.set_win16_trace(1);guard();} catch(e) {errors++;stop('activation error');throw e;}
     return {token, phase, slot, active:live(), deadline};
@@ -107,9 +120,9 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
   }
   function word(value) {
     if (!live()) return;
-    if(raw[phase]>=maxWords||cpu[phase]>=maxCpuMs){stop('raw budget');return;}
+    if(raw[phase]>=rawQuota()||cpu[phase]>=cpuQuota()){stop('raw budget');return;}
     const started=cpuNow();
-    try {decode(value);} finally {cpu[phase]+=Math.max(0,cpuNow()-started);if(active&&(raw[phase]>=maxWords||cpu[phase]>=maxCpuMs))stop('raw budget');}
+    try {decode(value);} finally {cpu[phase]+=Math.max(0,cpuNow()-started);if(active&&(raw[phase]>=rawQuota()||cpu[phase]>=cpuQuota()))stop('raw budget');}
   }
   function decode(value) {
     raw[phase]++;
@@ -135,7 +148,7 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
       if (lastCall !== null) add(record, true);
     } else if (lastCall !== null) { add({...record, apiKey: lastCall}); lastCall = null; }
   }
-  return {activate,input, word, stop, isActive:live,clock:cpuNow, charge(ms){if(live()){cpu[phase]+=Math.max(0,ms);if(cpu[phase]>=maxCpuMs)stop('raw CPU budget');}},fail() {errors++; stop('observer error');}, importValue(name, value) { if (live()) add({kind: name, value: value >>> 0}); }, status: () => ({active: live(), ever, token, reason, deadline, raw:{...raw},cpuMs:{...cpu},bytes: {...bytes}, omitted: {...omitted}, errors, flagRestoreError, unknown, traceWords, incomplete: pending,partial:partial.slice(), rows: rows.slice(), limitation: 'route precedes callback; call frames can establish guest consumption only after original-code authentication; handler-exit is not callback return'})};
+  return {activate,input, word, stop, isActive:live,clock:cpuNow, charge(ms){if(live()){cpu[phase]+=Math.max(0,ms);if(cpu[phase]>=cpuQuota())stop('raw CPU budget');}},fail() {errors++; stop('observer error');}, importValue(name, value) { if (live()) add({kind: name, value: value >>> 0}); }, status: () => ({active: live(), ever, token, reason, deadline, hoverMode, raw:{...raw},cpuMs:{...cpu},bytes: {...bytes}, omitted: {...omitted}, errors, flagRestoreError, unknown, traceWords, incomplete: pending,partial:partial.slice(), rows: rows.slice(), limitation: 'route precedes callback; call frames can establish guest consumption only after original-code authentication; handler-exit is not callback return'})};
 }
 
 function install(host, options) {
@@ -180,11 +193,13 @@ async function activateExisting(wine, token, phase) {
   function ask(link,t){return new Promise((resolve,reject)=>{const seq=++link._seq;const timer=setTimeout(()=>{link._pending.delete(seq);reject(Error('activation acknowledgment timeout'));},1500);link._pending.set(seq,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});try{link.worker.postMessage({t,seq,token,phase});}catch(e){clearTimeout(timer);link._pending.delete(seq);reject(e);}});}
   const current=links();
   if(current.length!==2||new Set(current.map(l=>l.slot)).size!==2||current.some(l=>!l.antaraWin16Ready||![0,1].includes(l.slot)))throw Error('exact existing Workers not ready');
-  if(phase==='down'){if(wine.__antaraActivation)throw Error('click activation already used');wine.__antaraActivation={token,links:current};}
-  else if(phase!=='up'||wine.__antaraActivation?.token!==token||current.some((l,i)=>l!==wine.__antaraActivation.links[i]))throw Error('late/replaced Worker or activation token');
+  const initial=!wine.__antaraActivation&&(phase==='hover'||phase==='down');
+  if(initial)wine.__antaraActivation={token,links:current,phase};
+  else if(wine.__antaraActivation?.token!==token||current.some((l,i)=>l!==wine.__antaraActivation.links[i])||!((phase==='down'&&wine.__antaraActivation.phase==='hover')||(phase==='up'&&wine.__antaraActivation.phase==='down')))throw Error('late/replaced Worker or activation token');
   const replies=await Promise.allSettled(current.map(l=>ask(l,'antaraActivate')));
   const ok=replies.every((r,i)=>r.status==='fulfilled'&&r.value.ack?.active&&r.value.ack.token===token&&r.value.ack.phase===phase&&r.value.ack.slot===current[i].slot&&r.value.ack.deadline>Date.now());
   if(!ok||links().some((l,i)=>l!==current[i])||links().length!==current.length){await Promise.allSettled(current.map(l=>ask(l,'antaraStop')));throw Error('crossworker activation failed; click refused');}
+  wine.__antaraActivation.phase=phase;
   return replies.map(r=>r.value.ack);
 }
 const api = {createObserver, install, overlay, linkOverlay, activateExisting, MARKERS};

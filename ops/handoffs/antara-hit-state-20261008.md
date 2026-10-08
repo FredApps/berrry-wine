@@ -49,6 +49,48 @@ different object, malformed/cyclic chains and allocation-only segment aliasing.
 Ordinary motion targets the previously reviewed visible Install coordinates;
 no guest writes, forced controls/returns or application selection overrides.
 
-Runtime remains queued; gate values, selector mapping, installation and gameplay
-are unmeasured. Stay in this worker through the authorized run. Read latest
-board/resource state; never reuse a package or prefix with stale/mismatched pins.
+## Actual runtime and phase close
+
+`scratch/runs/20261008T0122Z-antara-hit-state-runtime` ran the exact committed
+four-step observer/driver51737222e, with Worker a5828295 and unchanged Link268a.
+Hover USER125 returns to original4:2427; its actual96-byte caller span matches
+originalsegment4 except original relocations. Thus selector005f/base1a0000 is
+authenticated as segment4 at this boundary. Frame-derived object008f:655a has
+gate+1c6=011c, point+1e2/+1e4=408,144 and selection+1e6=1. Install turns white.
+This establishes successful application hover selection, not installation.
+
+Four intermediate ordinary moves consume the64 DOWN-phase row allowance
+before DOWN. Child receives the correct host DOWN packet but reports5 omitted
+DOWN-phase records; a missing routed DOWN or failed action cannot be inferred.
+Child1136words/12316bytes/error0,72 retained rows, no partial frame; UP routes
+and its original default API call returns0. Poller hits both65536-word caps,
+rows0. Original menu remains highlighted, with no installation or gameplay.
+
+Ordinary close01:26:29.798 before original01:27:16 deadline. All27 actual files
+copied and SHA checked,22545/22567 absent/noChrome/exactfreshbaseline sockets,
+505 unchanged pins and49GB floor verified. Prefix removed01:27:21; actual
+release posted01:27:28. Fresh noenv box bx_qms4q3z7 expiry01:53:20 and retained
+Puppeteer were adopted by root/queued Tiberian; do not delete during ownership.
+
+Root01:28:18 requested a tested source correction then EXIT, no rerun. The next
+driver uses one ordinary move with **hover ACK then fresh DOWN ACK before the
+press**, retaining the original8-second absolute deadline. Independent quotas
+are hover32rows/8192bytes/32768words/50ms, DOWN32/8192/32768/50ms,
+UP64/16384/65536/100ms. Their totals equal the old128rows/32KiB/131072words/200ms
+ceilings. A hover raw cap can restore tracing, then the authenticated DOWN ACK
+rearms its separate budget without extending the deadline. Legacy direct
+DOWN/UP activation remains tested. Flood regression reproduces the old shared
+hover/DOWN row loss, then proves5000 MOVE frames cannot consume the reserved
+DOWN/action-frame or UP allowance; CPU,byte,word,row totals remain bounded.
+Generated-driver regressions reject hover ACK and DOWN ACK independently.
+
+This correction is source/JS tested and **not browser tested**. The executed
+runtime evidence retains four-step identities. The next original boundary is
+4:2488→3:dad6 Install handling, or authenticated default4:24e8 with gate fields;
+ordinary DOWN handling remains unmeasured beyond its host packet. Static
+3:dad6 calls USER46 GetParent, USER42 EnableWindow, USER59 SetActiveWindow and
+USER124 UpdateWindow, then internal5:32a4; those three extra USER imports are
+not retained by the current observer. Any further collector extension needs
+root review, precise caps and original-code authentication. No generic guest
+defect or production patch is established. Next fresh phase follows the root
+queue after Tiberian/Warcraft; never reuse stale packages or prefixes.

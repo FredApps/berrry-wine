@@ -1,5 +1,17 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Actual hover/action observation2026-10-08: live005f/base1a0000 USER125 return
+4:2427 authenticates against originalsegment4. Frame-derived object008f:655a
+has+1c6=011c, savedpoint408,144 and selection+1e6=1; ordinary hover turns
+Install white. Four intermediate MOVE events use the DOWN row allowance before
+its route, with5 omitted records; correct host DOWN packet is measured, so
+missing DOWN/action cannot be inferred. UP routes normally. Installation and
+gameplay remain incomplete. Root-requested single-MOVE driver now reserves
+hover/DOWN/UP budgets and ACKs immediately before DOWN; flood/failed-ACK tests
+pass, but this correction is not browser tested. Actual evidence:
+`scratch/runs/20261008T0122Z-antara-hit-state-runtime`; see
+[hit-state handoff](../../ops/handoffs/antara-hit-state-20261008.md).
+
 Source continuation 2026-10-08: original segment1:a35a/a364 message records
 and selector relocation chain17 map DOWN to4:243c and MOVE to4:2330. MOVE
 stores point at object+1e2/+1e4 and selection at+1e6; DOWN consumes that

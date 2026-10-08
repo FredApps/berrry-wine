@@ -105,10 +105,45 @@ assert.equal(savedFrames.length,3);assert.equal(savedFrames[1].returnSelector,0x
 assert.equal(savedFrames[1].code.bytes.length,256);
 assert.deepEqual(savedFrames[1].objectGatesCandidate.bytes.slice(30),[152,1,144,0,1,0]);
 assert.equal(Buffer.from(gateMemory).toString('hex'),preserved);gates.stop('test');
+// Negative control reproduces the actual capture loss: hover shares DOWN's
+// rows in the old two-phase activation. The new third ACK reserves DOWN's
+// original action frame within exactly the old TOTAL resource ceilings.
+function emit(o, marker, words){o.word(marker);for(const v of words)o.word(v);}
+const floodOptions={...options,getExports:()=>gateEx,getMemory:()=>gateMemory,cpuNow:()=>0};
+const sharedHover=createObserver(floodOptions);sharedHover.activate('old-shape');
+for(let i=0;i<1000;i++)emit(sharedHover,0xca16a9eb,[98306,0x200,0,0x00900198,98306,0]);
+emit(sharedHover,0xca16a9eb,[98306,0x201,1,0x00900198,98306,0]);
+assert(!sharedHover.status().rows.some(r=>r.kind==='route'&&r.words[1]===0x201));sharedHover.stop('test');
+const reservedHover=createObserver(floodOptions);reservedHover.activate('reserved','hover');
+for(let i=0;i<5000;i++)emit(reservedHover,0xca16a9eb,[98306,0x200,0,0x00900198,98306,0]);
+assert.equal(reservedHover.status().raw.hover,32768);assert.equal(reservedHover.status().active,false);
+assert(reservedHover.status().omitted.hover>0);assert.equal(reservedHover.status().errors,0);
+reservedHover.activate('reserved','down');
+emit(reservedHover,0xca16a9eb,[98306,0x201,1,0x00900198,98306,0]);
+emit(reservedHover,0xca16a9f0,[0x2007a,0x2120,0,0,0,0x201,0,0,0,0,0,0,0,0,0]);
+const downFrame=reservedHover.status().rows.find(r=>r.phase==='down'&&r.kind==='call');
+assert.equal(downFrame.owner.savedFrames[1].returnOffset,0x24e8);
+assert.deepEqual(downFrame.owner.savedFrames[1].objectGatesCandidate.bytes.slice(30),[152,1,144,0,1,0]);
+assert.throws(()=>reservedHover.activate('reserved','down'),/rejected/);
+reservedHover.activate('reserved','up');emit(reservedHover,0xca16a9eb,[98306,0x202,0,0x00900198,98306,0]);
+assert(reservedHover.status().rows.some(r=>r.phase==='up'&&r.kind==='route'));
+const budgets=reservedHover.status();
+assert(budgets.rows.length<=128);assert(Object.values(budgets.bytes).reduce((a,b)=>a+b,0)<=32768);
+assert(Object.values(budgets.raw).reduce((a,b)=>a+b,0)<=131072);
+assert(budgets.bytes.hover<=8192&&budgets.bytes.down<=8192&&budgets.bytes.up<=16384);
+reservedHover.stop('test');assert.equal(Buffer.from(gateMemory).toString('hex'),preserved);
+const splitCpu=createObserver({...floodOptions,maxCpuMs:100});splitCpu.activate('cpu-split','hover');
+for(let i=0;i<100;i++)splitCpu.charge(1);assert.equal(splitCpu.status().cpuMs.hover,50);
+splitCpu.activate('cpu-split','down');for(let i=0;i<100;i++)splitCpu.charge(1);assert.equal(splitCpu.status().cpuMs.down,50);
+splitCpu.activate('cpu-split','up');for(let i=0;i<150;i++)splitCpu.charge(1);assert.equal(splitCpu.status().cpuMs.up,100);
+assert.equal(Object.values(splitCpu.status().cpuMs).reduce((a,b)=>a+b,0),200);
 async function coordination(){
  const acks=[];function fake(slot){const l={slot,antaraWin16Ready:true,_seq:0,_pending:new Map()};l.worker={postMessage(m){acks.push(m);const p=l._pending.get(m.seq);l._pending.delete(m.seq);p.resolve({ack:{slot,active:m.t==='antaraActivate',token:m.token,phase:m.phase,deadline:Date.now()+8000}});}};return l;}
  const main=fake(0),owner=fake(1),wine={guestWorker:{link:main},threadManager:{threads:new Map([[1,{link:owner}]])}};
  assert.equal((await activateExisting(wine,'ready','down')).length,2);assert.equal((await activateExisting(wine,'ready','up')).length,2);assert.equal(acks.length,4);
+ const split={guestWorker:{link:fake(0)},threadManager:{threads:new Map([[1,{link:fake(1)}]])}};
+ assert.equal((await activateExisting(split,'split','hover')).length,2);assert.equal((await activateExisting(split,'split','down')).length,2);assert.equal((await activateExisting(split,'split','up')).length,2);
+ await assert.rejects(()=>activateExisting(split,'split','down'),/activation token/);
  wine.threadManager.threads.set(2,{link:fake(2)});await assert.rejects(()=>activateExisting(wine,'ready','up'),/existing Workers/);
  const failed=fake(1);failed.worker.postMessage=m=>{const p=failed._pending.get(m.seq);failed._pending.delete(m.seq);p.resolve({ack:{active:false}});};const bad={guestWorker:{link:fake(0)},threadManager:{threads:new Map([[1,{link:failed}]])}};await assert.rejects(()=>activateExisting(bad,'reject','down'),/click refused/);assert(acks.some(m=>m.t==='antaraStop'));
  console.log('Antara explicit forwarded-owner route, DOWN/UP acknowledgment, late-worker refusal, raw CPU/word caps, original-forward-once, error cleanup, deadline/getter/translator and generated overlay PASS');
