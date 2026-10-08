@@ -1296,7 +1296,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-CRIMSONLAND-WEBGL-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI crimsonland-webgl
+  worker: fresh CLI crimsonland-runtime
   Next: Source/JS route and matching runtime preparation; ordinary Tutorial button hover/click then controlled movement. Browser queued behind both new-game lanes, no runtime grant yet.
   Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
   Evidence: Historical software route scratch/runs/20261006T0500Z-crimsonland-w4-survival; new WebGL evidence pending.
