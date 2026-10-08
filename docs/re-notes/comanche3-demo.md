@@ -1,5 +1,43 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Installed C3 launch and physical input, 2026-10-08
+
+On explicit `cdddc109b87c02f2a683c08da731e585a56fd614`, a single native
+`runDos` launch from eleven SHA-verified preserved installed files reaches
+copyright, animated Dolby intro, Pilot Roster and Duty Roster for Venom,
+Blood Hawk and Argon. No installer/Setup replay, snapshot, guest instruction,
+register or clock forcing. CPU module remains `91747769679ce2e661242d0777c1f0fb5aeffe48cbbe2f71ea9443eaf57a45cf`;
+the DOS JS includes main's rename plus host-shadow guard.
+
+Shared self-contained evidence:
+`scratch/runs/20261008T0551Z-comanche3-installed-gameplay/`. Reviewed
+`screen-014.png` → `screen-034.png` shows ordinary held Down moving Blood Hawk
+to Venom; Duty Roster is reviewed in048/104/150/155. Battle artwork044 is not
+gameplay. Actual port60 make/break logs and read-only BIOS buffer observations
+are retained. Native short taps often show no clear response; held inputs
+do produce menu interaction, but Up sometimes redraws a Pilot Roster background
+after Duty Roster. Operation-selection state, timing, BIOS mirroring and
+rendering causes remain unresolved. No cockpit, flight response or generic
+repair established. C3.SAV32/C3.NAM1674 guest-created files are preserved.
+
+The actual run ended by an explicit host diagnostic stop before its unchanged
+06:20:48.657 deadline,1546.31884wall/146.88242guest seconds,
+1470819156dispatches, clean child0 but guest not exited. No CPU faults or
+unimplemented instructions. Optional calls2f:16/15:c0/10:4f remain recorded;
+exact VBE subfunctions unknown. SETUP.CFG miss does not prove a blocker.
+182actual files38098701bytes retrieved and SHA checked;86pins unchanged,
+owned23064/23071groups and inspector absent, socket baseline/noChrome verified,
+prefix removed61.078seconds after terminal. Root owns fresh no-env
+`bx_698xwqef`, expiry06:30:25.015; no owned execution remains.
+
+Root board06:02 reserves the web press/release and blur/stop repair: current
+`LiveRun.key` sends immediate make+break through `pushKey`, so the held native
+input is not yet a qualified web route. No overlapping source edit made.
+Next: implement/validate that lifecycle, then authenticate C3's actual operation
+selection and cockpit/control response using the preserved installed files.
+No FPS/audio/performance claim. Exact source/input receipts, corrections and
+limitations are in [the installed-launch handoff](../../ops/handoffs/comanche3-installed-gameplay-20261008.md).
+
 ## Native full copy and generic rename repair, 2026-10-08
 
 The fresh continuation on explicit base

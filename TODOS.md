@@ -1239,11 +1239,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche3-installed-gameplay (sole assigned worker)
+  worker: fresh CLI toyvm-held-key-web (sole worker; web-control prerequisite)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Generic AH56 rename repair preserves SETUP.EXE/C3.EXE/RESOURCE.RES; root544 contained hashes and Setup CD-ROM-test/final-black screenshots reviewed. Four native variants passed; root14 handler groups include host-shadow fail-closed guard. Continue from preserved generated installed files through normal mounting/supported tempFiles, inspect Setup prompts and target ordinary C3 gameplay. Do not repeat installer/paging diagnosis; gameplay/FPS/audio unqualified.
+  Next: Native installed C3 startup and Pilot/Duty Rosters verified; root325 contained hashes and pilot-selection change reviewed. No mission/cockpit/gameplay. Fresh phase repairs missing real held-key web lifecycle, then authenticates operation selection; ordinary native physical-only input still returned/redrew menus, cause unresolved. Use verified installed files, no installer/paging replay.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1328,9 +1328,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Expose real held keyboard controls in ToyVM web sessions
   id: TOYVM-HELD-KEY-WEB-20261008
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued behind sole Comanche native worker)
+  worker: fresh CLI toyvm-held-key-web (sole assigned worker)
   Next: Current main web canvas forwards only keydown to LiveRun.key; Machine.pushKey immediately queues make and break, so a physical held key cannot remain pressed. Implement generic press/release with repeat and focus/stop cleanup while preserving BIOS key semantics and existing tap callers; wire dashboard and generated corpus site. Validate on a separate temporary browser, with real held input and visible original-game response. Coordinate tools/toyvm/dos.js/live.js ownership after current worker exits. Native held-key captures alone do not qualify the web launch route.
   Evidence: tools/toyvm/dos.js pushKey; tools/toyvm/live.js key; ops/toyvm-live/live.js canvas keydown; tools/toyvm/site.js generated canvas handler; native Comanche roster response with held input.
   Done: Meaningful key press/release and focus-loss tests plus reviewed browser held-input game response; scoped source/bundles/site changes pushed to main.

@@ -1,7 +1,7 @@
 updated: 2026-10-08T05:03:48.370Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: Comanche3 installed-gameplay is the sole assigned fresh worker after installation-progress exited0 at05:46:12. Generic DOS rename repair preserves installed SETUP/C3/resources; root544 contained hashes and Setup CD-ROM-test/final-black captures reviewed,14 handler groups pass including additional host-shadow guard. Continue from preserved installed files toward Setup completion and ordinary gameplay; no installer replay. Budget mode one worker/checks10+minutes. Warcraft III both-renderer movement reviewed; FPS/audio unverified.
+Current workers: ToyVM held-key web repair is the sole assigned fresh worker after Comanche installed-gameplay exited0 at06:24:33. Original C3 renders Pilot/Duty Rosters and held Down changes pilot selection; root325 hashes and3 captures reviewed, but no mission/cockpit. Current web UI immediately taps keys and cannot express physical holds; fix input lifecycle and browser-test ordinary controls before claiming web launch qualification. Native menu return cause remains unknown. Budget mode one worker/checks10+minutes; FPS/audio unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 
