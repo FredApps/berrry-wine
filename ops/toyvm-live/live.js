@@ -169,7 +169,7 @@
     document.title = t.title + ' · ToyVM';
     $('title').textContent = t.title;
     $('entry').textContent = `${t.entry.program}${t.entry.args ? ' ' + t.entry.args : ''}`;
-    $('pill').textContent = t.launchable ? 'Untested on ToyVM' : t.status === 'blocked' ? 'Blocked on ToyVM' : 'Not available';
+    $('pill').textContent = t.status === 'reviewed-gameplay' ? 'Reviewed ToyVM route' : t.launchable ? 'Untested on ToyVM' : t.status === 'blocked' ? 'Blocked on ToyVM' : 'Not available';
     $('pill').className = 'pill ' + (t.launchable ? 'warn' : 'bad');
     $('verdict').textContent = t.verdict || t.reason || '';
     $('details').innerHTML = blockedView(t);

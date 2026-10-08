@@ -31,16 +31,16 @@
    "text": "ToyVM implements no VCPI (INT 67h AX=DExx).",
    "cite": "tools/toyvm/dos.js INT 67h handler (EMS 4.0 only)"
   },
-  "no-paging": {
-   "text": "ToyVM has no paging; CR3 writes are dropped.",
-   "cite": "tools/toyvm/emit.js MOV CRn (only CR0 kept)"
+  "paging": {
+   "text": "ToyVM implements 386 paging; paging support alone does not qualify an extender or game.",
+   "cite": "tools/toyvm/paging.js; tools/toyvm/paging-exec.js; ops/handoffs/toyvm-paging-complete-20261007.md"
   },
   "pm-dos-16bit": {
    "text": "DOS calls made from protected mode are served with 16-bit offsets, so a flat-model caller passing 32-bit pointers is not served correctly.",
    "cite": "tools/toyvm/dos.js lin() masks the offset to 16 bits"
   },
   "extenders-run": {
-   "text": "Native DOS/4GW/CauseWay gameplay remains unqualified. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.",
+   "text": "DOS/4GW/CauseWay support is not globally qualified; individual reviewed routes remain scoped. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.",
    "cite": "ops/handoffs/toyvm-native-entry-probes-20261007/FINDINGS.md"
   },
   "flat-fs": {
@@ -208,7 +208,7 @@
       "facts": [
        "no-dpmi",
        "no-vcpi",
-       "no-paging",
+       "paging",
        "extenders-run",
        "pm-dos-16bit"
       ]
@@ -622,11 +622,11 @@
     "blockers": [
      {
       "id": "extender",
-      "text": "Sw.exe is a 32-bit program behind DOS/4GW (bound). ToyVM has no DPMI, VCPI or paging and has never run this extender, so it is not expected to start.",
+      "text": "Sw.exe is a 32-bit program behind DOS/4GW (bound). This title requires an extender route that static scanning cannot qualify; consult title-specific reviewed evidence.",
       "facts": [
        "no-dpmi",
        "no-vcpi",
-       "no-paging",
+       "paging",
        "extenders-run",
        "pm-dos-16bit"
       ]
@@ -782,11 +782,11 @@
     "blockers": [
      {
       "id": "extender",
-      "text": "GTADOS/K.EXE is a 32-bit program behind DOS/4GW (external). ToyVM has no DPMI, VCPI or paging and has never run this extender, so it is not expected to start.",
+      "text": "GTADOS/K.EXE is a 32-bit program behind DOS/4GW (external). This title requires an extender route that static scanning cannot qualify; consult title-specific reviewed evidence.",
       "facts": [
        "no-dpmi",
        "no-vcpi",
-       "no-paging",
+       "paging",
        "extenders-run",
        "pm-dos-16bit"
       ]
@@ -845,6 +845,120 @@
     "reason": "ToyVM reads a file whole and synchronously when it is opened, so every file a live session might open must be downloaded before boot; there is no on-demand fetch."
    },
    "fileList": "test/toyvm-dos-corpus/files/gta1-demo.json"
+  },
+  {
+   "id": "comanche3-demo",
+   "title": "Comanche 3 DOS demo",
+   "candidateId": null,
+   "dosGameId": null,
+   "dosboxAppIds": [],
+   "gameDir": "test/binaries/toyvm-installed/comanche3-demo",
+   "entry": {
+    "program": "C3.EXE",
+    "args": "",
+    "env": {}
+   },
+   "entrySource": "Original installed C3.EXE from preserved 20261008T0551Z installed export; original installer media Commanche3-demo-SW, distinct from Comanche Gold. No existing candidate/dos-game provenance entry; no invented candidate ID.",
+   "notes": "docs/re-notes/comanche3-demo.md",
+   "requiredOriginalFiles": [
+    {
+     "path": "C3ICON3.ICO",
+     "guestPath": "C3ICON3.ICO"
+    }
+   ],
+   "payload": {
+    "present": true,
+    "files": 11,
+    "bytes": 57436456,
+    "excluded": {
+     "/\\.ico$/i": 1
+    },
+    "largest": [
+     {
+      "path": "RESOURCE.RES",
+      "size": 55496696
+     },
+     {
+      "path": "SETUP.EXE",
+      "size": 950891
+     },
+     {
+      "path": "C3.EXE",
+      "size": 945297
+     }
+    ]
+   },
+   "programs": [
+    {
+     "name": "C3.EXE",
+     "bytes": 945297,
+     "mode": "real",
+     "extender": null,
+     "packers": [],
+     "newHeader": null
+    }
+   ],
+   "toyvm": {
+    "status": "reviewed-gameplay",
+    "verdict": "Reviewed ToyVM route (4280b855d06d1cb7361325ba671df82fa8001d09): One original launch reaches cockpit and ordinary airborne forward flight plus right bank: heading243/ALT2/SPEED0 -> heading244/ALT10/SPEED5 -> heading250/ALT41/SPEED17. Reviewed landmark continuity and instrument changes; no guest forcing. Recorded keyboard cockpit/forward flight/right bank only. FPS unknown; audio disabled. Combat, mission completion and saves unqualified.",
+    "blockers": [],
+    "cautions": [
+     {
+      "id": "keyboard-only",
+      "text": "A browser session would get keyboard input only.",
+      "facts": [
+       "no-browser-mouse"
+      ]
+     }
+    ],
+    "flatFs": {
+     "filesInSubdirs": 0,
+     "collisions": [],
+     "collisionCount": 0
+    },
+    "evidence": [
+     {
+      "run": "scratch/runs/20261008T1012Z-comanche3-flight-window",
+      "at": "2026-10-08T11:00:35.862Z",
+      "reached": "controlled-flight",
+      "summary": "One original launch reaches cockpit and ordinary airborne forward flight plus right bank: heading243/ALT2/SPEED0 -> heading244/ALT10/SPEED5 -> heading250/ALT41/SPEED17. Reviewed landmark continuity and instrument changes; no guest forcing.",
+      "reviewedGameplay": {
+       "reviewer": "root controlled-flight review 2026-10-08",
+       "resolves": [
+        "extender"
+       ],
+       "build": {
+        "commit": "4280b855d06d1cb7361325ba671df82fa8001d09",
+        "dirty": false,
+        "sourceManifest": "source-identity.json",
+        "wasmSha256": "91747769679ce2e661242d0777c1f0fb5aeffe48cbbe2f71ea9443eaf57a45cf",
+        "runtimeBundleSha256": "53a1d9f72525bfbefcfa1da9d4049723c4e03d6fca88b5f6a55b3f5e2a0936c7"
+       },
+       "limits": [
+        "Recorded keyboard cockpit/forward flight/right bank only.",
+        "FPS unknown; audio disabled. Combat, mission completion and saves unqualified."
+       ],
+       "taskIds": [
+        "NEW-GAME-COMANCHE3-DEMO-20261007"
+       ]
+      }
+     },
+     {
+      "run": "scratch/runs/20261008T1323Z-comanche3-registered-launch",
+      "at": "2026-10-08T13:23:30.415Z",
+      "reached": "registered-startup",
+      "summary": "Ordinary real dashboard catalog link -> registered ToyVM Start -> original Comanche3 copyright screen -> Stop. Eleven originals SHA-verified, actual CPU917477 and bundle53a1d9 identical to accepted flight. Startup check only; FPS unknown/audio disabled; accepted controlled flight remains separately scoped."
+     }
+    ]
+   },
+   "load": {
+    "policy": "preload-all",
+    "preloadFiles": 11,
+    "preloadBytes": 57436456,
+    "lazyFiles": 0,
+    "reason": "ToyVM reads a file whole and synchronously when it is opened, so every file a live session might open must be downloaded before boot; there is no on-demand fetch."
+   },
+   "fileList": "test/toyvm-dos-corpus/files/comanche3-demo.json"
   }
  ]
 }

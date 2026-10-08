@@ -355,6 +355,8 @@ function createReader(options = {}) {
   }
   async function runs(warnings) {
     const result = [];
+    const corpus = await fs.readFile(path.join(root, 'test/toyvm-dos-corpus/manifest.json'), 'utf8').then(JSON.parse).catch(() => null);
+    const explicitRuns = new Set((corpus?.titles || []).flatMap(t => (t.toyvm?.evidence || []).map(e => e.run)));
     for (const directory of ['scratch/runs', 'ops/runs']) {
       let entries;
       try { entries = await fs.readdir(path.join(root, directory), { withFileTypes: true }); }
@@ -366,7 +368,7 @@ function createReader(options = {}) {
           const file = await safeFile(root, `${relative}/result.json`);
           if (!file) continue;
           const r = JSON.parse(await readText(file, MB));
-          if (!r || typeof r !== 'object' || typeof r.candidateId !== 'string' || !date(r.startedAt)) throw new Error('candidateId and ISO startedAt are required');
+          if (!r || typeof r !== 'object' || (typeof r.candidateId !== 'string' && !(r.candidateId === null && explicitRuns.has(relative))) || !date(r.startedAt)) throw new Error('candidateId and ISO startedAt are required');
           const allowed = ['passed', 'failed', 'timeout', 'harness-error', 'running', 'unknown'];
           if (!allowed.includes(r.outcome)) throw new Error('invalid outcome');
           const run = { id: entry.name, key: relative, source: directory, candidateId: r.candidateId, taskId: clip(r.taskId), agentId: clip(r.agentId),

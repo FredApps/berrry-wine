@@ -7,7 +7,7 @@
 // The ToyVM assessment is STATIC: it compares what each program asks for (its
 // bytes, its directory layout, its release's own launch config) with what
 // ToyVM implements, citing the ToyVM source for each fact. It can say a title
-// is blocked; it can never say one is playable. Nothing here runs ToyVM.
+// is blocked; scoped reviewed evidence may qualify a recorded route. Nothing here runs ToyVM.
 //   node tools/toyvm-dos-corpus.js            write the manifests
 //   node tools/toyvm-dos-corpus.js --check    exit 1 if they are stale (payloads needed)
 //   node tools/toyvm-dos-corpus.js --only=ultima4,arena
@@ -25,9 +25,9 @@ const DIR = path.join(ROOT, 'test', 'toyvm-dos-corpus');
 const TOYVM_FACTS = {
   'no-dpmi': { text: 'ToyVM implements no DPMI host (INT 31h); INT 2Fh AX=1687h discovery is unhandled, not a complete DPMI absence protocol.', cite: 'tools/toyvm/dos.js serviceCall (no 0x31); docs/dos-corpus-blockers.md "We implement no DPMI (INT 31h)"' },
   'no-vcpi': { text: 'ToyVM implements no VCPI (INT 67h AX=DExx).', cite: 'tools/toyvm/dos.js INT 67h handler (EMS 4.0 only)' },
-  'no-paging': { text: 'ToyVM has no paging; CR3 writes are dropped.', cite: 'tools/toyvm/emit.js MOV CRn (only CR0 kept)' },
+  'paging': { text: 'ToyVM implements 386 paging; paging support alone does not qualify an extender or game.', cite: 'tools/toyvm/paging.js; tools/toyvm/paging-exec.js; ops/handoffs/toyvm-paging-complete-20261007.md' },
   'pm-dos-16bit': { text: 'DOS calls made from protected mode are served with 16-bit offsets, so a flat-model caller passing 32-bit pointers is not served correctly.', cite: 'tools/toyvm/dos.js lin() masks the offset to 16 bits' },
-  'extenders-run': { text: 'Native DOS/4GW/CauseWay gameplay remains unqualified. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.', cite: 'ops/handoffs/toyvm-native-entry-probes-20261007/FINDINGS.md' },
+  'extenders-run': { text: 'DOS/4GW/CauseWay support is not globally qualified; individual reviewed routes remain scoped. The 2026-10-07 original Daggerfall CauseWay entry reached protected mode but stopped in a repeated decode-failure path; missing DPMI alone is not an observed cause.', cite: 'ops/handoffs/toyvm-native-entry-probes-20261007/FINDINGS.md' },
   'flat-fs': { text: 'ToyVM resolves every DOS path by its basename in one flat directory; there are no subdirectories (no MKDIR/CHDIR).', cite: 'tools/toyvm/dos.js hostPath; INT 21h 39h/3Bh absent' },
   'no-mscdex': { text: 'ToyVM implements no CD-ROM / MSCDEX (INT 2Fh AX=15xx) and cannot mount a disc image.', cite: 'tools/toyvm/dos.js int2f (43xx and 1600 only)' },
   'no-mpu401': { text: 'ToyVM has no MPU-401 MIDI device; ports 0x330/0x331 read 0xFF. Sound Blaster, OPL and GUS are implemented.', cite: 'tools/toyvm/dos.js port table; tools/toyvm/audio.js, opl.js, gus.js' },
@@ -75,7 +75,7 @@ function assess(t, files, scans) {
   const pm = [entry, ...scans.others].filter((s) => s && s.mode.startsWith('protected'));
   for (const s of pm) {
     const ext = s.extender ? `${s.extender.id === 'dos4gw' ? 'DOS/4GW' : s.extender.id === 'causeway' ? 'CauseWay' : s.extender.id} (${s.extender.binding})` : 'an unidentified DOS extender';
-    if (s === entry || s.name === t.entry.program) add(blockers, 'extender', `${s.name} is a 32-bit program behind ${ext}. ToyVM has no DPMI, VCPI or paging and has never run this extender, so it is not expected to start.`, ['no-dpmi', 'no-vcpi', 'no-paging', 'extenders-run', 'pm-dos-16bit']);
+    if (s === entry || s.name === t.entry.program) add(blockers, 'extender', `${s.name} is a 32-bit program behind ${ext}. This title requires an extender route that static scanning cannot qualify; consult title-specific reviewed evidence.`, ['no-dpmi', 'no-vcpi', 'paging', 'extenders-run', 'pm-dos-16bit']);
   }
   // Launchers that EXEC a protected-mode program are blocked by it too.
   if (entry && !entry.mode.startsWith('protected') && pm.length) add(cautions, 'chained-extender', `${pm.map((s) => s.name).join(', ')} ${pm.length > 1 ? 'are' : 'is'} 32-bit behind a DOS extender; if the entry program starts ${pm.length > 1 ? 'them' : 'it'}, the same extender blocker applies.`, ['no-dpmi', 'extenders-run']);
@@ -100,14 +100,25 @@ function assess(t, files, scans) {
   return { status, verdict, blockers, cautions, flatFs: { filesInSubdirs: inSub.length, collisions: collisions.slice(0, 20), collisionCount: collisions.length } };
 }
 
-// Evidence changes the displayed observed boundary, never promotes gameplay or
+// Reviewed evidence qualifies only its recorded route and never
 // erases independent filesystem/device limitations. Original payload hashing is
 // not needed to reconcile an already pinned run into its title metadata.
 function applyEvidence(t, assessment) {
   const result = { ...assessment, blockers: assessment.blockers.map(b => ({ ...b })), cautions: assessment.cautions.map(c => ({ ...c })) };
-  result.evidence = (t.toyvmEvidence || []).map(e => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary }));
-  const last = (t.toyvmEvidence || []).at(-1);
+  result.evidence = (t.toyvmEvidence || []).map(e => ({ run: e.run, at: e.at, reached: e.reached, summary: e.summary, ...(e.reviewedGameplay ? { reviewedGameplay: e.reviewedGameplay } : {}) }));
+  const history = t.toyvmEvidence || [];
+  const last = history.findLast(e => e.reviewedGameplay || e.observedBlocker) || history.at(-1);
   if (!last) return result;
+  const reviewed = last.reviewedGameplay;
+  if (reviewed) {
+    if (!reviewed.reviewer || !reviewed.build?.commit || !/^[a-f0-9]{64}$/.test(reviewed.build.runtimeBundleSha256 || '')
+        || !Array.isArray(reviewed.limits) || !reviewed.limits.length || !Array.isArray(reviewed.resolves)
+        || reviewed.resolves.some(id => id !== 'extender') || typeof last.run !== 'string' || !last.summary) throw Error('invalid reviewed gameplay evidence');
+    result.blockers = result.blockers.filter(b => !reviewed.resolves.includes(b.id));
+    result.status = result.blockers.length ? 'blocked' : 'reviewed-gameplay';
+    result.verdict = 'Reviewed ToyVM route (' + reviewed.build.commit + '): ' + last.summary + ' ' + reviewed.limits.join(' ');
+    return result;
+  }
   const observed = last.observedBlocker;
   if (observed) {
     if (![observed.id, observed.text, observed.replaces].every(x => typeof x === 'string' && x.length)
@@ -154,9 +165,22 @@ function mergeSelectedManifest(previous, current, only) {
   if (!previous || !Array.isArray(previous.titles)) throw new Error('selected regeneration needs existing manifest');
   const selected = new Set(only), rows = new Map(current.titles.map(t => [t.id, t]));
   for (const id of selected) {
-    if (!rows.has(id) || !previous.titles.some(t => t.id === id)) throw new Error('unknown selected title ' + id);
+    if (!rows.has(id)) throw new Error('unknown selected title ' + id);
   }
-  return { ...previous, titles: previous.titles.map(t => selected.has(t.id) ? rows.get(t.id) : t) };
+  const refreshFacts = t => {
+    if (!(JSON.stringify(t.toyvm) || '').includes('no-paging')) return t;
+    const copy = JSON.parse(JSON.stringify(t));
+    for (const b of [...(copy.toyvm.blockers || []), ...(copy.toyvm.cautions || [])]) {
+      b.facts = (b.facts || []).map(id => id === 'no-paging' ? 'paging' : id);
+      b.text = b.text.replace('ToyVM has no DPMI, VCPI or paging and has never run this extender, so it is not expected to start.', 'This title requires an extender route that static scanning cannot qualify; consult title-specific reviewed evidence.');
+    }
+    return copy;
+  };
+  return { ...previous, toyvmFacts: current.toyvmFacts || previous.toyvmFacts, titles: [...previous.titles.map(t => selected.has(t.id) ? rows.get(t.id) : refreshFacts(t)), ...current.titles.filter(t => !previous.titles.some(p => p.id === t.id))] };
+}
+
+function verifyOriginalFiles(t, files) {
+  if (t.originalFiles && (files.length !== t.originalFiles.length || t.originalFiles.some(pin => !files.some(f => f.path === pin.path && f.size === pin.size && f.sha256 === pin.sha256)))) throw Error('original payload hash mismatch: ' + t.id);
 }
 
 function build(only) {
@@ -177,6 +201,7 @@ function build(only) {
     const required = requiredOriginalFiles(t, base, rels);
     rels.push(...required); rels.sort();
     const files = rels.map((r) => { const f = path.join(base, r); return { path: r, size: fs.statSync(f).size, sha256: sha256(f), load: 'preload' }; });
+    verifyOriginalFiles(t, files);
     const scanOf = (p) => { const hit = findCi(rels, p); return hit ? { ...scanDosExe(fs.readFileSync(path.join(base, hit)), hit), name: hit } : null; };
     const scans = { entry: scanOf(t.entry.program), others: (t.otherPrograms || []).map(scanOf).filter(Boolean) };
     const bytes = files.reduce((n, f) => n + f.size, 0);
@@ -204,7 +229,7 @@ function parseOnly(argv) {
   if (ids.some(id => !/^[a-z0-9][a-z0-9-]*$/.test(id))) throw new Error('expected nonempty --only title IDs');
   return ids;
 }
-module.exports = { build, assess, TOYVM_FACTS, requiredOriginalFiles, mergeSelectedManifest, parseOnly, applyEvidence };
+module.exports = { build, assess, TOYVM_FACTS, requiredOriginalFiles, mergeSelectedManifest, parseOnly, applyEvidence, verifyOriginalFiles };
 
 if (require.main === module) {
   const only = parseOnly(process.argv.slice(2));

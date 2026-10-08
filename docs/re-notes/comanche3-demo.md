@@ -1,5 +1,24 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Normal registered dashboard launch, 2026-10-08
+
+Title `comanche3-demo` now uses the normal DOS/ToyVM dashboard catalog,
+`/toyvm/?title=comanche3-demo`, title API and pinned eleven-file manifest.
+Durable originals live in gitignored
+`test/binaries/toyvm-installed/comanche3-demo/`; every size/SHA is pinned in
+`test/toyvm-dos-corpus/titles.json`. Original exports remain unchanged.
+There is no existing candidate provenance entry, so candidateId stays null.
+
+`scratch/runs/20261008T1323Z-comanche3-registered-launch/` records one ordinary
+Start showing original Comanche3 copyright text and ordinary Stop,16.837seconds.
+Actual CPU917477/bundle53a1d9 and44 source/font pins match accepted flight.
+The separate sealed flight result below remains unchanged and explicitly
+associated with this ToyVM title; DOSBox evidence is independent.
+Reviewed flight covers the recorded build/keyboard route only. FPS unknown,
+audio disabled; combat/mission completion/saves remain unqualified.
+See [the integration handoff](../../ops/handoffs/comanche3-catalog-result-20261008.md)
+for tests, exact identity, limits and verified remote cleanup.
+
 ## Original cockpit and controlled flight, 2026-10-08
 
 On explicit integrated source `4280b855d`, one user-authorized longer browser

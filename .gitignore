@@ -83,3 +83,6 @@ sitemap.xml
 # The DOS corpus report is generated into docs/dos-corpus and is
 # committed; the blanket *.png above would otherwise drop its screenshots.
 !docs/dos-corpus/shots/*.png
+
+# Private installed DOS payloads; manifests alone are versioned.
+test/binaries/toyvm-installed/

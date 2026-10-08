@@ -126,3 +126,17 @@ test('the existing authenticated gateway protects every /toyvm request; a sessio
     assert.equal(JSON.parse((await req('/toyvm/api/title?id=ok', cookie)).body).launchable, true);
   } finally { await new Promise((r) => gateway.close(r)); await new Promise((r) => upstream.close(r)); }
 });
+
+test('reviewed route launch validates entry, all files and actual payload availability', async () => {
+  const root = fixture();
+  const p = path.join(root, 'test/toyvm-dos-corpus/manifest.json');
+  const m = JSON.parse(fs.readFileSync(p)); m.titles[0].toyvm.status = 'reviewed-gameplay'; fs.writeFileSync(p, JSON.stringify(m));
+  const { titleView, validFiles } = require('./toyvm-server');
+  assert.equal((await titleView(root, 'ok')).launchable, true);
+  const list = JSON.parse(fs.readFileSync(path.join(root, 'test/toyvm-dos-corpus/files/ok.json')));
+  assert.equal(validFiles({ program: 'ABSENT.EXE' }, list.files), false);
+  assert.equal(validFiles({ program: 'GAME.COM' }, [...list.files, { ...list.files[0], path: 'sub/game.com' }]), false);
+  assert.equal(validFiles({ program: 'GAME.COM' }, [{ ...list.files[0], sha256: 'bad' }]), false);
+  fs.unlinkSync(path.join(root, 'payload/ok/DATA.DAT'));
+  assert.equal((await titleView(root, 'ok')).launchable, false);
+});

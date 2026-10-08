@@ -70,7 +70,7 @@ check('flat real-mode program with no device needs: untested, never "works"', ()
 check('extender-bound entry: blocked, citing DPMI/VCPI/paging facts', () => {
   const a = assess(title(), [file('GAME.EXE')], { entry: pm, others: [] });
   assert.strictEqual(a.status, 'blocked'); assert.deepStrictEqual(ids(a.blockers), ['extender']);
-  for (const f of ['no-dpmi', 'no-vcpi', 'no-paging', 'extenders-run']) assert.ok(a.blockers[0].facts.includes(f), f);
+  for (const f of ['no-dpmi', 'no-vcpi', 'paging', 'extenders-run']) assert.ok(a.blockers[0].facts.includes(f), f);
   assert.match(a.blockers[0].text, /CauseWay \(bound\)/);
 });
 check('basename collision across directories: blocked by the flat filesystem', () => {
@@ -121,7 +121,7 @@ check('a title screenshot never promotes gameplay or clears independent blockers
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'toyvm-dos-corpus', 'manifest.json'), 'utf8'));
 check('committed manifest never calls a title playable or working', () => {
   for (const t of manifest.titles) {
-    assert.ok(['blocked', 'untested', 'unknown'].includes(t.toyvm.status), `${t.id}: ${t.toyvm.status}`);
+    assert.ok(['blocked', 'untested', 'unknown', 'reviewed-gameplay'].includes(t.toyvm.status), `${t.id}: ${t.toyvm.status}`);
     assert.ok(!/\b(playable|works)\b/i.test(t.toyvm.verdict.replace(/not a claim that it works/, '')), `${t.id}: ${t.toyvm.verdict}`);
   }
 });
@@ -136,5 +136,27 @@ if (allPresent) {
   });
 } else console.log('skip freshness check: local payloads absent');
 
+check('reviewed extender route preserves CD and filesystem blockers and source assessment', () => {
+ const base = assess(title({devices:{cdrom:true}}), [file('GAME.EXE'),file('A/X'),file('B/X')], {entry:pm,others:[]});
+ const e = {run:'scratch/runs/flight', summary:'Controlled flight.',reviewedGameplay:{reviewer:'root',build:{commit:'reference',runtimeBundleSha256:'a'.repeat(64)},limits:['FPS unknown; audio disabled'],resolves:['extender']}};
+ const result = applyEvidence({toyvmEvidence:[e]},base);
+ assert.deepStrictEqual(ids(result.blockers),['flat-fs-collision','cdrom']); assert.equal(result.status,'blocked');
+ assert.equal(base.blockers[0].id,'extender'); assert.match(result.verdict,/reference/);
+ const clear = applyEvidence({toyvmEvidence:[e]},assess(title(),[file('GAME.EXE')],{entry:pm,others:[]}));
+ assert.equal(clear.status,'reviewed-gameplay'); assert.match(clear.verdict,/FPS unknown/);
+ const startup={run:'new-startup',summary:'Registered startup only.',reached:'registered-startup'};
+ assert.equal(applyEvidence({toyvmEvidence:[e,startup]},assess(title(),[file('GAME.EXE')],{entry:pm,others:[]})).status,'reviewed-gameplay');
+ assert.throws(()=>applyEvidence({toyvmEvidence:[{...e,reviewedGameplay:{...e.reviewedGameplay,resolves:['cdrom']}}]},base),/invalid reviewed/);
+});
+check('selected insertion preserves every unrelated row',()=>{
+ const {mergeSelectedManifest}=require('../tools/toyvm-dos-corpus');const old={id:'old',payload:{present:true}};
+ const row={id:'new'};const result=mergeSelectedManifest({titles:[old]},{titles:[row]},['new']);
+ assert.deepStrictEqual(result.titles,[old,row]);assert.equal(result.titles[0],old);
+});
+check('pinned originals reject byte/hash drift and missing or extra files',()=>{
+ const {verifyOriginalFiles}=require('../tools/toyvm-dos-corpus');const f={path:'C3.EXE',size:2,sha256:'a'.repeat(64)};
+ const t={id:'c3',originalFiles:[f]};verifyOriginalFiles(t,[f]);
+ for(const files of [[],[f,{...f,path:'extra'}],[{...f,sha256:'b'.repeat(64)}],[{...f,size:3}]]) assert.throws(()=>verifyOriginalFiles(t,files),/original payload hash mismatch/);
+});
 console.log(`${n - failed}/${n} passed`);
 process.exit(failed ? 1 : 0);

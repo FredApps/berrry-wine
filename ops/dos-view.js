@@ -10,14 +10,14 @@ const DOS_FILTERS = [['all', 'All'], ['available', 'Payload here'], ['launchable
 const dosMatch = (r, f) => f === 'all' || (f === 'available' && r.flags.available) || (f === 'launchable' && r.flags.launchable) || (f === 'gameplay' && r.flags.gameplayReviewed) || (f === 'perf' && r.flags.performanceMeasured) || (f === 'blocked' && r.flags.blocked);
 const dosSafe = (u, prefix) => typeof u === 'string' && u.startsWith(prefix) && !/[\u0000- \\]/.test(u);
 const dosBytes = (n) => !Number.isFinite(n) ? '?' : n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB';
-const dosToyvmTone = { blocked: 'bad', untested: 'warn', unknown: '' };
+const dosToyvmTone = { blocked: 'bad', 'reviewed-gameplay': 'good', untested: 'warn', unknown: '' };
 // Row cells stay brief; the full cited text is in Details. (Cutting the prose
 // at its first ". " broke on "e.g." -- a fixed phrase per blocker id cannot.)
-const DOS_BLOCKER_SHORT = { extender: 'a 32-bit DOS extender ToyVM has never run', 'flat-fs-collision': 'clashing file names in subfolders', cdrom: 'needs a CD-ROM drive', vbe2: 'needs VESA 2.0', 'entry-missing': 'entry program missing' };
+const DOS_BLOCKER_SHORT = { extender: 'an unqualified 32-bit DOS extender', 'flat-fs-collision': 'clashing file names in subfolders', cdrom: 'needs a CD-ROM drive', vbe2: 'needs VESA 2.0', 'entry-missing': 'entry program missing' };
 const dosLevelTone = { 'gameplay-reviewed': 'good', 'in-progress': 'warn', 'not-routed': '' };
 
 function dosToyvmCell(r) {
-  const t = r.toyvm, label = t.status === 'blocked' ? 'Blocked on ToyVM' : t.status === 'untested' ? 'Untested on ToyVM' : 'ToyVM: unknown';
+  const t = r.toyvm, label = t.status === 'reviewed-gameplay' ? 'Reviewed ToyVM flight route' : t.status === 'blocked' ? 'Blocked on ToyVM' : t.status === 'untested' ? 'Untested on ToyVM' : 'ToyVM: unknown';
   const action = t.launch && dosSafe(t.launch.url, '/toyvm/') ? `<a class="emulator-launch" href="${escape(t.launch.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(t.launch.label + ' — ' + r.title)}">${escape(t.launch.label)} ↗</a>`
     : `<p class="sub">${escape(t.blockers.length ? 'Blocked by: ' + t.blockers.map((b) => DOS_BLOCKER_SHORT[b.id] || b.id).join(', ') + '. Details has the sources.' : t.reason)}</p>`;
   const got = (t.evidence || []).at(-1);
@@ -34,7 +34,7 @@ function dosRowHtml(r) {
     return `<article class="panel dos-row"><div class="dos-head"><h3>${escape(r.title)}</h3>${badge(r.label, 'good')}</div><p class="sub">${escape(r.summary)}</p><div class="links">${r.galleryGithub ? link(r.galleryGithub, 'Gallery source') : ''}${r.basis.map((b) => b.github ? link(b.github, b.path) : '').join('')}</div></article>`;
   }
   const ev = [r.flags.gameplayReviewed ? badge('Gameplay reviewed', 'good') : '', r.flags.performanceMeasured ? badge('Performance measured', 'good') : '',
-    r.latestRun ? badge('Latest run: ' + r.latestRun.outcome, tone(r.latestRun.outcome)) : badge('No recorded run')].join('');
+    r.latestRun ? badge('Latest DOSBox run: ' + r.latestRun.outcome, tone(r.latestRun.outcome)) : badge('No recorded DOSBox run')].join('');
   const size = r.payload.present ? `${r.payload.files} files · ${dosBytes(r.payload.bytes)}` : 'payload not on this machine';
   return `<article class="panel dos-row"><div class="dos-head"><h3>${escape(r.title)}</h3><code>${escape(r.entry.program)}${r.entry.args ? ' ' + escape(r.entry.args) : ''}</code></div>`
     + `<p class="sub">${escape(size)}${r.programs[0]?.extender ? ' · ' + escape(r.programs[0].extender) : r.programs[0] ? ' · ' + escape(r.programs[0].mode) : ''}</p>`
@@ -47,7 +47,7 @@ function dosView() {
   const counts = DOS_FILTERS.map(([id, label]) => `<button data-dos-filter="${id}" aria-pressed="${dosFilter === id}"><strong>${c.rows.filter((r) => dosMatch(r, id)).length}</strong> ${label}</button>`).join('');
   return title('DOS / ToyVM corpus', 'Original MS-DOS programs and the engine that would run each one. A launch link proves files and build only; gameplay is what a reviewed run shows.')
     + `<div class="release-counts dos-filters" role="group" aria-label="DOS corpus filters">${counts}</div>`
-    + `<p class="source-note">ToyVM verdicts are static: what each program asks for, against what ToyVM implements, with the source for each fact. “Untested” is not a claim that it works.${c.github?.manifest ? ' ' + link(c.github.manifest, 'Corpus manifest') : ''}</p>`
+    + `<p class="source-note">ToyVM verdicts combine scoped reviewed evidence and static assessment: what each program asks for, against what ToyVM implements, with the source for each fact. “Untested” is not a claim that it works.${c.github?.manifest ? ' ' + link(c.github.manifest, 'Corpus manifest') : ''}</p>`
     + `<div class="dos-list">${rows.map(dosRowHtml).join('') || empty('No DOS titles match this filter.')}</div>`;
 }
 function dosFactList(list) {
@@ -62,12 +62,12 @@ function dosDetail(id) {
     + `<div class="dos-routes">${dosToyvmCell(r)}${dosDosboxCell(r)}</div>`
     + `<h3>Entry program</h3><p><code>${escape(r.entry.program)}${r.entry.args ? ' ' + escape(r.entry.args) : ''}</code></p><p class="sub">${escape(r.entrySource)}</p>`
     + (r.programs.length ? `<ul>${r.programs.map((x) => `<li><code>${escape(x.name)}</code> · ${escape(x.mode)}${x.extender ? ' · ' + escape(x.extender) : ''}</li>`).join('')}</ul>` : '')
-    + `<h3>ToyVM</h3><p>${escape(r.toyvm.verdict)}</p>${(r.toyvm.evidence || []).map((e) => `<p class="sub">${escape(when(e.at))} · ${escape(e.summary)} <code>${escape(e.run)}</code>${e.present ? '' : ' (run folder not on this machine)'}</p>`).join('')}${r.toyvm.blockers.length ? `<ul>${dosFactList(r.toyvm.blockers)}</ul>` : ''}${r.toyvm.cautions.length ? `<details><summary>Other limits (${r.toyvm.cautions.length})</summary><ul>${dosFactList(r.toyvm.cautions)}</ul></details>` : ''}`
+    + `<h3>ToyVM</h3><p>${escape(r.toyvm.verdict)}</p>${(r.toyvm.screenshots || []).map(x => `<img src="${escape(x.url)}" alt="${escape('ToyVM reviewed route — ' + x.name)}" loading="lazy">`).join('')}${(r.toyvm.evidence || []).map((e) => `<p class="sub">${escape(when(e.at))} · ${escape(e.summary)} <code>${escape(e.run)}</code>${e.present ? '' : ' (run folder not on this machine)'}</p>${e.reviewedGameplay ? `<p class="sub">Reviewed by ${escape(e.reviewedGameplay.reviewer)} · reference build <code>${escape(e.reviewedGameplay.build?.commit)}</code> · runtime <code>${escape(e.reviewedGameplay.build?.runtimeBundleSha256)}</code></p><p class="sub">${escape((e.reviewedGameplay.limits || []).join(' '))}</p>` : ''}`).join('')}${r.toyvm.blockers.length ? `<ul>${dosFactList(r.toyvm.blockers)}</ul>` : ''}${r.toyvm.cautions.length ? `<details><summary>Other limits (${r.toyvm.cautions.length})</summary><ul>${dosFactList(r.toyvm.cautions)}</ul></details>` : ''}`
     + `<h3>Win98 emulator + DOSBox.exe</h3>${s ? `<p>${escape(s.summary)}</p><p class="sub">As of ${escape(when(s.asOf))}${s.stale ? ' · a newer run exists; this summary may be stale' : ''}</p><div class="links">${s.basis.map((b) => b.github ? link(b.github, b.path) : b.source ? link(b.source, b.path) : `<span class="sub">${escape(b.path)}${b.present ? '' : ' (missing)'}</span>`).join('')}</div>` : `<p class="sub">${escape(r.dosbox.reason)}</p>`}`
     + `<h3>Payload</h3><p class="sub">${r.payload.present ? `${r.payload.files} files, ${dosBytes(r.payload.bytes)}, read in place; ${escape(r.load?.policy === 'preload-all' ? 'all downloaded before boot (ToyVM cannot fetch on demand)' : r.load?.policy || '')}.${excluded ? ' GOG wrapper files left out: ' + escape(excluded) + '.' : ''}` : escape(r.payload.reason)}</p><div class="links">${r.fileListGithub ? link(r.fileListGithub, 'File manifest (size + sha256)') : ''}</div>`
     + `<h3>Provenance</h3><p class="sub">${p.packages.map((x) => `${escape(x.url)}${x.sha1 ? ' · sha1 ' + escape(x.sha1) : ''}`).join('<br>') || 'No package recorded.'}</p><p class="sub">${escape(p.license)}</p><div class="links">${p.sourcePage ? link(p.sourcePage, 'Source page') : ''}${p.github ? link(p.github, p.manifest) : ''}${r.notes?.source ? link(r.notes.source, 'Investigation notes') : ''}${r.notes?.github ? link(r.notes.github, 'Notes on GitHub') : ''}</div>`
-    + `<h3>Evidence</h3>${shots}${r.performance ? `<p>${badge('Measured ' + (r.performance.fps === null ? '' : r.performance.fps.toFixed(1) + ' ') + r.performance.metric, 'good')} ${escape(r.performance.scene)}</p>` : '<p class="sub">No performance measurement recorded.</p>'}`
-    + `<div class="panel">${runRows(state.runs.filter((x) => r.latestRun && (x.candidateId === state.runs.find((y) => y.key === r.latestRun.key)?.candidateId)).slice(0, 12))}</div>`
+    + `<h3>DOSBox evidence</h3>${shots}${r.performance ? `<p>${badge('Measured ' + (r.performance.fps === null ? '' : r.performance.fps.toFixed(1) + ' ') + r.performance.metric, 'good')} ${escape(r.performance.scene)}</p>` : '<p class="sub">No performance measurement recorded.</p>'}`
+    + `<div class="panel">${runRows(state.runs.filter((x) => r.latestRun && (x.key === r.latestRun.key)).slice(0, 12))}</div>`
     + `<h3>Linked tasks</h3><div class="panel">${taskRows(state.tasks.filter((t) => r.tasks.some((x) => x.id === t.id)))}</div>`);
 }
 document.addEventListener('click', (event) => {
