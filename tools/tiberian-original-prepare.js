@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),cp=require('child_process'),crypto=require('crypto'),zlib=require('zlib');
-const wt=path.resolve(__dirname,'..'),dir=process.argv[2],prior='/home/user/wine-assembly/scratch/runs/20261008T002800Z-tiberian-release-preparation',accepted='/home/user/wine-assembly/scratch/runs/20261008-tiberian-return-semantics',prefix='/home/user/tiberian-original-20261008';
+const wt=path.resolve(__dirname,'..'),dir=process.argv[2],prior='/home/user/wine-assembly/scratch/runs/20261008T002800Z-tiberian-release-preparation',accepted='/home/user/wine-assembly/scratch/runs/20261008-tiberian-return-semantics',prefix=process.argv[3];
+if(!dir||!/^\/home\/user\/tiberian-focused-[a-z0-9-]+$/.test(prefix||''))throw Error('usage: prepare EVIDENCE_DIR /home/user/tiberian-focused-UNIQUE');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),replace=s=>s.replaceAll('/home/user/tiberian-release-20261008',prefix);
 function untar(file){const b=zlib.gunzipSync(fs.readFileSync(file)),m=new Map();for(let o=0;o+512<=b.length;){const h=b.subarray(o,o+512),str=(a,n)=>h.subarray(a,a+n).toString().split('\0')[0],name=(str(345,155)?str(345,155)+'/':'')+str(0,100),n=parseInt(str(124,12).trim()||'0',8);if(!name)break;if(h[156]===48||h[156]===0)m.set(name,b.subarray(o+512,o+512+n));o+=512+Math.ceil(n/512)*512;}return m;}
 fs.mkdirSync(dir,{recursive:true});const closure=untar(accepted+'/source-build-closure.tar.gz'),checked=[];
