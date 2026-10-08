@@ -5459,30 +5459,16 @@
       (i32.load offset=12 (global.get $WINDOW_RECT_SCRATCH))
       (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH))))
 
-  ;; Mouse-message coordinate origin for captured input. Win32 mouse lParams
-  ;; are client-relative for normal top-level windows, but child controls and
-  ;; popup windows (combo/list dropdowns, menus) use their own window origin.
+  ;; Client mouse lParams use the target HWND's client origin, including
+  ;; captioned popups and captured input. Borderless menus/controls and shaped
+  ;; whole-surface clients naturally have coincident client/window origins.
   (func $wnd_mouse_msg_origin_x (param $hwnd i32) (result i32)
-    (local $top i32) (local $style i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (local.set $top (call $wnd_top_level (local.get $hwnd)))
-    (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (if (i32.or
-          (i32.and (local.get $style) (i32.const 0x40000000))
-          (i32.and (call $wnd_get_style (local.get $top)) (i32.const 0x80000000)))
-      (then (return (call $wnd_window_screen_x (local.get $hwnd)))))
-    (call $wnd_client_screen_x (local.get $top)))
+    (call $wnd_client_screen_x (local.get $hwnd)))
 
   (func $wnd_mouse_msg_origin_y (param $hwnd i32) (result i32)
-    (local $top i32) (local $style i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (local.set $top (call $wnd_top_level (local.get $hwnd)))
-    (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (if (i32.or
-          (i32.and (local.get $style) (i32.const 0x40000000))
-          (i32.and (call $wnd_get_style (local.get $top)) (i32.const 0x80000000)))
-      (then (return (call $wnd_window_screen_y (local.get $hwnd)))))
-    (call $wnd_client_screen_y (local.get $top)))
+    (call $wnd_client_screen_y (local.get $hwnd)))
 
   ;; Fill MSG.time/MSG.pt for delivered input. Real Win32 records screen-space
   ;; cursor coordinates in MSG.pt and GetMessagePos(); client-relative lParam is
@@ -5496,9 +5482,13 @@
         (i32.and
           (i32.ge_u (local.get $msg) (i32.const 0x0200))
           (i32.le_u (local.get $msg) (i32.const 0x020D)))
-        (i32.and
-          (i32.ge_u (local.get $msg) (i32.const 0x00A0))
-          (i32.le_u (local.get $msg) (i32.const 0x00AD))))
+        (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0084))
+          (i32.or
+            (i32.eq (local.get $msg) (i32.const 0x020E))
+            (i32.and
+              (i32.ge_u (local.get $msg) (i32.const 0x00A0))
+              (i32.le_u (local.get $msg) (i32.const 0x00AD))))))
       (then
         (local.set $x
           (i32.add
@@ -5508,6 +5498,16 @@
           (i32.add
             (call $wnd_mouse_msg_origin_y (local.get $hwnd))
             (i32.extend16_s (i32.shr_u (local.get $lparam) (i32.const 16)))))
+        ;; Non-client input, hit-testing and both wheel messages already carry
+        ;; screen coordinates. Do not add the client origin a second time.
+        (if (i32.or
+              (i32.lt_u (local.get $msg) (i32.const 0x0200))
+              (i32.or
+                (i32.eq (local.get $msg) (i32.const 0x020A))
+                (i32.eq (local.get $msg) (i32.const 0x020E))))
+          (then
+            (local.set $x (i32.extend16_s (local.get $lparam)))
+            (local.set $y (i32.extend16_s (i32.shr_u (local.get $lparam) (i32.const 16))))))
         (global.set $last_msg_pos_x (local.get $x))
         (global.set $last_msg_pos_y (local.get $y))))
     (global.set $last_msg_time (call $host_get_ticks))

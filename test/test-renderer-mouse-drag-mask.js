@@ -470,4 +470,48 @@ ownerRenderer.handleKeyPress(88);
 assert.strictEqual(appBChars, 1,
   'keyboard input should retain the last clicked app across other app run slices');
 
+// Captioned WS_POPUP windows still receive client-relative mouse messages.
+// Exercise bootstrap geometry and exported geometry (including a region whose
+// published client rect is authoritative), then capture and cached release.
+for (const exported of [false, true]) {
+  const popup = new Win98Renderer(canvas);
+  const wasm = { exports: exported ? {
+    wnd_mouse_msg_origin_x: () => 3,
+    wnd_mouse_msg_origin_y: () => 23,
+    wnd_top_level: () => 700,
+  } : {} };
+  popup.wasm = wasm;
+  popup.windows[700] = {
+    hwnd: 700, visible: true, isChild: false, isPopup: true,
+    x: 0, y: 0, w: 640, h: 480, style: 0x90c800c0,
+    hasCaption: true, zOrder: 1, wasm,
+    ...(exported ? { region: { rects: [{ x: 0, y: 0, w: 640, h: 480 }] } } : {}),
+  };
+  popup.handleMouseDown(411, 167, 0);
+  assert.deepStrictEqual(popup.inputQueue.slice(-2).map(e => [e.msg, e.lParam]),
+    [[0x84, 0x00a7019b], [0x201, 0x00900198]],
+    'captioned popup keeps screen hit-test and client button coordinates');
+  assert.deepStrictEqual(popup._resolveCaptureTarget(700, wasm), {
+    win: popup.windows[700], screenX: 3, screenY: 23, targetHwnd: 700, wasm,
+  }, 'capture uses the same client origin as the press');
+  popup.handleMouseMove(421, 177);
+  popup.handleMouseUp(421, 177, 0);
+  for (const msg of [0x200, 0x202]) {
+    assert.strictEqual(popup.inputQueue.find(e => e.msg === msg).lParam, 0x009a01a2,
+      'drag and cached release retain captioned popup client coordinates');
+  }
+}
+
+const insetChildRenderer = new Win98Renderer(canvas);
+const insetChildWasm = { exports: {
+  wnd_child_from_point_deep: () => 801,
+  wnd_window_screen_x: () => 18,
+  wnd_window_screen_y: () => 36,
+  wnd_mouse_msg_origin_x: () => 20,
+  wnd_mouse_msg_origin_y: () => 40,
+} };
+assert.deepStrictEqual(insetChildRenderer._hitTestDeepChild({ hwnd: 800, wasm: insetChildWasm }, 50, 60),
+  { hwnd: 801, sx: 20, sy: 40 },
+  'deep child routing uses the same target client origin as capture and MSG.pt');
+
 console.log('PASS  renderer mouse drag moves carry button state');

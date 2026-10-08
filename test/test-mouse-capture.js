@@ -40,6 +40,17 @@ function makeWndProc(observed) {
 }
 
 const extraWat = String.raw`
+  (func (export "test_mouse_geometry")
+      (param $hwnd i32) (param $style i32) (param $parent i32)
+      (param $left i32) (param $top i32)
+    (drop (call $wnd_set_style (local.get $hwnd) (local.get $style)))
+    (call $wnd_set_parent (local.get $hwnd) (local.get $parent))
+    (call $client_rect_set (local.get $hwnd) (local.get $left)
+      (local.get $top) (i32.const 637) (i32.const 476)))
+  (func (export "test_mouse_tail") (param $ptr i32) (param $hwnd i32)
+      (param $msg i32) (param $lp i32)
+    (call $msg_store_input_tail (local.get $ptr) (local.get $hwnd)
+      (local.get $msg) (local.get $lp)))
   (func (export "test_make_capture_window")
       (param $proc i32) (param $tid i32) (result i32)
     (local $saved_tid i32) (local $hwnd i32)
@@ -88,7 +99,7 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: e, memory } = await bootRenderHarness({
+  const { exports: e, memory, renderer, instance } = await bootRenderHarness({
     extraWat,
     fonts: 'none',
     extraHostOverrides: {
@@ -188,6 +199,60 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_capture_raw(), 0,
     'destroying the capture window clears browser routing state');
   assert.strictEqual(e.test_get_capture(), 0);
+
+  const popup = e.test_make_capture_window(proc, 1) >>> 0;
+  const msgPtr = e.guest_alloc(28) >>> 0;
+  renderer.windows[popup] = {
+    hwnd: popup, visible: true, isChild: false, isPopup: true,
+    x: 0, y: 0, w: 640, h: 480, style: 0x90c800c0,
+    hasCaption: true, zOrder: 1, wasm: instance,
+  };
+  e.test_mouse_geometry(popup, 0x90c800c0, 0, 3, 23);
+  assert.deepStrictEqual([e.wnd_mouse_msg_origin_x(popup), e.wnd_mouse_msg_origin_y(popup)],
+    [3, 23], 'captioned WS_POPUP has a client mouse origin');
+  e.test_set_capture(popup);
+  renderer.handleMouseMove(411, 167);
+  const captured = renderer.inputQueue.find(event => event.msg === 0x200);
+  assert.strictEqual(captured.hwnd, popup);
+  assert.strictEqual(captured.lParam, 0x00900198, 'real USER capture routes client coordinates');
+  e.test_mouse_tail(msgPtr, popup, captured.msg, captured.lParam);
+  const point = () => [20, 24].map(off => view.getInt32(toWasm(msgPtr + off), true));
+  assert.deepStrictEqual(point(), [411, 167], 'MSG.pt reconstructs screen point from popup client lParam');
+  e.test_release_capture();
+  renderer.inputQueue.length = 0;
+  renderer.handleMouseDown(411, 167, 0);
+  renderer.handleMouseUp(421, 177, 0);
+  const released = renderer.inputQueue.find(event => event.msg === 0x202);
+  assert.strictEqual(released.lParam, 0x009a01a2, 'release after capture uses the same popup client contract');
+  e.test_mouse_tail(msgPtr, popup, released.msg, released.lParam);
+  assert.deepStrictEqual(point(), [421, 177]);
+  for (const message of [0x84, 0xa0, 0xa1, 0x20a, 0x20e]) {
+    e.test_mouse_tail(msgPtr, popup, message, 0x00a7019b);
+    assert.deepStrictEqual(point(), [411, 167], 'screen-coordinate message preserves MSG.pt');
+  }
+
+  for (const [label, style, left, top] of [
+    ['borderless popup', 0x90000000, 0, 0],
+    ['native menu surface', 0x90800000, 0, 0],
+    ['whole-surface region', 0x90c800c0, 0, 0],
+  ]) {
+    e.test_mouse_geometry(popup, style, 0, left, top);
+    assert.deepStrictEqual([e.wnd_mouse_msg_origin_x(popup), e.wnd_mouse_msg_origin_y(popup)],
+      [0, 0], label + ' retains coincident window/client origins');
+    e.test_mouse_tail(msgPtr, popup, 0x201, 0x00a7019b);
+    assert.deepStrictEqual(point(), [411, 167], label + ' preserves screen MSG.pt');
+  }
+  // Child coordinates start at the parent's client area; a child client inset
+  // must also participate. An owned popup must never inherit owner geometry.
+  e.test_mouse_geometry(popup, 0x90c800c0, 0, 3, 23);
+  const child = e.test_make_capture_window(proc, 1) >>> 0;
+  e.test_mouse_geometry(child, 0x50000000, popup, 2, 4);
+  assert.deepStrictEqual([e.wnd_mouse_msg_origin_x(child), e.wnd_mouse_msg_origin_y(child)], [5, 27]);
+  e.test_mouse_tail(msgPtr, child, 0x201, ((-7 & 0xffff) << 16) | (-9 & 0xffff));
+  assert.deepStrictEqual(point(), [-4, 20], 'child MSG.pt sign-extends client coordinates');
+  e.test_mouse_geometry(popup, 0x90c800c0, second, 3, 23);
+  assert.deepStrictEqual([e.wnd_mouse_msg_origin_x(popup), e.wnd_mouse_msg_origin_y(popup)], [3, 23],
+    'owned captioned popup stays independent of owner geometry');
 
   console.log('PASS  mouse capture is thread-owned and sends WM_CAPTURECHANGED');
 })().catch(error => {
