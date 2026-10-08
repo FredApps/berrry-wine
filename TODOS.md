@@ -1388,10 +1388,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: aow2-new-game (PID297783 live; sole worker)
+  worker: aow2-menu-route (PID363805 verified live; sole worker)
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
-  Evidence: Local original installer 101537511 bytes, SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
+  Next: Diagnose Scenario menu transition using ordinary registered Worker input on a temporary box; reach actual player-controlled gameplay and reviewed screenshot. Initial generic BSTR repair reaches main menu; root reviewing commits8833a3c0e and1455cc2f4 before integration. Expanded actual allocation-failure test now reported PASS in separate native review; inspect its receipt.
+  Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
 - [ ] New-game lane: Dungeon Siege demo
