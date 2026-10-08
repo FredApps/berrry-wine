@@ -1,5 +1,23 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Latest actual owning-input observation (2026-10-08): explicit acknowledged
+activation across both existing Workers covers forwarded input. Child slot1/tid2
+records routed NCHITTEST, DOWN and UP, correct client `(408,144)`, no host DOWN
+poll. All ten retained API caller spans authenticate against original child NE
+segment2: Catch return `004f:1131`, CallWindowProc return `004f:17f6`, prior
+thunk `001f:ff20`; DOWN/UP default API answers zero. One reviewed Install click
+still leaves the original menu unchanged. Child28rows/415words/4160bytes/error0;
+poller bounded123758words with partial UP frame reported. Original dialog
+`2:2ca0` statically declines DOWN/UP, so missing DLGPROC forwarding alone
+does not justify a fix. Actual DOWN stack contains object `008f:655a` and
+saved returns `004f:122f`/`005f:24e8`; static candidate originalsegment4:24e8
+follows object+1c6/+1e6 menu gates. That selector's mapping, gate values and
+preceding mousemove remain unmeasured. Next measure original application
+hit-test/action state. Installation/gameplay incomplete. Evidence:
+`scratch/runs/20261008T0059Z-antara-owning-queue-runtime`; see
+[owning-input handoff](../../ops/handoffs/antara-owning-queue-runtime-20261008.md).
+Actual remote cleanup/release01:02:22; queued Crimsonland adopted the fresh boat.
+
 Latest ordinary investigation (2026-10-08): corrected client DOWN `408,144`
 was polled in Worker slot0 for Main Menu `18002`; the one visible Install click
 left the reviewed menu unchanged. The check_input-triggered observer did not
