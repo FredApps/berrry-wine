@@ -155,6 +155,7 @@
       + `${t.cautions.length ? `<details><summary>Other limits (${t.cautions.length})</summary><ul class="reasons">${rows(t.cautions)}</ul></details>` : ''}`;
   }
 
+  let keyboardBound = false;
   async function init() {
     $('back').href = '/#dos';
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) { $('title').textContent = 'No title selected'; setStatus('Open a title from the dashboard\'s DOS / ToyVM view.'); return; }
@@ -184,7 +185,8 @@
       start: async (files) => {
         const ToyVM = root.ToyVM; ToyVM.unmountAll();
         for (const [name, bytes] of Object.entries(files)) ToyVM.mount(name, bytes);
-        const { LiveRun } = ToyVM.require('tools/toyvm/live.js');
+        const { LiveRun, bindKeyboard } = ToyVM.require('tools/toyvm/live.js');
+        if (!keyboardBound) { bindKeyboard(canvas, () => run); keyboardBound = true; }
         const env = Object.entries(t.entry.env || {}).map(([k, v]) => `${k}=${v}`);
         const r = new LiveRun({ canvas, exe: t.entry.program.split('/').pop(), args: t.entry.args || '', files, env, card: 'full',
           autoKey: false, mips: 10, paced: true, sound: false, soundPref: 'silent', jit: false,
@@ -212,7 +214,6 @@
   // A non-modal dialog fires no 'cancel' event, so Escape is handled here.
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && launcher && launcher.state === 'loading') { e.preventDefault(); launcher.cancel(); } });
   $('stop').addEventListener('click', () => { if (run) { run.stop(); run = null; } show($('stop'), false); show($('start'), true); setStatus('Stopped.'); });
-  $('screen').addEventListener('keydown', (e) => { if (!run) return; e.preventDefault(); e.stopPropagation(); run.key(e); });
   $('screen').addEventListener('pointerdown', () => $('screen').focus());
   init();
 })(typeof self !== 'undefined' ? self : globalThis);

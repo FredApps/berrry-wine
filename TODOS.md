@@ -1239,11 +1239,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI toyvm-held-key-web (sole worker; web-control prerequisite)
+  worker: fresh CLI comanche3-flight-window (sole active worker)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Native installed C3 startup and Pilot/Duty Rosters verified; root325 contained hashes and pilot-selection change reviewed. No mission/cockpit/gameplay. Fresh phase repairs missing real held-key web lifecycle, then authenticates operation selection; ordinary native physical-only input still returned/redrew menus, cause unresolved. Use verified installed files, no installer/paging replay.
+  Next: Disabled-detector optimization integrated main4280b855d after root250 hashes, regression and paired early-startup review; no loading/FPS speed claim. Original initialization advances but prior1800wall runs cover only123-140guest seconds. One fixed4200wall/600guest acceptance window now tracks known terrain/palette completion toward actual cockpit and ordinary flight, with prompt reviewed input route and sparse observations; no installer/menu replay or resetting deadlines.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1326,11 +1326,59 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Complete: root reviewed software Thrall selection/two opposing moves with matching host/owning OpenGL software backend;666 contained hashes and helper negative/review contracts PASS. Integrated0d9515322; run0400 referencef62/module4dc5. FPS/audio/combat/campaigncompletion/current-main runtime remain unverified.
   Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.
 
-- [ ] Expose real held keyboard controls in ToyVM web sessions
+- [x] Expose real held keyboard controls in ToyVM web sessions
   id: TOYVM-HELD-KEY-WEB-20261008
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI toyvm-held-key-web (sole assigned worker)
-  Next: Current main web canvas forwards only keydown to LiveRun.key; Machine.pushKey immediately queues make and break, so a physical held key cannot remain pressed. Implement generic press/release with repeat and focus/stop cleanup while preserving BIOS key semantics and existing tap callers; wire dashboard and generated corpus site. Validate on a separate temporary browser, with real held input and visible original-game response. Coordinate tools/toyvm/dos.js/live.js ownership after current worker exits. Native held-key captures alone do not qualify the web launch route.
+  worker: none (fresh toyvm-held-key-web exited0 07:08:27)
+  Next: Complete on main d87b54eca. Root180 contained evidence hashes and held/released/mission-menu captures verified; actual Machine/LiveRun tests and bundle reproducibility pass. Browser initial lifecycle closure proves ordinary holds, release, repeat, blur and Stop. Final keypad/code mapping and modifier-wait corrections unit/full-build tested but not original-media browser rerun. No production deployment or Comanche cockpit/gameplay qualification.
   Evidence: tools/toyvm/dos.js pushKey; tools/toyvm/live.js key; ops/toyvm-live/live.js canvas keydown; tools/toyvm/site.js generated canvas handler; native Comanche roster response with held input.
   Done: Meaningful key press/release and focus-loss tests plus reviewed browser held-input game response; scoped source/bundles/site changes pushed to main.
+
+- [ ] Gameplay screenshot and FPS: Arcanum: Of Steamworks & Magick Obscura Demo
+  id: GAMEPLAY-arcanum-demo
+  status: ready
+
+  candidate: arcanum-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered arcanum_demo fixture rechecked2026-10-08: 37 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-arcanum-demo.json
+  notes: Migration missing-file blocker cleared against current registered route: arcanum_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
+
+- [ ] Gameplay screenshot and FPS: Black & White 2 Demo
+  id: GAMEPLAY-black_white_2_demo
+  status: ready
+
+  candidate: black_white_2_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered black_white_2_demo fixture rechecked2026-10-08: 366 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json
+  notes: Migration missing-file blocker cleared against current registered route: black_white_2_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
+
+- [ ] Gameplay screenshot and FPS: Deus Ex demo
+  id: GAMEPLAY-deus-ex-demo
+  status: ready
+
+  candidate: deus-ex-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered deus_ex_demo fixture rechecked2026-10-08: 112 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json
+  notes: Migration missing-file blocker cleared against current registered route: deus_ex_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.

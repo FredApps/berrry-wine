@@ -890,6 +890,7 @@ class Machine {
     // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
     // the one port 60h reads right now. See keyboardIrq.
     this.kbQueue = [];
+    this.heldKeys = new Map();
     // --keys go on BOTH wires, for the reason pushKey gives: which one a
     // program listens on is not knowable from here. They used to go only into
     // the INT 16h queue above, and kbFill -- the only bridge to the hardware
@@ -2438,6 +2439,32 @@ class Machine {
     this.keys.push({ ah: scan & 0xFF, al: ascii & 0xFF });
     this.kbQueue.push(scan & 0x7F, (scan & 0x7F) | 0x80);
     this.syncKbBda();
+  }
+
+  // Physical transitions are separate from taps. Repeat is a BIOS keystroke
+  // and another hardware make, never an implicit release.
+  keyDown(scan, ascii, extended = false, repeat = false, bios = true) {
+    const id = `${extended ? 'e0:' : ''}${scan & 0x7F}`;
+    const held = this.heldKeys.has(id);
+    if (held && !repeat) return false;
+    if (!held) this.heldKeys.set(id, { scan: scan & 0x7F, extended });
+    if (bios) this.keys.push({ ah: scan & 0xFF, al: ascii & 0xFF });
+    if (extended) this.kbQueue.push(0xE0);
+    this.kbQueue.push(scan & 0x7F);
+    this.syncKbBda();
+    return true;
+  }
+
+  keyUp(scan, extended = false) {
+    const id = `${extended ? 'e0:' : ''}${scan & 0x7F}`;
+    if (!this.heldKeys.delete(id)) return false;
+    if (extended) this.kbQueue.push(0xE0);
+    this.kbQueue.push((scan & 0x7F) | 0x80);
+    return true;
+  }
+
+  releaseKeys() {
+    for (const k of this.heldKeys.values()) this.keyUp(k.scan, k.extended);
   }
 
   // The BIOS keyboard buffer, at 0040:001E, as a mirror of the INT 16h queue.

@@ -1,5 +1,138 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Disabled detector candidate, 2026-10-08
+
+Separate optimization `perf/toyvm-disabled-progress-20261008`, explicit base
+`7dd9b0e8f538dfdb514d16cc3d39478cf6bdb959`, skips diagnostic work inside
+`DosSession.checkProgress` when the detector is disabled. Real execution
+regressions prove zero diagnostic register/console work, full guest-memory and
+exported-getter equivalence, and unchanged enabled progress/spin/refusal behavior.
+Both bundles are reproducible. Root review/integration is pending.
+
+Evidence: `scratch/runs/20261008T0911Z-toyvm-disabled-progress/`; handoff
+[`toyvm-disabled-progress-20261008.md`](../../ops/handoffs/toyvm-disabled-progress-20261008.md).
+Six alternating pairs of the original early startup prefix match memory SHA,
+reported registers and counters; median paired elapsed reduction14.87% applies
+only to that250,366-dispatch prefix. A separate BIOS no-op handback stress loop
+is explicitly excluded from useful-work qualification. Exact CPU917477 is
+unchanged, with control/candidate V8 and SpiderMonkey x64 native captures plus
+actual Node host-path review. Standalone V8 capture differs from the benchmark
+engine; timed tiers are adaptive. No ARM, loading-speed or gameplay claim.
+
+One finite candidate original run again reaches the ordinary Argon/Haystack
+briefing/map/loading route. Live C2M1_C.PCX output250,215 matches the independent
+original reference; temporary file reaches5,242,880bytes. All60 sampled code
+spans match original and12 window reads preserve exported getters. Final
+original2db40 sample has possible validated near-call returns2a6cb/2f4ac/cb317;
+the prior later palette milestone and cb403 mission loop are not claimed.
+At the unchanged prelaunch deadline, normal host stop ends1771.587wall /
+130.3641804guest seconds with reviewed loading art, no cockpit or controlled
+flight. No extra Enter during loading, entry/profiling hook or guest state
+forcing. Cleanup29.029seconds,89retrieved files verified before prefix removal,
+19owned PIDs absent/no Chrome/exact baseline sockets/16immutable pins unchanged.
+
+## Authenticated resource and palette progress, 2026-10-08
+
+On explicit `83ef822fb4204145b642c507918739ba7c1626d5`, one fresh private
+dashboard fixture launch reaches Haystack loading using ordinary keyboard
+press/release. No extra Enter is sent during loading. No cockpit, controlled
+flight, or generic repair is established.
+
+Evidence: `scratch/runs/20261008T0806Z-comanche3-resource-loading/`.
+Original decoded resource/refill spans match the saved mapping. Shared LZW
+decoder `27567` completes on EDI ≥ `[8aa8]` or token `101`, frees at `2763d`,
+and returns at `27649`. LZR1 uses a length header; LZP1 uses width × height.
+RESOURCE2xxx's2,234 directory records decode filenames with XOR `aceddead`.
+Live output windows match independent original-algorithm decodes at M.PCX
+650341bytes and C.PCX667693bytes. Temporary output reaches5,242,880bytes.
+
+Final coherent RAM/stack authenticates `cb317` → `67907` → `2dd58` → `2dac0`:
+the original65,536-entry palette blend table. Its loop ordinal advances
+1287 →3566 →12922; later stack returns identify next palette phase `2f72d`.
+Six nearest-color code differences are original RGB immediate writes, verified
+against the original writer and live components. This is causal original work,
+not an established stall or complete trace authentication.
+
+The fresh run has no onEntry hook. Pure JS sparse reads and the coherent final
+44,302,336-byte snapshot preserve RAM and exported getters exactly. Two unpaired
+JS profiles show frequent host handbacks, progress-check/resolver/framebuffer
+cost; they do not qualify an optimization. Late memory serialization costs
+about32wall seconds. No guest RAM/register/instruction forcing is used.
+
+Actual Chrome151/tailcall386/paced10MIPS/JIT-off/silent CPU917477 runs
+1722.999wall/123.5675099guest seconds and stops before its fixed08:39:30Z
+deadline. All24 runtime images are reviewed as startup/menu/briefing/map/loading.
+All86 retrieved root hashes,18 pins,13 absent owned PIDs, no Chrome and baseline
+sockets are verified before prefix removal; cleanup39.263seconds. Prior1541
+indexed hashes remain unchanged. FPS/audio remain unknown. Root owns the boat
+lease and integration. See the resource-loading handoff for the exact identities,
+limitations and next causal initialization/cost measurement.
+
+## Authenticated Haystack selection and loading, 2026-10-08
+
+Current clean source `249b2d3986f9992d7432717acc61614f58653d1b` reaches
+Haystack briefing, map, and “Downloading Mission Parameters…” using public
+browser keyboard input and the original installed files. No cockpit or ordinary
+player-controlled flight was observed. No generic engine repair is justified.
+The held-key lifecycle and BIOS mirror policy remain unchanged.
+
+Evidence: `scratch/runs/20261008T0718Z-comanche3-haystack-selection/`.
+Original executable loader decryption authenticates live CS2b code at virtual
+base `0x10000000`: hardware reader `86cc`, queue consumer `80fe`, and menu
+consumer `68559`/Enter comparison `685a3`. Haystack dispatch has 321/321 exact
+original decoded instruction-byte matches and returns `c2m1` through `2450c`.
+The resource menu also names `Haystack~c2m1`. This supersedes the previous
+unmapped hardware-reader receipt without inventing a selection cause.
+
+Original French manual printed20 documents roster Up/Down+Enter; printed65–67
+documents briefing/map Next. Reviewed screen044 is the mission briefing;
+`canvas-mission-map.png` is the map; final captures remain loading art.
+Resource reads and a guest-created temporary file continue changing during
+loading. This does not authenticate a stall, duplicate-input cause, or bottleneck.
+
+One Chrome151/tailcall386/paced10MIPS/JIT-off/silent private dashboard fixture
+run lasted1773.004 wall seconds/140.186625 guest seconds under one deadline.
+Initial port observer used a reader that can update paging Accessed bits;
+strict preservation before its correction is not established. Later pure JS
+observer reads preserve full RAM/registers; viewport helper corrections are
+recorded. Cleanup completed92.489 seconds, exceeding allowance by2.489.
+See `ops/handoffs/comanche3-haystack-selection-20261008.md` for limitations
+and the next bounded causal investigation. No production deployment claim.
+
+## Web held keyboard repair and operation menu, 2026-10-08
+
+Generic web lifecycle repair `4a75293a249b0968e50e4a8bb61cf9ed4963624e`
+separates physical press/release/repeat from existing tap callers, with shared
+browser blur/visibility/stop cleanup. Real API/IRQ/port/BIOS tests and full build
+pass; old immediate-break and physical keypad mapping failures are retained.
+
+Shared `scratch/runs/20261008T0636Z-toyvm-held-key-web/` contains one original
+C3 browser launch on fresh no-env bx_vv2g89ek, actual Chrome151/tailcall386/
+CPU917477, eleven verified installed files, actual dashboard page/wiring with
+an explicitly private catalog/file fixture bootstrap. Ordinary Puppeteer
+keyboard.down/up visibly moves Blood Hawk013 to Venom016/017 while held;
+actual E0/50 then later E0/d0 port reads retained. Release018 and later020
+remain Venom. Repeat adds make only; ordinary focus loss and Stop clear held
+state. All55 images reviewed. No guest register/memory/instruction mutation.
+
+039 shows Argon Duty Roster;040 at06:55:11 shows Gallant Venture's Haystack
+mission menu **before** later Up at06:55:50. Enter attempts there leave the
+menu visible; no mission/cockpit/gameplay/FPS/audio qualification or causal
+native menu-return diagnosis. BIOS mirroring is preserved; retained entries
+and hooked INT9/hardware reads do not prove a BIOS-mirroring cause. Final
+Enter port read receipt CS2b/rawGIP86cc is not yet mapped to the original
+operation-selection consumer.
+
+Browser used the initial held-lifecycle bundle. Final physical event.code/
+keypad mapping and modifier-only BIOS-wait guard were corrected after launch,
+pass actual regressions/full build, and were not original-media browser rerun.
+Both closures and hashes are retained; no production dashboard/deploy claim.
+Actual1076.680wall/69.2270605guest seconds stops before unchanged07:00:40.829
+ceiling. Chrome0/owned PIDs absent/exact baseline sockets/immutable pins,
+98retrieved files12398326bytes SHA checked, prefix removed53.758s after terminal.
+Prior869 Comanche hashes unchanged. Root owns newboat lifecycle expiry07:14:18.
+See [the repair handoff](../../ops/handoffs/toyvm-held-key-web-20261008.md).
+
 ## Installed C3 launch and physical input, 2026-10-08
 
 On explicit `cdddc109b87c02f2a683c08da731e585a56fd614`, a single native

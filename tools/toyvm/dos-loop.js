@@ -2273,6 +2273,9 @@ class DosSession {
   // the guest's segment spliced onto STUB_OFF+3, a pair the program never had,
   // and a report naming an address that never existed is worse than no report.
   checkProgress(cs, ip, refusedEntry = false) {
+    // Live runs disable this detector. Avoid diagnostic reads and hashing on
+    // every handback when no verdict can be produced; direct callers agree.
+    if (!this.stuckLimit) return;
     const { vm, machine } = this;
     // The pair as a number. This runs on every handback and the string was
     // three allocations of it -- two toString(16) and a template -- for a value
