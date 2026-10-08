@@ -1239,7 +1239,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (Haystack worker exited0; resource-loading continuation queued)
+  worker: fresh CLI comanche3-resource-loading (sole active worker)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007

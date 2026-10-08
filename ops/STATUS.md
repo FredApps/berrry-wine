@@ -1,7 +1,7 @@
 updated: 2026-10-08T05:03:48.370Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: none; Comanche Haystack worker exited0 at07:59:16. Current final keyboard source reaches briefing/map/mission loading; root reviewed316 contained hashes and map/loading images. No flight/gameplay or generic selection defect established. Next sole worker: authenticate resource-loader completion and measure loading overhead, then ordinary cockpit/control. Budget mode one worker, checks10+minutes; FPS/audio unverified.
+Current workers: sole fresh comanche3-resource-loading launched08:04:55; prior Haystack worker exited0 at07:59:16. Current final keyboard source reaches briefing/map/mission loading; root reviewed316 contained hashes and map/loading images. No flight/gameplay or generic selection defect established. Active next step: authenticate resource-loader completion and measure loading overhead, then ordinary cockpit/control. Budget mode one worker, checks10+minutes; FPS/audio unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 
