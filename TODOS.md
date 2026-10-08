@@ -1205,13 +1205,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
 - [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
   id: NEW-GAME-BETRAYAL-ANTARA-DEMO-20261006
-  status: active
+  status: blocked
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-install-trap (sole worker)
+  worker: none (automatic security rejection; exited1)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual0200 ordinary four-step hovered Install DOWN traps child EIP19db02; final callback receipt lost. Preserve owning trap evidence/segment mapping, authenticate original caller and fix generic cause with regression toward installation/gameplay. One-worker budget mode; reference module4dc5 and original media retained.
+  Next: Hold rejected crash diagnostic; no retry/rephrase. WIP preserved, remote bx_fugmje42 authoritatively stopped after expiry, full cleanup/evidence retrieval incomplete. See ops/handoffs/antara-security-hold-20261008.md. No installation/gameplay qualification.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1317,3 +1317,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: none (exited0; coordinator review passed)
   Next: Complete scoped WebGL Prologue gameplay validation: root reviewed Thrall selection and two opposing ordinary right-click moves against fixed terrain; 675 contained artifact hashes pass. Run20261008T0156Z-warcraft3-campaign-world-runtime, referencef62/module4dc5. No FPS/audio/combat/campaign-completion claim.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
+
+- [~] Warcraft III original Prologue software-backend gameplay
+  id: GLD3D-WARCRAFT3-SOFTWARE-20261008
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI warcraft3-software (sole worker)
+  Next: Reuse reviewed WebGL Prologue route with verified guest OpenGL software backend on a temporary box; validate ordinary Thrall selection/two move orders. No fallback or FPS/audio claim.
+  Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.
