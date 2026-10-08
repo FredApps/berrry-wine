@@ -195,8 +195,7 @@ function collectTextFiles() {
   }
   // docs/: only the rendered .html pages, never the raw Markdown, JSON
   // status ledgers or the DOS corpus report tree.
-  // play/: the share links for `embed: true` apps (gen-site-pages.js).
-  for (const subdir of ['apps', 'articles', 'design', 'docs', 'docs/re-notes', 'play']) {
+  for (const subdir of ['apps', 'articles', 'design', 'docs', 'docs/re-notes']) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
     for (const entry of fs.readdirSync(dir)) {

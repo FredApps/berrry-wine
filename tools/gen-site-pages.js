@@ -31,8 +31,6 @@ const SITE_NAME = 'Wine-Assembly';
 const AUTHOR = 'Vladimir Grichina';
 const REPO = 'https://github.com/vgrichina/wine-assembly';
 const OG_IMAGE = `${SITE}/icons/og-image.png`;
-// X lists twitter:site as required for a player card.
-const TWITTER_SITE = '@vgrichina';
 // Pinned: a diagram that rendered under one mermaid parser should keep
 // rendering, and a floating "latest" has broken flowchart syntax before.
 const MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
@@ -169,66 +167,7 @@ function rewriteMdLinks(html, sourceRel) {
     (match, href, hash) => `href="${markdownPublicUrl(sourceRel, href, hash)}"`);
 }
 
-// The twitter: tags. A page with `player` ({ url, image, w, h }) is an X
-// player card: the poster is shown in the timeline and a click replaces it
-// with an iframe of `url`, so the program runs inside the tweet. Every other
-// page is the large-image card, using the og: picture.
-function twitterTags(fullTitle, description, ogImage, player) {
-  const L = [
-    `<meta name="twitter:card" content="${player ? 'player' : 'summary_large_image'}">`,
-    `<meta name="twitter:site" content="${TWITTER_SITE}">`,
-    `<meta name="twitter:title" content="${esc(fullTitle)}">`,
-    `<meta name="twitter:description" content="${esc(description)}">`,
-    `<meta name="twitter:image" content="${player ? player.image : ogImage}">`,
-  ];
-  if (player) {
-    L.push(`<meta name="twitter:player" content="${esc(player.url)}">`,
-      `<meta name="twitter:player:width" content="${player.w}">`,
-      `<meta name="twitter:player:height" content="${player.h}">`);
-  }
-  return L.join('\n  ');
-}
-
-// play/<id>.html: the link to post. Crawlers (Twitterbot runs no script) read
-// its tags and unfurl a playable player card; a person who follows the link
-// is sent straight into the program at /?app=<id>, not to a page about it.
-// The root index.html can't be that link itself: it is one static file with
-// the site's own card, whatever ?app= says. No meta refresh, since an unfurler
-// that follows one would describe the desktop instead. noindex, canonical to
-// the app page, so it never competes with that page in search.
-function playPageHtml(app, description, player) {
-  const title = `${app.name} — ${SITE_NAME}`;
-  const target = `/?app=${encodeURIComponent(app.id)}`;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(title)}</title>
-  <script>location.replace(${JSON.stringify(target)});</script>
-  <meta name="robots" content="noindex">
-  <meta name="description" content="${esc(description)}">
-  <link rel="canonical" href="${SITE}/apps/${app.id}.html">
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="${SITE_NAME}">
-  <meta property="og:title" content="${esc(title)}">
-  <meta property="og:description" content="${esc(description)}">
-  <meta property="og:url" content="${SITE}/play/${app.id}.html">
-  <meta property="og:image" content="${player.image}">
-  <meta property="og:image:width" content="${player.w}">
-  <meta property="og:image:height" content="${player.h}">
-  ${twitterTags(title, description, player.image, player)}
-  <link rel="icon" href="${SITE}/icons/icon-192.png">
-  <style>body { margin: 0; background: #008080; color: #fff; font: 15px/1.4 sans-serif; } a { color: #fff; } p { margin: 40vh 16px 0; text-align: center; }</style>
-</head>
-<body>
-  <p>Starting ${esc(app.name)}… <a href="${target}">Play ${esc(app.name)}</a></p>
-</body>
-</html>
-`;
-}
-
-function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ldMore = [], ogImage = OG_IMAGE, player = null, canonical }) {
+function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ldMore = [], ogImage = OG_IMAGE, canonical }) {
   const url = `${SITE}/${urlPath}`;
   // A page that has been folded into another (articles/ and docs/ into
   // design/) keeps serving its old URL but declares the new one canonical,
@@ -275,7 +214,10 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   <meta property="og:image" content="${ogImage}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  ${twitterTags(fullTitle, description, ogImage, player)}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${esc(fullTitle)}">
+  <meta name="twitter:description" content="${esc(description)}">
+  <meta name="twitter:image" content="${ogImage}">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="${SITE}/icons/icon-192.png">
   <script type="application/ld+json">${JSON.stringify(ld)}</script>${ldMore.map(x => `\n  <script type="application/ld+json">${JSON.stringify(x)}</script>`).join('')}${extraHead || ''}${mermaidHead}
@@ -321,7 +263,7 @@ const NAV = [NAV_HOME, NAV_APPS, NAV_DESIGN, NAV_STORY, NAV_REPO].join(' ');
 const APP_BLURBS_REL = 'tools/site-app-blurbs.json';
 const APP_FAQ_REL = 'tools/site-app-faq.json';
 const OG_DIR = 'screenshots/og';
-const { ogCard, PLAYER } = require('./gen-og-images');
+const { ogCard } = require('./gen-og-images');
 // The selector's groups are about where a binary came from; the pages group
 // by what a visitor is looking for, so a few labels fold together.
 const GROUP_LABELS = {
@@ -450,7 +392,6 @@ function loadDesktopApps() {
       args: app.args || '',
       lan: !!app.lan,
       touch: !!app.touchControls,
-      embed: !!app.embed,
       shot: fs.existsSync(path.join(ROOT, shot)) ? shot : null,
       shotSize: fs.existsSync(path.join(ROOT, shot)) ? pngSize(path.join(ROOT, shot)) : null,
       notes,
@@ -667,14 +608,6 @@ function generatePages() {
       ogCard(path.join(ROOT, app.shot), path.join(ROOT, card));
       ogImage = `${SITE}/${card}`;
     }
-    // `embed: true` in lib/apps.js: the page is also a playable X player
-    // card. Without a screenshot there is no poster, so no card.
-    let player = null;
-    if (app.embed && app.shot) {
-      const poster = `${OG_DIR}/${app.id}-player.png`;
-      ogCard(path.join(ROOT, app.shot), path.join(ROOT, poster), PLAYER);
-      player = { url: `${SITE}/?app=${app.id}&embed=1`, image: `${SITE}/${poster}`, w: PLAYER.w, h: PLAYER.h };
-    }
     pages.push({
       name: `apps/${app.id}.html`,
       content: pageHtml({
@@ -686,7 +619,6 @@ function generatePages() {
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
         dates: blurbDates,
         ogImage,
-        player,
         ldMore: [faqLd(qa)],
         ldExtra: {
           '@type': 'WebPage',
@@ -696,8 +628,6 @@ function generatePages() {
       }),
     });
     urls.push({ loc: `${SITE}/apps/${app.id}.html`, lastmod: blurbDates.modified, priority: '0.7', changefreq: 'monthly' });
-    // The share link (not in the sitemap: it is a redirect into the app).
-    if (player) pages.push({ name: `play/${app.id}.html`, content: playPageHtml(app, appDescription(app), player) });
   }
   const appsIndex = appsIndexMd(apps);
   pages.push({
