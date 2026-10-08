@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-four-step-action
+  worker: none (current step completed; budget-mode queue)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual0144 reserved DOWN authenticated default4:24e8/selection0 after singleMOVE. Earlier four-step hover proves selection1. Root81hashes and finalcombined0154 driver tests pass; fresh worker executes reviewed four-step hover plus independent DOWN ACK on temporary box after Tiberian release58:34. Installation/gameplay remain unqualified.
+  Next: Actual0200 four-step hover plus reserved DOWN reaches child unreachable EIP19db02; final child receipt lost, Install mapping unproven. Root78 contained hashes pass. Preserve trap evidence before diagnosis; queued under one-worker budget mode, no rerun or gameplay claim.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-menu-consumer
+  worker: none (current step completed; budget-mode queue)
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Actual0126 originalcommand1559 changes selector9→1; root543hashes verified, findingsa2ae61094. Fresh worker targets562830 pump/4de9dd consumer/DestroyWindow and resource94, not repeatedclick diagnosis. Checked preflight must prevent launch on anyfailure. Remote after Warcraft thenAntara; no build, gameplayunqualified.
+  Next: Actual0152 selector1 followed by 236 repeated WM_PAINT cycles in earlier ShowWindow pump, not consumer frame. Root570 contained hashes pass. Next distinguish validation versus reinvalidation with owning paint evidence; queued under one-worker budget mode, no blanket fix or gameplay claim.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
