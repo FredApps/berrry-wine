@@ -69,6 +69,20 @@ function analyzeReceipt(original, receipt) {
   const findings = [];
   for (const [rowIndex, row] of receipt.rows.entries()) {
     const owner = row.owner;
+    const installReturns = new Map([[0x2002e,[0xdafc,0xdb2f]],[0x2003b,[0xdb0f]],[0x2002a,[0xdb23]],[0x2007c,[0xdb42]]]);
+    if (row.kind === 'call' && installReturns.has(row.words[0]) && owner?.caller) {
+      const returnOffset = row.words[1] - owner.csBase;
+      const caller = original.authenticate(3, owner.caller.guest - owner.csBase, owner.caller.bytes);
+      const action = owner.savedFrames?.find(f => f.returnOffset === 0x248d && f.code?.bytes);
+      const savedCode = action && original.authenticate(4, action.code.guest - action.codeBase, action.code.bytes);
+      const at = action ? 0x248b - (action.code.guest - action.codeBase) : -1;
+      const targetSelector = at >= 0 && at + 2 <= action.code.bytes.length ? action.code.bytes[at] | action.code.bytes[at+1] << 8 : null;
+      const relocation = original.segment(4).sites.get(0x248b);
+      const sameObject = action && owner.savedFrames[0]?.objectOffsetCandidate === action.objectOffsetCandidate && owner.savedFrames[0]?.objectSelectorCandidate === action.objectSelectorCandidate && action.objectSelectorCandidate === owner.get_sreg_ss;
+      const authenticated = row.phase === 'down' && installReturns.get(row.words[0]).includes(returnOffset) && caller.authenticated && savedCode?.authenticated && relocation?.target === 3 && relocation.type === 2 && targetSelector === owner.get_sreg_cs && sameObject;
+      findings.push({rowIndex, boundary:'original Install 4:2488 -> 3:dad6 API', apiKey:row.words[0], returnOffset, authenticated:!!authenticated, caller, savedCode, targetSelector, sameObject:!!sameObject, limitation:'API-entry snapshot proves this boundary only; no internal5:32a4 return or installation completion'});
+      continue;
+    }
     if (row.kind !== 'call' || ![0x2007a,0x2007d].includes(row.words[0]) || !owner?.savedFrames) continue;
     if (row.words[0] === 0x2007d) {
       const caller = owner.caller && original.authenticate(4, owner.caller.guest - owner.csBase, owner.caller.bytes);

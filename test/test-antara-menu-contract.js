@@ -32,5 +32,13 @@ if(process.argv[2]) {
   const positive=analyzeReceipt(original,receipt).findings[0];assert.equal(positive.authenticated,true);assert.equal(positive.selection1e6,1);assert.equal(positive.savedY,144);
   candidate.code.bytes[0x24e6-0x2418]=0x57;assert.equal(analyzeReceipt(original,receipt).findings[0].authenticated,false);
   candidate.code.bytes[0x24e6-0x2418]=0x4f;candidate.objectOffsetCandidate++;assert.equal(analyzeReceipt(original,receipt).findings[0].authenticated,false);
+  const s3=original.segment(3), installCode=Array.from(original.bytes.subarray(s4.offset+0x23bd,s4.offset+0x24bd));
+  installCode[0x248b-0x23bd]=0x57;installCode[0x248c-0x23bd]=0;
+  const installFrame={returnOffset:0x248d,returnSelector:0x5f,codeBase:0x1a0000,code:{guest:0x1a23bd,bytes:installCode},objectSelectorCandidate:0x8f,objectOffsetCandidate:0x655a};
+  const installOwner={get_sreg_cs:0x57,get_sreg_ss:0x8f,csBase:0x190000,caller:{guest:0x19dacc,bytes:Array.from(original.bytes.subarray(s3.offset+0xdacc,s3.offset+0xdb2c))},savedFrames:[installFrame]};
+  const installReceipt={rows:[{kind:'call',words:[0x2002e,0x19dafc],phase:'down',owner:installOwner}]};
+  assert.equal(analyzeReceipt(original,installReceipt).findings[0].authenticated,true);
+  installCode[0x248b-0x23bd]=0x4f;assert.equal(analyzeReceipt(original,installReceipt).findings[0].authenticated,false);
+  installCode[0x248b-0x23bd]=0x57;installOwner.caller.bytes[0]^=1;assert.equal(analyzeReceipt(original,installReceipt).findings[0].authenticated,false);
 }
 console.log('Antara original identity, chained selector relocations, allocation-only exclusion, code mismatch and original menu map PASS');

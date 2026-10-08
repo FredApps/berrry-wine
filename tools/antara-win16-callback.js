@@ -4,6 +4,9 @@
 const MARKERS = Object.freeze({0xca16a9eb: ['route', 6], 0xca16a9f0: ['call', 15], 0xca16a9ef: ['handler-exit', 6]});
 const INPUT = new Set([0x200, 0x201, 0x202, 0x203, 0x111, 0x20, 0x21, 0x84]);
 const USER = new Set([18, 19, 22, 23, 28, 29, 50, 53, 76, 87, 107, 108, 111, 114, 122, 124, 125, 218, 219]);
+// Candidate return offsets only; OFFLINE original-code/selector checks are
+// required before calling these Install boundaries. No generic API polling.
+const INSTALL_USER = new Map([[46, [0xdafc, 0xdb2f]], [59, [0xdb0f]], [42, [0xdb23]], [124, [0xdb42]]]);
 
 function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = () => performance.now(), baselineTrace, maxRows = 128, maxBytes = 32768, durationMs = 8000, maxWords = 65536, maxCpuMs = 100}) {
   if (baselineTrace !== 0) throw Error('pinned trace-disabled baseline required');
@@ -58,7 +61,7 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
     // Retain candidates for OFFLINE original-relocation authentication. Do
     // not presume a selector names original segment 4 or that BP+6 is an
     // application object until the saved caller code authenticates.
-    if (record.kind === 'call' && ((record.words[0] === 0x2007a && [0x200,0x201,0x202].includes(record.words[5])) || record.words[0] === 0x2007d)) {
+    if (record.kind === 'call' && ((record.words[0] === 0x2007a && [0x200,0x201,0x202].includes(record.words[5])) || record.words[0] === 0x2007d || (phase === 'down' && INSTALL_USER.get(record.words[0] & 0xffff)?.includes(record.words[1] & 0xffff)))) {
       result.savedFrames = [];
       const seen = new Set(); let cursor = bp;
       for (let i = 0; i < 3 && !seen.has(cursor); i++) {
@@ -144,7 +147,9 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
       // Filter BEFORE any owner getter or memory read. Idle/paint never spends
       // the release budget. Capture KERNEL calls only within an input route.
       const messageApi = module === 2 && [107, 111, 122].includes(ordinal);
-      lastCall = context && (!messageApi || INPUT.has(record.words[5])) && (module === 1 || (module === 2 && USER.has(ordinal))) ? record.words[0] : null;
+      const installCandidate = phase === 'down' && INSTALL_USER.get(ordinal)?.includes(record.words[1] & 0xffff);
+      const selectedUser = INSTALL_USER.has(ordinal) ? installCandidate : USER.has(ordinal);
+      lastCall = context && (!messageApi || INPUT.has(record.words[5])) && (module === 1 || (module === 2 && selectedUser)) ? record.words[0] : null;
       if (lastCall !== null) add(record, true);
     } else if (lastCall !== null) { add({...record, apiKey: lastCall}); lastCall = null; }
   }

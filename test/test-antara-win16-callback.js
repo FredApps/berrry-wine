@@ -6,6 +6,16 @@ const values = {get_current_thread_id: 2, get_eip: 0x2100, get_esp: 0x3100, get_
 const ex = {set_win16_trace: v => switches.push(v), guest_to_wasm: p => p, win16_seg_base: i => i === 8 ? 0x2000 : 0x3000, win16_seg_limit: () => 4096};
 for (const [k, v] of Object.entries(values)) ex[k] = () => { reads++; return v; };
 const options = {getExports: () => ex, getMemory: () => buffer, slot: 1, now: () => clock, baselineTrace: 0};
+// Unrelated calls to the newly selected APIs must perform zero owner reads.
+const precise=createObserver(options);precise.activate('precise','hover');precise.activate('precise','down');
+const feed=(marker,words)=>{precise.word(marker);for(const v of words)precise.word(v);};
+feed(0xca16a9eb,[98306,0x201,1,0x00900198,98306,0]);
+const beforePrecise=reads, beforeRows=precise.status().rows.length;
+for(let i=0;i<100;i++)for(const key of [0x2002e,0x2003b,0x2002a,0x2007c]){feed(0xca16a9f0,[key,0x2120,...Array(13).fill(0)]);feed(0xca16a9ef,Array(6).fill(0));}
+assert.equal(reads,beforePrecise);assert.equal(precise.status().rows.length,beforeRows);
+feed(0xca16a9f0,[0x2002e,0x1adafc,...Array(13).fill(0)]);
+assert.equal(precise.status().rows.at(-1).words[0],0x2002e);assert(precise.status().rows.at(-1).owner.savedFrames);
+precise.stop('test');reads=0;switches.length=0;
 assert.throws(() => createObserver({...options, baselineTrace: 1}), /baseline/);
 assert.throws(() => createObserver({...options, durationMs: 9000}), /bounds/);
 const o = createObserver(options);
