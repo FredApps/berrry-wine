@@ -1239,11 +1239,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI toyvm-disabled-progress (sole active worker; separate performance branch)
+  worker: fresh CLI comanche3-flight-window (sole active worker)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Original terrain LZW windows and subsequent palette-table initialization authenticated; no stall or generic correctness bug established. Current run20261008T0806Z-comanche3-resource-loading root230 hashes reviewed. Flight remains incomplete. Profile identifies disabled stall detector hashing and resolver/framebuffer host cost. Next targeted generic disabled-detector fast path with preserved enabled behavior and paired remote measurement, then original controlled flight; no blind timeout/menu replay.
+  Next: Disabled-detector optimization integrated main4280b855d after root250 hashes, regression and paired early-startup review; no loading/FPS speed claim. Original initialization advances but prior1800wall runs cover only123-140guest seconds. One fixed4200wall/600guest acceptance window now tracks known terrain/palette completion toward actual cockpit and ordinary flight, with prompt reviewed input route and sparse observations; no installer/menu replay or resetting deadlines.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation

@@ -1,7 +1,7 @@
-updated: 2026-10-08T09:09:32.001Z
+updated: 2026-10-08T10:10:42.404Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: sole fresh toyvm-disabled-progress launched09:09:14 on separate performance branch; prior resource-loading worker exited0 at08:57:08. Original terrain decoding and palette initialization progress authenticated,230 evidence hashes verified. No cockpit/flight. Active phase: measure and remove disabled stall-detector overhead with correctness coverage and paired remote validation before another gameplay attempt. Budget one worker/checks10+minutes; no full-game/FPS/audio claim.
+Current workers: sole fresh comanche3-flight-window launched10:10:16. Disabled-detector optimization integrated4280b855d after correctness,250 evidence hashes and limited paired startup review; previous worker exited0 at10:04:51. Fixed4200wall/600guest window sized from measured advancing initialization aims for actual cockpit/control. No flight, loading-speed/FPS/audio qualification yet. Budget one worker/checks10+minutes.
 
 Comanche 3 paging and DOS rename fixes are integrated (72e306790,4b0955e79,cdddc109b). Original installation completed and preserved C3.EXE/RESOURCE.RES; Setup completion remains unqualified. Installed original game now reaches Haystack mission loading with final web keyboard repair d87b54eca. No installer or paging replay is needed.
 
