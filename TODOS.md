@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker user budget supersedes simultaneous two-worker target. Comanche controlled flight is reviewed; sole comanche-catalog worker is adding ordinary registered dashboard launch. Tiberian/Antara/Arx/Winamp rejected diagnostics are held without retry. Arcanum and Deus Ex are queued with verified local fixtures; choose the next ready unqualified title after current integration, keeping live worker labels accurate.
+  Next: One-worker user budget supersedes simultaneous two-worker target. Comanche controlled flight and registered launch are complete; sole Arcanum worker now covers both backends and gameplay FPS. Tiberian/Antara/Arx/Winamp rejected diagnostics are held without retry. Arcanum and Deus Ex are queued with verified local fixtures; choose the next ready unqualified title after current integration, keeping live worker labels accurate.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1338,16 +1338,16 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Gameplay screenshot and FPS: Arcanum: Of Steamworks & Magick Obscura Demo
   id: GAMEPLAY-arcanum-demo
-  status: ready
+  status: active
 
   candidate: arcanum-demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued under one-worker budget)
+  worker: arcanum-gameplay-coverage (PID210299 live; sole worker)
   prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
   created: 2026-10-03T08:42:45.967Z
   accepted: 2026-10-03T08:42:45.967Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Registered arcanum_demo fixture rechecked2026-10-08: 37 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Next: Qualify ordinary crash-site player control on both software/WebGL with source/backend identity and scene-qualified FPS. Historical free-roam exists in re-notes, so this is coverage work, not a never-qualified new title. All37 registered fixture paths present; source notes supply original route. Runtime on fresh no-env boat, one browser, immutable adequate loading bounds.
   Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-arcanum-demo.json
   notes: Migration missing-file blocker cleared against current registered route: arcanum_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.

@@ -1,7 +1,7 @@
-updated: 2026-10-08T13:36:03.390Z
+updated: 2026-10-08T13:38:11.085Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: none while root integrates completed Comanche catalog work. Normal registered dashboard launch passed on a temporary box; accepted controlled flight remains separately linked. Tiberian diagnostic remains held after automatic rejection, without retry. Next ready new-game lane: Arcanum, with ordinary gameplay/input and both rendering backends still to qualify.
+Current workers: one. Arcanum coverage worker is active for ordinary crash-site control, software/WebGL evidence and scene-qualified FPS. Its historical free roam means it is not counted as a new title. Comanche controlled flight plus normal registered launch is complete and pushed. Tiberian rejected diagnostic remains held without retry.
 
 Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Normal registered ToyVM dashboard launch now passes; historical flight evidence is linked separately. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
 
