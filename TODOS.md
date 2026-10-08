@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. Arcanum is active coverage, not a new title; Comanche flight and registered launch are complete. Age of Wonders II and Dungeon Siege are the next queued new-game candidates with SHA-pinned local installers and no known prior qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
+  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. Age of Wonders II is the sole active new-game worker and Dungeon Siege is queued with SHA-pinned local installers and no known prior qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1386,9 +1386,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Age of Wonders II demo
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued under one-worker budget; Arcanum coverage currently active)
+  worker: aow2-new-game (PID297783 live; sole worker)
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
   Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
   Evidence: Local original installer 101537511 bytes, SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
@@ -1398,7 +1398,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued under one-worker budget; Arcanum coverage currently active)
+  worker: none (queued under one-worker budget; Age of Wonders II currently active)
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
   Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
