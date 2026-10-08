@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. Age of Wonders II is the sole active new-game worker and Dungeon Siege is queued with SHA-pinned local installers and no known prior qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
+  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. Dungeon Siege is the sole active new-game worker; Age of Wonders II source-level arbitration diagnosis is queued after startup trap/title-only results. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1163,7 +1163,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
   created: 2026-10-06T02:09:48.337Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Quake II traversal, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue control are qualified on both backends at their recorded reference builds; Warcraft software review integrated0d9515322, no pending review. TR3/Uplink later gameplay retained. Do not repeat old Crimsonland splash/relative-input diagnosis. Arcanum now also has reviewed movement on both backends; WebGL compositor measurement is21.56/s, software FPS remains open. The sole budget-mode worker is Age of Wonders II; Dungeon Siege follows it. Longer gameplay routes, Pirates/heavy titles and PBO causal diagnosis remain queued. Winamp diagnostic held. Overall goal remains active; FPS/audio/current-main validation are separate.
+  Next: Quake II traversal, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue control are qualified on both backends at their recorded reference builds; Warcraft software review integrated0d9515322, no pending review. TR3/Uplink later gameplay retained. Do not repeat old Crimsonland splash/relative-input diagnosis. Arcanum now also has reviewed movement on both backends; WebGL compositor measurement is21.56/s, software FPS remains open. The sole budget-mode worker is Dungeon Siege; Age of Wonders II source-level diagnosis is queued. Longer gameplay routes, Pirates/heavy titles and PBO causal diagnosis remain queued. Winamp diagnostic held. Overall goal remains active; FPS/audio/current-main validation are separate.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
 
@@ -1386,19 +1386,19 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Age of Wonders II demo
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: aow2-menu-route (PID363805 verified live; sole worker)
+  worker: none (continuation exited0; source regression queued)
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Diagnose Scenario menu transition using ordinary registered Worker input on a temporary box; reach actual player-controlled gameplay and reviewed screenshot. Initial generic BSTR repair reaches main menu; root reviewing commits8833a3c0e and1455cc2f4 before integration. Expanded actual allocation-failure test now reported PASS in separate native review; inspect its receipt.
+  Next: Build a controlled Worker slice/send arbitration regression before more game runs; overlapping dispatch is a lead, not proven cause. Latest unchanged module e4d59e88 gives startup stack trap074ffd4e or title-only waits. No gameplay/menu reproduction; earlier held-click outcome unknown. Core and registry already main; see ops/handoffs/age-of-wonders2-menu-route-20261008.md.
   Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
 - [ ] New-game lane: Dungeon Siege demo
   id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued under one-worker budget; Age of Wonders II currently active)
+  worker: dungeon-siege-original (PID421077 verified live; sole worker)
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
   Next: Inspect/extract original embedded MSGAME.CAB on temporary box: offset464312,191706128 bytes,37 files including DungeonSiegeDemo.exe. Preserve originals, reconcile installation prerequisites, register complete route then verify ordinary gameplay/screenshot. Static preflight only; no runtime claim. See ops/handoffs/dungeon-siege-preflight-20261008.md.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
