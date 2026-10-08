@@ -2165,3 +2165,29 @@ so no real context was ever made. Setting the format a window already has
 succeeds on Windows and in Wine (only a different format is refused): fixed in
 `579ee802`, and the main menu renders on software GL again by batch 2000.
 Evidence `scratch/runs/20261006T030624Z-warcraft3_demo-swgl-regress`.
+
+## Original Prologue browser preparation, October 8
+
+The September 28 CLI controlled gameplay above remains historical evidence;
+the October 6 WebGL menu result does not supersede it or establish fresh browser
+control. Prepared ordinary browser harness `tools/warcraft3-prologue/` uses
+accepted source/host `f62ab3c9` and module `4dc5ac2c`, retaining SetPixelFormat
+`579ee802` and sparse-page GL reads `604f0fd14`. No new build is needed.
+
+All 12 registered media paths are present in the shared fixture tree, including
+War3Demo.exe SHA `4bfa825510527235c2a14f7682dba1d4b339664f312f85206f01206e98d8000a`,
+Game.dll SHA `286823c37a1083e91f07d040e46a9df7af4c4952e01fcbba460589bd4e297654`,
+Storm.dll SHA `99974ea6dab31eff68a6c22d259dd6d8abcab0b2947417b3b41ebf01ab366e61`,
+and war3.mpq SHA `9e19d7ffb65054e4bdd3add7e26d70e16f063cdc20fa5b57639f3b9b7a196f9c`.
+The isolated worktree lacks private fixtures; preparation hardlinks originals
+from the shared fixture tree and authenticates the immutable baseline closure.
+A broken historical `Warcraft` symlink is outside the registered route.
+
+Prepared run `20261008T0135Z-warcraft3-prologue-ready` passes 542 SHA pins,
+542 HTTP HEADs, eight full GET hashes, range and drain checks. This is source
+and local HTTP readiness, not browser execution. The input harness requires
+personally reviewed actual state before every ordinary ABC/Create/Select,
+Campaign/Prologue, chapter Space, cinematic Escape, Thrall/right-click action.
+It checks live host AND owning renderer `api: gl` WebGL endpoints; neutral D3D
+endpoint proof is rejected. FPS/audio are unknown. Budget and serialized
+runtime conditions are in the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md).
