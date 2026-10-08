@@ -65,7 +65,7 @@ screenshot cited was looked at.
 | scr_architec, fallingl, geometry, jazz, oasaver, rockroll, scifi | D3DRM | **renders** (w4 rerun at `--tick-ms-per-batch=2`) | **7 savers render** (2026-10-06, browser; fallingl dark leaves and oasaver green field as on software) | fallingl black leaves, oasaver stray box: w4 |
 | halflife_uplink | OpenGL | **gameplay** (corridor + HUD) | **gameplay** (2026-10-06, lazy-file browser route after `5f4bac8c`; `scratch/runs/20261006T2100Z-hl-uplink-lazy-mci/4-gameplay-webgl-lazy.png`) | MCI lazy park now waits for IO; subclassed dialog buttons receive queued mouse input. Earlier black result superseded. |
 | simgolf_demo | OpenGL | **gameplay** | **gameplay** (2026-10-06, browser; course + build bar) | — |
-| quake2_demo | OpenGL (ref_gl) | menu | **gameplay + ordinary forward/reverse/idle traversal** (2026-10-07, temporary browser, guest Worker/WebGL, module `fb1be916`; [reviewed run](../scratch/runs/20261007T213620Z-quake2-ordinary-traversal/result.json)) | Game → Easy; support-beam approach/reverse and stable idle landmarks reviewed; world visible by 54 s after selection. FPS/audio/network unqualified; [identity and cleanup](../ops/handoffs/quake2-ordinary-traversal-20261007.md). Historical 2026-09-23 gameplay retained. |
+| quake2_demo | OpenGL (ref_gl) | **gameplay + ordinary forward/reverse/idle traversal** (2026-10-08, temporary browser, guest Worker/WAT software OpenGL, accepted reference `096889e1` / module `fb1be916`; [reviewed run](../scratch/runs/20261008T000901Z-quake2-software-ordinary/result.json)) | **gameplay + ordinary forward/reverse/idle traversal** (2026-10-07, temporary browser, guest Worker/WebGL, module `fb1be916`; [reviewed run](../scratch/runs/20261007T213620Z-quake2-ordinary-traversal/result.json)) | Original ref_gl Game → Easy; support-beam approach/reverse and stable idle landmarks reviewed on both backends. Software world visible by 49.617 s after selection, WebGL by 54 s. Software endpoint selection verified in host and owning render Worker, without GL WebGL fallback. Fresh software execution uses the unchanged accepted reference host/module closure, not a new current-main build. FPS/audio/network unqualified; [software identity and cleanup](../ops/handoffs/quake2-software-ordinary-20261008.md), [WebGL identity and cleanup](../ops/handoffs/quake2-ordinary-traversal-20261007.md). Historical 2026-09-23 gameplay retained. |
 | warcraft3_demo | OpenGL | **menu** after `579ee802` (was blank) | **menu** (2026-10-06, browser) | fixed today: a second SetPixelFormat of the same format was refused, so WC3 never made its real context |
 | ptct | OpenGL | renders, correctness unverified | beams draw (2026-10-06, browser) | 0.35 presents/s on software |
 | ut2003_demo | D3D8 | menu | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | each frame ~1 s on software |
@@ -110,8 +110,10 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
    October 6 run enters Tutorial from a visibly hovered button and shows world
    movement under W input. The earlier general claim that its menu cannot start
    gameplay is superseded; Survival and WebGL gameplay remain unverified.
-3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum
-   reach gameplay only past the 120 s cap on the software arm.
+3. **Throughput, not correctness**: ut2003/ut2004/arcanum
+   reach gameplay only past the 120 s cap on the dated software sweep.
+   Quake II's fresh ordinary software run on the accepted reference build
+   reaches the world by 49.617 s after Easy, superseding its earlier cap result.
 4. **Remaining WebGL coverage**: the October 6 spot checks and later TR3/Uplink
    follow-ups are retained above. Pirates is unmeasured, heavy titles remain
    excluded, and several rows only prove menus or rendering. Do not reopen
