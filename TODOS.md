@@ -1163,7 +1163,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
   created: 2026-10-06T02:09:48.337Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: October7 Q2 WebGL ordinarytraversal completed2534731b3 (softwarearm stillmenu); later main48ffb5e5 TR3 Jungle/movement and5f4bac8c Uplink lazy/WebGL gameplay supersede stale failures; root reviewed retained images. Keep aggregate active: menus/loading/excluded/unmeasured rows do not prove full software+WebGL gameplay. Remaining Pirates WebGL/resource route, heavy titles/Winamp fixture identification, longer gameplay routes, and separate D3DIM PBO warning. No redundant sweep or screenshot run.
+  Next: Quake II ordinary traversal qualified on WebGL2534731b3 and software069662726 for their recorded reference build. TR3/Uplink later gameplay retained. Crimsonland WebGL splash exits before gameplay; fresh owning fault/exit capture queued after Antara. Winamp exception work held; fixture identity already established. Aggregate remains active for longer gameplay routes, Pirates/heavy titles and PBO causal diagnosis. No redundant sweep.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
 

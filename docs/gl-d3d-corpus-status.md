@@ -72,7 +72,7 @@ screenshot cited was looked at.
 | ut2003_demo_server | D3D8 | **gameplay** (listen server renders DM-Antalus) | **gameplay** (2026-10-06, browser; DM-Antalus, HUD) | — |
 | ut2004_demo | D3D8 | splash at 120 s | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | slow |
 | alien_shooter | D3D8 | **Mission 01 gameplay, movement and firing** (2026-10-06; `scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2`) | **menu** (2026-10-06, browser; past the software cap) | Heap fix `d699e4df`; CLI route uses `--tick-ms-per-batch=20` to finish intro pan. WebGL gameplay remains unverified. |
-| crimsonland | D3D8 | **Tutorial gameplay and movement** (2026-10-06; `scratch/runs/20261006T0500Z-crimsonland-w4-survival`) | **menu** (2026-10-06, browser, D3D9 backend = webgl; launcher Play) | Correctly hovered Tutorial button starts gameplay; Survival itself was not re-tested. WebGL gameplay remains unverified. |
+| crimsonland | D3D8 | **Tutorial gameplay and movement** (2026-10-06; `scratch/runs/20261006T0500Z-crimsonland-w4-survival`) | **publisher splash, then ExitProcess0** (2026-10-08; owning WebGL backend verified; `scratch/runs/20261008T0026Z-crimsonland-webgl-runtime`) | Ordinary Enter precedes exit; causality unknown. Tutorial gameplay remains unverified on WebGL. Bounded fault/exit capture prepared; historical software Tutorial result retained. |
 | pawn | D3D9 | **gameplay** (board) | board (2026-10-06, browser); gameplay (2026-09-23) | — |
 | pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not measured: bigMemory and its 1.3 GB tree cannot be shipped to a boat browser; the local box cannot hold it | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
@@ -109,7 +109,7 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
 2. **Crimsonland route corrected in retained software evidence**: the later
    October 6 run enters Tutorial from a visibly hovered button and shows world
    movement under W input. The earlier general claim that its menu cannot start
-   gameplay is superseded; Survival and WebGL gameplay remain unverified.
+   gameplay is superseded; Survival and WebGL gameplay remain unverified. The October 8 temporary browser run verifies an owning WebGL splash but exits to desktop before gameplay; a fault/exit capture is queued to identify the cause.
 3. **Throughput, not correctness**: ut2003/ut2004/arcanum
    reach gameplay only past the 120 s cap on the dated software sweep.
    Quake II's fresh ordinary software run on the accepted reference build
