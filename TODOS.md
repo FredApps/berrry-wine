@@ -1237,9 +1237,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
-  status: review
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (flight worker exited0; root gameplay review passed)
+  worker: comanche-catalog (PID176147 live; normal registered launch integration, accepted flight preserved)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
@@ -1266,13 +1266,14 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Command & Conquer: Tiberian Sun demo
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
-  status: active
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: tiberian-bad-transfer (PID154859 live verified 2026-10-08T12:58:51Z; sole worker)
+  worker: none (bad-transfer worker exited1 at2026-10-08T13:02:23.732Z after automatic cybersecurity rejection)
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
   Next: Parent10002 DirectDraw repaint loop and registered COM shadow-CPU activation repaired, including AddRef ULONG edge correction; root11182 hashes and real owner/paint regressions passed. Ordinary campaign loading now reaches first OleRun, then owning trap atEIP00d88176/ESP00d88168 in heap frame data. Next capture first bad control-flow producer, including activation continuation integrity; do not assume an independent guest defect or redo cleared menu/COM causes. Final AddRef edge tested/build-only d8d4096 differs from actual browser ff3281; gameplay still unqualified.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
+  Blocker: Diagnostic preparation was rejected automatically for possible cybersecurity risk. No retry, rephrasing, or delegation of rejected operation. Existing work preserved; no new gameplay evidence.
 
 - [~] Diagnose original Winamp MilkDrop exception and validate visualization
   id: GLD3D-WINAMP-EXCEPTION-20261007
