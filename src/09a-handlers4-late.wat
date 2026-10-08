@@ -725,7 +725,7 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
 
   ;; 383: ValidateRect(hwnd, lprc). lprc=NULL → full client (clear all).
   (func $handle_ValidateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wa i32) (local $cs i32) (local $empty i32)
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wa i32) (local $empty i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))
@@ -736,16 +736,18 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
         (local.set $l (load.field Rect left (local.get $wa)))
         (local.set $t (load.field.memarg Rect top (local.get $wa)))
         (local.set $r (load.field.memarg Rect right (local.get $wa)))
-        (local.set $b (load.field.memarg Rect bottom (local.get $wa))))
+        (local.set $b (load.field.memarg Rect bottom (local.get $wa)))
+        (local.set $empty (call $update_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))))
       (else
-        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-        (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
-        (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
-        (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
-    (local.set $empty (call $update_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
-    (if (i32.and (i32.ne (local.get $empty) (i32.const 0))
-                 (i32.eq (local.get $arg0) (global.get $main_hwnd)))
-      (then (global.set $paint_pending (i32.const 0))))
+        ;; NULL validates the entire update region, independent of host
+        ;; geometry (which may belong to another instance during callbacks).
+        (call $update_clear_hwnd (local.get $arg0))
+        (local.set $empty (i32.const 1))))
+    (if (local.get $empty)
+      (then
+        (call $paint_flag_clear_hwnd (local.get $arg0))
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 0))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )

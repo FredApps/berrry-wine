@@ -11,23 +11,28 @@ function installPaintOwnershipReceipt(host, getContext, readDamage, emit) {
     ['ValidateRect', [2, 1]], ['InvalidateRect', [3, 1]],
     ['ValidateRgn', [2, 1]], ['InvalidateRgn', [3, 1]],
     ['RedrawWindow', [4, 1]], ['UpdateWindow', [1, 1]],
+    ['ShowWindow', [2,1]], ['SetWindowPos',[7,1]], ['MoveWindow',[6,1]],
   ]);
   const original = {}, hooks = {}, frames = [], names = new Map(), counts = new Map();
   const limits = {bytes: 65536, rows: 96, cpuMs: 200, hooks: 20000, depth: 128};
   let active = false, closed = false, deadline = 0, hwnd = 0, error = null, capped = null;
   let bytes = 0, rows = 0, cpuMs = 0, hookCount = 0, nextId = 0, unmatched = 0;
+  let writerCount=0, writerCpuMs=0, writerBytes=0, writerError=null, writerCapped=null;
+  const writerLimits={hooks:64,bytes:32768,cpuMs:100};
+  let writerRead=false;
   function guard() {
+    if(writerRead){if(Date.now()>=deadline)throw Error('deadline');if(writerBytes>=writerLimits.bytes||writerCpuMs>=writerLimits.cpuMs)throw Error('writer budget');return;}
     if (!active || Date.now() >= deadline) throw Error('deadline');
     if (bytes >= limits.bytes || rows >= limits.rows || cpuMs >= limits.cpuMs) throw Error('budget');
   }
   function get(c, n) { guard(); const v = c.exports[n](); guard(); return v >>> 0; }
   function read(c, address, length, guest = true) {
-    guard(); if (!Number.isInteger(length) || length < 0 || length > 1024 || bytes + length > limits.bytes) throw Error('budget');
+    guard(); if (!Number.isInteger(length) || length < 0 || length > 1024 || (writerRead ? writerBytes + length > writerLimits.bytes : bytes + length > limits.bytes)) throw Error('budget');
     const p = guest ? c.exports.guest_to_wasm(address) >>> 0 : address;
     guard(); const buffer = c.memory.buffer; guard();
     if (!Number.isSafeInteger(p) || p < 256 || p + length > buffer.byteLength) throw Error('bounds');
     const out = new Uint8Array(length), src = new Uint8Array(buffer, p, length);
-    for (let i = 0; i < length; i++) { guard(); out[i] = src[i]; bytes++; }
+    for (let i = 0; i < length; i++) { guard(); out[i] = src[i]; if(writerRead)writerBytes++;else bytes++; }
     guard(); return out;
   }
   function words(c, p, n) { const b = read(c, p, n * 4), v = new DataView(b.buffer); return Array.from({length: n}, (_, i) => v.getUint32(i * 4, true)); }
@@ -77,6 +82,19 @@ function installPaintOwnershipReceipt(host, getContext, readDamage, emit) {
       callbackReturn: 'unmeasured; guest dispatch can redirect after this handler',
       dlgprocHandled: 'unknown; DWL_MSGRESULT zero does not distinguish TRUE/FALSE'});
   }
+  if(typeof host.invalidate!=='function')throw Error('missing invalidate');
+  original.invalidate=host.invalidate;
+  hooks.invalidate=function(...args){
+    if(deadline&&!closed&&Date.now()<deadline&&[hwnd,0x10002,0x10003].includes(args[0]>>>0)&&writerCount<writerLimits.hooks&&!writerError&&!writerCapped){
+      const start=performance.now();writerRead=true;
+      try{writerCount++;const c=getContext(),esp=get(c,'get_esp');
+        const target=args[0]>>>0;const snapshot=readDamage(c,target,(p,n)=>read(c,p,n,false));
+        const eip=get(c,'get_eip');emit({kind:'writer',name:'host.invalidate',target,slot:c.slot,tid:get(c,'get_current_thread_id'),eip,esp,stack:words(c,esp,24),code:Array.from(read(c,eip,32)),damage:snapshot,parent:frames.filter(Boolean).map(f=>({id:f.id,name:f.name,stack:f.stack})),at:Date.now()});
+      }catch(e){if(/budget|deadline/.test(String(e)))writerCapped=String(e);else writerError=String(e)}
+      finally{writerRead=false;writerCpuMs+=Math.max(0,performance.now()-start);if(writerCpuMs>=writerLimits.cpuMs)writerCapped='cpuMs';}
+    }
+    try{return original.invalidate.apply(this,args)}catch(e){writerError='original import trap: '+String(e);throw e}
+  };host.invalidate=hooks.invalidate;
   for (const [name, fn] of [['log', entry], ['log_api_exit', exit]]) {
     if (typeof host[name] !== 'function') throw Error('missing ' + name);
     original[name] = host[name];
@@ -91,7 +109,7 @@ function installPaintOwnershipReceipt(host, getContext, readDamage, emit) {
   return {
     arm(target) { if (active || closed || deadline) throw Error('single arm required'); if (!Number.isInteger(target) || target <= 0) throw Error('HWND required'); hwnd = target; deadline = Date.now() + 8000; active = true; return {armed: true, deadline, limits}; },
     close() { active = false; closed = true; const pending = frames.filter(Boolean); for (const n of Object.keys(original)) if (host[n] === hooks[n]) host[n] = original[n];
-      return {closed, deadline, error, capped, bytes, rows, cpuMs, hookCount, unmatched, pending, counts: Object.fromEntries(counts), scope: 'owning import entry/handler-exit damage; no raw DLGPROC BOOL or retired guest-return claim'}; },
+      return {writer:{writerCount,writerCpuMs,writerBytes,writerError,writerCapped,limits:writerLimits},closed, deadline, error, capped, bytes, rows, cpuMs, hookCount, unmatched, pending, counts: Object.fromEntries(counts), scope: 'owning import entry/handler-exit damage; no raw DLGPROC BOOL or retired guest-return claim'}; },
   };
 }
 

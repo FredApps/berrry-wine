@@ -5,7 +5,7 @@ function fixture(emit) {
   const memory = {buffer: new ArrayBuffer(16384)}, view = new DataView(memory.buffer), rows = [], calls = [], names = new Map();
   let esp = 0x600, eax = 0, tid = 1, damage = {update: 1, paint: 1, rect: [3, 4, 12, 15]};
   const ex = {get_esp: () => esp, get_eax: () => eax, get_eip: () => 0x400800, get_current_thread_id: () => tid, guest_to_wasm: p => p >= 0x400000 ? 0x1000 : p};
-  const host = Object.fromEntries(['log', 'log_api_exit'].map(n => [n, function(...args) { calls.push({n, args, receiver: this}); return 71; }]));
+  const host = Object.fromEntries(['log', 'log_api_exit', 'invalidate'].map(n => [n, function(...args) { calls.push({n, args, receiver: this}); return 71; }]));
   const original = {...host};
   const observer = installPaintOwnershipReceipt(host, () => ({exports: ex, memory, slot: 0}), () => structuredClone(damage), emit || (r => rows.push(r)));
   function entry(name, args, address = 0x600) {
@@ -52,7 +52,7 @@ assert.match(thrown.observer.close().error, /collector failed/); assert.deepEqua
 const trap = fixture(); trap.observer.arm(0x10002); trap.entry('BeginPaint', [0x10002, 0x900]);
 const finalTrap = trap.observer.close(); assert.equal(finalTrap.pending.length, 1, 'guest trap preserves pending owning evidence');
 let forwards = 0;
-const throwingHost = {log() { forwards++; throw Error('original guest trap'); }, log_api_exit() { return 9; }};
+const throwingHost = {log() { forwards++; throw Error('original guest trap'); }, log_api_exit() { return 9; }, invalidate() {}};
 const throwingOriginal = {...throwingHost};
 const throwingObserver = installPaintOwnershipReceipt(throwingHost, () => { throw Error('unarmed getter forbidden'); }, () => {}, () => {});
 assert.throws(() => throwingHost.log(), /original guest trap/); assert.equal(forwards, 1);
@@ -72,3 +72,14 @@ const before = new Uint8Array(buf).slice();
 assert.deepEqual(readPaintDamage({}, 0x10002, (p, n) => new Uint8Array(buf).slice(p, p + n), regions), {slot: 1, update: 1, paint: 1, rect: [0, 0, 0, 0]});
 assert.deepEqual(new Uint8Array(buf), before); assert.deepEqual(readPaintDamage({}, 9, (p, n) => new Uint8Array(buf).slice(p, p + n), regions), {destroyed: true});
 console.log('PASS paint ownership, nested frames, retained/renewed damage, zero-result ambiguity, trap preservation, forwarding and budgets');
+
+const writer=fixture();writer.observer.arm(0x10002);
+writer.entry('CallWindowProcA',[0xffff0004,0x10002,0xf,0,0]);
+for(let i=0;i<21000;i++)writer.host.log(0x2000,15);
+writer.damage({update:1,paint:1,rect:[0,0,299,202]});
+assert.equal(writer.host.invalidate.call(writer.host,0x10002,123),71);
+const w=writer.rows.find(r=>r.kind==='writer');assert(w,'reserved writer survives broad flood');assert.equal(w.target,0x10002);assert.equal(w.parent[0].name,'CallWindowProcA');assert.equal(w.stack.length,24);assert.deepEqual(w.damage.rect,[0,0,299,202]);
+writer.host.invalidate(0x10003);assert(writer.rows.some(r=>r.kind==='writer'&&r.target===0x10003));
+for(let i=0;i<100;i++)writer.host.invalidate(0x10002);
+const wr=writer.observer.close();assert(wr.writer.writerCount<=64);assert(wr.writer.writerBytes<=32768);assert.equal(wr.writer.writerError,null);assert.deepEqual(writer.host,writer.original);
+console.log('PASS reserved invalidate writer ownership, alternate target, forwarding and independent flood limits');
