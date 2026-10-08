@@ -1,5 +1,41 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8: campaign COM fault could not be reproduced on the fresh box
+
+Sole worker on explicit `a21a7c308` reused accepted module `6adb4387…`,
+authenticated all125 source checks/478 runtime pins/29 aliases, and retained
+original SUN `f70dcf32…` and media. Three bounded fresh-box runs are
+`20261008T0314Z-tiberian-campaign-com`, `20261008T0317Z-tiberian-campaign-com`
+and `20261008T0321Z-tiberian-campaign-com`. Each has190 actual full/range
+producer hashes with zero drift and five explicitly optional shell404s.
+The prior0256 loading/error evidence remains valid historical evidence; these
+new runs do not reproduce its campaign dialog1000c or Titan loading.
+
+The first run had two refused input commands lacking required reviewed-scene
+metadata and closed its observer at click cleanup. Those limitations are
+retained. The second keeps independent API/fault budgets through ordinary
+quit. The third preserves the prior pump/paint navigation harness and adds
+only a reserved cxx_throw hook. Both corrected runs observe no COM throw;
+their final receipts and personally inspected screenshots are retained.
+Ordinary New Campaign and750ms Enter remain at the original menu/gray menu
+surface. No further paint/selector repair or forced state was attempted.
+
+An authenticated startup CoCreateInstance return at original5ec3e3 reports
+`0x80040154` (REGDB_E_CLASSNOTREG), followed by S_OK at the same caller.
+This recovered startup failure is **not** the campaign HRESULT. Other
+CoCreateInstance handler-exit values occur during deferred activation and
+must not be labelled final guest-call results. No owning campaign exception
+object/caller/HRESULT was captured, and no engine change is justified.
+
+The preparation helper now audits accepted6adb closure/module instead of
+the obsoletebd5 reference. A bounded fault observer and meaningful exhausted
+API-lane/forwarding/throw/restoration test are available, but diagnostic
+tooling is not a campaign repair. All three browsers quit before their
+unchanged300s deadlines; independent PID/socket/pin checks and evidence
+retrieval precede owned-prefix removal. Fresh no-env bx_fugmje42 lifecycle
+is retained by root, expiry03:52:10.007 UTC. Gameplay/FPS/audio remain unknown.
+See [campaign COM handoff](../../ops/handoffs/tiberian-campaign-com-20261008.md).
+
 ## October 8: explicit validation repair passes the menu blocker
 
 Reserved owning host.invalidate evidence in `20261008T0251Z-tiberian-writer`
