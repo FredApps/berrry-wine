@@ -33,6 +33,6 @@ const send = m => sandbox.self.onmessage({data: m});
   const linkSandbox = {module: {exports: {}}, console: {log: s => forwarded.push(s)}, setTimeout, clearTimeout};
   vm.runInNewContext(fs.readFileSync(dir + '/prepared/lib/guest-thread-host.js', 'utf8'), linkSandbox);
   const link = Object.create(linkSandbox.module.exports.WorkerLink.prototype); link._onMessage(empty); assert.equal(forwarded.length, 1);
-  fs.writeFileSync(dir + '/integration-tests.json', JSON.stringify({at: new Date().toISOString(), passed: true, observerClose: close.receipt, workerRows: forwarded.length, scope: 'actual generated Worker/Link mocked guest init/arm/slice/receipt/close; no native/browser'}, null, 2));
+  if (!fs.existsSync(dir + '/artifact-index.json')) fs.writeFileSync(dir + '/integration-tests.json', JSON.stringify({at: new Date().toISOString(), passed: true, observerClose: close.receipt, workerRows: forwarded.length, scope: 'actual generated Worker/Link mocked guest init/arm/slice/receipt/close; no native/browser'}, null, 2), {flag: 'wx'});
   console.log('PASS actual prepared Worker/Link init/arm/slice/first-empty/close, original forwarding and cleanup');
 })().catch(e => { console.error(e); process.exitCode = 1; });

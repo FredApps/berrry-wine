@@ -111,6 +111,18 @@ preparation with archive/copy/32MiB transport allowance above2GiB. Runtime uses
 hardlinks to0150,8-shot/16MiB screenshot caps,24MiB actual retrieval cap and
 75KiB transfer chunks. No evidence deletion or mutable-worktree deduplication.
 
+Final integrity audit found one preparation-only receipt mutation: a generated
+Worker test rerun at01:53:53.746 rewrote0150/integration-tests.json after sealing,
+also visible through its runtime hardlink. Its earlier version with SHA
+`6e376f3ff9834f6996b4770333ccc3d305ff4f7b7e59ced3551cb5a24dfce67e`
+is unavailable. Original0150 manifest/result are preserved under
+`publication-before-receipt-refresh/`; an explicit integrity correction and
+current manifest/result describe the later passing receipt. Runtime's own
+manifest already covered the later receipt. All source/media/archive and actual
+runtime captures verify unchanged. The generated test now leaves indexed
+packages untouched and uses exclusive receipt creation for unsealed packages.
+This was a metadata immutability failure, not a restored historical receipt.
+
 ## Actual cleanup and handoff
 
 Antara released bx_jk5sz7qx at01:51:18. Independent01:52:26 verifies prior
