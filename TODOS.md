@@ -966,7 +966,7 @@ commit output — do not assume your hunks landed.**
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: pirates-2004
-  Next: Review the stopped captain-route evidence and transferred ownership; define a bounded reproduction that reaches the actual StretchRect operation without disturbing the retained reference service.
+  Next: Captain-route stop remains independent and unmeasured. Before claiming current-main actual rectangular/filter2 transfer, reconcile missing archived implementation under PIRATES-TRANSFER-REENTRANCY; main058b82eba still explicitly traps those shapes. Preserve historical no-transfer outcome; do not rerun old-build recipe as current-main acceptance.
   Done: Identify the route failure and either validate the actual game transfer/readback with reviewed images or record a precise blocking dependency. Link unresolved terrain defects separately; a zero-transfer run is not a rendering pass.
   Evidence: ops/handoffs/mig-pirates-stretch.md; ops/handoffs/mig-pirates-stretch-recipe.md
 
@@ -1046,7 +1046,7 @@ commit output — do not assume your hunks landed.**
   created: 2026-10-02T04:16:51.185761+00:00
   created-by: orchestrator-handoff-audit
   candidate: pirates-2004
-  Next: Audit per-instance StretchRect packet/stage state across nested same-thread callbacks and existing render-token snapshots before claiming reentrancy.
+  Next: October8 main058b82eba audit: only whole-surface/filter0 support; archived428c9abed rectangle/filter2 packet implementation is absent from main. Isolate archived source/tests, audit nested callback deferral and per-invocation stage/packet ownership, prove negative/positive nested pixel/cleanup behavior before integration. See ops/handoffs/pirates-stretch-main-reconciliation-20261008.md.
   Done: Explicit ownership/lifetime contract and focused nested-call regression, or exact unsupported case recorded; no unchecked pooling/copy removal.
   Evidence: ops/handoffs/01a0f736-78f1-7822-8b37-159d6f8ed94d.md
 
