@@ -966,17 +966,18 @@ commit output — do not assume your hunks landed.**
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: pirates-2004
-  Next: Review the stopped captain-route evidence and transferred ownership; define a bounded reproduction that reaches the actual StretchRect operation without disturbing the retained reference service.
+  Next: Captain-route stop remains independent and unmeasured. Before claiming current-main actual rectangular/filter2 transfer, reconcile missing archived implementation under PIRATES-TRANSFER-REENTRANCY; main058b82eba still explicitly traps those shapes. Preserve historical no-transfer outcome; do not rerun old-build recipe as current-main acceptance.
   Done: Identify the route failure and either validate the actual game transfer/readback with reviewed images or record a precise blocking dependency. Link unresolved terrain defects separately; a zero-transfer run is not a rendering pass.
   Evidence: ops/handoffs/mig-pirates-stretch.md; ops/handoffs/mig-pirates-stretch-recipe.md
 
-- [ ] Verify Quake II world traversal beyond a changed frame
+- [x] Verify Quake II world traversal beyond a changed frame
   id: Q2-MOVEMENT-FOLLOWUP
-  status: backlog
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: quake-2-demo-installer
-  Next: Extend the existing shared-registry route with controlled movement and a verifiable position or landmark change.
+  Next: Complete: original ordinary forward/reverse/idle traversal independently reviewed on WebGL2534731b3 and software069662726. Runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain reference identities; no redundant run.
   Done: Reviewed before/after world captures and position/landmark evidence demonstrate actual traversal, with exact build, route and renderer provenance. Retain texture/resource checks and distinguish movement from animation or camera-only changes.
   Evidence: ops/handoffs/mig-render-q2.md
 
@@ -1045,7 +1046,7 @@ commit output — do not assume your hunks landed.**
   created: 2026-10-02T04:16:51.185761+00:00
   created-by: orchestrator-handoff-audit
   candidate: pirates-2004
-  Next: Audit per-instance StretchRect packet/stage state across nested same-thread callbacks and existing render-token snapshots before claiming reentrancy.
+  Next: October8 main058b82eba audit: only whole-surface/filter0 support; archived428c9abed rectangle/filter2 packet implementation is absent from main. Isolate archived source/tests, audit nested callback deferral and per-invocation stage/packet ownership, prove negative/positive nested pixel/cleanup behavior before integration. See ops/handoffs/pirates-stretch-main-reconciliation-20261008.md.
   Done: Explicit ownership/lifetime contract and focused nested-call regression, or exact unsupported case recorded; no unchecked pooling/copy removal.
   Evidence: ops/handoffs/01a0f736-78f1-7822-8b37-159d6f8ed94d.md
 
@@ -1081,3 +1082,246 @@ commit output — do not assume your hunks landed.**
   Done: Publish only confidently associated existing captures with exact hashes/provenance, update coverage and disposition deltas, preserve originals and explicit unknowns; never rerun games to fabricate historical evidence.
   Evidence: ops/handoffs/ops-visual-acceptance.md; ops/handoffs/ops-quarantine-review.md; scratch/ops-visual-acceptance-20261002/final-verification.json
   Notes: The completed18-image recovery/147-bundle audit remains accepted. This deeper search is unscheduled, not permission to take deferred Claude claims or restore incorrect associations.
+
+
+## Codex reclaimed work — 2026-10-07
+
+Current scoped ownership after reconciling the stopped fleet. The shared operational ledger retains other historical and released tasks. See ops/handoffs/codex-resume-20261007.md.
+
+- [~] Keep two new games moving toward playable gameplay with screenshots
+  id: NEW-GAMES-PIPELINE
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  accepted: 2026-10-04T02:11:10.446Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Two active lanes: Antara (/root/coverage_audit) source-only bounded DialogBox/module trace preparation; Arx Fatalis (/root/restore_evidence) source-only startup continuation/owning Worker investigation after corrected300sec run remained hidden. Croc2/DieHard ordinary movement qualified; no FPS/audio claim. Runtime leases serialized by root.
+  done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
+  notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
+
+- [~] Inventory every game and complete gameplay screenshot/FPS coverage
+  id: OPS-ALL-GAMEPLAY-COVERAGE
+  status: active
+  reclaimed: 2026-10-07T07:42:56.312Z
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  created: 2026-10-03T08:30:54.631Z
+  created-by: user via Telegram
+  accepted: 2026-10-03T08:30:54.631Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Reclaimed coordinator coverage at user relaunch. Reconcile Oct6 merged gameplay/measurement evidence before new runs; preserve44 archived FPS obligations, true counters and exactmissingpaths. Arena/TR3/DOS dashboard already landed; no duplicate screenshots or public deployment. Source/runtime claims serialized.
+  Done: Each game has a reviewed actual-gameplay screenshot and valid scene-qualified FPS evidence, or an explicit per-game blocker with exact missing paths; menus, intros and raw Flip event rates are not gameplay FPS.
+  Evidence: ops/handoffs/migration-core-ready-20261003.md
+
+- [x] New-game lane: original Daggerfall ordinary player-controlled dungeon
+  id: NEW-GAME-DAGGERFALL-20261005
+  status: done
+  reclaimed: 2026-10-07T07:42:56.312Z
+  candidate: gog-free-elder-scrolls-daggerfall
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/coverage_audit
+  prev-owner: /root/coverage_audit — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-05T18:27:59.455Z
+  accepted: 2026-10-05T18:27:59.455Z
+  accepted-by: /root/coverage_audit
+  Next: Qualified narrow ordinary dungeon movement on October7; documentation integrated remote main 724637d9, save repair fe7cfb95. Root reviewed forward/reverse/idle wall geometry in scratch/runs/20261007-daggerfall-dungeon-controls/result.json (708 artifact hashes). Runtime source3b8189/module8eb; optional bundle403 and driver exit1 preserved, clean process closure. No FPS, audio or sustained-play claim; worker refills lane.
+  Done: Reviewed actual first-person dungeon and finite ordinary movement response, exact source/fixture/input receipts and cleanup; character-review screens do not count.
+  Evidence: scratch/new-games-pipeline-20261005/daggerfall-reserve/activation.json; docs/re-notes/daggerfall-gog.md; tools/run-daggerfall-gameplay.js
+
+- [x] New-game lane: Die Hard: Nakatomi Plaza demo (Piranha/Fox 2002, LithTech, Direct3D)
+  id: NEW-GAME-DIEHARD-NAKATOMI-DEMO-20261006
+  status: done
+  reclaimed: 2026-10-07T07:42:56.312Z
+  Next: Narrow ordinary player-control qualified and root accepted2026-10-07. No further gameplay retry required; FPS/audio/sustained-level remain separate coverage obligations. Refill lane Arx Fatalis source preparation.
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/restore_evidence
+  created: 2026-10-06T18:40:00.000Z
+  candidate: test/binaries/win98-games-a-d/Diehard nacatomi demoD3D.exe (local, no download)
+  Earlier: 2026-10-06T20:00Z -- installs headless (03e2f5f3 LoadLibrary system path); boots past every emulator blocker so far: 33e4ff16 (_EH_prolog EBP), b15fa588 (__p___argv/argc), 0dbe4ab6 (D3D8 16-bit mode + back-buffer view, Reset, CopyRects, A1R5G5B5/X1R5G5B5 textures; A/B on other D3D8 apps clean). lithtech.exe initializes D3D8 at 640x480x16, presents, and is on its loading screen decompressing rez data at 1.8M batches (~7 min). Notes 16191cf9 docs/re-notes/diehard-nakatomi-demo.md. Waiting on orchestrator: long local run vs boat. Then registration (apps.js + corpus-categories + manifest) and gameplay input.
+  Done: registered app, reviewed gameplay screenshot with input evidence, result.json (candidateId = app id), commit on main, manifest generator command posted.
+  Evidence: main236e8be9 thread-zero-poll fix; localregistration mainfea60cb9; scratch/runs/20261007-diehard-nakatomi-player-control (34hashes, four reviewed gameplay images); docs0be37005 pending root publication.
+
+- [x] USER REPORT: Drakan demo crashes in the browser (Threads on): 'render endpoint is closed' + fs_read_file_result threw in notifyGuestWrite
+  id: DRAKAN-WEB-THREADS-LAZY-CRASH-20261006
+  status: done
+  reclaimed: 2026-10-07T07:42:56.312Z
+  note: 2026-10-06T21:25Z d3ec2640: invalidate_code_range runs with d3dim_lazy_bypass -- the page shadow no longer traps materializing a lazy D3DIM surface after a Worker ReadFile; Drakan reaches its main menu in the page with Threads on (scratch/runs/20261006T2120Z-drakan-threads-lazy). Next: fence the destination of host writes (ReadFile etc.) in the guest BEFORE the host writes so a later readback cannot overwrite file bytes read into an armed surface; regression test for that; Threads-off page check. Also: headless probe clicks/Enter do not dismiss the beta MessageBox in guest-Worker mode (renderer handleMouseDown via evalfile does) -- probe issue, pre-existing.
+  note: 2026-10-06T21:00Z claude:1863d2b5 taking it.
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/corpus_categories
+  created: 2026-10-06T20:57:00.000Z
+  Next: Completed October7: owner-side host-write fence maina1710870, actual-WASM/VFS negative control and candidate + Worker regression/full gates PASS; actual browser level personally reviewed with Threads on and off, clean process/server closure. Acceptance doc/hashes integrated mainea63ceed; ops/handoffs/drakan-threads-acceptance-20261007.json. No new movement, FPS, sound quality or PBO-warning-resolution claim.
+  Done: Drakan reaches its level in the page with Threads on and off; regression test for the lazy read completion in Worker mode; commit on main.
+  Evidence: user Telegram 2026-10-06T20:5xZ (log pasted in the orchestrator session)
+
+
+## GL/D3D reconciliation — October 7
+
+- [ ] GL/Direct3D corpus: every 3D app works on software and WebGL
+  id: GLD3D-CORPUS-27-20261006
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
+  created: 2026-10-06T02:09:48.337Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: Q2 both-backend ordinary traversal, Crimsonland WebGL Tutorial and AlienShooter WebGL Mission01 now qualified on documented reference builds. Fresh WarcraftIII Prologue ordinary-browser lane reconciles retained history and original fixtures next. Winamp/Arx held; aggregate remains open for longer routes, heavy titles/Pirates and PBO cause. No redundant sweep.
+  Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
+  Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
+
+- [ ] D3DIM async-flip PBO trips Chrome "READ-usage buffer written again before being read back"
+  id: D3DIM-ASYNC-PBO-WARN-20261006
+  status: blocked
+  note: 2026-10-06T21:25Z parked at WIND-DOWN, not started. Next: page probe on MW3 menu wrapping the D3DIM executor's readPixels/fenceSync/getBufferSubData (lib/d3dim-gpu.js asyncFlip path) to find which PBO is written again before its readback; likely reuse of one PIXEL_PACK_BUFFER across flips while an earlier read is inflight -> ring of PBOs or wait on the fence before reuse.
+  note: 2026-10-06T20:25Z claude:1863d2b5 claimed: code read finds no write-before-read path; next a page probe wrapping readPixels/fenceSync/getBufferSubData on MW3's live context (browser queue).
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (my change, fcfa4989) (fleet stopped)
+  created: 2026-10-06T20:20:00Z
+  Next: Warning isolated outside emulator: Chrome151 standalone4x4 WebGL2 yields six identical warnings despite8 correct pixel readbacks/GL_NO_ERROR. Matching browser source retains readback shadow allocation in GetBufferSubDataCHROMIUM path. Emulator trace216writes215reads has zero overwrite violations; one pending at capture end. No speculative renderer fix. Browser warning remains; no user input required. Recheck after browser-side correction; performance impact unmeasured. Receipt ops/handoffs/pbo-chrome151-reproduction-20261007.json.
+  Evidence: scratch/runs/20261006T1935Z-gld3d-webgl-recheck/c/mw3-2.console
+
+- [x] New-game lane: Croc 2 demo (Fox Interactive / Argonaut 1999, software 3D platformer)
+  id: NEW-GAME-CROC2-DEMO-20261006
+  status: done
+  reparked: 2026-10-06T16:20Z -- second look (e37aa7c6 re-notes): D3DDevice/DisplayDevice seeds select a hardware D3D record but the game stays on its software renderer (no CreateDevice); Demo Mode at ~8 presents/s with defaults; at tick 10 the picture freezes ~120k with main computing and T2 in InterlockedExchange+CS. Not a clock artifact alone. Next: what main waits on (T2 handshake).
+  resumed: 2026-10-06T16:00Z by claude:d10ba697 -- testing whether the black front end after Enter is the headless 200ms/batch clock (menu idle timeout) rather than a render bug.
+  candidate: win98-games-a-d/Croc2DemoSW-D3D.exe (local, no download)
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root/coverage_audit
+  prev-owner: claude:d10ba697-f69c-4855-aeff-e6a61b6e2735 (fleet stopped)
+  created: 2026-10-06T05:27:48.000Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: Completed narrow ordinary Jungle movement/reversal/settled idle, personally reviewed by root; main20bdd9c6 registration and600be49b findings. Evidence scratch/runs/20261007-croc2-jungle-controls/result.json, 500 artifact hashes, exit0/clean closure. No FPS/audio/sustained-play claim. Refill lane with Antara source investigation.
+  Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
+  Evidence: scratch/new-game-croc2-20261006 (work), scratch/runs/<id> (reviewed captures)
+
+- [~] Run DOSBox-packaged games directly in ToyVM for the dedicated DOS production route
+  id: TOYVM-DOS-NATIVE-GAMEPLAY-20261007
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: /root
+  created: 2026-10-07T09:08:16.475Z
+  requested-by: user via Telegram, dedicated DOS VM preferred over DOSBox inside Win98
+  Next: Reviewed CALL gate/RETF and hidden segment cache repair integrated4f1e083b/fcd391dd, fallback tests/bundlesc2cded63.36 targeted cases,16 real/VM86 cases, four existingCPU suites, full backend-install and bundle checks PASS;92 integrated source pins match tested tree. Recheck original Daggerfall extender next with bounded correctness run; paging/earlier invalid stack remain unresolved, ArenaCD/U4world still open. No native gameplay qualification.
+  Done: Every DOSBox-packaged corpus title has a direct dedicated-DOS/ToyVM launch route with ordinary player-controlled gameplay, reviewed native screenshot and source/run identity, sound/input/save validation and honest FPS evidence or explicit remaining per-title blockers. Implement compatibility gaps rather than substituting DOSBox wrapper evidence. Main dashboard clearly distinguishes native and Win98+DOSBox results, routes to the native player when supported, and exposes required/lazy loading and actionable errors. Scoped fixes/tests integrated to main; no public deployment.
+  Evidence: test/toyvm-dos-corpus/manifest.json; test/toyvm-dos-corpus/titles.json; ops/dos-corpus.json; tools/toyvm-dos-corpus.js; user instruction2026-10-07. Daggerfall/Arena DOSBox gameplay does not establish native compatibility.
+- [~] New-game lane: Betrayal in Antara demo (Sierra 1997, SCI32 RPG)
+  id: NEW-GAME-BETRAYAL-ANTARA-DEMO-20261006
+  status: blocked
+  candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (automatic security rejection; exited1)
+  created: 2026-10-06T04:51:54.000Z
+  accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
+  Next: Hold rejected crash diagnostic; no retry/rephrase. WIP preserved, remote bx_fugmje42 authoritatively stopped after expiry, full cleanup/evidence retrieval incomplete. See ops/handoffs/antara-security-hold-20261008.md. No installation/gameplay qualification.
+  Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
+  Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
+
+- [ ] New-game lane: Arx Fatalis demo (original local MSI/CAB media)
+  id: NEW-GAME-ARX-FATALIS-DEMO-20261007
+  status: blocked
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none; arx-fault exited1
+  candidate: test/binaries/win98-games-a-d/Arx_Fatalis-demo-D3D-Glide
+  Next: Automated possible-cybersecurity-risk rejection stopped diagnostic; no retry/rephrase. Root cleaned remote and preserved scratch/runs/20261007-arx-diagnostic-interrupted. Prior introAV unresolved; Darkstone refills lane.
+  Done: Original asset closure registered locally, ordinary reviewed player scene and control evidence, scoped tested fixes integrated on main; no FPS claim without separate measurement.
+  Evidence: scratch/wt-diehard-20261007/scratch/refill-after-diehard/shortlist.json; original ARX.exe SHAebd3e2b3; no currentmain registration or historical qualified run found.
+
+- [x] Additional game lane: Carmageddon TDR2000 demo
+  id: NEW-GAME-TDR2000-DEMO-20261007
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI tdr (scratch/fresh-workers-20261007)
+  candidate: test/binaries/win98-games-a-d/Carmageddon TDR2000 demo-D3D
+  requested-by: user Telegram two more games in parallel, 2026-10-07
+  Next: Completed mainb7cdb5fd: durable local-only registry/manifest, exact2963rows (148required/2815lazy), focused tests and fail-closed diskguard. Ordinary actualrace forward/reverse/brake screenshots reviewed; evidence1124777f, sentTelegram851/852. FPS/audio unmeasured; no public deployment.
+  Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
+
+- [~] Additional game lane: Comanche 3 demo
+  id: NEW-GAME-COMANCHE3-DEMO-20261007
+  status: blocked
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (fresh comanche-startup completed)
+  candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
+  requested-by: user Telegram two more games in parallel, 2026-10-07
+  depends-on: TOYVM-386-PAGING-20261007
+  Next: Authenticated paging dependency: original REP copies linear10000000 to physical0 because CR3/pagewalking absent, corrupting IVT. Findings2acadd964; root independently matched16KiB original/readbuffer/IVT hashes. No more budget-only runs; resume after generic paging, then original installer/gameplay.
+  Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
+
+- [ ] Quake II WebGL ordinary world movement validation
+  id: GLD3D-QUAKE2-TRAVERSAL-20261007
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (fresh q2-gl-validation completed)
+  Next: Completed main2534731b3: fb1be916 ordinary Game/Easy/W/S/idle worldtranslation personally reviewed byroot. Sixscreens/38artifacts contained and present; Telegramphotos860/861 sent. Actualbrowser/driver cleanclosure,16ancillaryVLANAPIrefusals retained; FPS/audio/network unqualified.
+  Done: Current source/host/run identity, reviewed actual gameplay and input movement, scoped corpus table update on main; FPS/audio separate.
+
+- [x] Implement generic 386 paging for original DOS extenders
+  id: TOYVM-386-PAGING-20261007
+  handoff: ops/handoffs/toyvm-paging-implementation-20261007.md
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (fresh toyvm-paging-integrate completed)
+  Next: Complete main72e306790 with foundation4b0955e79. All47 correctness groups passed; root verified1495 artifacts and integrated source pins. Original authenticated16KiB copy maps correctly and preservesIVT, progresses Loading Install for75s without CPU faults; installation/gameplay remain separate.
+  Evidence: docs/re-notes/comanche3-later-execution-20261007.md; scratch/runs/20261007-comanche3-paging-diagnostic/evidence-index.json; source emit.js dropsCR3 and maskslinear24bits.
+  Done: Generic paging correctness reviewed with fault semantics and original Comanche startup progressing beyond paged copy; no gameplay claim without ordinary control evidence.
+
+- [ ] New-game lane: Command & Conquer: Tiberian Sun demo
+  id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (reproduction prerequisite queued; worker exited0)
+  candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
+  Next: Accepted0256 reaches campaign loading/error; three0314/0317/0321 reruns stayed at menu. Root1554 hashes pass; served-file comparison differs only in guest-worker observer, cause unproven. Preserve validated paint repair; reproduce matched0256 route before interpreting campaign HRESULT. No further blind click/COM rerun.
+  Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
+  Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
+
+- [~] Diagnose original Winamp MilkDrop exception and validate visualization
+  id: GLD3D-WINAMP-EXCEPTION-20261007
+  status: blocked
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (worker exited1 after automated rejection)
+  Next: HELD: automated cybersecurity-risk rejection terminated Winamp diagnostic worker at23:52:06. No retry/rephrasing/delegation of rejected diagnostic. Root recovered14 existing outputs and verified driver/browser exited; no exception cause or visualization qualification.
+  Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
+  Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
+
+- [x] Validate original Quake II OpenGL workload on emulator software backend
+  id: GLD3D-QUAKE2-SOFTWARE-20261007
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (q2-software exited0)
+  Next: Done scoped software forward/reverse/idle gameplay, reviewed original ref_gl and owning renderer software proof; main069662726. Exact reference096889e/fb1be916, not current-main build validation. FPS/audio/network unqualified.
+  Done: Reviewed ordinary gameplay/input evidence, exact backend/source/module/original identity, scoped GL table update on main; FPS/audio separate.
+  Evidence: scratch/runs/20261008T000901Z-quake2-software-ordinary; ops/handoffs/quake2-software-ordinary-20261008.md
+
+- [x] Validate Crimsonland Tutorial control on WebGL
+  id: GLD3D-CRIMSONLAND-WEBGL-20261008
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (crimsonland-relative-input exited0)
+  Next: Done scoped WebGL Tutorial movement and relative aiming; root reviewed3images and100contained hashes. Integrated6f4f74b19. Original referencef62/module4dc5; no engine patch. FPS/audio/combat/long-session qualification remain separate.
+  Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
+  Evidence: scratch/runs/20261008T0105Z-crimsonland-relative-input; ops/handoffs/crimsonland-relative-input-20261008.md; Telegram879.
+
+- [~] Validate Alien Shooter Mission 01 control on WebGL
+  id: GLD3D-ALIEN-SHOOTER-WEBGL-20261008
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: completed; actual exit0 2026-10-08T01:26:18Z
+  Next: Complete scoped WebGL Mission01 movement/aiming acceptance; root reviewed images/backend and all109 contained hashes. Findings integrated bf8d2e134; run20261008T0114Z-alien-shooter-webgl. No FPS/audio/combat-completion or current-main runtime claim.
+  Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
+  Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
+
+- [x] Warcraft III original Prologue ordinary WebGL gameplay
+  id: GLD3D-WARCRAFT3-PROLOGUE-20261008
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (exited0; coordinator review passed)
+  Next: Complete scoped WebGL Prologue gameplay validation: root reviewed Thrall selection and two opposing ordinary right-click moves against fixed terrain; 675 contained artifact hashes pass. Run20261008T0156Z-warcraft3-campaign-world-runtime, referencef62/module4dc5. No FPS/audio/combat/campaign-completion claim.
+  Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
+
+- [~] Warcraft III original Prologue software-backend gameplay
+  id: GLD3D-WARCRAFT3-SOFTWARE-20261008
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI warcraft3-software (sole worker)
+  Next: Reuse reviewed WebGL Prologue route with verified guest OpenGL software backend on a temporary box; validate ordinary Thrall selection/two move orders. No fallback or FPS/audio claim.
+  Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.

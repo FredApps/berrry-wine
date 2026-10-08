@@ -171,6 +171,25 @@ async function main() {
   assert.strictEqual(devFlags & 0x20, 0, 'the device is not an emulated driver');
   assert.strictEqual(devFlags & 0xa0a, 0xa0a,
     'primary and secondary stereo 16-bit are supported');
+  // DSCAPS field offsets. The max rate used to land at +56
+  // (dwFreeHw3DAllBuffers), leaving the rate range 0..0, and every voice count
+  // read 0 -- Diablo II's d2sound needs dwMaxHw3DAllBuffers >= 16 to keep 3D
+  // sound and otherwise refuses every sound it flags as 3D.
+  const capsAt = off => dv.getUint32(wa(devCaps) + off, true);
+  assert.strictEqual(capsAt(8), 100, 'dwMinSecondarySampleRate');
+  assert.strictEqual(capsAt(12), 100000, 'dwMaxSecondarySampleRate');
+  assert.strictEqual(capsAt(16), 1, 'dwPrimaryBuffers');
+  assert(capsAt(20) >= 16 && capsAt(32) >= 16, 'hardware mixing voices are reported');
+  assert(capsAt(44) >= 16 && capsAt(56) >= 16, 'hardware 3D voices are reported');
+  assert.notStrictEqual(capsAt(56), 44100, 'no sample rate in dwFreeHw3DAllBuffers');
+  // A DX3-sized caller (dwSize 20) gets only the fields it declared.
+  const oldCaps = e.guest_alloc(96) >>> 0;
+  for (let i = 0; i < 96; i += 4) dv.setUint32(wa(oldCaps) + i, 0x5a5a5a5a, true);
+  dv.setUint32(wa(oldCaps), 20, true);
+  assert.strictEqual(e.test_ds_get_caps(sound, oldCaps) >>> 0, 0);
+  assert.strictEqual(dv.getUint32(wa(oldCaps) + 12, true), 100000);
+  assert.strictEqual(dv.getUint32(wa(oldCaps) + 20, true), 0x5a5a5a5a,
+    'GetCaps writes nothing past the caller\'s dwSize');
   const topLevel = e.test_ds_make_window(0x10000000, 0) >>> 0;
   const child = e.test_ds_make_window(0x50000000, topLevel) >>> 0;
 

@@ -13,8 +13,14 @@ vfs.files.set('c:\\sample.hlp', {
 const modern = vfs.createFile('C:\\sample.hlp', 0x80000000, 3);
 assert(modern > 0xffff, 'ordinary CreateFile handle stays in the Win32 namespace');
 
-const legacy = vfs.createLegacyFile('C:\\sample.hlp', 0x80000000, 3);
-assert(legacy >= 4 && legacy < 0xffff, '_lopen handle fits in a 16-bit HFILE');
+// A read-only HFILE may not change the file's length (f31daedb): Windows
+// answers SetEndOfFile on it with ERROR_ACCESS_DENIED.
+const readOnly = vfs.createLegacyFile('C:\\sample.hlp', 0x80000000, 3);
+assert(readOnly >= 4 && readOnly < 0xffff, '_lopen handle fits in a 16-bit HFILE');
+assert.strictEqual(vfs.setEndOfFileResult(readOnly), 5, 'read-only HFILE cannot truncate');
+
+const legacy = vfs.createLegacyFile('C:\\sample.hlp', 0xC0000000, 3);
+assert(legacy >= 4 && legacy < 0xffff, 'read/write _lopen handle fits in a 16-bit HFILE');
 
 const buffer = new Uint8Array(4);
 assert.deepStrictEqual(vfs.readFile(legacy, buffer, 4), { ok: true, bytesRead: 4 });

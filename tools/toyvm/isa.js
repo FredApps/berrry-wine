@@ -297,7 +297,12 @@ const REGFILE_SEL = IPHIST_BASE + IPHIST_SIZE;
 const REGFILE_BASE = REGFILE_SEL + 32;
 const REGFILE_SEGB = REGFILE_BASE + 32;
 const REGFILE_SIZE = 128;                  // from REGFILE_SEL
-const DEC_END = REGFILE_SEL + REGFILE_SIZE;
+// Restart journal belongs to the emulator, beyond all guest physical RAM.
+const PAGE_UNDO_BASE = REGFILE_SEL + REGFILE_SIZE;
+const PAGE_UNDO_SIZE = 4096;
+const PAGE_REG_SAVE = PAGE_UNDO_BASE + PAGE_UNDO_SIZE;
+const PAGE_CTL_SAVE = PAGE_REG_SAVE + REGFILE_SIZE;
+const DEC_END = PAGE_CTL_SAVE + 0x100;
 
 // The µop engines' tail (uop-wasm.js): vreg files, out slots, the one-program
 // code page and the arena where a live run keeps many chained programs at
@@ -343,5 +348,6 @@ module.exports = {
   DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX, DEC_FIXUP_WORDS,
   DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_INSNS, DEC_INSNS_MAX, DEC_END,
   IPHIST_BASE, IPHIST_SIZE, REGFILE_BASE, REGFILE_SEL, REGFILE_SEGB, REGFILE_SIZE,
+  PAGE_UNDO_BASE, PAGE_UNDO_SIZE, PAGE_REG_SAVE, PAGE_CTL_SAVE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

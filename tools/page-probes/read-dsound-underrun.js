@@ -40,6 +40,8 @@
       ringBytes: r.len,
       lapMs: +r.lapMs.toFixed(1),
       refreshes: r.refreshes,
+      // Of those, seen by diffing a worklet-routed ring from the timer.
+      polledRefreshes: r.polledRefreshes | 0,
       refreshGapMs: { p50: pct(r.refreshGaps, 0.5), p90: pct(r.refreshGaps, 0.9),
         p99: pct(r.refreshGaps, 0.99), max: pct(r.refreshGaps, 1) },
       sampleGapMs: { p50: pct(r.sampleGaps, 0.5), p99: pct(r.sampleGaps, 0.99),

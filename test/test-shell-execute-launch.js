@@ -129,8 +129,14 @@ function makeShell(opts = {}) {
       for (const dir of other.dirs) this.dirs.add(dir);
     },
   };
+  const coreBase = { loadAddr: 0x10a62000, origBase: 0x10100000 };
   const caller = { _helpCtx: { vfs }, _runSliceAppKey: 'cue:speed-demons',
-    asyncMultimediaTimer: true };
+    asyncMultimediaTimer: true,
+    // host.js keys each loaded module twice, with and without the extension.
+    moduleBases: { 'core.dll': coreBase, core: coreBase },
+    // The Worker backend's loader results carry no names, so with Threads on
+    // only the byte cache knows what was loaded.
+    _loadedDllBytesByName: { 'core.dll': new Uint8Array(1), 'engine.dll': new Uint8Array(1) } };
   const ok = shell.launchVfsExe('C:\\windows\\temp\\is-test.tmp\\child.tmp',
     caller, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
   assert.strictEqual(ok, true, 'absolute child exe in the caller VFS is accepted');
@@ -142,6 +148,8 @@ function makeShell(opts = {}) {
     'dynamic child inherits the mounted app Auto run-slice policy');
   assert.strictEqual(child.asyncMultimediaTimer, true,
     'chain-launched installed children inherit multimedia timer semantics');
+  assert.deepStrictEqual(child.inheritedDlls, ['core.dll', 'engine.dll'],
+    'a child inherits the names of the DLLs its caller runs as real PEs');
 
   assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
     'relative child exe resolves against the caller working directory');
@@ -270,6 +278,62 @@ function makeShell(opts = {}) {
   assert.strictEqual(shell.launchExe('wordpad.exe'), true,
     'a registered exe is accepted');
 }
+
+// UT's first-run wizard runs C:\app.exe testrendev=... once per renderer. The
+// child has no registry `dlls` seeds, so its import of the app-private
+// Core.dll was declined by isLoadableDll and bound to a stub
+// (?appPackage@@YAPBGXZ trap). The inherited names make it loadable; a system
+// DLL the emulator implements still is not.
+(async () => {
+  const { resolveDllGraph } = require('../lib/process-boot.js');
+  const { isLoadableDll } = require('../lib/dll-registry.js');
+  const inherited = new Set(['core.dll']);
+  const asked = [];
+  const configs = await resolveDllGraph({
+    exeBytes: new Uint8Array(1),
+    detectRequiredDlls: () => ['core.dll', 'user32.dll'],
+    isLoadable: name => inherited.has(name.toLowerCase()) || isLoadableDll(name),
+    loadSpec: async spec => { asked.push(spec); return { name: spec, bytes: new Uint8Array(1) }; },
+  });
+  assert.deepStrictEqual(configs.map(c => c.name), ['core.dll'],
+    'an inherited private DLL loads; user32.dll is still served by the emulator');
+  assert.deepStrictEqual(asked, ['core.dll'], 'the system DLL is never even looked up');
+  const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+  assert.match(shellSource,
+    /resolveDllGraph\(\{[\s\S]*?isLoadable: name => inheritedDlls\.has\(/,
+    'the browser launch hands the inherited names to the DLL graph');
+  console.log('ok: a VFS child loads the app-private DLLs its caller ran');
+
+  // A system DLL the host cannot serve (a fresh worktree has no gitignored
+  // test/binaries/dlls) is named, not dropped: Deus Ex's page run looked like
+  // a regression for an hour because msvcrt.dll 404'd silently and the crash
+  // surfaced later in a built-in wcschr stub.
+  // One the app declares itself (a `dlls` seed) is flagged, and fails the
+  // launch in both hosts; one found by the import walk stays optional.
+  const missing = [];
+  const got = await resolveDllGraph({
+    exeBytes: new Uint8Array(1),
+    seeds: ['binaries/app/core.dll'],
+    detectRequiredDlls: () => ['msvcrt.dll'],
+    isLoadable: () => true,
+    loadSpec: async () => null,
+    onMissing: (name, spec, info) => missing.push([name, spec, info.seed]),
+  });
+  assert.deepStrictEqual(got, [], 'nothing loads');
+  assert.deepStrictEqual(missing, [
+    ['core.dll', 'binaries/app/core.dll', true],
+    ['msvcrt.dll', 'msvcrt.dll', false],
+  ], 'each missing DLL is reported, the declared one as a seed');
+  assert.match(shellSource, /resolveDllGraph\(\{[\s\S]*?onMissing: \(name, spec, \{ seed \} = \{\}\) => \{[\s\S]*?log\.textContent \+=[\s\S]*?missingDeclaredDlls\.push/,
+    'the browser launch logs a missing DLL and collects the declared ones');
+  assert.match(shellSource, /if \(missingDeclaredDlls\.length\) \{[\s\S]*?failLaunch\(error\);/,
+    'a missing declared DLL fails the browser launch');
+  const runSource = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
+  assert.match(runSource, /onMissing: \(name, spec, \{ seed \} = \{\}\) => \{[\s\S]*?if \(seed\) \{\s*console\.error\(`run\.js: declared DLL not found[\s\S]*?process\.exit\(1\)/,
+    'and the CLI run');
+  console.log('ok: a DLL the host cannot serve is named; a declared one fails the launch');
+})().catch(e => { console.error(e); process.exit(1); });
+
 {
   const { shell, launched } = makeShell({ singleApp: true });
   const parent = {};

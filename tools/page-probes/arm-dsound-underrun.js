@@ -166,14 +166,18 @@
     r.lastSampleAt = t;
   };
 
-  const origPlayRing = voices.playRing;
-  voices.playRing = function (id, ptr, len, startOff, loop) {
-    const ret = origPlayRing.apply(this, arguments);
-    try {
-      if (loop === 2) {
-        const t = now();
+  // One refresh: diff the ring against the last snapshot, stamp changed
+  // cells. `polled` is the sampling timer looking at a worklet-routed ring
+  // (see below); a poll that finds nothing changed is not a refresh.
+  const refreshRing = (id, ptr, len, t, polled) => {
         const r = ringFor(id, ptr, len);
         const cur = new Uint8Array(getMemory(), ptr, len);
+        if (polled && r.snap) {
+          let same = true;
+          for (let i = 0; i < len; i++) if (cur[i] !== r.snap[i]) { same = false; break; }
+          if (same) return;
+          r.polledRefreshes = (r.polledRefreshes | 0) + 1;
+        }
         const pos = voices.getPos(id) >>> 0;
         const posCell = Math.floor(pos / CELL);
         if (r.snap) {
@@ -209,7 +213,12 @@
         r.refreshes++;
         secondBucket(r, t).refreshes++;
         sample(r, t);
-      }
+  };
+  const origPlayRing = voices.playRing;
+  voices.playRing = function (id, ptr, len, startOff, loop) {
+    const ret = origPlayRing.apply(this, arguments);
+    try {
+      if (loop === 2) refreshRing(id, ptr, len, now(), false);
     } catch (e) { state.error = String(e && e.stack || e); }
     return ret;
   };
@@ -218,7 +227,17 @@
   const timer = setInterval(() => {
     const t = now();
     for (const id of Object.keys(state.rings)) {
-      try { sample(state.rings[id], t); } catch (e) { state.error = String(e && e.stack || e); }
+      try {
+        // Threads mode: once a ring is routed to the AudioWorklet it plays
+        // straight out of shared memory and its Unlocks never call playRing,
+        // so its refreshes are only visible by looking at the bytes.
+        const r = state.rings[id];
+        const v = voices._map && voices._map[r.id];
+        // The cursor is sampled either way: a writer that stalled is
+        // exactly the case where nothing changes.
+        if (v && v.workletNode) refreshRing(r.id, r.ptr, r.len, t, true);
+        sample(r, t);
+      } catch (e) { state.error = String(e && e.stack || e); }
     }
   }, 1);
   state.restores.push(() => clearInterval(timer));

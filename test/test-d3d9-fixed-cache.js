@@ -69,7 +69,11 @@ const fixtures=require('./fixtures/d3d9-lighting-cases');
   const scheduled=[],asyncDevice=new Device({getExports:()=>e,getMemory:()=>memory.buffer,width:4,height:4,
    fixedCacheBytes:65536,schedule:fn=>scheduled.push(fn),quadBudget:1});
   try{
-   const pending=asyncDevice.drawAsync(fixtures.draw());assert(stats(asyncDevice)[7]>0);
+   // Setup is deferred into scheduled steps; run them until the variant is
+   // compiled, then retire every template before the raster steps finish.
+   const pending=asyncDevice.drawAsync(fixtures.draw());
+   for(let guard=0;stats(asyncDevice)[7]===0&&scheduled.length&&guard<64;guard++)scheduled.shift()();
+   assert(stats(asyncDevice)[7]>0,'scheduled setup compiled a variant');
    asyncDevice.freeFixedCache();while(scheduled.length)scheduled.shift()();await pending;
    const b=asyncDevice.present().pixels;close([b[2],b[1],b[0],b[3]],[128,64,32,191]);
    const cancelled=asyncDevice.drawAsync(fixtures.draw());asyncDevice.cancel();

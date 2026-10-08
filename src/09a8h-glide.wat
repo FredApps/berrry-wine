@@ -411,12 +411,18 @@
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $r i32)
     (call $lock_acquire (global.get $GLIDE_STATE))
-    ;; Activation gates presentation; resize/move of the fixed virtual video
-    ;; mode are unsupported and return the specified FxBool failure.
+    ;; Activation gates presentation. GR_CONTROL_RESIZE (3) and MOVE (4) are
+    ;; notifications that a fullscreen board has nothing to do for, and 3dfx's
+    ;; Glide 2 returns FXTRUE for them: Driver calls grSstControl(MOVE) on
+    ;; every WM_MOVE (one arrives at window creation) and posts WM_CLOSE when
+    ;; it fails, so a FALSE here quit the game during boot. Unknown codes fail.
     (if (i32.or (i32.eq (local.get $arg0) (i32.const 1))
         (i32.eq (local.get $arg0) (i32.const 2))) (then
         (i32.store offset=244 (call $glide_state) (i32.eq (local.get $arg0) (i32.const 1)))
         (local.set $r (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $arg0) (i32.const 3))
+        (i32.eq (local.get $arg0) (i32.const 4)))
+      (then (local.set $r (i32.const 1))))
     (i32.store offset=0 (global.get $reg_base) (local.get $r))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
@@ -425,10 +431,25 @@
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $p i32) (local $r i32) (local $hwnd i32)
-    (local $w i32) (local $h i32) (call $lock_acquire (global.get $GLIDE_STATE))
+    (local $w i32) (local $h i32) (local $cbuf i32) (call $lock_acquire (global.get $GLIDE_STATE))
     (call $glide_init) (call $glide_flush)
     (if (i32.load offset=12 (global.get $GLIDE_STATE)) (then (call $glide_fail)))
-    (if (i32.or (i32.gt_u (local.get $arg3) (i32.const 3)) (i32.or (i32.gt_u (local.get $arg4) (i32.const 1)) (i32.or (i32.ne (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))) (i32.const 2)) (i32.gt_u (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (i32.const 1))))) (then (call $glide_fail)))
+    ;; nColBuffers (stack +24) and nAuxBuffers (+28). The release 3dfx Glide
+    ;; 2.4 driver (Voodoo Graphics, Win95, from Myth's disc) checks only their
+    ;; sum against frame-buffer memory, and skips that check above 2 MB; this
+    ;; board reports 4 MB. Myth opens with one color buffer and two aux
+    ;; buffers. Triple buffering (3) has no backend surface yet: answer it as
+    ;; a board without frame-buffer memory for a third buffer does, FXFALSE
+    ;; with nothing opened. Deus Ex's GlideDrv asks for three first and then
+    ;; retries with two; trapping there ended the game.
+    (local.set $cbuf (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+    (if (i32.eq (local.get $cbuf) (i32.const 3))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $lock_release (global.get $GLIDE_STATE))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+        (return)))
+    (if (i32.or (i32.gt_u (local.get $arg3) (i32.const 3)) (i32.or (i32.gt_u (local.get $arg4) (i32.const 1)) (i32.or (i32.or (i32.lt_s (local.get $cbuf) (i32.const 1)) (i32.gt_s (local.get $cbuf) (i32.const 2))) (i32.gt_u (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (i32.const 2))))) (then (call $glide_fail)))
     (if (i32.eq (local.get $arg1) (i32.const 0)) (then (local.set $w (i32.const 320)) (local.set $h (i32.const 200))))
     (if (i32.eq (local.get $arg1) (i32.const 1)) (then (local.set $w (i32.const 320)) (local.set $h (i32.const 240))))
     (if (i32.eq (local.get $arg1) (i32.const 2)) (then (local.set $w (i32.const 400)) (local.set $h (i32.const 256))))
@@ -470,7 +491,10 @@
     (i32.store offset=8 (local.get $p) (local.get $h))
     (i32.store offset=12 (local.get $p) (local.get $arg3))
     (i32.store offset=16 (local.get $p) (local.get $arg4))
-    (local.set $r (call $host_glide_submit (i32.const 1) (local.get $p) (i32.const 20)))
+    ;; +20: color buffer count (1 = single-buffered: rendering lands on the
+    ;; displayed surface and a swap only presents it).
+    (i32.store offset=20 (local.get $p) (local.get $cbuf))
+    (local.set $r (call $host_glide_submit (i32.const 1) (local.get $p) (i32.const 24)))
     (i32.store offset=12 (global.get $GLIDE_STATE) (local.get $r))(i32.store offset=24 (global.get $GLIDE_STATE) (local.get $w))(i32.store offset=28 (global.get $GLIDE_STATE) (local.get $h))
     (if (i32.eq (call $glide_api_version) (i32.const 3)) (then
       (i32.store offset=216 (call $glide_state) (i32.const 2))
@@ -760,6 +784,90 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; guColorCombineFunction(fnc) and guAlphaSource(mode): Glide2 cvg/glide/
+  ;; src/gu.c presets, each a fixed grColorCombine / grAlphaCombine call.
+  ;; Combine enums (glide.h): function ZERO 0, LOCAL 1, SCALE_OTHER 3,
+  ;; SCALE_OTHER_ADD_LOCAL 4, SCALE_OTHER_ADD_LOCAL_ALPHA 5,
+  ;; SCALE_OTHER_MINUS_LOCAL 6, BLEND 7; factor NONE 0, LOCAL 1, LOCAL_ALPHA 3,
+  ;; TEXTURE_ALPHA 4, ONE 8; local ITERATED 0, CONSTANT/NONE 1; other
+  ;; ITERATED 0, TEXTURE 1, CONSTANT/NONE 2.
+  (func $glide_color_combine_set
+      (param $function i32) (param $factor i32) (param $local i32) (param $other i32) (param $invert i32)
+    (i32.store offset=0 (call $glide_state) (local.get $function))
+    (i32.store offset=4 (call $glide_state) (local.get $factor))
+    (i32.store offset=8 (call $glide_state) (local.get $local))
+    (i32.store offset=12 (call $glide_state) (local.get $other))
+    (i32.store offset=16 (call $glide_state) (local.get $invert)))
+
+  (func $handle_guColorCombineFunction
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; ITRGB_DELTA0 (3) and TEXTURE_TIMES_ITRGB_DELTA0 (7) also switch the
+    ;; iterated colour to flat (_grColorCombineDelta0Mode), which the backend
+    ;; does not model.
+    (if (i32.or (i32.or (i32.eq (local.get $arg0) (i32.const 3)) (i32.eq (local.get $arg0) (i32.const 7)))
+                (i32.gt_u (local.get $arg0) (i32.const 16)))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (block $done
+      (if (i32.eqz (local.get $arg0)) (then                              ;; ZERO
+        (call $glide_color_combine_set (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 2) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 1)) (then                 ;; CCRGB
+        (call $glide_color_combine_set (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 2) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 2)) (then                 ;; ITRGB
+        (call $glide_color_combine_set (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 2) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 4)) (then                 ;; DECAL_TEXTURE
+        (call $glide_color_combine_set (i32.const 3) (i32.const 8) (i32.const 1) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 5)) (then                 ;; TEXTURE_TIMES_CCRGB
+        (call $glide_color_combine_set (i32.const 3) (i32.const 1) (i32.const 1) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 6)) (then                 ;; TEXTURE_TIMES_ITRGB
+        (call $glide_color_combine_set (i32.const 3) (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 8)) (then                 ;; TEXTURE_TIMES_ITRGB_ADD_ALPHA
+        (call $glide_color_combine_set (i32.const 5) (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 9)) (then                 ;; TEXTURE_TIMES_ALPHA
+        (call $glide_color_combine_set (i32.const 3) (i32.const 3) (i32.const 1) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 10)) (then                ;; TEXTURE_TIMES_ALPHA_ADD_ITRGB
+        (call $glide_color_combine_set (i32.const 4) (i32.const 3) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 11)) (then                ;; TEXTURE_ADD_ITRGB
+        (call $glide_color_combine_set (i32.const 4) (i32.const 8) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 12)) (then                ;; TEXTURE_SUB_ITRGB
+        (call $glide_color_combine_set (i32.const 6) (i32.const 8) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 13)) (then                ;; CCRGB_BLEND_ITRGB_ON_TEXALPHA
+        (call $glide_color_combine_set (i32.const 7) (i32.const 4) (i32.const 1) (i32.const 0) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 14)) (then                ;; DIFF_SPEC_A
+        (call $glide_color_combine_set (i32.const 4) (i32.const 3) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      (if (i32.eq (local.get $arg0) (i32.const 15)) (then                ;; DIFF_SPEC_B
+        (call $glide_color_combine_set (i32.const 5) (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 0)) (br $done)))
+      ;; ONE (16): ZERO inverted.
+      (call $glide_color_combine_set (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 2) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+  (func $handle_guAlphaSource
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $function i32) (local $factor i32) (local $local i32) (local $other i32)
+    (if (i32.gt_u (local.get $arg0) (i32.const 3)) (then (call $glide_fail)))
+    ;; CC_ALPHA 0: LOCAL, NONE, CONSTANT, NONE.  ITERATED_ALPHA 1: LOCAL, NONE,
+    ;; ITERATED, NONE.  TEXTURE_ALPHA 2: SCALE_OTHER, ONE, NONE, TEXTURE.
+    ;; TEXTURE_ALPHA_TIMES_ITERATED_ALPHA 3: SCALE_OTHER, LOCAL, ITERATED, TEXTURE.
+    (local.set $function (select (i32.const 1) (i32.const 3) (i32.lt_u (local.get $arg0) (i32.const 2))))
+    (local.set $factor (select (i32.const 8) (i32.const 0) (i32.eq (local.get $arg0) (i32.const 2))))
+    (if (i32.eq (local.get $arg0) (i32.const 3)) (then (local.set $factor (i32.const 1))))
+    (local.set $local (select (i32.const 0) (i32.const 1)
+      (i32.or (i32.eq (local.get $arg0) (i32.const 1)) (i32.eq (local.get $arg0) (i32.const 3)))))
+    (local.set $other (select (i32.const 2) (i32.const 1) (i32.lt_u (local.get $arg0) (i32.const 2))))
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (i32.store offset=20 (call $glide_state) (local.get $function))
+    (i32.store offset=24 (call $glide_state) (local.get $factor))
+    (i32.store offset=28 (call $glide_state) (local.get $local))
+    (i32.store offset=32 (call $glide_state) (local.get $other))
+    (i32.store offset=36 (call $glide_state) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
   ;; Glide2 gu.c uses float intermediates and normalizes the last entry to 255.
   (func $glide_fog_exp (param $density f32) (param $i i32) (result f32)
     (local $dp f32)
@@ -896,6 +1004,110 @@
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
+  ;; grTexDownloadMipMapLevelPartial(tmu, startAddress, thisLod, largeLod,
+  ;; aspect, format, evenOdd, data, t, max_t): Glide2 cvg/glide/src/gtexdl.c.
+  ;; Rows t..max_t of level thisLod of the mipmap whose largest level sits at
+  ;; startAddress; data holds those rows only, packed. A level outside the
+  ;; evenOdd mask is skipped. Texture RAM keeps a mipmap's levels packed from
+  ;; largeLod down (grTexDownloadMipMap is these calls in a loop), so the level
+  ;; starts after the bytes of every larger level the mask selects. The upload
+  ;; record states that level's layout when the whole level arrives; for a
+  ;; strict subset of rows it states the single 1x1 LOD, which bounds nothing
+  ;; but the minimum length, because the backend only validates the copy
+  ;; against the layout and the record's address and length carry the rows.
+  (func $glide_download_level
+      (param $tmu i32) (param $start i32) (param $lod i32) (param $large i32)
+      (param $aspect i32) (param $format i32) (param $mask i32) (param $data i32)
+      (param $t i32) (param $max_t i32)
+    (local $w i32) (local $h i32) (local $row i32) (local $addr i32) (local $n i32) (local $p i32)
+    (call $glide_tmu (local.get $tmu))
+    ;; Glide3 numbers LODs the other way round; only the Glide2 ABI is here.
+    (if (i32.eq (call $glide_api_version) (i32.const 3)) (then (call $glide_fail)))
+    (if (i32.or (i32.lt_u (local.get $lod) (local.get $large))
+          (i32.or (i32.gt_u (local.get $lod) (i32.const 8))
+            (i32.or (i32.gt_u (local.get $aspect) (i32.const 6))
+              (i32.or (i32.eqz (local.get $mask)) (i32.gt_u (local.get $mask) (i32.const 3))))))
+      (then (call $glide_fail)))
+    (if (i32.eqz (i32.and (local.get $mask)
+          (i32.shl (i32.const 1) (i32.and (local.get $lod) (i32.const 1)))))
+      (then (return)))
+    (local.set $w (i32.shr_u (i32.const 256) (local.get $lod)))
+    (local.set $h (local.get $w))
+    (if (i32.lt_u (local.get $aspect) (i32.const 3))
+      (then (local.set $h (i32.shr_u (local.get $h) (i32.sub (i32.const 3) (local.get $aspect))))))
+    (if (i32.gt_u (local.get $aspect) (i32.const 3))
+      (then (local.set $w (i32.shr_u (local.get $w) (i32.sub (local.get $aspect) (i32.const 3))))))
+    (if (i32.eqz (local.get $w)) (then (local.set $w (i32.const 1))))
+    (if (i32.eqz (local.get $h)) (then (local.set $h (i32.const 1))))
+    (if (i32.or (i32.gt_s (local.get $t) (local.get $max_t))
+          (i32.or (i32.lt_s (local.get $t) (i32.const 0)) (i32.ge_s (local.get $max_t) (local.get $h))))
+      (then (call $glide_fail)))
+    (local.set $row (i32.shl (local.get $w) (i32.ge_u (local.get $format) (i32.const 8))))
+    (local.set $addr (local.get $start))
+    (if (i32.gt_u (local.get $lod) (local.get $large))
+      (then (local.set $addr (i32.add (local.get $addr)
+        (call $glide_tex_bytes (i32.sub (local.get $lod) (i32.const 1)) (local.get $large)
+          (local.get $aspect) (local.get $format) (local.get $mask))))))
+    (local.set $addr (i32.add (local.get $addr) (i32.mul (local.get $t) (local.get $row))))
+    (local.set $n (i32.mul (i32.add (i32.sub (local.get $max_t) (local.get $t)) (i32.const 1)) (local.get $row)))
+    (if (i32.or (i32.ne (i32.and (local.get $start) (i32.const 7)) (i32.const 0))
+          (i64.gt_u (i64.add (i64.extend_i32_u (local.get $addr)) (i64.extend_i32_u (local.get $n))) (i64.const 4194304)))
+      (then (call $glide_fail)))
+    (local.set $p (call $glide_record (i32.const 6) (i32.add (local.get $n) (i32.const 28))))
+    (i32.store offset=0 (local.get $p) (local.get $addr))
+    (if (i32.and (i32.eqz (local.get $t)) (i32.eq (local.get $max_t) (i32.sub (local.get $h) (i32.const 1))))
+      (then
+        (i32.store offset=4 (local.get $p) (local.get $lod))
+        (i32.store offset=8 (local.get $p) (local.get $lod))
+        (i32.store offset=12 (local.get $p) (local.get $aspect)))
+      (else
+        (i32.store offset=4 (local.get $p) (i32.const 8))
+        (i32.store offset=8 (local.get $p) (i32.const 8))
+        (i32.store offset=12 (local.get $p) (i32.const 3))))
+    (i32.store offset=16 (local.get $p) (local.get $format))
+    (i32.store offset=20 (local.get $p) (i32.const 3))
+    (i32.store offset=24 (local.get $p) (local.get $n))
+    (call $glide_copy_guest (i32.add (local.get $p) (i32.const 28)) (local.get $data) (local.get $n)))
+
+  (func $handle_grTexDownloadMipMapLevel
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $esp i32) (local $h i32) (local $aspect i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $aspect (local.get $arg4))
+    ;; The whole level: rows 0 .. height-1 (glide_download_level validates).
+    (local.set $h (i32.shr_u (i32.const 256) (i32.and (local.get $arg2) (i32.const 15))))
+    (if (i32.lt_u (local.get $aspect) (i32.const 3))
+      (then (local.set $h (i32.shr_u (local.get $h) (i32.sub (i32.const 3) (local.get $aspect))))))
+    (if (i32.eqz (local.get $h)) (then (local.set $h (i32.const 1))))
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (call $glide_download_level (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $aspect)
+      (call $gl32 (i32.add (local.get $esp) (i32.const 24)))   ;; format
+      (call $gl32 (i32.add (local.get $esp) (i32.const 28)))   ;; evenOdd
+      (call $gl32 (i32.add (local.get $esp) (i32.const 32)))   ;; data
+      (i32.const 0) (i32.sub (local.get $h) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
+
+  (func $handle_grTexDownloadMipMapLevelPartial
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $esp i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (call $glide_download_level (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $arg4)
+      (call $gl32 (i32.add (local.get $esp) (i32.const 24)))   ;; format
+      (call $gl32 (i32.add (local.get $esp) (i32.const 28)))   ;; evenOdd
+      (call $gl32 (i32.add (local.get $esp) (i32.const 32)))   ;; data
+      (call $gl32 (i32.add (local.get $esp) (i32.const 36)))   ;; t
+      (call $gl32 (i32.add (local.get $esp) (i32.const 40))))  ;; max_t
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44))))
+
   (func $handle_grTexDownloadTable
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -928,6 +1140,32 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; grDrawPolygonVertexList(int nVertices, const GrVertex vlist[]): Glide 2
+  ;; draws a convex polygon as a triangle fan from vlist[0]; fewer than three
+  ;; vertices draw nothing. The array stride is the SDK's 60-byte GrVertex
+  ;; (myth_tfl.exe fills its list with `add eax, 0x3c`). Myth's 3dfx renderer
+  ;; resolves this by name and abandons Glide entirely when it is missing.
+  (func $handle_grDrawPolygonVertexList
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32)
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (if (i32.ge_s (local.get $arg0) (i32.const 3)) (then
+      ;; The whole list must be addressable: no wrap past 4 GiB.
+      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $arg0)) (i64.const 60)) (i64.const 0xFFFFFFFF))
+        (then (call $glide_fail)))
+      (call $glide_check_guest (local.get $arg1) (i32.mul (local.get $arg0) (i32.const 60)))
+      (local.set $i (i32.const 1))
+      (loop $fan
+        (call $glide_triangle (local.get $arg1)
+          (i32.add (local.get $arg1) (i32.mul (local.get $i) (i32.const 60)))
+          (i32.add (local.get $arg1) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 60))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br_if $fan (i32.lt_s (i32.add (local.get $i) (i32.const 1)) (local.get $arg0))))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_grBufferClear
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
@@ -964,7 +1202,12 @@
       (local.set $q (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
       (br_if $invalid (i32.or (i32.eqz (local.get $q))
         (i32.gt_u (local.get $q) (i32.const 4294967275))))
-      (br_if $invalid (i32.ne (call $gl32 (local.get $q)) (i32.const 20)))
+      ;; info->size is not checked. The SDK says to set it to
+      ;; sizeof(GrLfbInfo_t), but the retail drivers only test it with
+      ;; GR_CHECK_F, which exists in debug builds alone. Die by the Sword's
+      ;; rl3dfx.dll passes a GrLfbInfo_t straight off its stack with size
+      ;; never written, and gives up drawing after ten failed locks, so
+      ;; rejecting a stale size left its logos and menu black.
       (local.set $p (call $glide_lfb_stage (local.get $arg1) (local.get $arg3)
         (i32.and (local.get $arg0) (i32.const 1))
         (i32.load offset=24 (global.get $GLIDE_STATE)) (i32.load offset=28 (global.get $GLIDE_STATE))))

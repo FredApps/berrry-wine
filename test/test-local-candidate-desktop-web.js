@@ -32,6 +32,8 @@ const TRACE_HOST_NAMES = String(process.env.CANDIDATE_TRACE_HOST || '')
 const SCREENSHOT_DIR = process.env.CANDIDATE_SCREENSHOT_DIR || '';
 const DEBUG_EVAL = process.env.CANDIDATE_DEBUG_EVAL === '1';
 const BASE_URL = String(process.env.CANDIDATE_BASE_URL || '').trim();
+// Extra page query for an A/B, e.g. CANDIDATE_QUERY='eager-files'.
+const EXTRA_QUERY = String(process.env.CANDIDATE_QUERY || '').trim().replace(/^\?/, '');
 
 const ALL_CANDIDATES = [
   {
@@ -128,6 +130,12 @@ const ALL_CANDIDATES = [
     stepsPerSlice: 1000,
     clicks: [
       {
+        // The menu sits under a "play intro.avi wait" dialog until the
+        // video ends, so the click waits for the menu's orange badge.
+        waitForGuestPixelBefore: {
+          x: 527, y: 366, rMin: 200, gMin: 130, bMax: 80,
+          timeoutMs: 120000, label: 'menu Game of the Year badge',
+        },
         guestX: 148, guestY: 193, holdMs: 120, waitMs: 1000,
         snapshotAfter: 'new-game-click',
       },
@@ -444,6 +452,7 @@ async function main() {
     const raw = BASE_URL || `http://127.0.0.1:${port}/index.html`;
     const url = new URL(raw);
     url.searchParams.set('candidate-web', String(Date.now()));
+    for (const [k, v] of new URLSearchParams(EXTRA_QUERY)) url.searchParams.set(k, v);
     return url.href;
   })();
   const launchHost = new URL(launchUrl).host;
@@ -750,7 +759,7 @@ async function main() {
         const hasAnyMain = visible.some(w => !w.isDialog);
         const log = document.getElementById('log').textContent;
         if (runningApps.length === 1 && hasExpected) resolve(1);
-        else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error'));
+        else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error: ' + ((log.match(/.*(?:ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED).*/i) || [''])[0]).slice(0, 600)));
         else if (performance.now() - started > ${timeoutMs | 0}) {
           const app = runningApps[0];
           const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
@@ -783,7 +792,7 @@ async function main() {
         const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
         const log = document.getElementById('log').textContent;
         if (runningApps.length === 1 && e && e.post_message_q && e.get_main_hwnd) resolve(1);
-        else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error'));
+        else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error: ' + ((log.match(/.*(?:ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED).*/i) || [''])[0]).slice(0, 600)));
         else if (performance.now() - started > 25000) reject(new Error(${jsString(app.id + ' wasm instance did not start')}));
         else setTimeout(tick, 100);
       };
@@ -820,7 +829,7 @@ async function main() {
           if (child) { resolve(1); return; }
         }
         const log = document.getElementById('log').textContent;
-        if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error'));
+        if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error: ' + ((log.match(/.*(?:ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED).*/i) || [''])[0]).slice(0, 600)));
         else if (performance.now() - started > ${timeoutMs | 0}) reject(new Error('dialog control ' + wanted + ' did not appear'));
         else setTimeout(tick, 100);
       };

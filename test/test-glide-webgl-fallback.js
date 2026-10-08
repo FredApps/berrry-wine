@@ -46,6 +46,50 @@ const GlideRenderWorker = require('../lib/glide-render-worker');
     assert.strictEqual(reply.result, 1, 'worker open succeeds without WebGL');
     assert(warned.some(m => /software backend/.test(m)));
     await endpoint.execute({ t: 'glide-command', op: 2, bytes: new Uint8Array() });
+    // The 24-byte open grSstWinOpen sends (word 5 = nColBuffers). With Threads
+    // the guest's Glide goes through this endpoint, and a 20-byte-only check
+    // here trapped Myth TFL's single-buffered 3Dfx open at EIP 0x4602f6.
+    const single = GlideRenderWorker.create({ instance: { exports: e }, memory, backend: 'software', sendFrame() {} });
+    const open24 = new Uint8Array(new Uint32Array([0, 64, 48, 0, 0, 1]).buffer);
+    assert.strictEqual((await single.execute({ t: 'glide-command', op: 1, bytes: open24 })).result, 1,
+      'render worker accepts the single-buffered 24-byte open');
+    await single.execute({ t: 'glide-command', op: 2, bytes: new Uint8Array() });
+    const bad = GlideRenderWorker.create({ instance: { exports: e }, memory, backend: 'software', sendFrame() {} });
+    assert.throws(() => bad.execute({ t: 'glide-command', op: 1,
+      bytes: new Uint8Array(new Uint32Array([0, 64, 48, 0, 0, 3]).buffer) }), /Invalid Glide open packet/,
+      'a colour-buffer count other than 1 or 2 is still refused');
   } finally { console.warn = warn; }
+
+  // The CLI host wiring. run.js keeps ctx.createCanvas null unless
+  // --headless-gl or --glide-renderer=software (GL and D3D9 key their
+  // no-3D-hardware path off it), and with only that the default webgl Glide
+  // bridge had no drawable at all: grSstWinOpen returned 0, NFS III and
+  // Diablo II ignored it, and their next grBufferClear/guGammaCorrectionRGB
+  // trapped on the closed context. ctx.glideCreateCanvas is Glide's own.
+  const { createHostImports } = require('../lib/host-imports');
+  const { createCanvas } = require('../lib/canvas-compat');
+  const openThroughHost = extra => {
+    const logged = [], error = console.error;
+    console.error = m => logged.push(String(m));
+    try {
+      const imports = createHostImports(Object.assign({ getMemory: () => memory.buffer,
+        exports: e, renderer: null, onExit() {}, glideBackend: 'webgl', createCanvas: null }, extra));
+      new Uint32Array(memory.buffer, packetAt, 5).set([0, 64, 48, 0, 0]);
+      const opened = imports.host.glide_submit(1, packetAt, 20);
+      if (opened) imports.host.glide_submit(2, 0, 0);
+      return { opened, logged };
+    } finally {
+      console.error = error;
+      new Uint8Array(memory.buffer, packetAt, 20).set(saved);
+    }
+  };
+  assert.strictEqual(openThroughHost({}).opened, 0,
+    'control: with no drawable factory the open fails, the shape that trapped');
+  const viaCli = openThroughHost({ glideCreateCanvas: createCanvas });
+  assert.strictEqual(viaCli.opened, 1, 'glideCreateCanvas lets a webgl bridge open headless');
+  assert(viaCli.logged.some(m => /software backend/.test(m)), 'by falling back to software');
+  const runJs = require('fs').readFileSync(require('path').join(__dirname, 'run.js'), 'utf8');
+  assert(/glideCreateCanvas: createCanvas \|\| null/.test(runJs),
+    'test/run.js hands the Glide bridge its own drawable factory');
   console.log('PASS Glide without WebGL falls back to software on the page and in the render Worker');
 })().catch(error => { console.error(error); process.exitCode = 1; });

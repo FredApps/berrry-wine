@@ -643,7 +643,10 @@
       position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
       z-index: 5000;
       width: min(400px, calc(100vw - 20px));
-      max-height: calc(100dvh - 16px); overflow: auto;
+      /* Never a scrollbar: every line below is capped (ellipsis, clamped
+         heading, a fixed number of Details rows), so the window fits a
+         landscape phone; anything still taller is clipped, not scrolled. */
+      max-height: calc(100dvh - 16px); overflow: hidden;
       background: #c0c0c0; color: #000;
       border: 1px solid; border-color: #dfdfdf #000 #000 #dfdfdf;
       box-shadow: inset 1px 1px #fff, inset -1px -1px #808080, 2px 2px 0 rgba(0,0,0,.35);
@@ -681,7 +684,10 @@
       font: bold 20px/32px Arial, sans-serif; text-align: center;
     }
     .wa-launch-err.wa-launch-noicon .wa-launch-erricon { display: none; }
-    .wa-launch-heading { font-weight: bold; padding-top: 2px; }
+    .wa-launch-heading {
+      font-weight: bold; padding-top: 2px; overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+    }
     .wa-launch-saving div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
     .wa-launch-bar {
       position: relative; height: 18px; margin: 6px 0 2px; padding: 2px; overflow: hidden;
@@ -697,9 +703,9 @@
     }
     @keyframes wa-launch-slide { from { left: -42px; } to { left: 100%; } }
     .wa-launch-status { margin-top: 6px; }
-    .wa-launch-status div { margin-bottom: 2px; }
-    .wa-launch-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin-top: 8px; }
-    .wa-launch-grid span:nth-child(even) { overflow-wrap: anywhere; }
+    .wa-launch-status div { margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wa-launch-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin-top: 8px; }
+    .wa-launch-grid span:nth-child(even) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wa-launch-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
     .wa-launch-btn {
       min-width: 75px; height: 23px; padding: 0 8px; background: #c0c0c0; color: #000;
@@ -710,13 +716,17 @@
     .wa-launch-btn:active { border-color: #000 #fff #fff #000; box-shadow: inset 1px 1px #808080; }
     .wa-launch-default { box-shadow: inset -1px -1px #808080, 0 0 0 1px #000; }
     .wa-launch-btn:focus-visible, .wa-launch-tb:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
-    .wa-launch-details { margin-top: 8px; max-height: 140px; overflow: auto; background: #fff; border: 2px inset #dfdfdf; }
-    .wa-launch-details table { width: 100%; border-collapse: collapse; }
+    /* A fixed number of rows (DETAILS_MAX_ROWS in lib/launch-progress.js,
+       with a summary row for the rest), so it never needs to scroll. */
+    .wa-launch-details { margin-top: 8px; overflow: hidden; background: #fff; border: 2px inset #dfdfdf; }
+    .wa-launch-details table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .wa-launch-details th:nth-child(2), .wa-launch-details td:nth-child(2) { width: 64px; }
+    .wa-launch-details th:nth-child(3), .wa-launch-details td:nth-child(3) { width: 72px; }
     .wa-launch-details th {
       position: sticky; top: 0; text-align: left; font-weight: normal; padding: 1px 4px;
       background: #c0c0c0; border: 1px solid; border-color: #fff #808080 #808080 #fff;
     }
-    .wa-launch-details td { padding: 1px 4px; white-space: nowrap; }
+    .wa-launch-details td { padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wa-launch-live {
       position: absolute; width: 1px; height: 1px; overflow: hidden;
       clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
@@ -1619,6 +1629,32 @@
           <option value="broken_sword_demo">Broken Sword Demo</option>
           <option value="dungeon_keeper_demo">Dungeon Keeper Demo</option>
           <option value="darkstone_demo">Darkstone Demo</option>
+          <option value="red_alert_95_demo">Command &amp; Conquer: Red Alert Demo</option>
+          <option value="die_by_the_sword_demo">Die by the Sword Demo</option>
+          <option value="dark_colony_demo">Dark Colony Demo</option>
+          <option value="atlantis_demo">Atlantis: The Lost Tales Demo</option>
+          <option value="dark_reign_demo">Dark Reign Demo</option>
+          <option value="populous_tb_demo">Populous: The Beginning Demo</option>
+          <option value="descent3_demo">Descent 3 Demo</option>
+          <option value="carmageddon_tdr2000_demo">Carmageddon TDR2000 Alpha Test Demo</option>
+          <option value="croc2_demo">Croc 2 Demo (experimental)</option>
+          <option value="diehard_nakatomi_demo">Die Hard: Nakatomi Plaza Demo</option>
+          <option value="drakan_demo">Drakan: Order of the Flame Demo</option>
+          <option value="braveheart_demo">Braveheart Demo</option>
+          <option value="anachronox_demo">Anachronox Demo</option>
+          <option value="anno1602_demo">Anno 1602 Demo</option>
+          <option value="driver_demo">Driver Demo</option>
+          <option value="cmr2_demo">Colin McRae Rally 2.0 Demo</option>
+          <option value="colin_mcrae_rally_demo">Colin McRae Rally Demo</option>
+          <option value="avp_alien_demo">Aliens versus Predator: Alien Demo</option>
+          <option value="alpha_centauri_demo">Sid Meier's Alpha Centauri Demo</option>
+          <option value="freespace_demo">Descent: FreeSpace Demo</option>
+          <option value="dark_earth_demo">Dark Earth Demo</option>
+          <option value="daytona_usa_deluxe_demo">Daytona USA Deluxe Demo</option>
+          <option value="blood2_demo">Blood II: The Chosen Demo</option>
+          <option value="disciples_demo">Disciples: Sacred Lands Demo</option>
+          <option value="commandos_demo">Commandos: Behind Enemy Lines Demo</option>
+          <option value="age_of_wonders_demo">Age of Wonders Beta Demo</option>
           <option value="jazz2_demo">Jazz Jackrabbit 2 Demo</option>
           <option value="simgolf_demo">Sid Meier's SimGolf Demo</option>
           <option value="simcity2000_demo">SimCity 2000 Demo</option>
@@ -1644,6 +1680,7 @@
           <option value="unreal_special_demo">Unreal Special Edition</option>
           <option value="ut2003_demo">Unreal Tournament 2003 Demo</option>
           <option value="ut2004_demo">Unreal Tournament 2004 Demo</option>
+          <option value="ut348_demo">Unreal Tournament Demo (348)</option>
           <option value="icewind_dale_demo">Icewind Dale Demo</option>
           <option value="baldurs_gate_noninteractive_demo">Baldur's Gate Non-interactive Demo</option>
           <option value="baldurs_gate_interactive_demo">Baldur's Gate Interactive Demo</option>
@@ -1651,6 +1688,9 @@
           <option value="civ2_win16">Civilization II (Win16 retail)</option>
           <option value="civ2_mge">Civilization II: MGE (Win32 retail)</option>
           <option value="morrowind">Morrowind (retail, own ISO)</option>
+          <option value="myth_tfl">Myth: The Fallen Lords (retail, own ISO)</option>
+          <option value="tomb_raider_3_demo">Tomb Raider III Demo</option>
+          <option value="tomb_raider_2_demo">Tomb Raider II Demo</option>
           <option value="diablo_demo">Diablo (pre-release demo)</option>
           <option value="diablo_shareware">Diablo Shareware (1997)</option>
           <option value="worms2_demo">Worms 2 Demo</option>
@@ -1964,6 +2004,7 @@ Resource-aware Win98 emulator
       "lib/page-viewport.js",
       "lib/renderer.js",
       "lib/dll-registry.js",
+      "lib/app-file-sizes.generated.js",
       "lib/apps.js",
       "lib/debug-app-picker.js",
       "lib/browser-input.js",
@@ -1975,6 +2016,8 @@ Resource-aware Win98 emulator
       "lib/overlay-store.js",
       "lib/vfs-overlay.js",
       "lib/byte-provider.js",
+      "lib/main-io-wait.js",
+      "lib/app-files.js",
       "lib/zip-mount.js",
       "lib/iso9660.js",
       "lib/cdrom.js",

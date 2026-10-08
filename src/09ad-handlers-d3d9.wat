@@ -846,6 +846,12 @@
       (i32.store offset=100 (local.get $wa) (i32.const 2048))
       (i32.store offset=104 (local.get $wa) (i32.const 2048))
       (f32.store offset=112 (local.get $wa) (f32.const 1.0e10)) ;; MaxVertexW
+      ;; MaxTextureBlendStages: the six stages ValidateDevice and the fixed
+      ;; cascade ($d3d_fixed_compile_cascade_table, count <= 6) implement. It
+      ;; was left 0, which no real device reports: Pirates! (2004) requires
+      ;; >= 2 stages and >= 2 simultaneous textures, so it released its device
+      ;; and put up "Unable to initialize DirectX".
+      (i32.store offset=148 (local.get $wa) (i32.const 6))
       (i32.store offset=152 (local.get $wa) (i32.const 4)) ;; sampled textures
       (f32.store offset=176 (local.get $wa) (f32.const 1)) ;; point size
       (i32.store offset=180 (local.get $wa) (i32.const 0x100000))
@@ -957,10 +963,10 @@
             (call $gs32 (i32.add (local.get $program) (i32.const 21760)) (call $gl32 (i32.add (local.get $pp) (i32.const 40))))
             (call $gs32 (i32.add (local.get $program) (i32.const 21764)) (i32.const 1))))))
         (call $gs32 (i32.add (local.get $program) (i32.const 1684)) (local.get $hwnd))
+        ;; $d3dim_create_device already retained the creator (27979740); the
+        ;; device's Release drops that one reference through +20628. A second
+        ;; AddRef here leaked one IDirect3D9 reference per device.
         (call $gs32 (i32.add (local.get $program) (i32.const 20628)) (local.get $arg0))
-        (if (local.get $arg0) (then
-          (store.field DxObject refcount (call $dx_from_this (local.get $arg0))
-            (i32.add (load.field DxObject refcount (call $dx_from_this (local.get $arg0))) (i32.const 1)))))
         (call $gs32 (i32.add (local.get $program) (i32.const 20632)) (local.get $arg1))
         (call $gs32 (i32.add (local.get $program) (i32.const 20636)) (local.get $arg2))
         (call $gs32 (i32.add (local.get $program) (i32.const 20640)) (local.get $arg3))

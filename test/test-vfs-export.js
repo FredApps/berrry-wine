@@ -46,3 +46,22 @@ assert(logs.some(line => /skip lazy media file d:\\disc\.bin/.test(line)),
   'skipped provider-backed media should be visible in the log');
 
 console.log('PASS vfs export preserves file/directory collisions');
+
+// --save-vfs-prefix: an installer capture keeps only the tree it installed.
+// A disc file the installer READ is resident (no _provider) yet must not be
+// exported -- Myth's retail Setup reads 30MB off D: and the unfiltered dump
+// copied it, filling the host disk.
+const prefixRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-vfs-export-prefix-'));
+const prefixed = saveVfsToHost({
+  files: new Map([
+    ['c:\\program files\\game\\game.exe', { data: Uint8Array.from([1]) }],
+    ['c:\\program files\\gamex\\other.exe', { data: Uint8Array.from([2]) }],
+    ['d:\\tags\\read-by-setup.gor', { data: Uint8Array.from([3]) }],
+  ]),
+  dirs: new Set(['c:', 'c:\\']),
+}, prefixRoot, { prefix: 'C:\\Program Files\\Game\\' });
+assert.deepStrictEqual(prefixed.length, 1, 'only the prefixed tree exports');
+assert(fs.existsSync(path.join(prefixRoot, 'program files', 'game', 'game.exe')));
+assert(!fs.existsSync(path.join(prefixRoot, 'program files', 'gamex', 'other.exe')),
+  'a sibling sharing the prefix string is not inside the tree');
+console.log('PASS vfs export --save-vfs-prefix keeps only the named guest tree');

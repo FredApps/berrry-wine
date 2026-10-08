@@ -662,6 +662,10 @@ async function manifestCancelStage(browser, base) {
       retry.buttons.some(b => b.id === 'retry') && !retry.status.includes('Retrying…'), JSON.stringify(retry.status));
     rules.set(manifest, { chunk: 2000000, stallAt: 0, stallMs: 1800, delay: 1 });
     const request = page.waitForRequest(req => new URL(req.url()).pathname === manifest, { timeout: STAGE_MS });
+    // error -> error is not a kind change, so the window repaints on the next
+    // animation frame: the model can already say "failed" while the DOM still
+    // shows "Retrying..." with no Retry button. Wait for the button itself.
+    await page.waitForSelector('#wine-launch-window [data-action="retry"]', { visible: true, timeout: STAGE_MS });
     await page.click('#wine-launch-window [data-action="retry"]');
     await request;
     await page.click('#wine-launch-window [data-action="cancel"]');

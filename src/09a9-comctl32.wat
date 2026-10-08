@@ -489,7 +489,9 @@
             (local.set $path (local.get $path_owned))))
         (local.set $bmp (call $load_image_bitmap_file (call $g2w (local.get $path)) (i32.const 0)))
         (if (local.get $path_owned)
-          (then (call $heap_free (local.get $path_owned)))))
+          (then (call $heap_free (local.get $path_owned))))
+        ;; A streamed file not resident yet: the wrapper parks and reruns.
+        (if (i32.eq (local.get $bmp) (i32.const -2)) (then (return (i32.const -2)))))
       (else
         (local.set $bmp (call $gdi_bitmap_load_resource
           (local.get $hi) (local.get $name) (local.get $wide)))))
@@ -538,6 +540,8 @@
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
       (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -2))
+      (then (call $io_block (i32.const 32))))
   )
 
   ;; ImageList_LoadImageW — same core with a UTF-16 resource/path name.
@@ -549,6 +553,8 @@
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
       (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -2))
+      (then (call $io_block (i32.const 32))))
   )
 
   ;; Append every whole cell of $bitmap to $list. Transparency comes from

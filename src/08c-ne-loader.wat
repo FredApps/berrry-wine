@@ -112,7 +112,7 @@
   ;; Map a module name to the small id the API dispatcher uses. Unknown
   ;; modules get 0, which makes every call through them fail loudly rather
   ;; than silently returning into nothing.
-  (func $win16_module_id (param $pstr i32) (result i32)
+  (func $win16_system_module_id (param $pstr i32) (result i32)
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_KERNEL))   (then (return (i32.const 1))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_USER))     (then (return (i32.const 2))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_GDI))      (then (return (i32.const 3))))
@@ -125,6 +125,12 @@
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_DDEML))    (then (return (i32.const 10))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_NDDEAPI))  (then (return (i32.const 11))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_WIN87EM))  (then (return (i32.const 12))))
+    (i32.const 0))
+
+  (func $win16_module_id (param $pstr i32) (result i32)
+    (local $system i32)
+    (local.set $system (call $win16_system_module_id (local.get $pstr)))
+    (if (local.get $system) (then (return (local.get $system))))
     ;; Then the ones this task brought with it. A Win16 game is routinely three
     ;; several NE files -- Tetris alone imports ABOUTTET for its about box, and
     ;; the Entertainment Pack ships IWLIB and WEPUTIL beside the games -- and
@@ -147,6 +153,54 @@
     (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
                                  (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
              (i32.add (i32.const 0x8400) (i32.mul (local.get $i) (i32.const 16)))))
+
+  ;; Resolved VFS filenames belong to the loaded module, not to the shared
+  ;; Win32 scratch stack. This selector table occupies 0x8B00..0x8B94 of the
+  ;; hidden page, after DLL run/ref/image-size tables and before HRSRCs.
+  (func $win16_dll_path_sel_ptr (param $id i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+      (i32.add (i32.const 0x8B00) (i32.shl (local.get $id) (i32.const 2)))))
+
+  (func $win16_dll_path_id_valid (param $id i32) (result i32)
+    (i32.and (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+      (i32.lt_u (local.get $id)
+        (i32.add (global.get $WIN16_DYNAMIC_BASE) (global.get $WIN16_DYNAMIC_MODULES)))))
+
+  ;; Host staging writes an ANSI MAX_PATH into this private pooled block.
+  ;; Allocation changes shared allocator metadata only, never CPU registers.
+  (func $win16_dll_path_alloc (export "win16_dll_path_alloc")
+        (param $id i32) (result i32)
+    (local $ptr i32) (local $sel i32)
+    (if (i32.eqz (call $win16_dll_path_id_valid (local.get $id)))
+      (then (return (i32.const 0))))
+    (local.set $ptr (call $win16_dll_path_sel_ptr (local.get $id)))
+    (local.set $sel (i32.load (local.get $ptr)))
+    (if (i32.eqz (local.get $sel))
+      (then
+        (local.set $sel (call $win16_pool_alloc (i32.const 260)))
+        (if (i32.eqz (local.get $sel)) (then (return (i32.const 0))))
+        (i32.store (local.get $ptr) (local.get $sel))))
+    (call $g2w (call $win16_seg_base (call $win16_sel_to_index (local.get $sel)))))
+
+  (func $win16_dll_path_guest (param $id i32) (result i32)
+    (local $sel i32) (local $path i32)
+    (if (i32.eqz (call $win16_dll_path_id_valid (local.get $id)))
+      (then (return (i32.const 0))))
+    (local.set $sel (i32.load (call $win16_dll_path_sel_ptr (local.get $id))))
+    (if (i32.eqz (local.get $sel)) (then (return (i32.const 0))))
+    (local.set $path (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
+    (if (i32.eqz (call $gl8 (local.get $path))) (then (return (i32.const 0))))
+    (local.get $path))
+
+  (func $win16_dll_path_forget (param $id i32)
+    (local $ptr i32) (local $sel i32)
+    (if (call $win16_dll_path_id_valid (local.get $id))
+      (then
+        (local.set $ptr (call $win16_dll_path_sel_ptr (local.get $id)))
+        (local.set $sel (i32.load (local.get $ptr)))
+        (i32.store (local.get $ptr) (i32.const 0))
+        (if (local.get $sel) (then (call $win16_global_free (local.get $sel)))))))
 
   ;; TOOLHELP is a documented Windows 3.1 service DLL, but it is imported like
   ;; any other app-local NE module and therefore receives a dynamic id. Match
@@ -218,6 +272,7 @@
   ;; file must not keep its id, or four failed LoadLibrary calls would leave no
   ;; room for a real one.
   (func $win16_dynamic_module_release (param $id i32)
+    (call $win16_dll_path_forget (local.get $id))
     (if (i32.and (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
                  (i32.lt_u (local.get $id)
                            (i32.add (global.get $WIN16_DYNAMIC_BASE)
@@ -232,6 +287,7 @@
     (local $i i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (call $win16_dll_path_forget (i32.add (global.get $WIN16_DYNAMIC_BASE) (local.get $i)))
       (i32.store8 (call $win16_dynamic_module_slot (local.get $i)) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
@@ -470,8 +526,14 @@
                     ;; LOBYTE
                     (i32.store8 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off)))
                   (else
-                    ;; FAR_ADDR (3) and anything else pointer-shaped: off:sel
-                    (i32.store16 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off))
+                    ;; FAR_ADDR additive relocations add the existing offset,
+                    ;; but replace the selector (there is no carry into it).
+                    ;; Preserve the legacy fallback for other pointer types.
+                    (i32.store16 (i32.add (local.get $seg_wa) (local.get $site))
+                      (i32.add (local.get $tgt_off)
+                        (select (local.get $next) (i32.const 0)
+                          (i32.and (local.get $additive)
+                            (i32.eq (local.get $addr_type) (i32.const 3))))))
                     (i32.store16 (i32.add (i32.add (local.get $seg_wa) (local.get $site)) (i32.const 2))
                                  (local.get $tgt_sel))))))))
         ;; Additive records patch one site and stop; chained ones follow the
@@ -1192,6 +1254,7 @@
   ;; turns in, the next LoadLibrary found the selector arena exhausted.
   (func $win16_dll_unload (param $module_id i32)
     (local $rec i32)
+    (call $win16_dll_path_forget (local.get $module_id))
     (local.set $rec (call $win16_dll_rec (local.get $module_id)))
     (if (i32.load offset=12 (local.get $rec))
       (then

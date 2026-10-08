@@ -10,6 +10,7 @@
     (local $hc_i i32) (local $hc_slot i32) (local $hc_fp i32)
     (local $prev_eip i32) (local $prev_esp i32)
     (local $saved_budget i32) (local $saved_start i32) (local $shared_cache_generation i32)
+    (local $saved_api_depth i32)
     ;; A global rather than a local because $branch_end spends it too — see the
     ;; comment on $block_budget in 01-header.wat. Saved and restored because
     ;; run() is re-entrant: a COM class-factory callback is driven by calling
@@ -18,6 +19,8 @@
     ;; loop whatever the nested one left behind, and it would halt early.
     (local.set $saved_budget (global.get $block_budget))
     (local.set $saved_start (global.get $run_budget_start))
+    (local.set $saved_api_depth (global.get $api_handler_depth))
+    (global.set $api_handler_depth (i32.const 0))
     (global.set $block_budget (local.get $max_blocks))
     (global.set $run_budget_start (local.get $max_blocks))
     ;; A Win16 task started by WinExec: its first slice turns the fresh thread
@@ -26,6 +29,8 @@
       (then (call $win16_task_boot)))
     ;; Animate controls playing on comctl32's "thread" (09c3-wndprocs6).
     (call $anim_service)
+    ;; Resuming from an alertable SleepEx with an APC queued: run it first.
+    (call $apc_resume_alert_sleep)
     ;; FlushInstructionCache broadcasts through shared memory because decoded
     ;; blocks are instance-local. Check once per host/Worker slice, not once per
     ;; x86 block; the API is rare and a slice boundary is the first point at
@@ -327,6 +332,7 @@
     (global.set $blocks_retired_base
       (i32.add (global.get $blocks_retired_base) (global.get $last_run_blocks)))
     (global.set $run_budget_start (local.get $saved_start))
+    (global.set $api_handler_depth (local.get $saved_api_depth))
     (global.set $block_budget (local.get $saved_budget)))
 
   ;; Blocks retired since the instance started, including the running call's
@@ -541,6 +547,7 @@
   (func (export "test_shared_post_read") (param $msg_ptr i32) (param $remove i32) (result i32)
     (call $shared_post_queue_read (local.get $msg_ptr) (local.get $remove)))
   (func (export "reset_thread_message_queue") (param $tid i32)
+    (call $getmessage_hook_reset (local.get $tid))
     (call $shared_post_queue_reset_tid (local.get $tid)))
   (func (export "test_timer_set")
     (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
@@ -1364,6 +1371,29 @@
   ;; is normally drawing/tracking its own (often through DirectInput).
   (func (export "get_cursor_display_count") (result i32)
     (global.get $cursor_count))
+  ;; 1 when some DirectInput device that is a mouse (misc0 kind 2) is acquired
+  ;; with DISCL_EXCLUSIVE (low bit of the DISCL_* the device flags keep): the
+  ;; game reads mouse counts only and hides the system cursor, so the page
+  ;; should capture the pointer (docs/mouse-model-audit.md). The DX table is in
+  ;; shared memory, so this answers for a device any guest thread acquired.
+  ;; A full table scan, which is why the page polls it at most every 250 ms.
+  (func (export "get_mouse_capture_hint") (result i32)
+    (local $i i32) (local $entry i32) (local $flags i32)
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.shl (local.get $i) (i32.const 5))))
+      (if (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 7)) (then
+        (local.set $flags (load.field DxObject flags (local.get $entry)))
+        (if (i32.and
+              (i32.eq (load.field DxObject misc0 (local.get $entry)) (i32.const 2))
+              (i32.and
+                (i32.ne (i32.and (local.get $flags) (global.get $DIDEV_ACQUIRED)) (i32.const 0))
+                (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))))
+          (then (return (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.const 0))
   ;; Synchronous NCHITTEST helper — JS calls before generating mouse
   ;; events so classification lives in WAT. Returns HT* code.
   (func (export "hittest_sync")
@@ -1408,6 +1438,8 @@
         (then (global.set $rtl_unwind_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA003A))
         (then (global.set $seh_node_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA003C))
+        (then (global.set $dialog_proc_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0001))
         (then (global.set $createwnd_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0002))
@@ -1641,6 +1673,8 @@
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $current_thread_id (i32.add (local.get $tid) (i32.const 1)))
+    (call $getmessage_hook_reset (global.get $current_thread_id))
+    (call $getmessage_hook_open_owner (global.get $current_thread_id))
     (call $shared_post_queue_reset_tid (global.get $current_thread_id))
     (global.set $post_queue_count (i32.const 0))
     (global.set $pq_read_off (i32.const 0))
@@ -3123,6 +3157,14 @@
     (i32.store (global.get $MM_TIMER_THREAD) (local.get $mode)))
   (func (export "get_mm_timer_thread") (result i32)
     (i32.atomic.load offset=4 (global.get $MM_TIMER_THREAD)))
+  ;; 1 = guest threads run concurrently (Worker backend): decode LOCK-prefixed
+  ;; RMW and memory XCHG as atomic compare-and-swap (handler 499). 0 keeps the
+  ;; cooperative encoding. Process-wide; set before the guest runs, since a
+  ;; block decoded earlier keeps the encoding it was decoded with.
+  (func (export "set_lock_atomic_mode") (param $mode i32)
+    (i32.atomic.store (global.get $LOCK_MODE) (local.get $mode)))
+  (func (export "get_lock_atomic_mode") (result i32)
+    (i32.atomic.load (global.get $LOCK_MODE)))
 
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
@@ -3247,9 +3289,18 @@
   ;; store handler, so nothing retires the decoded blocks it just overwrote.
   ;; Storm keeps its generated code and its file buffers in the same heap
   ;; region, so that is a real collision, not a theoretical one.
+  ;; The host calls this AFTER it wrote guest bytes (a ReadFile served for a
+  ;; guest Worker). Translating here must not materialize a lazily synced
+  ;; D3DIM surface: the page's shadow instance has no executor (it trapped
+  ;; in $d3dim_lazy_materialize -- Drakan, Threads on), and a readback now
+  ;; would overwrite the bytes just written anyway.
   (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (local $bypass i32)
+    (local.set $bypass (global.get $d3dim_lazy_bypass))
+    (global.set $d3dim_lazy_bypass (i32.const 1))
     (call $page_watch_write_guest (local.get $ga) (local.get $len))
-    (call $invalidate_code_range (local.get $ga) (local.get $len)))
+    (call $invalidate_code_range (local.get $ga) (local.get $len))
+    (global.set $d3dim_lazy_bypass (local.get $bypass)))
 
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)
@@ -3442,11 +3493,31 @@
     (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
     (local.set $guest (call $virtual_reserve_down (local.get $size)))
     (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-    (local.set $guest (call $virtual_map_commit (local.get $guest) (local.get $size)))
+    (if (i32.eqz (call $virtual_map_commit (local.get $guest) (local.get $size)))
+      (then
+        (drop (call $virtual_map_release (local.get $guest)))
+        (return (i32.const 0))))
     ;; Remember the range as a view, so VirtualFree can refuse it the way
     ;; Windows does instead of treating it as VirtualAlloc'd memory.
     (call $mapped_view_register (local.get $guest) (local.get $size))
     (local.get $guest))
+  ;; A guest thread's stack. Win9x CreateThread reserves it with VirtualAlloc,
+  ;; so every thread stack lies ABOVE the main thread's, which the loader made
+  ;; first. Single-threaded Watcom programs depend on that: their __CHK keeps
+  ;; one stack floor (the main thread's) and judges every thread's ESP against
+  ;; it, so a callback on a timer thread whose stack came from the low guest
+  ;; heap, below $GUEST_STACK, reported "Stack Overflow!" and ExitProcess'd
+  ;; (Atlantis demo's MSS timer). 0 means no range was free; the caller falls
+  ;; back to guest_alloc.
+  (func (export "guest_stack_alloc") (param $requested i32) (result i32)
+    (local $size i32) (local $guest i32)
+    (local.set $size
+      (i32.and (i32.add (local.get $requested) (i32.const 0xFFF))
+        (i32.const 0xFFFFF000)))
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $guest (call $virtual_reserve_down (local.get $size)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
   ;; Paired with guest_map_alloc; heap_free cannot release a sparse mapping.

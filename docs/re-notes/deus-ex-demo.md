@@ -197,3 +197,58 @@ enters it:
 
 **After the fix.** The same pinned run reaches batch 3000 without the crash.
 The capture shows the rotating 3D Deus Ex logo intro rendering in software.
+
+## 2026-10-06: renderers, fullscreen and the mouse
+
+The demo ships SoftDrv, D3DDrv, GlideDrv, OpenGlDrv (plus MetalDrv/SGLDrv).
+The installer and Default.ini select SoftDrv. `lib/apps.js` now edits
+DeusEx.ini at mount time (`iniSet`, applied by both hosts through
+`lib/app-files.js applyIniSet`): renderer keys and `StartupFullscreen=True`.
+To try another renderer, change `deusExRenderer` there; on the CLI an ad-hoc
+`INI=<file>` argument plus `--vfs-include=<file>` works too (UE1 Core parses
+`INI=`; there is no command-line renderer override, and a map name on the
+command line is ignored -- the demo always boots DX.dx).
+
+Renderer status:
+
+- **SoftDrv** (default): fullscreen menu 10.2 PRESENT/s, Training 10.3.
+  Windowed it was 5.1 at the menu: the "slow menu" was the windowed
+  presentation path, not the software rasterizer.
+- **D3DDrv**: works after three emulator fixes -- DDCAPS2_CANRENDERWINDOWED
+  in the driver caps (without it: "D3D Device: Fullscreen only" and
+  `Assertion failed: RenDev`), `IDirect3DDevice7::Load` popping 6 dwords
+  and copying the mip chain (it popped 7: SetTexture's epilogue restored a
+  garbage EBX and the next SetTexture asserted `Pool` in MakeNew,
+  d3ddrv+0x10008bfc), and a desktop-sized windowed primary (Blt to the client
+  rect in screen coordinates was cut at 640x480). Fullscreen: menu 11.2,
+  Training 5.8 PRESENT/s; WebGL readback blocks ~19% of each step. Darker than
+  SoftDrv: D3DDrv logs "Gamma control not available" (we store a gamma ramp
+  but do not apply it to presentation, so DDCAPS2_PRIMARYGAMMA stays off).
+  Precache uses texture pools keyed by size; a NULL pool means the caller's
+  state is corrupt, not a pool miss.
+- **GlideDrv**: needs fullscreen (UE1's Glide driver refuses a window: it
+  reads a WinDrv.int message and shuts Glide down). Needed six Glide 2 entry
+  points (guColorCombineFunction, guAlphaSource, guTexCombineFunction,
+  grDrawPlanarPolygonVertexList, grTexDownloadMipMapLevel[Partial]) and
+  grSstWinOpen answering FXFALSE for three colour buffers (it asks for 3,
+  then retries with 2). Reaches the 3D Eidos intro on the CLI; in the page
+  the app exits back to the desktop with no presents (open).
+- **OpenGlDrv**: resolves every GL 1.1 entry point through GetProcAddress
+  and gives up when any is missing; 263 names do not resolve (248 core,
+  15 extensions; `scratch/runs/20261006-dx-renderers/gl-unresolved.txt`).
+
+**Mouse.** WinDrv reads WM_MOUSEMOVE as an offset from the client centre and
+re-centres with SetCursorPos (windrv+0x1110af82). Pointer lock only engages
+under exclusive presentation, so with `-windowed` the page fed absolute
+positions into that relative protocol -- the erratic mouse. Fullscreen fixes
+it; a CLI `relmousemove 40,30` arrives as exactly (+40,+30) from (320,240).
+Pointer-lock counts now reach the guest 1:1 (cc69ac8e) instead of being
+scaled by the picture stretch (~46% at 640 wide on a 1380-px page).
+
+**Keyboard menu route** (browser, where the relative mouse makes clicks
+awkward): Esc after ~250 presents, then Down x3 and Enter reaches Training;
+use 0.1 s key holds -- 0.4 s auto-repeats and lands on Credits.
+
+Evidence: scratch/runs/20261006T1115Z-deusex-renderer-bench (windowed),
+20261006T1215Z-deusex-fullscreen-bench (fullscreen), 20261006T1100Z-deusex-d3d-cli
+and 20261006T1110Z-deusex-soft-cli (CLI routes).

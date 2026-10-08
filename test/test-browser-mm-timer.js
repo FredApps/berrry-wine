@@ -16,6 +16,44 @@ const context = { console };
 vm.runInNewContext(hostSource + '\n;globalThis.WineAssembly = WineAssembly;', context);
 
 const wine = new context.WineAssembly();
+
+// COMI's main-thread wait can outlast one PCM buffer. Its reviewed matched
+// run demonstrated why the independent timer default must reach the guest.
+// Execute the actual launcher policy and pre-Worker boot block, not a copy
+// of their boolean expressions. WASM is represented only by its setter sink.
+function uniqueSlice(source, start, end) {
+  const a = source.indexOf(start);
+  assert(a >= 0 && source.indexOf(start, a + start.length) < 0, 'unique source start');
+  const b = source.indexOf(end, a + start.length);
+  assert(b > a, 'source end exists');
+  return source.slice(a, b);
+}
+const launchPolicy = uniqueSlice(shellSource,
+  'wine.asyncMultimediaTimer = !!app.asyncMultimediaTimer;',
+  'wine.x87Fusion = app.x87Fusion !== false;');
+const bootPolicy = uniqueSlice(hostSource,
+  '// ?mm-thread[=0] and ?async-mm[=0] override',
+  'this._wasmModule = wasmModule;');
+function configuredTimerMode(app, query = '') {
+  const configured = new context.WineAssembly();
+  const calls = [];
+  configured.instance = { exports: { set_mm_timer_thread_mode(value) { calls.push(value); } } };
+  vm.runInNewContext(launchPolicy, { wine: configured, app });
+  vm.runInNewContext('(function(){' + bootPolicy + '\n}).call(wine)',
+    { wine: configured, URLSearchParams, location: { search: query } });
+  assert.strictEqual(calls.length, 1, 'one process-wide mode setting before Worker startup');
+  return calls[0];
+}
+assert.strictEqual(wine.mmTimerThread, true, 'direct host construction defaults to independent timer thread');
+assert.strictEqual(configuredTimerMode(apps.curse_monkey_island_demo), 1,
+  'actual COMI registry launch installs independent timer delivery');
+assert.strictEqual(configuredTimerMode({}), 1, 'absent app option preserves default');
+assert.strictEqual(configuredTimerMode({ mmTimerThread: false }), 0, 'explicit app opt-out is honored');
+assert.strictEqual(configuredTimerMode(apps.curse_monkey_island_demo, '?mm-thread=0'), 0,
+  'explicit diagnostic query disables timer thread');
+assert.strictEqual(configuredTimerMode({ mmTimerThread: false }, '?mm-thread=1'), 1,
+  'explicit query overrides app opt-out');
+
 let calls = 0;
 wine.instance = {
   exports: {

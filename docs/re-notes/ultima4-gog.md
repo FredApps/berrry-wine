@@ -54,3 +54,39 @@ cannot satisfy that signature.
 ```sh
 node test/test-ultima4-dosbox.js
 ```
+
+## 2026-10-05 ordinary browser character creation (not gameplay)
+
+Session87748 used source94d18605/module2e2fd8d1, the original installed DOSBox0.74-2.1 and existing dynamic-core/fixed3000/sound-disabled config. The sole local registration overlay was explicitly pinned;258production sources and280asset URLs were checked. Normal input reached main menu, I/new name Avatar, male choice, the introduction and virtue questions. The first A choice advanced the abacus; second preamble (Valor/Spirituality) was visible. No player world or movement was reached.
+
+The300sec wall guard ended18:04:02.733Z with browser/server closed, errors[], sessionexit2. It includes operator image-review time; no compatibility fault or timing performance is inferred. Later submitted inputs after terminal were not executed. Immutable evidence: scratch/runs/20261005-ultima4-character-creation/result.json and validation.json; screenshot question2.png is character creation, not gameplay.
+
+Next: fresh600sec ordinary route, reuse the now-observed introduction advance sequence with periodic captures, stop at actual virtue prompts and answer seven visible choices. Personal review of active world and before/after arrow movement remain mandatory. No automatic retry or synthetic save/protocol.
+
+## 2026-10-05 seven choices complete, post-creation save-open failure
+
+Continuation session59296 on the same94d18605/2e2fd8d1 completed ordinary name/sex/intro and seven personally reviewed A/B choices (A,A,A,B,A,B,A). The final narrative was advanced normally. Actual DOSBox program labels then changed TITLE→ULTIMA→AVATAR→ULTIMA→DOSBOX, and the rendered text reads `Opening PARTY.SAV` immediately followed by the DOS `C:\>` prompt. Stable after-save.png confirms no active world. No gameplay/FPS accepted.
+
+Stopped at the concrete boundary, before the600sec guard: clean exit0/browser+serverclosed18:31:41.282Z/errors[]. Immutable result/screenshots/logs/hashes: scratch/runs/20261005-ultima4-post-creation-save-exit.
+
+Source-only distinction: original installed PARTY.NEW exists (502bytes); PARTY.SAV is not a packaged asset and is expected to be created during play, so it must not be added as a fake fixture. Bundled DOSBox source drive_local.cpp uses fopen("wb+") in FileCreate, rb/rb+ in FileOpen and fwrite for writes; rename delegates CRT rename. Current pinned CRT maps wb+ to CREATE_ALWAYS and tracks FILE ownership. These static paths do not establish which call failed here. Next bounded passive observation should preserve actual VFS create/write/move/delete/close return values for PARTY.NEW/PARTY.SAV/MONSTERS.SAV and a small final metadata inventory; no guest writes or invented saves.
+
+## 2026-10-05 correction: packaged saves and omitted GOG overlay
+
+The preceding statement that PARTY.SAV is not packaged was incorrect. Original installed `__support/save/PARTY.SAV` exists (502 bytes), alongside DNGMAP.SAV (512), MONSTERS.SAV (256), OUTMONST.SAV (256). These original bytes must be retained, not replaced by an invented character save. GOG's original `__support/app/dosboxULTIMA4_single.conf` mounts its base then `mount C "..\cloud_saves" -t overlay`; its installer script creates the cloud_saves support-data folder. The inherited Wine Assembly config mounted only the base.
+
+Session13406 completed seven reviewed choices and returned to the same Opening PARTY.SAV DOS prompt. Existing production fs trace (8 selected records,0 target drops) reads c:\party.new502 bytes, then FindFirstFile/OpenExisting read of c:\PARTY.SAV fails. Passive metadata before/after AVATAR retains all four original templates under __support/save but no root save or cloud_saves mapping. This establishes an omitted packaging setup/overlay, not a CRT repair. No guest memory writes or private Worker hooks.258 source/280 asset pins; source94d18605/module2e2fd8d1. Clean exit0 at18:54:30.420Z, browser/server closed,errors[],deadlinefalse.
+
+Immutable trace, screenshot, cleanup and hashes: scratch/runs/20261005-ultima4-original-save-overlay-missing. No gameplay/FPS. Next: reproduce original overlay with exact template bytes and preserve persisted user saves; test setup idempotence/conflicts, then a fresh ordinary world/movement route.
+
+The scoped packaging repair maps those four original template URLs a second time into `c:\cloud_saves`, restores the original DOSBox `-t overlay` mount after the base mount, and opts that directory into existing browser save persistence. Persistence attaches after file mounting and restores actual user bytes before execution, without a reset token. This is original-package setup, not a generated character/save bypass or engine change. Source-only tests verify byte identity, idempotence, pinned legacy-metadata backups, conflict-before-write, and actual VirtualFS persistence replacing template bytes with saved user bytes. Original host save files are untouched. The script recognizes only the exact old generated config/manifest hashes for migration; arbitrary conflicting metadata fails.
+
+Recipe: `node tools/prepare-ultima4-gog-assets.js`; focused test: `node test/test-ultima4-gog-assets.js`. All 277 original files verify, four overlay aliases yield 282 manifest records. Browser readiness: scratch/new-games-pipeline-20261005/ultima4/SAVE-OVERLAY-READY.md, same production module2e2fd8d1, no observer. No new gameplay acceptance until a fresh ordinary world and movement route succeeds.
+
+## 2026-10-05 original-overlay ordinary overworld movement accepted
+
+Session75639 used unchanged production94d18605/module2e2fd8d1 with packaging0ef64ef7 (mainf2cce214), no observer. Fresh ordinary name/sex/intro and seven personally reviewed choices A,A,A,A,B,A,A reached AVATAR overworld. ArrowRight150ms shifted lake/castle left and logged East; ArrowLeft150ms restored terrain and logged West; idle1200ms retained position. Root personally reviewed world/east/west/idle. Narrow gameplay movement accepted, not audio/FPS/full campaign or runtime-reload persistence. Browser/server closed19:11:28.013Z/errors[]/deadlinefalse; process clear.
+
+Original bundled DOSBox source drive_overlay.cpp shows FileOpen tries overlaydir+name (314–368), FileCreate uses create_file_in_overlay(name,wb+) (384–409), and first writes to base files switch into an overlay copy (129–146,157–176). Thus DOS C:\PARTY.SAV writes target host/VFS C:\cloud_saves\PARTY.SAV with this original mount. This is source-backed routing; no live save-file/byte capture was added to the ordinary qualification.
+
+Immutable result, build/actual served identity, inputs, images and hash closure: scratch/runs/20261005-ultima4-overworld-movement. Earlier diagnostic now preserves original result/validation before adding explicit build metadata; both generations retained.

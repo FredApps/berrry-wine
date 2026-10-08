@@ -297,12 +297,40 @@ function lower(region, opts = {}) {
   // path absorbs it before it is ever compiled (a `je skip` over one store).
   // Treating these edges as free let the slow half run a whole block past
   // the point where L1 stops the slice (bobs.com: `inc si` into its head).
-  const heads = new Set([headKey]);
+  //
+  // FIX J (emit.js GO_SYN) takes the jmp_syn half of that back out: L1's
+  // jmp_syn still ends the block but no longer tests the budget, so falling
+  // into a JMP target is free again. What stays a test point is the program's
+  // own head, and not because of jmp_syn: uop-live holds that head as a
+  // HANDBACK (its block becomes `jmp_syn 0, head` with the jump-table slot
+  // cleared), so L1 hands back there on every entry, J or not, and the host's
+  // budget check at that handback is the test this keeps.
+  // `--jmp-syn-budget-test` restores the old set exactly.
+  const synTest = require('./emit').JMP_SYN_BUDGET_TEST;
+  const jmpTargets = new Set();
   for (const k of order) {
     const n = nodes.get(k);
-    if (n.d.kind === 'jmp') for (const e of n.succ) heads.add(e.k);
+    if (n.d.kind === 'jmp') for (const e of n.succ) jmpTargets.add(e.k);
   }
-  p.l1Heads = heads;
+  const heads = new Set([headKey, ...(synTest ? jmpTargets : [])]);
+  // uop-opt.js reads l1Heads for its deopt stubs: "the fast half only ever
+  // stands at an L1 head right after a transfer, and L1 tests there". Under J
+  // that still holds for a JMP target reached ONLY by transfers (the jmp tests
+  // the budget), and stops holding for one a straight line falls into (a
+  // jmp_syn in L1, untested). A target reached both ways is ambiguous -- the
+  // stub cannot tell which edge it came in on -- and is left out, favouring the
+  // per-iteration fall-in over a once-per-entry jmp (a README residual).
+  let l1Heads = heads;
+  if (!synTest) {
+    const fallIn = new Set();
+    for (const k of order) {
+      const n = nodes.get(k);
+      if (!successors(n.d) && n.succ[0]) fallIn.add(n.succ[0].k);
+    }
+    l1Heads = new Set([headKey]);
+    for (const k of jmpTargets) if (!fallIn.has(k)) l1Heads.add(k);
+  }
+  p.l1Heads = l1Heads;
 
   for (const k of order) {
     const n = nodes.get(k);

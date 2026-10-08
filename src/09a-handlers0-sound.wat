@@ -61,11 +61,19 @@
   ;; parameter. $host_play_sound copies the bytes out synchronously, so the
   ;; block is freed as soon as it returns. A path that does not resolve returns
   ;; FALSE, which is exactly what Win98 reports for a missing sound file.
+  ;;
+  ;; A streamed (lazy) file whose bytes are not resident yet returns -2,
+  ;; "parked": the Win32 handlers then park the call on IO_WAIT and the host
+  ;; re-runs it once the chunk is in, as _lread does. That is what lets sound
+  ;; files load on demand instead of all being fetched before the guest
+  ;; starts (lib/app-files.js). The Win16 bridge cannot park its scratch frame,
+  ;; so there a nonresident sound is simply not played.
   (func $sound_play_file (param $path_guest i32) (param $wide i32) (param $loop i32)
         (result i32)
     (local $handle i32) (local $size i32) (local $blk i32)
     (local $data_guest i32) (local $data_wa i32) (local $ok i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
+    (call $lazy_park_release)
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $path_guest))
       (i32.const 0x80000000)   ;; GENERIC_READ
@@ -90,6 +98,16 @@
     (i32.store (call $g2w (local.get $blk)) (i32.const 0))
     (local.set $ok (call $host_fs_read_file (local.get $handle)
       (local.get $data_guest) (local.get $size) (local.get $blk)))
+    ;; Ask only after a failure, as _lread does: the pending flag describes
+    ;; the last failed read, and closing the handle clears it.
+    (if (i32.and (i32.eqz (local.get $ok)) (i32.eqz (global.get $win16_in_call32)))
+      (then
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then
+            ;; Held open, not closed: see $lazy_park_hold.
+            (call $lazy_park_hold (local.get $handle))
+            (call $heap_free (local.get $blk))
+            (return (i32.const -2))))))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (if (i32.or (i32.eqz (local.get $ok))
                 (i32.ne (i32.load (call $g2w (local.get $blk))) (local.get $size)))
@@ -180,6 +198,8 @@
     (i32.store offset=0 (global.get $reg_base) (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -2))
+      (then (call $io_block (i32.const 12))))
   )
 
   ;; 863: PlaySoundW(pszSound, hmod, fdwSound) — 3 args stdcall. hmod only
@@ -190,6 +210,8 @@
     (i32.store offset=0 (global.get $reg_base) (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg2) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -2))
+      (then (call $io_block (i32.const 16))))
   )
 
   ;; PlaySoundA(pszSound, hmod, fdwSound) — 3 args stdcall, ANSI path form.
@@ -197,5 +219,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg2) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -2))
+      (then (call $io_block (i32.const 16))))
   )
 

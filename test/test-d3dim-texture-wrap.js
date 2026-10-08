@@ -145,6 +145,59 @@ async function software() {
   wat.test_wrap_set_rs(device, 5, 1);
   wat.test_wrap_set_rs(device, 6, 1);
   assert.strictEqual(describe(), 3, 'describe: WRAPU + WRAPV');
+
+  // Top-left fill rule: a triangle owns its top scanline, not its bottom one.
+  // NFS III draws its cockpit as 256x256 tiles that meet at y=256 with
+  // TEXTUREADDRESS=WRAP; the upper tile's bottom row used to be drawn too, at
+  // tv=1.001, wrapped to its texture's opaque first row: a black line across
+  // the race view. Draw the LOWER quad first so the upper one cannot hide a
+  // stolen row by being overwritten.
+  wat.test_wrap_set_rs(device, 5, 0); wat.test_wrap_set_rs(device, 6, 0);
+  const quad = (y0, y1) => [[[0, y0], [W, y0], [W, y1]], [[0, y0], [W, y1], [0, y1]]];
+  const drawTri = (pts, color) => {
+    pts.forEach(([x, y], i) => {
+      const p = vertices + i * 32;
+      float(p, x); float(p + 4, y); float(p + 8, 0.5); float(p + 12, 1);
+      wat.guest_write32(p + 16, color);
+      wat.guest_write32(p + 20, 0xff000000);
+      float(p + 24, 0.5); float(p + 28, y === y0Of(pts) ? 0.001 : 1.001);
+    });
+    wat.test_wrap_draw(device, rt, vertices);
+  };
+  const y0Of = pts => Math.min(...pts.map(q => q[1]));
+  const fillTex = c => { for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) mem.setUint16(texDib + y * texPitch + x * 2, c, true); };
+  const rowColors = y => { const s = new Set(); for (let x = 0; x < W - 1; x++) s.add(mem.getUint16(rtDib + (y * W + x) * 2, true)); return [...s]; };
+  for (const textured of [true, false]) {
+    wat.test_wrap_set_rs(device, 1, textured ? wat.guest_read32(out + 8) >>> 0 : 0);
+    for (let i = 0; i < W * W; i++) mem.setUint16(rtDib + i * 2, 0, true);
+    fillTex(BLUE);
+    for (const tri of quad(8, W)) drawTri(tri, 0xff0000ff);   // lower: blue
+    fillTex(RED);
+    for (const tri of quad(0, 8)) drawTri(tri, 0xffff0000);   // upper: red
+    const label = textured ? 'textured' : 'flat';
+    assert.deepStrictEqual(rowColors(7), [RED], `${label}: row 7 belongs to the upper quad (${rowColors(7)})`);
+    assert.deepStrictEqual(rowColors(8), [BLUE], `${label}: the shared row 8 belongs to the lower quad, not the upper one (${rowColors(8).map(c => c.toString(16))})`);
+  }
+
+  // The same rule across x: a span owns its left column, not its right one.
+  // Two quads meet at x=8; the RIGHT one is drawn first, so a left quad that
+  // paints column 8 cannot hide it. The left quad is split along the
+  // diagonal that gives one triangle a top apex ON the shared edge, (8,0):
+  // that row's span has zero width and must draw nothing.
+  const quadX = (x0, x1) => [[[x0, 0], [x1, 0], [x0, W]], [[x1, 0], [x1, W], [x0, W]]];
+  const colColors = x => { const s = new Set(); for (let y = 0; y < W; y++) s.add(mem.getUint16(rtDib + (y * W + x) * 2, true)); return [...s]; };
+  for (const textured of [true, false]) {
+    wat.test_wrap_set_rs(device, 1, textured ? wat.guest_read32(out + 8) >>> 0 : 0);
+    for (let i = 0; i < W * W; i++) mem.setUint16(rtDib + i * 2, 0, true);
+    fillTex(BLUE);
+    for (const tri of quadX(8, W)) drawTri(tri, 0xff0000ff);   // right: blue
+    fillTex(RED);
+    for (const tri of quadX(0, 8)) drawTri(tri, 0xffff0000);   // left: red
+    const label = textured ? 'textured' : 'flat';
+    const hex = cs => cs.map(c => c.toString(16));
+    assert.deepStrictEqual(colColors(7), [RED], `${label}: column 7 belongs to the left quad (${hex(colColors(7))})`);
+    assert.deepStrictEqual(colColors(8), [BLUE], `${label}: the shared column 8 belongs to the right quad, not the left one (${hex(colColors(8))})`);
+  }
 }
 
 // The GPU executor with a recording device: the vertices it hands over.

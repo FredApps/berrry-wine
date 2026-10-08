@@ -266,6 +266,10 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
   // a write plus a backward branch as a decryptor and stops trusting the code
   // ahead of it -- a bulk store does the same job with no branch at all.
   let bulkWrite = false;
+  // Whether this instruction loads SS (MOV SS / POP SS). compile.js reads it
+  // for the interrupt shadow after STI: see IFEN_STI_MOVSS there. LSS is not
+  // one -- the SDM's shadow rule names MOV SS and POP SS only.
+  let ssLoad = false;
 
   // The 386 ModRM: rm=100 means a SIB byte follows, rm=101 with mod=00 is a
   // bare disp32, and mod=10's displacement is four bytes rather than two.
@@ -548,6 +552,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       const m = modrm();
       const sr = cpuLevel >= 386 ? (m.reg & 7) : (m.reg & 3);
       if (sr > 5) return null;
+      if (op === 0x8E && sr === 2) ssLoad = true;
       const [rf, mf] = op === 0x8C ? ['mov_r_sr', 'mov_m_sr'] : ['mov_sr_r', 'mov_sr_m'];
       if (m.isReg) words.push(H[rf], (m.rm & 7) | (sr << 4));
       else {
@@ -956,6 +961,10 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         if (!m.isReg) return null;
         words.push(op2 === 0x20 ? H.mov_r_cr : H.mov_cr_r,
           (m.rm & 7) | ((m.reg & 7) << 4));
+        if (op2 === 0x22) {
+          words.push(wip(start + n));
+          endsBlock = m.reg === 3;
+        }
         break;
       }
       return null;
@@ -1105,6 +1114,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       else if ((op & 0xE7) === 0x06) {
         words.push(opsize === 32 ? H.push_seg32 : H.push_seg, (op >> 3) & 3);
       } else if ((op & 0xE7) === 0x07 && op !== 0x0F) {
+        if (((op >> 3) & 3) === 2) ssLoad = true;
         words.push(opsize === 32 ? H.pop_seg32 : H.pop_seg, (op >> 3) & 3);
       }
       // XCHG AX, r16. 0x90 is XCHG AX,AX, which is NOP -- emitted as NOP so the
@@ -1151,7 +1161,12 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     endsBlock = true;
   }
 
-  return { words, nextIp: wip(start + n), length: n, fixups, endsBlock, writesMem, bulkWrite, operands };
+  // `sti` marks the one instruction whose interrupt shadow compile.js has to
+  // lay out (the eligible boundary is after the NEXT instruction, not after
+  // this one); see IFEN in compile.js. Not endsBlock: the block ends one
+  // instruction later.
+  return { words, nextIp: wip(start + n), length: n, fixups, endsBlock, writesMem, bulkWrite, operands,
+    sti: op === 0xFB, ssLoad };
 }
 
 // How many instruction bytes each operand kind is read from, and the word

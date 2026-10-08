@@ -946,6 +946,97 @@
       (i32.add (local.get $l) (i32.const 1)) (i32.const 8)
       (i32.sub (local.get $r) (i32.const 1)) (i32.const 10) (i32.const 0x00FFFFFF)))
 
+  ;; One 13x13 cell of OBM_CHECKBOXES at ($x0,$y0). $shape 0 check box,
+  ;; 1 radio button, 2 three-state box; $state bit 0 checked, bit 1 pushed
+  ;; (grey interior). The box and tick are $paint_check_box_state's, so a
+  ;; control drawn from this sheet matches one USER paints itself.
+  (func $obm_check_cell (param $bits i32) (param $stride i32)
+        (param $x0 i32) (param $y0 i32) (param $shape i32) (param $state i32)
+    (local $x i32) (local $y i32) (local $d i32) (local $c i32) (local $i i32)
+    (local $face i32) (local $mark i32)
+    (local.set $face (select (i32.const 0x00C0C0C0) (i32.const 0x00FFFFFF)
+      (i32.ne (i32.and (local.get $state) (i32.const 2)) (i32.const 0))))
+    (local.set $mark (select (i32.const 0x00808080) (i32.const 0)
+      (i32.eq (local.get $shape) (i32.const 2))))
+    (if (i32.eq (local.get $shape) (i32.const 1))
+      (then
+        ;; A 12-pixel disc about (5.5,5.5): face inside, a two-pixel rim that
+        ;; is dark on the upper left and light on the lower right, and an
+        ;; eight-pixel dot when checked. d is the squared distance doubled.
+        (local.set $y (i32.const 0))
+        (block $rows (loop $row
+          (br_if $rows (i32.ge_s (local.get $y) (i32.const 12)))
+          (local.set $x (i32.const 0))
+          (block $cols (loop $col
+            (br_if $cols (i32.ge_s (local.get $x) (i32.const 12)))
+            (local.set $d (i32.add
+              (i32.mul (i32.sub (i32.shl (local.get $x) (i32.const 1)) (i32.const 11))
+                       (i32.sub (i32.shl (local.get $x) (i32.const 1)) (i32.const 11)))
+              (i32.mul (i32.sub (i32.shl (local.get $y) (i32.const 1)) (i32.const 11))
+                       (i32.sub (i32.shl (local.get $y) (i32.const 1)) (i32.const 11)))))
+            (local.set $c (i32.const -1))
+            (if (i32.le_s (local.get $d) (i32.const 146))
+              (then
+                (local.set $c (local.get $face))
+                (if (i32.gt_s (local.get $d) (i32.const 64))
+                  (then
+                    (local.set $c
+                      (if (result i32) (i32.lt_s (i32.add (local.get $x) (local.get $y)) (i32.const 11))
+                        (then (select (i32.const 0x00808080) (i32.const 0)
+                          (i32.gt_s (local.get $d) (i32.const 100))))
+                        (else (select (i32.const 0x00FFFFFF) (i32.const 0x00C0C0C0)
+                          (i32.gt_s (local.get $d) (i32.const 100))))))))
+                (if (i32.and (i32.le_s (local.get $d) (i32.const 16))
+                             (i32.ne (i32.and (local.get $state) (i32.const 1)) (i32.const 0)))
+                  (then (local.set $c (i32.const 0))))))
+            (if (i32.ge_s (local.get $c) (i32.const 0))
+              (then (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+                (i32.add (local.get $x0) (local.get $x)) (i32.add (local.get $y0) (local.get $y))
+                (i32.add (local.get $x0) (i32.add (local.get $x) (i32.const 1)))
+                (i32.add (local.get $y0) (i32.add (local.get $y) (i32.const 1)))
+                (local.get $c))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $col)))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $row)))
+        (return)))
+    ;; EDGE_SUNKEN: grey/white outer, black/light-grey inner, then the face.
+    (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+      (local.get $x0) (local.get $y0)
+      (i32.add (local.get $x0) (i32.const 13)) (i32.add (local.get $y0) (i32.const 13))
+      (i32.const 0x00FFFFFF))
+    (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+      (local.get $x0) (local.get $y0)
+      (i32.add (local.get $x0) (i32.const 12)) (i32.add (local.get $y0) (i32.const 12))
+      (i32.const 0x00808080))
+    (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+      (i32.add (local.get $x0) (i32.const 1)) (i32.add (local.get $y0) (i32.const 1))
+      (i32.add (local.get $x0) (i32.const 12)) (i32.add (local.get $y0) (i32.const 12))
+      (i32.const 0x00C0C0C0))
+    (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+      (i32.add (local.get $x0) (i32.const 1)) (i32.add (local.get $y0) (i32.const 1))
+      (i32.add (local.get $x0) (i32.const 11)) (i32.add (local.get $y0) (i32.const 11))
+      (i32.const 0))
+    (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+      (i32.add (local.get $x0) (i32.const 2)) (i32.add (local.get $y0) (i32.const 2))
+      (i32.add (local.get $x0) (i32.const 11)) (i32.add (local.get $y0) (i32.const 11))
+      (local.get $face))
+    (if (i32.eqz (i32.and (local.get $state) (i32.const 1))) (then (return)))
+    ;; Six 2px strokes: down-right to the elbow, then up-right.
+    (block $done (loop $tick
+      (br_if $done (i32.ge_s (local.get $i) (i32.const 6)))
+      (local.set $y (select (i32.add (local.get $i) (i32.const 4))
+                            (i32.sub (i32.const 10) (local.get $i))
+                            (i32.lt_s (local.get $i) (i32.const 3))))
+      (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+        (i32.add (local.get $x0) (i32.add (local.get $i) (i32.const 3)))
+        (i32.add (local.get $y0) (local.get $y))
+        (i32.add (local.get $x0) (i32.add (local.get $i) (i32.const 4)))
+        (i32.add (local.get $y0) (i32.add (local.get $y) (i32.const 2)))
+        (local.get $mark))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $tick))))
+
   (func $obm_is_system (param $id i32) (result i32)
     (i32.and (i32.ge_u (local.get $id) (i32.const 32734))
              (i32.le_u (local.get $id) (i32.const 32767))))
@@ -983,7 +1074,10 @@
     (if (i32.eq (local.get $id) (i32.const 32760)) (then (local.set $kind (i32.const 6))))
     (if (i32.or (i32.eq (local.get $id) (i32.const 32766)) (i32.eq (local.get $id) (i32.const 32761)))
       (then (local.set $kind (i32.const 7))))
-    ;; OBM_CHECKBOXES, OBM_BTNCORNERS and the OBM_OLD_* set have no artwork
+    ;; OBM_CHECKBOXES: Delphi's VCL loads it at startup only to size its check
+    ;; boxes (width/4 x height/3), so it must exist even if nothing blits it.
+    (if (i32.eq (local.get $id) (i32.const 32759)) (then (local.set $kind (i32.const 8))))
+    ;; OBM_BTNCORNERS and the OBM_OLD_* set have no artwork
     ;; here yet: stop and name the id rather than hand back a NULL the app
     ;; will read as "USER has no such bitmap".
     (if (i32.eqz (local.get $kind))
@@ -998,6 +1092,8 @@
       (then (local.set $w (i32.const 36)) (local.set $h (i32.const 18))))
     (if (i32.or (i32.eq (local.get $kind) (i32.const 4)) (i32.eq (local.get $kind) (i32.const 6)))
       (then (local.set $w (i32.const 13)) (local.set $h (i32.const 13))))
+    (if (i32.eq (local.get $kind) (i32.const 8))
+      (then (local.set $w (i32.const 52)) (local.set $h (i32.const 39))))
     (local.set $stride (i32.shl (local.get $w) (i32.const 2)))
     (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
     (i32.store (global.get $GDI_BITMAP_PLAN) (local.get $w))
@@ -1122,6 +1218,26 @@
             (br $cols)))
           (local.set $y (i32.add (local.get $y) (i32.const 1)))
           (br $rows)))))
+
+    (if (i32.eq (local.get $kind) (i32.const 8))
+      (then
+        ;; Rows: check box, radio button, three-state box. Columns: plain,
+        ;; checked, pushed, pushed and checked.
+        (call $gdi_common_toolbar_fill (local.get $bits) (local.get $stride)
+          (i32.const 0) (i32.const 0) (local.get $w) (local.get $h) (i32.const 0x00C0C0C0))
+        (local.set $y (i32.const 0))
+        (block $sheet_rows (loop $sheet_row
+          (br_if $sheet_rows (i32.ge_s (local.get $y) (i32.const 3)))
+          (local.set $x (i32.const 0))
+          (block $sheet_cols (loop $sheet_col
+            (br_if $sheet_cols (i32.ge_s (local.get $x) (i32.const 4)))
+            (call $obm_check_cell (local.get $bits) (local.get $stride)
+              (i32.mul (local.get $x) (i32.const 13)) (i32.mul (local.get $y) (i32.const 13))
+              (local.get $y) (local.get $x))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $sheet_col)))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $sheet_row)))))
 
     (drop (call $gdi_write_surface_upload (local.get $handle) (i32.const 0)
       (i32.const 0) (local.get $w) (local.get $h)))

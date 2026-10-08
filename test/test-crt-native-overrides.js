@@ -103,6 +103,7 @@ async function checkCrt(crt, exeBytes) {
   // cdecl call through the interpreter; returns EAX and checks the callee
   // popped exactly its return address.
   const stackTop = e.get_esp() >>> 0;
+  let lastCallStopped = false;
   function call(addr, args) {
     let esp = (stackTop - 0x400) >>> 0;
     for (let i = args.length - 1; i >= 0; i--) { esp -= 4; w32(esp, args[i]); }
@@ -110,9 +111,17 @@ async function checkCrt(crt, exeBytes) {
     esp -= 4; w32(esp, 0);
     e.set_esp(esp);
     e.set_eip(addr);
+    // An unhandled exception (the PE-unmasked floor case below) stops the guest
+    // where it raised since e09a1c2d: EIP 0 and $yield_flag set, with the stack
+    // wherever the raise left it. A left-over flag would halt the next run
+    // before its first block, so drain it (run halts and clears it at once).
+    if (e.get_yield_flag()) e.run(1);
     e.run(2000000);
-    assert.strictEqual(e.get_eip() >>> 0, 0, `call ${hex(addr)} returned`);
-    assert.strictEqual(e.get_esp() >>> 0, argsBase, `call ${hex(addr)} pops only its return address`);
+    assert.strictEqual(e.get_eip() >>> 0, 0, `call ${hex(addr)} returned or stopped`);
+    lastCallStopped = !!e.get_yield_flag();
+    // Only a call that returned is held to the cdecl contract.
+    if (!lastCallStopped)
+      assert.strictEqual(e.get_esp() >>> 0, argsBase, `call ${hex(addr)} pops only its return address`);
     const eax = e.get_eax() >>> 0;
     e.set_esp(stackTop);
     return eax;
@@ -216,7 +225,8 @@ async function checkCrt(crt, exeBytes) {
     e.t_set_fpu_sw(0);
     const top0 = e.t_fpu_top();
     call(addr, f64words(x));
-    const out = { top: e.t_fpu_top(), sw: e.t_fpu_sw(), cw: e.t_fpu_cw() };
+    const out = { top: e.t_fpu_top(), sw: e.t_fpu_sw(), cw: e.t_fpu_cw(), exited: lastCallStopped };
+    if (out.exited) return out;  // raised and stopped: no result was stored
     assert.strictEqual(out.top, (top0 + 7) & 7, 'floor leaves one value on the x87 stack');
     out.r = bits(e.t_fpu_pop());
     return out;
@@ -224,6 +234,7 @@ async function checkCrt(crt, exeBytes) {
   const fb0 = e.get_crt_fallback_count();
   const floorCase = (x, cw, label) => {
     const a = floorArm(real.floor, x, cw), n = floorArm(thunk.floor, x, cw);
+    assert.strictEqual(n.exited, a.exited, `${crt.name} floor(${label}) both arms take the same road`);
     assert.strictEqual(n.r, a.r, `${crt.name} floor(${label}) result bits`);
     assert.strictEqual(hex(n.sw), hex(a.sw), `${crt.name} floor(${label}) status word`);
     assert.strictEqual(n.top, a.top, `${crt.name} floor(${label}) TOP`);

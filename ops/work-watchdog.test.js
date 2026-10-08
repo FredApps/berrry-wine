@@ -42,3 +42,28 @@ test('Claude submission only confirms the exact watchdog draft',()=>{
   assert.match(message([task],config),/Do not deploy publicly or answer approvals/);
   assert.ok(message(Array.from({length:20},()=>({...task,id:'A'.repeat(150)})),config).length<600);
 });
+test('a short owner id (first UUID group) owns the same tasks as the full session id',()=>{
+  const full='claude:d10ba697-f69c-4855-aeff-e6a61b6e2735';
+  const tasks=[{...task,id:'SHORT',owner:'claude:d10ba697'},{...task,id:'FULL',owner:full},{...task,id:'OTHER',owner:'claude:d10ba69'}];
+  assert.deepEqual(eligible(tasks,full).map(t=>t.id),['FULL','SHORT']);
+});
+test('workers idle without owned tasks are reported to the dispatcher, not nudged themselves',()=>{
+  const {unassigned,dispatch,dispatchMessage}=require('./work-watchdog');
+  const c={...config,dispatcher:'orchestrator',terminals:['orchestrator','w1','w2'],unassignedMs:600000};
+  const snap={tasks:[{...task,owner:'claude:w2'}],agents:[{id:'claude:w1',state:'idle'},{id:'claude:w2',state:'idle'},{id:'claude:o',state:'idle'}]};
+  const w1={id:'w1',agentId:'claude:w1',idle:true},w2={id:'w2',agentId:'claude:w2',idle:true},o={id:'orchestrator',agentId:'claude:o',idle:true,screenHash:'h'};
+  assert.equal(unassigned(snap,w1,c,{},1000),1000);
+  assert.equal(unassigned(snap,w1,c,{unassignedSince:500},1000),500);
+  assert.equal(unassigned(snap,w2,c,{},1000),null,'owns a task');
+  assert.equal(unassigned(snap,{...w1,idle:false},c,{unassignedSince:500},1000),null,'busy resets');
+  w1.unassignedSince=1000;
+  assert.equal(dispatch(snap,[o,w1,w2],c,{},300000).send,false,'not idle long enough');
+  let d=dispatch(snap,[o,w1,w2],c,{},601000);assert.equal(d.send,true);assert.deepEqual(d.workers,['w1']);
+  d.record.attempts=1;d.record.lastNudgeAt=601000;
+  assert.equal(dispatch(snap,[o,w1,w2],c,d.record,700000).record.reason,'cooldown');
+  assert.equal(dispatch(snap,[{...o,idle:false},w1,w2],c,{},601000).send,false,'dispatcher busy');
+  assert.equal(dispatch(snap,[o,w1,w2],{...c,paused:true},{},601000).send,false);
+  assert.equal(dispatch(snap,[o,w1,w2],{...c,dispatcher:undefined},{},601000).send,false);
+  w2.unassignedSince=1000;assert.equal(dispatch(snap,[o,w1,w2],c,d.record,700000).send,true,'a newly idle worker is a new dispatch');
+  const m=dispatchMessage(['w1','w2']);assert.match(m,/w1, w2/);assert.match(m,/Do not deploy publicly/);assert.ok(m.length<420,m.length);
+});

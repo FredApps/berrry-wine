@@ -7,13 +7,13 @@ const {Device}=require('../lib/d3d9-software-backend');
 function harness({sliceMs=4,cost=1,finish=Infinity,fail=0}={}){
   const state={calls:0,time:0,releases:0,cancels:0,scheduled:[],events:[]};
   const device=Object.create(Device.prototype);
-  Object.assign(device,{sliceMs,quadBudget:256,now:()=>state.time,
+  Object.assign(device,{sliceMs,quadBudget:256,now:()=>state.time,completedSamples:0n,lastDrawSamples:0n,
     options:{schedule:callback=>state.scheduled.push(callback)},
     exports:()=>({d3d_software_step(context,budget){
       assert.strictEqual(context,1);assert.strictEqual(budget,256);state.calls++;state.time+=cost;
       state.events.push('step');if(state.calls===fail)return -1;return state.calls>=finish?0:1;
-    },d3d_software_cancel(){state.cancels++;}}),
-    prepare(){assert(!this.active);return this.active={context:1,released:false};},
+    },d3d_software_cancel(){state.cancels++;},d3d_software_samples(context){assert.strictEqual(context,1);return 0n;}}),
+    prepare(){assert(!this.active);return this.active={context:1,contexts:[1],released:false};},
     release(draw){assert(!draw.released,'single release');draw.released=true;this.active=null;state.releases++;state.events.push('release');},
   });
   return {device,state};

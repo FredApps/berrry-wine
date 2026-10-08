@@ -721,6 +721,7 @@ function decoderWat() {
       (param $ip i32) (param $base i32) (param $mask i32)
       (param $d32 i32) (param $arena i32) (param $maxWords i32)
       (param $oneInsn i32) (param $seed i32) (result i32)
+  (if (call $pg_on) (then (return (i32.const 0))))
   (call $dc_block (local.get $ip) (local.get $base) (local.get $mask)
                   (local.get $d32) (local.get $arena) (local.get $maxWords)
                   (local.get $oneInsn) (local.get $seed)))

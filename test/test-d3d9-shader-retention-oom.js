@@ -20,7 +20,7 @@ const IR=require('../lib/d3d-shader-ir');
  (func (export "private_shader") (result i32) (global.get $test_private_shader))
  (func (export "private_ir") (result i32) (global.get $test_private_ir))
  (func (export "ir_live") (result i32) (global.get $d3d_ir_live_bytes))
- (func (export "free_head") (result i32) (global.get $free_list))
+ (func (export "free_head") (result i32) (call $heap_bins_flush) (global.get $free_list))
  (func (export "new_device") (result i32) (local $device i32)
    (local.set $device (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV9)))
    (store.field DxObject misc1 (call $dx_from_this (local.get $device)) (call $d3d9_program_alloc))

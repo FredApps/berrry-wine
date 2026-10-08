@@ -69,6 +69,7 @@ const namedApiIds = [
   ['MsgWaitForMultipleObjects', 'API_ID_MsgWaitForMultipleObjects'],
   ['PeekMessageA', 'API_ID_PeekMessageA'],
   ['PeekMessageW', 'API_ID_PeekMessageW'],
+  ['_EH_prolog', 'API_ID__EH_prolog'],
   ['IDirectDraw_QueryInterface', 'API_ID_IDirectDraw_BASE'],
   ['IAMMultiMediaStream_QueryInterface', 'API_ID_IAMMultiMediaStream_BASE'],
   ['IShellLinkA_QueryInterface', 'API_ID_IShellLinkA_BASE'],
@@ -276,6 +277,15 @@ const gpuApis = new Map([
   ['glActiveTextureARB', 1],
   ['glClientActiveTextureARB', 1],
   ['glMultiTexCoord2fARB', 3],
+  // Descent 3's OpenGL renderer draws its client arrays unindexed.
+  ['glDrawArrays', 3],
+  // Unreal-engine OpenGlDrv composes its view transform with glMultMatrixf
+  // (Deus Ex demo, OPENGLDRV-GL11-SURFACE).
+  ['glMultMatrixf', 1],
+  // glClearDepth(GLclampd): two physical stack dwords.
+  ['glClearDepth', 2],
+  // glColor3ub(r, g, b): Anachronox's ref_gl HUD and font colours.
+  ['glColor3ub', 3],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 
@@ -286,15 +296,15 @@ function handlerCall(api) {
   }
   const vbDdSlot = api.name.match(/^IVBDirectDraw7_DirectSlot(\d+)$/);
   if (vbDdSlot && !api.handler) {
-    const slot = parseInt(vbDdSlot[1], 10);
-    return `      (call $handle_IVBDirectDraw7_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+    const slot = (api.nargs + 1) * 4;
+    return `      (call $handle_vb_unsupported_stdcall (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
   const vbClipSlot = api.name.match(/^IVBDirectDrawClipper_DirectSlot(\d+)$/);
   if (vbClipSlot) {
     // Even an unsupported method must consume the complete typelib ABI.
     // Keep the argument count in api_table, not a second per-slot WAT table.
     const stackBytes = (api.nargs + 1) * 4;
-    return `      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const ${stackBytes}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+    return `      (call $handle_vb_unsupported_stdcall (i32.const ${stackBytes}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
   const vbSoundSlot = api.name.match(/^IVBDirectSound_DirectSlot(\d+)$/);
   if (vbSoundSlot) {
@@ -452,6 +462,8 @@ for (const v of d3d8Vtables) comInterfaces.push(v);
 // IUnknown and its IMarshal. Tail again, same registry-offset reason.
 comInterfaces.push({ prefix: 'IFtmInner', global: 'DX_VTBL_FTM_INNER' });
 comInterfaces.push({ prefix: 'IFtmMarshal', global: 'DX_VTBL_FTM_MARSHAL' });
+// Separate Unicode DirectPlay4 interface; never aliases ANSI method semantics.
+comInterfaces.push({ prefix: 'IDirectPlay4W', global: 'DX_VTBL_DPLAY4W' });
 
 // IDirectInputDevice7: the v2 device vtable plus EnumEffectsInFile and
 // WriteEffectToFile. An app that asks for IID_IDirectInputDevice7A and is
@@ -466,6 +478,9 @@ comInterfaces.push({ prefix: 'IDirectSound8', global: 'DX_VTBL_DSOUND8', extends
 const byName = new Map(apiTable.map(a => [a.name, a]));
 // Preserve all existing shared vtable registry offsets.
 comInterfaces.push({prefix:'IVBImageSurface7',global:'DX_VTBL_VBIMAGE7'});
+// Unicode IDirectPlayLobby/2/3 (one 19-slot vtable serves all three as a
+// prefix). Tail, so every established registry offset stays where it was.
+comInterfaces.push({ prefix: 'IDirectPlayLobby3W', global: 'DX_VTBL_DPLAYLOBBY3W' });
 
 const ifaceInfo = new Map();
 for (const iface of comInterfaces) {

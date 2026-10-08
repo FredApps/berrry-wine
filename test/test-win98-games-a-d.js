@@ -18,6 +18,20 @@ const expected = {
   broken_sword_demo: ['winsword.exe', 63],
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['darkstonedemo.exe', 13],
+  red_alert_95_demo: ['RA95.EXE', 8],
+  die_by_the_sword_demo: ['dbts_demo.exe', 28],
+  dark_colony_demo: ['dc.exe', 971],
+  daytona_usa_deluxe_demo: ['DAYTONA USA Deluxe Demo WWW.exe', 702],
+  blood2_demo: ['Client.exe', 97],
+  disciples_demo: ['discipdm.exe', 174],
+  atlantis_demo: ['ATLANTIS.EXE', 2916],
+  dark_reign_demo: ['DKReign.exe', 255],
+  colin_mcrae_rally_demo: ['GAME.EXE', 1990],
+  avp_alien_demo: ['avp_alien_demo.exe', 29],
+  descent3_demo: ['main.exe', 23],
+  anno1602_demo: ['1602.exe', 455],
+  driver_demo: ['game.exe', 152],
+  cmr2_demo: ['CMR2Demo.exe', 219],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
@@ -51,6 +65,8 @@ for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
 
 assert.deepStrictEqual(APPS.broken_sword_demo.dlls.map(file => path.basename(file)),
   ['smackw32.dll']);
+assert.deepStrictEqual(APPS.die_by_the_sword_demo.dlls.map(file => path.basename(file)),
+  ['rlapi.dll', 'SIMFORCE.dll'], 'Die by the Sword statically imports Rlapi.dll');
 assert.strictEqual(APPS.broken_sword_demo.startupInput, undefined,
   'the working opening movie is not skipped automatically');
 assert(APPS.broken_sword_demo.exe.includes('Broken_Sword_demo-SW/installed/'),
@@ -79,4 +95,4 @@ assert.deepStrictEqual(APPS.atomic_bomberman_june_demo.touchControls.buttons,
 // The June demo's expiry is a calendar pin, not a patch to the binary.
 assert.strictEqual(APPS.atomic_bomberman_june_demo.wallClock, '1997-07-01T12:00:00Z');
 
-console.log('PASS  five Archive.org Windows 98 demos are reproducible local apps');
+console.log(`PASS  ${Object.keys(expected).length} Archive.org Windows 98 demos are reproducible local apps`);

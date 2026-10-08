@@ -12,8 +12,13 @@ const extraWat = String.raw`
     ;; its four cdecl arguments still below ESP and the disposition in EAX.
     (i32.store (global.get $THUNK_BASE) (i32.const 0xCACA000E))
     (i32.store offset=4 (global.get $THUNK_BASE) (i32.const 0))
-    (global.set $delphi_resume_eip (local.get $resume_eip))
-    (global.set $delphi_resume_esp (local.get $resume_esp))
+    ;; Above them, the 20-byte dispatcher node, whose +12/+16 carry this
+    ;; raise's resume point. The globals hold a different raise's values (a
+    ;; nested raise inside the handler overwrites them); the frame must win.
+    (global.set $delphi_resume_eip (i32.const 0x0BAD0BAD))
+    (global.set $delphi_resume_esp (i32.const 0x0BAD0BAD))
+    (call $gs32 (i32.const 0x0040201C) (local.get $resume_eip))
+    (call $gs32 (i32.const 0x00402020) (local.get $resume_esp))
     (global.set $eip (i32.const 0xCCCCCCCC))
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00402000))
     (global.set $steps (i32.const 77))

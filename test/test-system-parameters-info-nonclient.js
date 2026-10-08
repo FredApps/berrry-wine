@@ -82,6 +82,23 @@ const extraWat = String.raw`
   assert.strictEqual(read32(drag), 1,
     'the browser desktop advertises its full-window drag behavior');
 
+  // No screen saver is configured. PopCap's engine (Zuma) presets "active,
+  // 1 second" and stops drawing when the saver should be up, so a failed
+  // query froze the game one second after the last input.
+  for (const [action, value, label] of [
+    [0x10, 0, 'SPI_GETSCREENSAVEACTIVE'],
+    [0x72, 0, 'SPI_GETSCREENSAVERRUNNING'],
+    [0x0e, 900, 'SPI_GETSCREENSAVETIMEOUT'],
+  ]) {
+    for (const wideCall of [0, 1]) {
+      const out = allocFilled(4, 0x01);
+      assert.strictEqual(wat.test_spi_handler(action, 0, out, wideCall), 20,
+        `${label} keeps the four-argument stdcall cleanup`);
+      assert.strictEqual(wat.test_spi_handler_eax(), 1, `${label} succeeds`);
+      assert.strictEqual(read32(out), value, `${label} writes ${value}`);
+    }
+  }
+
   const iconAnsi = allocFilled(100);
   assert.strictEqual(wat.test_spi_handler(0x1f, 92, iconAnsi, 0), 20,
     'WinRAR\'s newer-sized ANSI icon-title query keeps exact stack cleanup');
@@ -112,7 +129,7 @@ const extraWat = String.raw`
   assert.deepStrictEqual(Array.from(bytes.slice(wa(shortFont), wa(shortFont + 60))),
     Array(60).fill(0x2f), 'failed sizing leaves LOGFONTA untouched');
 
-  for (const action of [0x1f, 0x26, 0x29, 0x30, 0x68]) {
+  for (const action of [0x0e, 0x10, 0x1f, 0x26, 0x29, 0x30, 0x68, 0x72]) {
     assert.strictEqual(wat.test_spi(action, action === 0x1f ? 92 : 0, 0, 1), 0,
       `getter 0x${action.toString(16)} rejects a null output`);
   }

@@ -389,7 +389,8 @@ const nativeMessages = [], nativeOps = [];
 const nativeBroker = RPC.createMainBroker(rpcMemory, {
   gpu_gl_batch: (batch, owner) => {
     assert.strictEqual(owner, 0);
-    assert.deepStrictEqual(batch, { memoryOffset: nativeOffset, bytes: brokerBatch.bytes });
+    assert.deepStrictEqual(batch, { memoryOffset: nativeOffset, bytes: brokerBatch.bytes,
+      softwareFront: 0 }, 'no software front buffer without a gl_sw_front export');
     assert.strictEqual(Atomics.load(rpcView, RPC.SLOT.STATUS), RPC.STATUS_REQ);
     return Stream.replay(Stream.memoryBatch(rpcMemory, batch.memoryOffset, batch.bytes),
       (opcode, _aux, capture) => {
@@ -410,7 +411,7 @@ assert.strictEqual(nativeWorker.imports.host.gpu_gl_call(Stream.WAT_STREAM_FLUSH
   nativeOffset, brokerBatch.bytes), 91);
 assert.deepStrictEqual(nativeOps, [10, 12]);
 assert.deepStrictEqual(nativeMessages, [{ t: 'glBatch', slot: 0,
-  memoryOffset: nativeOffset, bytes: brokerBatch.bytes }]);
+  memoryOffset: nativeOffset, bytes: brokerBatch.bytes, softwareFront: 0, softwareConfig: undefined }]);
 assert.strictEqual(new DataView(rpcMemory.buffer).getUint32(nativeOffset - 4, true), 123);
 assert.strictEqual(Atomics.load(rpcView, RPC.SLOT.STATUS), RPC.STATUS_IDLE);
 

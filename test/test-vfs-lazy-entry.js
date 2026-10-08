@@ -249,8 +249,9 @@ test('a mid-file park rewinds nothing and resumes at the same offset', async () 
   r = vfs.readFile(h, buf, 64);
   assert(r.ok && r.bytesRead === 64, 'the retried read should hit the cache');
   assert(Buffer.compare(Buffer.from(buf), Buffer.from(BYTES.subarray(0, 64))) === 0);
-  // Now seek far away, into a chunk nothing has fetched, and park again.
-  const far = 900000;
+  // Now seek far away, into a chunk nothing has fetched, and park again (the
+  // second chunk: the first read was not sequential, so nothing read ahead).
+  const far = bp.DEFAULT_CHUNK_SIZE + 1000;
   vfs.setFilePointer(h, far, 0);
   r = vfs.readFile(h, buf, 64);
   assert(r.pending, 'a fresh chunk should park again');
@@ -314,6 +315,48 @@ test('the host import reports pending separately from failure', () => {
   assert.strictEqual(imports.fs_read_file(0xdead, GUEST_BASE, 16, 0), 0);
   assert.strictEqual(imports.fs_read_pending(), 0,
     'a failed read must not report pending');
+});
+
+test('one ReadFile wider than the chunk cache completes whole across parks', async () => {
+  // Caesar III reads its 9.2 MB c3.555 in one call against a 4 MB sized-lazy
+  // cache. Restarting the call from the top after each park re-fetched the
+  // evicted head forever and the read faulted, silently: the game drew with
+  // empty sprites. Here: the whole 1 MB file in ONE host-import call through a
+  // 256 KB cache (4 x 64 KB), async-only, so every chunk parks.
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const vfs = new VirtualFS();
+  const cache = new bp.ChunkCache(new bp.NodeFileProvider(FILE, { sync: false }),
+    { chunkSize: 65536, maxChunks: 4, readAhead: 0 });
+  vfs.setProviderFile(GUEST, { provider: cache });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({
+    getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 },
+    vfs,
+  });
+  const GUEST_BASE = 0x400000; // maps to WASM 0x12000
+  const NREAD = GUEST_BASE + SIZE + 64;
+  const wa = ga => RegionMap.g2w(ga, 0x400000);
+  const handle = vfs.createFile(GUEST, 0x80000000, 3);
+  let result, parks = 0;
+  for (;;) {
+    result = imports.fs_read_file_result(handle, GUEST_BASE, SIZE, NREAD);
+    if (result !== 997) break;
+    parks++;
+    assert(parks < 200, 'the read never completed');
+    // The count reported while parked must be zero, never a partial count.
+    assert.strictEqual(new DataView(memory.buffer).getUint32(wa(NREAD), true), 0);
+    await vfs.fillPendingRead(vfs.getIoState(1).pendingRead);
+  }
+  assert.strictEqual(result, 0, `the read failed with ${result}`);
+  assert.strictEqual(new DataView(memory.buffer).getUint32(wa(NREAD), true), SIZE,
+    'one full read is reported');
+  assert(Buffer.from(memory.buffer, wa(GUEST_BASE), SIZE).equals(Buffer.from(BYTES)),
+    'the bytes match the file');
+  assert.strictEqual(vfs.getOpenFile(handle).pos, SIZE, 'the position ends at EOF');
+  // Each park fills one piece of half the cache (2 chunks): ~9 parks for 1 MB.
+  assert(parks >= Math.floor(SIZE / (2 * 65536)), `expected a park per piece, saw ${parks}`);
+  assert(cache._chunks.size <= 4, 'the cache stayed within its bound');
 });
 
 test('a provider whose fill rejects latches a read failure, not a park loop',
@@ -994,20 +1037,49 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
   const blocks = [
     ['browser worker', path.join(__dirname, '..', 'host.js'),
       'const pvfs = self._helpCtx && self._helpCtx.vfs;',
-      "await self.guestWorker.callExport('clear_yield');"],
-    ['browser cooperative', path.join(__dirname, '..', 'host.js'),
-      'const vfs = self._helpCtx && self._helpCtx.vfs;\n          const pending = vfs && vfs.getPendingRead(1);',
-      'self.instance.exports.clear_yield();'],
+      '} else if (r.yield === 13) {'],
     ['CLI', path.join(__dirname, 'run.js'),
       'const pending = ctx.vfs && ctx.vfs.getPendingRead(1);',
       'instance.exports.clear_yield();'],
   ];
+  // The cooperative browser step no longer awaits an inline block: it parks
+  // the main thread through lib/main-io-wait.js, so the same property is
+  // checked on that module (fill = the VFS's own identity-guarded
+  // fillPendingRead, which is what host.js's _fillParkedRead ends in).
+  {
+    const { createMainIoWait } = require('../lib/main-io-wait');
+    const vfs = new VirtualFS();
+    let complete;
+    vfs.setProviderFile(GUEST, { provider: {
+      size: 16, tryRead: () => null,
+      fill: () => new Promise(resolve => { complete = resolve; }),
+    } });
+    const a = vfs.createFile(GUEST, 0x80000000, 3);
+    const b = vfs.createFile(GUEST, 0x80000000, 3);
+    const pa = vfs.readFile(a, new Uint8Array(4), 4).pending;
+    const pb = vfs.readFile(b, new Uint8Array(4), 4).pending;
+    vfs.pendingRead = pa;
+    let cleared = 0;
+    const ex = { get_yield_reason: () => 12, clear_yield: () => { cleared++; } };
+    const io = createMainIoWait({ fill: (v, p) => v.fillPendingRead(p) });
+    assert.strictEqual(io.poll(ex, vfs), true, 'main-io-wait: the park starts');
+    await new Promise(resolve => setImmediate(resolve));   // the fill is now in flight
+    vfs.pendingRead = pb;
+    complete();
+    for (let i = 0; i < 5 && io.inFlight; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(vfs.pendingRead, pb, 'main-io-wait: late A completion must not clear B');
+    assert.strictEqual(io.poll(ex, vfs), false, 'main-io-wait: the park releases');
+    assert.strictEqual(cleared, 1);
+  }
   for (const [name, filename, startMarker, endMarker] of blocks) {
     const source = fs.readFileSync(filename, 'utf8');
     const start = source.indexOf(startMarker);
     const end = source.indexOf(endMarker, start);
     assert(start >= 0 && end > start, `${name}: io-wait block must remain discoverable`);
-    const service = new AsyncFunction('self', 'ctx', 'TRACE_YIELD', source.slice(start, end));
+    // The worker branch no longer awaits the fill inline: it starts it in the
+    // background as self._workerMainIoWait, which the test then awaits.
+    const service = new AsyncFunction('self', 'ctx', 'TRACE_YIELD', 'r',
+      source.slice(start, end) + '\n;if (self._workerMainIoWait) await self._workerMainIoWait.promise;');
     const vfs = new VirtualFS();
     let complete;
     vfs.setProviderFile(GUEST, { provider: {
@@ -1022,7 +1094,7 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
     // _fillParkedRead (host.js) ends in the same vfs.fillPendingRead; for a
     // provider that is not loadFiles game data it is exactly that call.
     const running = service({ _helpCtx: { vfs }, logToUI: message => { throw Error(message); },
-      _fillParkedRead: (v, p) => v.fillPendingRead(p) }, { vfs }, false);
+      _fillParkedRead: (v, p) => v.fillPendingRead(p), _wakeStep: () => {} }, { vfs }, false, { yield: 12 });
     vfs.pendingRead = pb;
     complete();
     await running;

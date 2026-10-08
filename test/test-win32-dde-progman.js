@@ -139,7 +139,7 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: e, memory } = await bootRenderHarness({ extraWat });
+  const { exports: e, memory, hostCtx } = await bootRenderHarness({ extraWat });
   const root = path.join(__dirname, '..');
   const exe = fs.readFileSync(path.join(root, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, e.get_staging());
@@ -204,6 +204,46 @@ const extraWat = String.raw`
     1, 'shortcut execute transaction returns Boolean success');
   assert.strictEqual(e.guest_read32(result), 0x8000,
     'synchronous execute reports DDE_FACK');
+  // Explorer's Progman server carries the commands out. Myth: The Fallen
+  // Lords' VISE installer sends exactly this, with wFmt = CF_TEXT and an
+  // unquoted program path containing spaces; the browser desktop later turns
+  // the resulting Start Menu .lnk into the installed game's icon.
+  const vfs = hostCtx.vfs;
+  const group = 'c:\\windows\\start menu\\programs\\myth the fallen lords';
+  for (const text of [
+    '[CreateGroup("Myth The Fallen Lords")]',
+    '[ShowGroup("Myth The Fallen Lords", 1)]',
+    '[ReplaceItem("Myth The Fallen Lords")]',
+    '[AddItem(C:\\Program Files\\Myth_TFL\\myth_tfl.exe, Myth The Fallen Lords, , 0, -1, -1, )]',
+  ]) {
+    e.guest_write32(result, 0);
+    assert.strictEqual(
+      e.test_call_DdeClientTransaction(putString(text), text.length + 1, conv, 0, 1, 0x4050, result),
+      1, `${text} is carried out`);
+    assert.strictEqual(e.guest_read32(result), 0x8000, `${text} reports DDE_FACK`);
+  }
+  assert.strictEqual(vfs.getFileAttributes(group) & 0x10, 0x10, 'CreateGroup made the Start Menu folder');
+  const lnk = vfs.files.get(group + '\\myth the fallen lords.lnk');
+  assert(lnk && lnk.data, 'AddItem wrote the shortcut');
+  const { parseShellLink } = require('../lib/shell-link');
+  const parsed = parseShellLink(lnk.data);
+  assert.strictEqual(parsed.target.toLowerCase(), 'c:\\program files\\myth_tfl\\myth_tfl.exe',
+    'the unquoted path with spaces is the whole target');
+  assert.strictEqual((parsed.workingDir || '').toLowerCase(), 'c:\\program files\\myth_tfl',
+    'the working directory defaults to the program folder');
+  assert(!parsed.args, 'no arguments were given');
+  // Two commands in one transaction, the second naming an argument.
+  const two = '[AddItem("C:\\Program Files\\Myth_TFL\\readme.exe -x", Read Me)] [DeleteItem(Myth The Fallen Lords)]';
+  assert.strictEqual(e.test_call_DdeClientTransaction(putString(two), two.length + 1, conv, 0, 0, 0x4050, result), 1);
+  assert(!vfs.files.has(group + '\\myth the fallen lords.lnk'), 'DeleteItem removed the shortcut');
+  const readme = parseShellLink(vfs.files.get(group + '\\read me.lnk').data);
+  assert.strictEqual(readme.args, '-x', 'arguments after the program are kept');
+  // Anything Explorer would not understand is refused, not acknowledged.
+  e.guest_write32(result, 0x1234);
+  assert.strictEqual(e.test_call_DdeClientTransaction(putString('[Reload()]'), 11, conv, 0, 0, 0x4050, result), 0);
+  assert.strictEqual(e.guest_read32(result), 0, 'an unknown command is DDE_FNOTPROCESSED');
+  assert.strictEqual(e.test_call_DdeClientTransaction(putString('CreateGroup(x)'), 15, conv, 0, 0, 0x4050, result), 0,
+    'a command outside [] is refused');
   assert.strictEqual(
     e.test_call_DdeClientTransaction(0, 0, conv, 0, 1, 0x20b0, result),
     0, 'the virtual Program Manager does not invent request data');

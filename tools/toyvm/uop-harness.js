@@ -33,7 +33,7 @@ const { discover, liveFlagsAt, FBIT } = require('./uop-ir');
 // Harness globals that describe the ARENA or the run loop, not the guest.
 const NOT_GUEST = new Set(['ip', 'steps', 'left', 'rtop', 'halt', 'exitwhy', 'intno', 'irqwant',
   'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads',
-  'edgelook', 'smclo', 'smchi']);
+  'edgelook', 'smclo', 'smchi', 'irqpend', 'ifarm']);
 
 function envOf(vm) {
   const ex = vm.exports;
@@ -67,6 +67,9 @@ function seed(vm, s, cacheOpts = {}) {
   if (vm.exports.set_edgelook) vm.exports.set_edgelook(1);
   if (vm.exports.set_intfast) vm.exports.set_intfast(0);
   if (vm.exports.set_irqwant) vm.exports.set_irqwant(0);
+  // The IF-enable boundary's two flags (emit.js CONT): no IRQ is pending here.
+  if (vm.exports.set_irqpend) vm.exports.set_irqpend(0);
+  if (vm.exports.set_ifarm) vm.exports.set_ifarm(0);
   return cache;
 }
 

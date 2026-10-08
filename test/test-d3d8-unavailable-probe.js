@@ -264,7 +264,9 @@ const { bootRenderHarness } = require('./render-helper');
     checkCapability(e.d3d8_check_format, [0, 1, 22, 0, 3, format], D3D_OK, 0x074ff020,
       `UT2003 texture format 0x${format.toString(16)} is backed by CreateTexture`);
   }
-  checkCapability(e.d3d8_check_format, [0, 1, 22, 0, 3, 24], D3DERR_NOTAVAILABLE,
+  // X1R5G5B5/A1R5G5B5 (24/25) are stored and decoded now (LithTech's 16-bit
+  // textures); A2B10G10R10 (31) is still not.
+  checkCapability(e.d3d8_check_format, [0, 1, 22, 0, 3, 31], D3DERR_NOTAVAILABLE,
     0x074ff020, 'unsupported texture storage format is unavailable');
   checkCapability(e.d3d8_check_format, [0, 1, 22, 1, 3, 22], D3DERR_NOTAVAILABLE,
     0x074ff020, 'unmodeled render-target usage is unavailable');

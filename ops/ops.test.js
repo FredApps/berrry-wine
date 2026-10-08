@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-const { parseTasks, parseSession, createReader, logWindows } = require('./readers');
+const { parseTasks, parseSession, createReader, logWindows, scanGoal } = require('./readers');
 const { createServer } = require('./server');
 const { parseProcesses, parseOpenFiles, associate } = require('./processes');
 
@@ -52,6 +52,8 @@ test('registry-only corpus rows remain visible and exact app aliases share run e
   const f = await fixture(); t.after(() => fs.rm(f.root, {recursive:true,force:true}));
   await f.write('lib/apps.js', `module.exports={APPS:{demo_alias:{exe:'binaries/candidates/demo/game.exe'},freecell:{exe:'binaries/freecell.exe'},unknown:{exe:'binaries/missing.exe'}},DESKTOP_APPS:[['freecell','FreeCell']]};`);
   await f.write('test/binaries/freecell.exe','fixture');
+  // The emulator's app picker names apps the launcher arrays do not.
+  await f.write('index.html','<select><option value="unknown">Unknown &amp; Friends (demo)</option><option value="freecell">Picker FreeCell</option></select>');
   await f.write('scratch/runs/alias/result.json',JSON.stringify({candidateId:'demo_alias',startedAt:'2026-10-03T01:00:00Z',outcome:'unknown'}));
   const snapshot = await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
   assert.equal(snapshot.candidates.length,3);
@@ -66,6 +68,8 @@ test('registry-only corpus rows remain visible and exact app aliases share run e
   assert.equal(freecell.fixtureStatus,'present');
   const unknown = snapshot.candidates.find(c=>c.id==='unknown');
   assert.equal(unknown.fixtureStatus,'missing');
+  assert.equal(unknown.name,'Unknown & Friends (demo)');
+  assert.equal(freecell.name,'FreeCell','a launcher-array label is kept over the picker');
   assert.equal(unknown.category.id,'unclassified');
   assert.ok(!snapshot.warnings.some(w=>w.includes('demo_alias')));
 });
@@ -522,4 +526,72 @@ test('task APIs require same origin, retain discussion beyond activity window an
   snapshot=await createReader({root:f.root,codexRoot:false,claudeRoot:false}).snapshot();
   assert.equal(snapshot.tasks.find(t=>t.id===taskId).pickup,'accepted');
   assert.equal(snapshot.tasks.find(t=>t.id===taskId).status,'ready');
+});
+
+test('selected window presentations retain explicit scope and reject invalid qualification or visibility', async t => {
+  const f=await fixture();t.after(f.cleanup);
+  const reader=createReader({root:f.root,codexRoot:false,claudeRoot:false});
+  const performance={metric:'selected-window-presentations',counterKind:'selected-window-presentations',measuredAt:'2026-10-05T15:51:14Z',renderer:'normal CanvasSurface GDI',scene:'Dredmor Level1',host:'fixture',physicalFps:null,visibility:{client:{x:0,y:10,w:1024,h:758},fraction:758/768},qualification:{accepted:true,sceneReview:'root image review',counterReview:'root source/raw review',evidence:'receipt.json'},samples:[{frames:67,durationMs:5003.51}]};
+  const save=()=>f.write('scratch/runs/WINDOW/result.json',JSON.stringify({candidateId:'demo',startedAt:performance.measuredAt,outcome:'passed',performance}));
+  await save();let p=(await reader.snapshot()).candidates[0].performance;
+  assert.equal(p.fps,67000/5003.51);assert.equal(p.physicalFps,null);assert.deepEqual(p.visibility,performance.visibility);
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const src=app.match(/function corpusFps\([\s\S]*?(?=\nfunction corpusView\()/)[0];
+  const render=require('node:vm').runInNewContext(src+'\ncorpusFps',{escape:String,age:()=>'<1m',when:String});
+  assert.match(render({performance:p},true),/13\.4 window presentations\/s \(coalesced GDI\)/);
+  assert.match(render({performance:p},true),/98\.70% visible/);assert.match(render({performance:p},true),/Physical-display FPS not measured/);
+  assert.equal(require('./release-model').rateLabels(p).rate,'window presentations/s (coalesced GDI)');
+  for(const [target,key,value] of [[performance,'physicalFps',60],[performance.qualification,'accepted',false],[performance.qualification,'counterReview',''],[performance.visibility,'fraction',0],[performance.visibility,'fraction',1.1],[performance.visibility.client,'w',0],[performance.visibility.client,'x',null]]){
+    const prior=target[key];target[key]=value;await save();assert.equal((await reader.snapshot()).candidates[0].performance,null,key);target[key]=prior;
+  }
+});
+
+test('corpus search matches identity fields and splits games from apps', async () => {
+  const app=await fs.readFile(path.join(__dirname,'app.js'),'utf8');
+  const source=app.match(/const nonGameCategories=[\s\S]*?(?=\nfunction corpusFps\()/)[0];
+  const {matchesCorpusSearch,corpusKind}=require('node:vm').runInNewContext(source+'\n({matchesCorpusSearch,corpusKind})',{corpusQuery:'',corpusType:'all'});
+  const myth={id:'myth-demo',name:'Myth: The Fallen Lords',category:{id:'strategy',label:'Strategy / tactics'},executables:['MYTH.EXE'],notes:'mentions notepad'};
+  const pad={id:'notepad',name:'Notepad',category:{id:'tools',label:'Applications / tools'},releaseReadiness:{scope:'non-game'}};
+  const scoped={id:'x',name:'X',category:{id:'unclassified'},releaseReadiness:{scope:'game'}};
+  assert.equal(corpusKind(myth),'games');assert.equal(corpusKind(pad),'apps');assert.equal(corpusKind(scoped),'games');
+  assert.ok(matchesCorpusSearch(myth,'fallen MYTH','all'));
+  assert.ok(matchesCorpusSearch(myth,'myth.exe','games'));
+  assert.ok(!matchesCorpusSearch(myth,'notepad','all'),'notes are not searched');
+  assert.ok(!matchesCorpusSearch(myth,'','apps'));
+  assert.ok(matchesCorpusSearch(pad,'','apps'));
+});
+
+test('the private emulator can serve a checkout other than the dashboard root', () => {
+  const a=createReader({root:'/tmp/dash-root',codexRoot:false,claudeRoot:false});
+  assert.equal(a.emulatorRoot,'/tmp/dash-root');
+  const b=createReader({root:'/tmp/dash-root',emulatorRoot:'/tmp/web-root',codexRoot:false,claudeRoot:false});
+  assert.equal(b.root,'/tmp/dash-root');assert.equal(b.emulatorRoot,'/tmp/web-root');
+});
+
+test('a Claude /goal is read from its set command and its latest Stop-hook status', () => {
+  const root = '/project', at = s => `2026-10-06T00:${s}:00Z`;
+  const set = {type:'user', cwd:root, sessionId:'w', timestamp:at('10'), message:{role:'user', content:'<local-command-stdout>Goal set: Finish the Myth lane with evidence</local-command-stdout>'}};
+  const status = met => ({type:'attachment', cwd:root, sessionId:'w', timestamp:at('20'), attachment:{type:'goal_status', met, condition:'Finish the Myth lane with evidence'}});
+  assert.equal(parseSession('claude', [set], '/logs/w.jsonl', false, root).goal.met, false);
+  assert.equal(parseSession('claude', [set], '/logs/w.jsonl', false, root).goal.condition, 'Finish the Myth lane with evidence');
+  assert.equal(parseSession('claude', [set, status(true)], '/logs/w.jsonl', false, root).goal.met, true);
+  const cleared = {...set, timestamp:at('30'), message:{role:'user', content:'<local-command-stdout>Goal cleared</local-command-stdout>'}};
+  assert.equal(parseSession('claude', [set, cleared], '/logs/w.jsonl', false, root).goal, null);
+  const plain = {type:'assistant', cwd:root, sessionId:'w', timestamp:at('40'), message:{content:[{type:'text',text:'hi'}],stop_reason:'end_turn'}};
+  assert.equal(parseSession('claude', [plain], '/logs/w.jsonl', false, root).goal, null);
+});
+
+test('a goal record older than the 1 MiB tail window is found by the backward scan', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wine-goal-'));
+  const file = path.join(dir, 'w.jsonl');
+  const goal = (met, condition) => JSON.stringify({type:'attachment', timestamp:'2026-10-06T00:10:00Z', attachment:{type:'goal_status', met, condition}});
+  const image = JSON.stringify({type:'user', message:{content:[{type:'tool_result', content:[{type:'image', data:'A'.repeat(900 * 1024)}]}]}});
+  await fs.writeFile(file, [goal(false, 'old goal'), image, goal(false, 'Keep every worker busy'), image, image, ''].join('\n'));
+  const size = (await fs.stat(file)).size;
+  assert.ok(size > 2 * 1024 * 1024);
+  const found = await scanGoal(file, size, 0);
+  assert.equal(found.condition, 'Keep every worker busy');
+  assert.equal(found.met, false);
+  assert.equal(await scanGoal(file, size, size - 1024), undefined, 'a range without goal records says nothing');
+  await fs.rm(dir, {recursive: true});
 });

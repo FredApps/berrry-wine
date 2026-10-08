@@ -61,6 +61,12 @@ async function main() {
     assert.strictEqual(ctx.vfs.getFileAttributes(full), 0x20, `${file} exists`);
     assert.strictEqual(imports.host.has_dll_file(wa(writeStr(full, false))), 0,
       `${file} is not offered to LoadLibrary as a PE`);
+    // The CLI's LoadLibrary byte lookup must agree with the page: mapping the
+    // stub zeroed every DDRAW import of NFS III's softtria.dll/d3da.dll.
+    for (const name of [full, file, file.toLowerCase()]) {
+      assert.strictEqual(boot.findVfsDllBytes(ctx.vfs, file.toLowerCase(), name), null,
+        `${name} is not handed to the CLI loader as DLL bytes`);
+    }
 
     const wide = writeStr(full, true);
     const size = e.test_call_GetFileVersionInfoSizeW(wide, 0) >>> 0;
@@ -74,9 +80,16 @@ async function main() {
       `${file} root query`);
     const fixed = wa(dv.getUint32(wa(outPtr), true));
     assert.strictEqual(dv.getUint32(fixed, true), 0xFEEF04BD, `${file} signature`);
+    // The four by-name modules answer 4.6.3.518 (6.1a) either way; d3d8.dll is
+    // the DirectX 8.1 runtime's 4.8.1.881, which GetDXVersion's 8.1 tier reads.
+    const expected = file === 'D3D8.DLL' ? [0x00040008, 0x00010371] : [0x00040006, 0x00030206];
     assert.deepStrictEqual([dv.getUint32(fixed + 8, true), dv.getUint32(fixed + 12, true)],
-      [0x00040006, 0x00030206], `${file} is 4.6.3.518, the same as the by-name answer`);
+      expected, `${file} file version`);
   }
+  // A real DLL in the same lookup is still found.
+  const realDll = { data: new Uint8Array([0x4d, 0x5a]), attrs: 0x20 };
+  ctx.vfs.files.set('c:\\plugins\\real.dll', realDll);
+  assert.strictEqual(boot.findVfsDllBytes(ctx.vfs, 'real.dll', 'real.dll'), realDll.data);
   console.log('PASS  DirectX system modules exist as versioned files in C:\\WINDOWS\\SYSTEM');
 }
 

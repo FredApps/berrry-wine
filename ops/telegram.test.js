@@ -179,3 +179,71 @@ test('Busy terminal keeps actionable chat queued with typing, without Saved chat
  await bot.handle(message('capture the next game'));
  assert.equal(state.chatQueue.length,1);assert.deepEqual(calls.map(c=>c.method),['sendChatAction']);
 });
+test('Claude orchestrator: busy pane still accepts chat into an empty prompt, never over a draft or approval',()=>{
+  const {claudeChatReady,claudeChatSubmitKey}=require('./work-guard');
+  const busy='● Working on it\n✻ Imagining… (12s)\n─────\n❯ \n─────\n  ⏵⏵ bypass permissions on · esc to interrupt';
+  assert.equal(claudeChatReady(busy),true);
+  assert.equal(claudeChatReady(busy.replace('❯ ','❯ half-typed note')),false);
+  assert.equal(claudeChatReady('just a shell $'),false);
+  const text='[Telegram] status?';
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ '+text),text),'Enter');
+  assert.equal(claudeChatSubmitKey(busy,text),null);
+  const long='[Telegram] '+'wep16_chips: CHIP01.MID '.repeat(20);
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ [Pasted text #3 +2 lines]'),long),'Enter');
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ [Pasted text #3]'),text),null);
+  assert.equal(claudeChatSubmitKey(busy.replace('❯ ','❯ note [Pasted text #3]'),long),null);
+});
+test('Claude transcript replies: final text after a Telegram prompt is direct, tool chatter is not',()=>{
+  const replies=require('./telegram-replies'),state={};
+  const user=(content,extra={})=>({type:'user',timestamp:'t',uuid:'u'+Math.random(),message:{role:'user',content},...extra});
+  const said=(text,stop,uuid)=>({type:'assistant',timestamp:'t',uuid,message:{id:'m',stop_reason:stop,content:[{type:'text',text}]}});
+  replies.enqueue(state,user('[Telegram] how is myth going?'));
+  replies.enqueue(state,said('Checking the board.','tool_use','a1'));
+  replies.enqueue(state,user([{type:'tool_result',tool_use_id:'x',content:'ok'}]));
+  replies.enqueue(state,said('Myth worker is on the demo search.','end_turn','a2'));
+  replies.enqueue(state,user('[Telegram] ignore',{isSidechain:true}));
+  assert.deepEqual(state.replyQueue.map(r=>[r.id,r.text,r.direct]),[['a2','Myth worker is on the demo search.',true]]);
+  replies.enqueue(state,user('local keyboard prompt'));
+  replies.enqueue(state,said('Autonomous final.','end_turn','a3'));
+  replies.enqueue(state,said('[Telegram update] Myth demo found.','end_turn','a4'));
+  assert.deepEqual(state.replyQueue.map(r=>r.id),['a2','a4']);
+});
+test('Claude transcript replies: Telegram chat queued while busy still gets its answer relayed',()=>{
+  const replies=require('./telegram-replies'),state={};
+  const said=(text,stop,uuid)=>({type:'assistant',timestamp:'t',uuid,message:{id:'m',stop_reason:stop,content:[{type:'text',text}]}});
+  const queued=prompt=>({type:'attachment',timestamp:'t',attachment:{type:'queued_command',prompt}});
+  replies.enqueue(state,{type:'user',timestamp:'t',message:{role:'user',content:[{type:'text',text:'<task-notification>done</task-notification>'}]}});
+  replies.enqueue(state,queued('[Telegram] still cannot see them'));
+  replies.enqueue(state,said('Fixed: they had no category.','end_turn','q1'));
+  replies.enqueue(state,queued('local note typed while busy'));
+  replies.enqueue(state,said('Autonomous final.','end_turn','q2'));
+  assert.deepEqual(state.replyQueue.map(r=>[r.id,r.direct]),[['q1',true]]);
+});
+
+test('a dim Claude prompt suggestion is not a draft', () => {
+  const {claudeChatReady,plainScreen}=require('./work-guard');
+  const rule='\x1b[38;5;244m'+'─'.repeat(40)+'\x1b[0m';
+  const footer='  \x1b[38;5;211m⏵⏵ bypass permissions on\x1b[0m (shift+tab to cycle) · ← for agents';
+  const ghost=['✻ Churned for 1m 52s',rule,'\x1b[39m❯ \x1b[2myes, list the clean merged Codex worktrees\x1b[0m',rule,footer].join('\n');
+  assert.equal(claudeChatReady(plainScreen(ghost)),true);
+  const typed=ghost.replace('\x1b[2myes, list','typed by hand, list');
+  assert.equal(claudeChatReady(plainScreen(typed)),false);
+  assert.match(plainScreen('\x1b[2mdim status\x1b[0m line'),/^dim status line$/);
+});
+test('Owner images and files are saved and forwarded to the orchestrator by path, with the caption',async()=>{
+ const state={owner:{userId:10,chatId:10}},actions=[],fetched=[];
+ const bot=createBot({state,save:async()=>{},telegram:async()=>({message_id:20}),local:async(url,body)=>{if(url==='/api/state')return {tasks:[],approvals:{items:[]}};actions.push({url,body});return {sent:true};},
+  download:async(a,messageId)=>{fetched.push(a.file_id);return '/inbox/'+messageId+'-'+(a.file_name||'photo.jpg');}});
+ const base={date:Date.now()/1000,from:{id:10},chat:{id:10,type:'private'}};
+ await bot.handle({message:{...base,message_id:7,caption:'what is wrong here?',photo:[{file_id:'small'},{file_id:'large'}]}});
+ assert.deepEqual(fetched,['large'],'the largest photo size is saved');
+ assert.equal(actions[0].url,'/api/orchestrator-chat');
+ assert.match(actions[0].body.message,/^what is wrong here\?\n\[image attached: \/inbox\/7-photo\.jpg — open it with the Read tool\]$/);
+ await bot.handle({message:{...base,message_id:8,document:{file_id:'png',file_name:'shot.png',mime_type:'image/png'}}});
+ assert.match(actions[1].body.message,/^\[image attached: \/inbox\/8-shot\.png/);
+ await bot.handle({message:{...base,message_id:9,document:{file_id:'zip',file_name:'save.zip',mime_type:'application/zip'}}});
+ assert.equal(actions[2].body.message,'[document attached: /inbox/9-save.zip]');
+ await bot.handle({message:{...base,message_id:10,voice:{file_id:'v'}}});
+ assert.equal(actions[3].body.message,'[voice attached: /inbox/10-photo.jpg]');
+ assert.deepEqual(fetched,['large','png','zip','v']);
+});

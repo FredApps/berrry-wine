@@ -1177,7 +1177,8 @@ const SAFE_CALLS = [
   // guest ip -> arena address and holds no guest register. $jlook_edge is
   // $jlook of $gip plus a store to $ip; in a region that $ip is dead, because
   // every exit leaves through `br $out` and the epilogue re-resolves it.
-  [/^(slice_exit|jlook|jlook_edge|rpush|rpop)$/, []],
+  // $jlook_syn is the same for a jmp_syn (emit.js GO_SYN, fix J).
+  [/^(slice_exit|jlook|jlook_edge|jlook_syn|rpush|rpop)$/, []],
   [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
   // REP widening's guards and its decline counter. Two queries over a linear
   // span and one statistic; none of the three reads or writes a guest register.
@@ -1537,8 +1538,10 @@ ${accessors}
 ${machineAccessors()}
 ${helpers()}
 (func (export "spin") (param $k i32) ${LOCALS} ${locals}
+  (if (call $pg_on) (then (return)))
 ${pro}
   (block $done (loop $l
+    (br_if $done (call $pg_on))
     (br_if $done (i32.eqz (local.get $k)))
 ${body}
     (local.set $k (i32.sub (local.get $k) (i32.const 1)))
@@ -1836,6 +1839,11 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
       if (ex[`mset_${g}`]) ex[`mset_${g}`](v);
     }
     for (const [g, v] of Object.entries(snapshotRegs)) if (ex[`set_${g}`]) ex[`set_${g}`](v);
+    // Restore hidden caches as captured, including bases: selector replay may
+    // consult descriptor bytes which changed after the original segment load.
+    for (const [g, v] of Object.entries(hot.machineSnapshot || {})) {
+      if (ex[`mset_${g}`]) ex[`mset_${g}`](v);
+    }
     if (arm.afterSeed) arm.afterSeed();
   };
 
@@ -1859,7 +1867,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     // selector and the wrong base and address somewhere else entirely.
     const bases = arms.every(a => (a.vm ? a.vm.exports : a.exports)[`get_${isa.SEG[0]}b`])
       ? isa.SEG : [];
-    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook'].includes(g))
+    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook', 'irqpend', 'ifarm'].includes(g))
       .map(g => `${g}=${ex[`get_${g}`]() >>> 0}`)
       .concat(bases.map(r => `${r}b=${ex[`get_${r}b`]() >>> 0}`))
       .join(' ');

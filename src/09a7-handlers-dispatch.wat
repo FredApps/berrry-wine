@@ -60,7 +60,9 @@
   ;; through the VFS and build the bitmap from its BITMAPFILEHEADER + DIB, so
   ;; the caller gets the file's real pixels at the file's real size. Returns 0
   ;; when the file is missing or is not a BMP, leaving the resource path to
-  ;; decide what to do next.
+  ;; decide what to do next, and -2 when the file is streamed (lazy) and its
+  ;; bytes are not resident yet: the caller parks on IO_WAIT and is re-run
+  ;; once the host has them, as _lread is.
   ;; LR_CREATEDIBSECTION asks for a DIB section rather than a DDB, and the
   ;; difference is visible to the guest: GetObject reports bmBits for a section
   ;; and NULL for a DDB, because a DDB's pixels live in device storage the app
@@ -71,6 +73,8 @@
   (func $load_image_bitmap_file (param $path_wa i32) (param $dib_section i32) (result i32)
     (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
     (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32)
+    (local $ok i32)
+    (call $lazy_park_release)
     (local.set $handle (call $host_fs_create_file
       (local.get $path_wa) (i32.const 0x80000000)
       (i32.const 3) (i32.const 0x80) (i32.const 0)))
@@ -91,8 +95,18 @@
         (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
         (return (i32.const 0))))
     (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $ok (call $host_fs_read_file
       (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
+    ;; Ask before any close, which clears the pending-read state.
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then
+            ;; Held open, not closed: see $lazy_park_hold.
+            (call $lazy_park_hold (local.get $handle))
+            (call $heap_free (local.get $read_ga))
+            (call $heap_free (local.get $buf_ga))
+            (return (i32.const -2))))))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (local.set $size (i32.load (local.get $read_wa)))
     (call $heap_free (local.get $read_ga))
@@ -159,14 +173,21 @@
             ;; which for a device-dependent stand-in is 0.
             (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+            (if (i32.eq (local.get $tmp) (i32.const -2))
+              (then (call $io_block (i32.const 28))))
             (return)))
         (local.set $tmp (call $gdi_native_load_bitmap (local.get $arg0)
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
             (then (local.get $arg1))
             (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
+        ;; A resource that is not there is NULL with ERROR_RESOURCE_NAME_NOT_FOUND,
+        ;; as in Windows -- not a blank stand-in bitmap. DDLoadBitmap-style
+        ;; loaders try the resource first and fall back to LR_LOADFROMFILE only
+        ;; on NULL: Dark Colony asks for "cursor/cursor%d.bmp" that way, took
+        ;; the stand-in for success, and drew its whole mouse cursor from 24
+        ;; empty 32x32 frames, so the pointer was invisible everywhere.
         (if (i32.eqz (local.get $tmp))
-          (then (local.set $tmp (call $gdi_native_create_compat_bitmap
-            (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
+          (then (global.set $last_error (i32.const 1814))))
         (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (return)))
     ;; IMAGE_ICON (1): intern the resource so DrawIconEx can find its pixels
@@ -384,6 +405,23 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; FatalAppExitA(uAction, lpMessageText) — the message, then process exit
+  ;; (as Wine: MessageBox, then ExitProcess(0)). The text goes to the same log
+  ;; sink as OutputDebugStringA rather than a modal box, since nothing runs
+  ;; after it. Carmageddon 2's BRender driver loader resolves it by name.
+  (func $handle_FatalAppExitA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $length i32) (local $wa i32)
+    (if (local.get $arg1)
+      (then
+        (local.set $length (call $guest_strlen (local.get $arg1)))
+        (if (local.get $length)
+          (then
+            (local.set $wa (call $g2w_affine_span (local.get $arg1) (local.get $length)))
+            (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+              (then (call $host_log (local.get $wa) (local.get $length))))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
+    (call $host_exit (i32.const 0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)))
+
   ;; 715: AdjustWindowRect(lpRect, dwStyle, bMenu) — adjust rect for window chrome
   (func $handle_AdjustWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $border i32) (local $caption i32) (local $frame i32)
@@ -448,14 +486,21 @@
 
   ;; 741: QueryPerformanceCounter(lpPerformanceCount) — tie to wall clock.
   ;; Frequency is 1MHz (see below), so one tick = 1µs. host_get_ticks() is ms,
-  ;; multiply by 1000. Also advance by $perf_counter_lo so consecutive calls
-  ;; within the same ms still differ (some apps busy-wait on QPC). The global
-  ;; increment advances a stationary clock until that legacy i32 wraps;
-  ;; clock-source rollover and cross-thread consistency remain separate issues.
+  ;; multiply by 1000. Consecutive calls within one ms must still differ (some
+  ;; apps busy-wait on QPC), so a reading never repeats the last one.
+  ;;
+  ;; "The last one" is process-wide, in $QPC_SHARED: the count is
+  ;; max(ticks*1000, last+1), published by CAS. It used to add a per-instance
+  ;; call counter instead, which made every guest thread its own clock -- a
+  ;; thread that polls QPC a million times runs a second ahead of one that
+  ;; does not -- so a reading taken on another thread could go BACKWARDS.
+  ;; Descent: FreeSpace treats a backwards QPC as a reset of its time base;
+  ;; its frame limiter then computed "now - last frame" as minus 2550 seconds
+  ;; and called Sleep for 2.5 million ms, which froze the mission in flight.
   ;;
   ;; A QPC frame limiter is a clock spin like any timeGetTime one, so it goes
   ;; through the same detector keyed on the MILLISECOND the count is built
-  ;; from. The returned count itself can never repeat ($perf_counter_lo moves
+  ;; from. The returned count itself can never repeat ($qpc_next moves
   ;; every call), but the clock under it does, and that is what the guest is
   ;; waiting on. Parked before the counter bump and the store, so the re-run
   ;; on wake is the whole call again.
@@ -466,16 +511,28 @@
       (then
         (if (call $clock_spin_arm (global.get $tick_count)) (then (return)))))
     (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $val
-      (i64.add (i64.mul (i64.extend_i32_u (global.get $tick_count)) (i64.const 1000))
-               (i64.extend_i32_u (global.get $perf_counter_lo))))
+    (local.set $val (call $qpc_next
+      (i64.mul (i64.extend_i32_u (global.get $tick_count)) (i64.const 1000))))
     ;; LARGE_INTEGER is one 64-bit count: neither multiplication nor the
     ;; sub-millisecond adjustment may discard the carry into its high DWORD.
     (i64.store (local.get $wa) (local.get $val))
-    (global.set $perf_counter_lo (i32.add (global.get $perf_counter_lo) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )
+
+  ;; The next process-wide QPC count for a clock reading of $now µs: $now if
+  ;; that is past every count handed out so far, else one past the last.
+  (func $qpc_next (param $now i64) (result i64)
+    (local $last i64) (local $next i64)
+    (block $done (loop $retry
+      (local.set $last (i64.atomic.load (global.get $QPC_SHARED)))
+      (local.set $next
+        (select (local.get $now) (i64.add (local.get $last) (i64.const 1))
+          (i64.gt_u (local.get $now) (local.get $last))))
+      (br_if $done (i64.eq (local.get $last)
+        (i64.atomic.rmw.cmpxchg (global.get $QPC_SHARED) (local.get $last) (local.get $next))))
+      (br $retry)))
+    (local.get $next))
 
   ;; 742: QueryPerformanceFrequency(lpFrequency) — 1MHz
   (func $handle_QueryPerformanceFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -837,6 +894,33 @@
           (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (i32.const 0))))))
     (local.get $o))
 
+  ;; FORMAT_MESSAGE_FROM_SYSTEM text for a Win32 error code: the template
+  ;; (WASM address) as the system's message table has it, CRLF and all, or 0
+  ;; when the code is not one we carry. The common file/handle/memory errors
+  ;; and the Windows Installer results msiexec reports as system messages (a
+  ;; 1619 used to reach the user as "Err"). Every literal lands in the 4 KB
+  ;; $WATX_STRING_POOL, which the full memory map cannot grow, so this is the
+  ;; short list rather than the whole table.
+  (func $system_message_text (param $id i32) (result i32)
+    (if (i32.eqz (local.get $id)) (then (return "The operation completed successfully.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1)) (then (return "Incorrect function.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 2)) (then (return "The system cannot find the file specified.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 3)) (then (return "The system cannot find the path specified.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 5)) (then (return "Access is denied.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 6)) (then (return "The handle is invalid.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 8)) (then (return "Not enough storage is available to process this command.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 87)) (then (return "The parameter is incorrect.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 112)) (then (return "There is not enough space on the disk.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 126)) (then (return "The specified module could not be found.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 127)) (then (return "The specified procedure could not be found.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 183)) (then (return "Cannot create a file when that file already exists.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1602)) (then (return "User cancelled installation.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1603)) (then (return "Fatal error during installation.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1618)) (then (return "Another installation is already in progress.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1619)) (then (return "This installation package could not be opened.\r\n")))
+    (if (i32.eq (local.get $id) (i32.const 1639)) (then (return "Invalid command line argument.\r\n")))
+    (i32.const 0))
+
   ;; Find the message this call names and expand it, as ANSI, into $dst — $max
   ;; bytes, or a measuring pass that writes nothing when $dst is 0. Every
   ;; decision FormatMessage makes is here, so both spellings make it the same
@@ -874,6 +958,15 @@
             (return (call $format_message_expand
               (global.get $TEXT_SCRATCH) (local.get $dst) (local.get $max)
               (local.get $args_g)))))))
+    ;; FORMAT_MESSAGE_FROM_SYSTEM (also the fallback after a module miss when
+    ;; both are given, as in Windows): the system message table.
+    (if (i32.and (local.get $flags) (i32.const 0x1000))
+      (then
+        (local.set $len (call $system_message_text (local.get $msg_id)))
+        (if (local.get $len)
+          (then
+            (return (call $format_message_expand
+              (local.get $len) (local.get $dst) (local.get $max) (local.get $args_g)))))))
     ;; Nothing named a message we have: a generic one, written through the same
     ;; bounds-checked put as everything else so a measuring pass stays a
     ;; measuring pass.
@@ -1975,22 +2068,41 @@
   ;; 764: GetUserDefaultLCID — already implemented at ID 413, this is a duplicate entry
   ;; (handled by dispatch to same function)
 
-  ;; 765: wcsrchr(str, ch) — find last occurrence of wide char
+  ;; 765: wcsrchr(str, ch) — find last occurrence of wide char.
+  ;; Walks GUEST addresses, one $gl16 per character: a string on the heap or
+  ;; the stack of a large app lives in the sparse backing window, where one
+  ;; $g2w is good for one page and "wa - GUEST_BASE + image_base" is not the
+  ;; inverse of it. The terminator itself matches when ch is 0, as in the CRT.
   (func $handle_wcsrchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32) (local $last i32) (local $ch i32)
-    (local.set $ptr (call $g2w (local.get $arg0)))
-    (local.set $last (i32.const 0))
+    (local $ga i32) (local $last i32) (local $ch i32) (local $want i32)
+    (local.set $ga (local.get $arg0))
+    (local.set $want (i32.and (local.get $arg1) (i32.const 0xFFFF)))
     (block $done (loop $scan
-      (local.set $ch (i32.load16_u (local.get $ptr)))
-      (if (i32.eq (local.get $ch) (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (then (local.set $last (local.get $ptr))))
+      (local.set $ch (call $gl16 (local.get $ga)))
+      (if (i32.eq (local.get $ch) (local.get $want))
+        (then (local.set $last (local.get $ga))))
       (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
+      (local.set $ga (i32.add (local.get $ga) (i32.const 2)))
       (br $scan)))
-    ;; Convert WASM addr back to guest addr: wa - GUEST_BASE + image_base
-    (if (local.get $last)
-      (then (i32.store offset=0 (global.get $reg_base) (i32.add (i32.sub (local.get $last) (global.get $GUEST_BASE)) (global.get $image_base))))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $last))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))  ;; cdecl
+  )
+
+  ;; 4472: wcschr(str, ch) — first occurrence of a wide char, or NULL. As
+  ;; wcsrchr above: guest addresses throughout, and ch == 0 finds the
+  ;; terminator. Deus Ex's Core.dll calls it at startup through MSVCRT.
+  (func $handle_wcschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ga i32) (local $ch i32) (local $want i32) (local $found i32)
+    (local.set $ga (local.get $arg0))
+    (local.set $want (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+    (block $done (loop $scan
+      (local.set $ch (call $gl16 (local.get $ga)))
+      (if (i32.eq (local.get $ch) (local.get $want))
+        (then (local.set $found (local.get $ga)) (br $done)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $ga (i32.add (local.get $ga) (i32.const 2)))
+      (br $scan)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $found))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))  ;; cdecl
   )
 
@@ -2397,6 +2509,28 @@
     (i32.store offset=16 (global.get $reg_base)
       (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; SetDirectSound(pDirectSound, hWnd): which DirectSound object the ports'
+  ;; output goes to. DirectMusic only records it here -- it matters when a
+  ;; port is created and activated, and none can be (EnumPort above) -- so
+  ;; accepting it is the whole of the call, a NULL included (it means "make
+  ;; your own"). Croc 2's ads.dll sets it right after creating the object.
+  (func $handle_IDirectMusic_SetDirectSound
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; Activate(fEnable): turns every port of this DirectMusic object on or
+  ;; off. There are no ports, so there is nothing to switch and both
+  ;; directions succeed; Croc 2's ads.dll deactivates in its teardown.
+  (func $handle_IDirectMusic_Activate
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
   (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
     (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
@@ -2510,35 +2644,24 @@
       (i32.const 0xC0007AAD) (i32.const 0x4E9BC24F)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IDirectDrawGammaControl_GetGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ramp i32) (local $i i32) (local $value i32)
+    (local $ramp i32)
     (if (i32.eqz (call $ddraw_gamma_control_valid (local.get $arg0)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x88760082))) ;; DDERR_INVALIDOBJECT
       (else (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg2)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)))
       (else
         ;; A DDGAMMARAMP is 1536 bytes and always crosses a guest page
-        ;; boundary, whose two halves need not be adjacent in WASM memory.
-        ;; The stored ramp is our own heap allocation, so only the caller's
-        ;; buffer needs gathering.
+        ;; boundary, whose two halves need not be adjacent in WASM memory, so
+        ;; the caller's buffer is gathered and written back.
         (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
-        (if (global.get $gdi_gamma_ramp_guest)
-          (then
-            (memory.copy (local.get $ramp)
-              (call $g2w (global.get $gdi_gamma_ramp_guest)) (i32.const 1536)))
-          (else
-            (local.set $i (i32.const 0))
-            (block $done (loop $fill
-              (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-              (local.set $value (i32.mul (local.get $i) (i32.const 257)))
-              (i32.store16 (i32.add (local.get $ramp) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (i32.store16 (i32.add (i32.add (local.get $ramp) (i32.const 512)) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (i32.store16 (i32.add (i32.add (local.get $ramp) (i32.const 1024)) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
-              (local.set $i (i32.add (local.get $i) (i32.const 1)))
-              (br $fill)))))
+        (call $gamma_ramp_load (local.get $ramp))
         (call $guest_span_writeback (local.get $arg2) (local.get $ramp) (i32.const 1536))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; The ramp is the display's (src/10f $gamma_ramp_store): the host applies it
+  ;; when it presents the primary, which is why the driver caps can offer
+  ;; DDCAPS2_PRIMARYGAMMA.
   (func $handle_IDirectDrawGammaControl_SetGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ramp i32)
     (if (i32.eqz (call $ddraw_gamma_control_valid (local.get $arg0)))
@@ -2548,22 +2671,13 @@
           (i32.eqz (local.get $arg2)))
         (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))) ;; DDERR_INVALIDPARAMS
         (else
-          (if (i32.eqz (global.get $gdi_gamma_ramp_guest))
-            (then
-              (local.set $ramp (call $heap_alloc (i32.const 1536)))
-              (if (i32.eqz (local.get $ramp))
-                (then
-                  (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
-                  (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-                  (return)))
-              (global.set $gdi_gamma_ramp_guest (local.get $ramp))))
           ;; The caller's 1536-byte ramp can straddle two sparse guest pages
           ;; that are not adjacent in WASM memory; gather it before copying.
           (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
-          (memory.copy (call $g2w (global.get $gdi_gamma_ramp_guest))
-            (local.get $ramp) (i32.const 1536))
-          (call $guest_span_release (local.get $ramp) (i32.const 1536))
-          (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
+          (i32.store offset=0 (global.get $reg_base)
+            (select (i32.const 0) (i32.const 0x8007000E) ;; DD_OK / DDERR_OUTOFMEMORY
+              (call $gamma_ramp_store (local.get $ramp))))
+          (call $guest_span_release (local.get $ramp) (i32.const 1536))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; CLSID_ShellLink's Win98 interfaces. Inno Setup configures IShellLinkA,
@@ -2961,29 +3075,49 @@
   ;; that later reads the shortcut -- the browser desktop putting an installed
   ;; game's icon up, or a guest resolving it -- had no target to find.
   (func $handle_IPersistFile_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $link i32) (local $written i32) (local $handle i32) (local $entry i32)
-    (local $path i32) (local $args i32) (local $work i32) (local $flags i32)
-    (local $at i32) (local $info i32) (local $desc i32) (local $icon i32)
+    (local $entry i32) (local $icon i32) (local $ok i32)
     (if (i32.eqz (local.get $arg1))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    ;; Header 76 + LinkInfo at most 0x2D+261 + four StringData at most 261 + 4.
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $icon (call $shell_link_ext_field (local.get $arg0) (i32.const 0)))
+    (local.set $ok (call $shell_link_write
+      (call $g2w (local.get $arg1)) (i32.const 1)
+      (load.field DxObject misc0 (local.get $entry))
+      (load.field DxObject misc1 (local.get $entry))
+      (load.field DxObject misc2 (local.get $entry))
+      (call $shell_link_ext_field (local.get $arg0) (i32.const 8))
+      (local.get $icon)
+      (select (call $shell_link_ext_field (local.get $arg0) (i32.const 4)) (i32.const 0)
+        (i32.ne (local.get $icon) (i32.const 0)))))
+    (if (i32.eq (local.get $ok) (i32.const 1))
+      (then
+        (store.field DxObject flags (local.get $entry) (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+      (else
+        (i32.store offset=0 (global.get $reg_base)
+          (select (i32.const 0x8007000E) (i32.const 0x80004005) (i32.eq (local.get $ok) (i32.const 2))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; Write an MS-SHLLINK shortcut at the path $lnk_wa (a WASM address, ANSI or
+  ;; wide per $lnk_wide). $path/$args/$work/$desc/$icon are guest ANSI strings
+  ;; or 0. Used by IPersistFile::Save on an IShellLink and by the virtual
+  ;; Program Manager's [AddItem]. Returns 1 written, 0 I/O failure, 2 no memory.
+  (func $shell_link_write (param $lnk_wa i32) (param $lnk_wide i32)
+      (param $path i32) (param $args i32) (param $work i32) (param $desc i32)
+      (param $icon i32) (param $icon_index i32) (result i32)
+    (local $link i32) (local $written i32) (local $handle i32)
+    (local $flags i32) (local $at i32) (local $info i32) (local $ok i32)
     (local.set $link (call $heap_alloc (i32.const 1536)))
     (local.set $written (call $heap_alloc (i32.const 4)))
     (if (i32.or (i32.eqz (local.get $link)) (i32.eqz (local.get $written)))
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+        (if (local.get $link) (then (call $heap_free (local.get $link))))
+        (if (local.get $written) (then (call $heap_free (local.get $written))))
+        (return (i32.const 2))))
     (call $zero_memory (call $g2w (local.get $link)) (i32.const 1536))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $path (load.field DxObject misc0 (local.get $entry)))
-    (local.set $args (load.field DxObject misc1 (local.get $entry)))
-    (local.set $work (load.field DxObject misc2 (local.get $entry)))
-    (local.set $desc (call $shell_link_ext_field (local.get $arg0) (i32.const 8)))
-    (local.set $icon (call $shell_link_ext_field (local.get $arg0) (i32.const 0)))
     (if (local.get $path) (then (local.set $flags (i32.const 0x02))))       ;; HasLinkInfo
     (if (local.get $desc)
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))) ;; HasName
@@ -2999,14 +3133,11 @@
     (call $gs32 (i32.add (local.get $link) (i32.const 16)) (i32.const 0x46000000))
     (call $gs32 (i32.add (local.get $link) (i32.const 20)) (local.get $flags))
     (if (local.get $icon)
-      (then (call $gs32 (i32.add (local.get $link) (i32.const 56))
-        (call $shell_link_ext_field (local.get $arg0) (i32.const 4))))) ;; IconIndex
+      (then (call $gs32 (i32.add (local.get $link) (i32.const 56)) (local.get $icon_index))))
     (call $gs32 (i32.add (local.get $link) (i32.const 60)) (i32.const 1)) ;; SW_SHOWNORMAL
     (local.set $at (i32.const 0x4C))
     (if (local.get $path)
       (then
-        ;; LinkInfo: 0x1C-byte header, a fixed-disk VolumeID with an empty
-        ;; label at +0x1C, LocalBasePath at +0x2D, an empty CommonPathSuffix.
         (local.set $info (i32.add (local.get $link) (local.get $at)))
         (call $gs32 (i32.add (local.get $info) (i32.const 4)) (i32.const 0x1C))
         (call $gs32 (i32.add (local.get $info) (i32.const 8)) (i32.const 1)) ;; VolumeIDAndLocalBasePath
@@ -3035,23 +3166,18 @@
         (local.get $link) (local.get $at) (local.get $icon) (i32.const 1)))))
     (local.set $at (i32.add (local.get $at) (i32.const 4))) ;; TerminalBlock
     (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $arg1)) (i32.const 0x40000000)
-      (i32.const 2) (i32.const 0x80) (i32.const 1)))
-    (if (i32.eq (local.get $handle) (i32.const -1))
-      (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)))
-      (else
-        (if (i32.and
-              (call $host_fs_write_file (local.get $handle) (local.get $link)
-                (local.get $at) (local.get $written))
-              (i32.eq (call $gl32 (local.get $written)) (local.get $at)))
-          (then
-            (store.field DxObject flags (local.get $entry) (i32.const 0))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
-          (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))))
+      (local.get $lnk_wa) (i32.const 0x40000000)
+      (i32.const 2) (i32.const 0x80) (local.get $lnk_wide)))
+    (if (i32.ne (local.get $handle) (i32.const -1))
+      (then
+        (local.set $ok (i32.and
+          (i32.ne (call $host_fs_write_file (local.get $handle) (local.get $link)
+            (local.get $at) (local.get $written)) (i32.const 0))
+          (i32.eq (call $gl32 (local.get $written)) (local.get $at))))
         (drop (call $host_fs_close_handle (local.get $handle)))))
     (call $heap_free (local.get $link))
     (call $heap_free (local.get $written))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+    (local.get $ok))
   (func $handle_IPersistFile_SaveCompleted (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $shell_link_mark (local.get $arg0) (i32.const 1024))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -3185,8 +3311,8 @@
           (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
           (return)))
       (if (i32.eq (local.get $local_class) (i32.const 1))
-        (then (local.set $hr (call $dplay_query_interface_wa
-          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 0)))))
+        (then (local.set $hr (call $dplay_query_interface
+          (local.get $obj_guest) (local.get $arg3) (local.get $arg4) (i32.const 0)))))
       (if (i32.eq (local.get $local_class) (i32.const 2))
         (then (local.set $hr (call $dx_query_interface_single_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
@@ -3214,7 +3340,7 @@
       (if (i32.eq (local.get $local_class) (i32.const 8))
         (then (local.set $hr (call $dx_query_interface_single_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
-          (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+          (i32.const 0x4FD2A833) (i32.const 0x11D086C8)
           (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))))
       (if (i32.eq (local.get $local_class) (i32.const 9))
         (then (local.set $hr (call $ddraw_cocreate_query_wa
@@ -4752,6 +4878,19 @@
     (i32.store offset=0 (global.get $reg_base) (global.get $tick_count))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
+
+  ;; timeGetSystemTime(pmmt, cbmmt) — the system time as an MMTIME in
+  ;; milliseconds: wType = TIME_MS (1), u.ms = the timeGetTime clock. A buffer
+  ;; smaller than the 12-byte MMTIME is TIMERR_STRUCT (129), as on Win98.
+  (func $handle_timeGetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.lt_u (local.get $arg1) (i32.const 12))
+      (then (i32.store offset=0 (global.get $reg_base) (i32.const 129)))
+      (else
+        (global.set $tick_count (call $host_get_ticks))
+        (i32.store (call $g2w (local.get $arg0)) (i32.const 1))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4))) (global.get $tick_count))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; timeBeginPeriod(uPeriod) — browser scheduling has no host timer quantum
   ;; to change, but the request must still be inside the range advertised by

@@ -33,7 +33,9 @@ function asyncProvider(failures = {}) {
 (async () => {
   {
     const p = asyncProvider();
-    const cache = new ChunkCache(p, { chunkSize: 64, maxChunks: 2, readAhead: 0 });
+    // prefetch: 0 -- this case counts provider calls around pinning, and a
+    // background prefetch from the sequential stream below would land late.
+    const cache = new ChunkCache(p, { chunkSize: 64, maxChunks: 2, readAhead: 0, prefetch: 0 });
     assert.deepStrictEqual(cache.chunksFor([[0, 1], [130, 200], [640, 657], [700, 900]]), [0, 2, 3, 10]);
     const seen = [];
     const result = await cache.preload([[0, 1], [130, 200], [640, 657]], {

@@ -40,8 +40,14 @@ const SKIP_FILES = new Set(['package.json', 'package-lock.json',
 // Directories to skip entirely
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
 
-// Directories that contain binary assets (base64-encoded)
-const BINARY_DIRS = ['binaries', 'icons', 'build', 'screenshots/apps', 'screenshots/og'];
+// Directories that contain binary assets (base64-encoded). build/ is NOT one:
+// it is where every test, capture and sweep writes its PNGs and logs, and a
+// walk of it published test-web-direct-launch's screenshots on the 2026-10-05
+// deploy. What the page fetches from build/ is named in BUILD_OUTPUTS, and
+// registry-mounted assets there (the NFS II SE demo) come in through
+// desktopAssetPaths like any other app file.
+const BINARY_DIRS = ['binaries', 'icons', 'screenshots/apps', 'screenshots/og'];
+const BUILD_OUTPUTS = ['build/wine-assembly.wasm', 'build/wine-assembly.compat.wasm'];
 
 // berrry rejects any single file over this with HTTP 400. Oversized binary
 // assets are therefore published as name.part000, name.part001, ...; the web
@@ -234,6 +240,8 @@ const NOT_REDISTRIBUTABLE = new Set([
 const NEVER_PUBLISH_PREFIXES = [
   'test/binaries/candidates/morrowind/',
   'binaries/candidates/morrowind/',
+  'test/binaries/candidates/myth-the-fallen-lords/',
+  'binaries/candidates/myth-the-fallen-lords/',
   'downloads/',
 ];
 const neverPublish = p => {
@@ -401,8 +409,18 @@ function collectBinaries() {
     files.push(...encodeBinaryFile(rel, full));
   }
 
-  // icons/ and build/ have no registry; they are whole directories the page
-  // fetches by name, so they still walk.
+  // The compiled module is the one build/ product the page loads. A deploy
+  // without it would ship a site that cannot boot anything, so its absence
+  // stops the deploy rather than logging past it.
+  for (const rel of BUILD_OUTPUTS) {
+    const full = path.join(ROOT, rel);
+    if (!fs.existsSync(full)) throw new Error(`${rel} is missing; run bash tools/build.sh first`);
+    seen.add(rel);
+    files.push(...encodeBinaryFile(rel, full));
+  }
+
+  // icons/ and screenshots/ have no registry; they are whole directories the
+  // page fetches by name, so they still walk.
   for (const subdir of BINARY_DIRS.filter(d => d !== 'binaries')) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
@@ -1008,6 +1026,8 @@ if (require.main === module) {
 
 module.exports = {
   ASSET_PART_SIZE,
+  BINARY_DIRS,
+  BUILD_OUTPUTS,
   SERVER_MAX_FILE_SIZE,
   encodeBinaryBytes,
   desktopAssetPaths,

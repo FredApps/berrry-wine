@@ -897,6 +897,14 @@ async function main() {
     tsc2hi > tsc1hi || (tsc2hi === tsc1hi && tsc2 > tsc1), true);
   test('rdtsc is non-zero', tsc1 !== 0 || tsc1hi !== 0, true);
 
+  // mov r32, CRn: Win9x emulates the ring-3 read. Tomb Raider III's CPU probe
+  // reads CR4 right after CPUID and tests TSD (bit 2) and PCE (bit 8).
+  // mov eax,cr4; mov ebx,cr0; mov esi,cr4 (rm=6 picks the destination).
+  runCode([0x0F, 0x20, 0xE0, 0x0F, 0x20, 0xC3, 0x0F, 0x20, 0xE6]);
+  test('mov eax,cr4 = PSE, TSD and PCE clear', e.get_eax() >>> 0, 0x10);
+  test('mov ebx,cr0 = PG|WP|NE|ET|MP|PE', e.get_ebx() >>> 0, 0x80010033);
+  test('mov esi,cr4 writes the ModRM rm register', e.get_esi() >>> 0, 0x10);
+
   // cpuid leaf 0 → "GenuineIntel" in EBX/EDX/ECX.
   runCode([0x31, 0xC0, 0x0F, 0xA2]);
   test('cpuid leaf 0 EBX = "Genu"', e.get_ebx() >>> 0, 0x756E6547);
@@ -1401,6 +1409,28 @@ async function main() {
     ]);
     rerunCachedCode(smcAddr);
     test('stack-run SMC: rewritten code runs', e.get_eax(), 2);
+  }
+
+  // ================================================================
+  // 16.16 fixed-point idioms (Aliens versus Predator's DIV_FIXED/MUL_FIXED)
+  // ================================================================
+  {
+    // DIV_FIXED: cdq; rol eax,16; mov dx,ax; xor ax,ax; idiv ebx -- the
+    // 16-bit writes must leave the upper halves of EDX/EAX alone, so the
+    // dividend is the sign-extended (a << 16).
+    const fixDiv = (a, b) => Number((BigInt(a | 0) << 16n) / BigInt(b | 0)) | 0;
+    for (const [a, b] of [[0x30000, 0x20000], [-0x30000, 0x20000], [-5, 0x10000], [0x12345, -0x777], [-0x7fff, -3]]) {
+      runCode([0x99, 0xC1, 0xC0, 0x10, 0x66, 0x89, 0xC2, 0x66, 0x31, 0xC0, 0xF7, 0xFB],
+        () => { e.set_eax(a >>> 0); e.set_ebx(b >>> 0); });
+      test(`DIV_FIXED ${a}/${b}`, e.get_eax(), fixDiv(a, b));
+    }
+    // MUL_FIXED: imul edx; shrd eax,edx,16.
+    const fixMul = (a, b) => Number((BigInt(a | 0) * BigInt(b | 0)) >> 16n) | 0;
+    for (const [a, b] of [[0x30000, 0x20000], [-0x30000, 0x20000], [-5, 0x8000], [0x7fffffff, -0x10001]]) {
+      runCode([0xF7, 0xEA, 0x0F, 0xAC, 0xD0, 0x10],
+        () => { e.set_eax(a >>> 0); e.set_edx(b >>> 0); });
+      test(`MUL_FIXED ${a}*${b}`, e.get_eax(), fixMul(a, b));
+    }
   }
 
   // ================================================================

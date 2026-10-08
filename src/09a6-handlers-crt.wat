@@ -6,6 +6,8 @@
   (global $msvcrt_signal_table (mut i32) (i32.const 0))
   (global $msvcrt_tm_ptr (mut i32) (i32.const 0))
   (global $msvcrt_getdrive_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_mb_cur_max_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_pctype_var (mut i32) (i32.const 0))
 
   ;; __mb_cur_max() — cdecl. Win9x ANSI DBCS pages use at most two bytes per
   ;; multibyte character; Western/OEM single-byte pages use one.
@@ -14,6 +16,20 @@
         (i32.const 2)
         (i32.const 1)
         (call $is_dbcs_code_page (global.get $ansi_code_page))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; __p___mb_cur_max() — cdecl. The address of msvcrt's __mb_cur_max int,
+  ;; holding the value above (MB_CUR_MAX reads it through this). 0 when no
+  ;; storage could be allocated.
+  (func $handle___p___mb_cur_max (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $msvcrt_mb_cur_max_ptr))
+      (then (global.set $msvcrt_mb_cur_max_ptr (call $heap_alloc (i32.const 4)))))
+    (if (global.get $msvcrt_mb_cur_max_ptr)
+      (then (call $gs32 (global.get $msvcrt_mb_cur_max_ptr)
+        (select (i32.const 2) (i32.const 1)
+          (call $is_dbcs_code_page (global.get $ansi_code_page))))))
+    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_mb_cur_max_ptr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -46,13 +62,10 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
-  ;; _iob() — cdecl, returns the CRT stdin/stdout/stderr FILE table.
+  ;; _iob() — cdecl, returns the CRT stdin/stdout/stderr FILE table: three
+  ;; real 32-byte MSVCRT FILE structs (see $crt_iob_ensure).
   (func $handle__iob (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (global.get $msvcrt_iob_ptr))
-      (then
-        (global.set $msvcrt_iob_ptr (call $heap_alloc (i32.const 96)))
-        (call $zero_memory (call $g2w (global.get $msvcrt_iob_ptr)) (i32.const 96))))
-    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_iob_ptr))
+    (i32.store offset=0 (global.get $reg_base) (call $crt_iob_ensure))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1078,245 +1091,570 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
-  ;; Minimal MSVCRT FILE* stream support. We use the VFS handle itself as the
-  ;; stream pointer, which is sufficient for old games that only log and load
-  ;; byte streams through their matching CRT imports.
+  ;; ---- MSVCRT FILE streams ---------------------------------------------
+  ;; Every FILE* this CRT hands out is a real 32-byte MSVCRT FILE in guest
+  ;; memory, because MSVC-compiled code reads it directly: getc/putc, feof and
+  ;; ferror are macros over these fields. Winamp 2.91 inlines feof as
+  ;; `test byte [FILE+0xc],0x10` (0x41a598) and spun forever on a bare handle.
+  ;;   +0x00 _ptr   +0x04 _cnt      +0x08 _base    +0x0c _flag
+  ;;   +0x10 _file  +0x14 _charbuf  +0x18 _bufsiz  +0x1c _tmpfname
+  ;; Streams are unbuffered, laid out exactly as MSVCRT lays out an _IONBF
+  ;; stream: _base = _ptr = &_charbuf, _bufsiz = 2, _cnt = 0, _IONBF in _flag.
+  ;; An inline getc/putc therefore always falls through to the library, and
+  ;; every operation reaches the VFS synchronously. _flag carries the real
+  ;; bits -- _IOREAD 0x1, _IOWRT 0x2, _IONBF 0x4, _IOEOF 0x10, _IOERR 0x20,
+  ;; _IOSTRG 0x40, _IORW 0x80 -- moved through MSVCRT's _filbuf/_flsbuf
+  ;; transitions. _file holds the VFS handle: this CRT's _open/_read/_write
+  ;; also traffic in raw handles, so the descriptor view stays consistent.
+  ;; Text-mode CRLF translation is not performed (bytes pass through).
+  ;;
   ;; Ownership is process-shared, not a per-WASM-instance global: a stream
   ;; opened by a Worker must be visible to cleanup on the main thread.
+  ;; $CRT_STREAM_STATE: recursive lock at +0/+4, record list at +8, the _iob
+  ;; table's guest pointer at +12. A record is 48 bytes:
+  ;;   +0 next  +4 handle  +8 the FILE* it describes  +12 aux  +16 FILE storage
+  ;; aux bit0 = append ('a' mode: seek to the end before every write, as
+  ;; O_APPEND does), bit1 = standard stream (its FILE lives in _iob). A
+  ;; standard stream whose handle is 0 writes to the console std handle; a
+  ;; freopen gives it a VFS handle instead.
+  ;; Never hold the list lock across host RPC or heap allocation/free.
   (global $CRT_STREAM_STATE i32 (region.addr $CRT_STREAM_STATE 0))
   (global $CRT_STREAM_STATE_SIZE i32 (region.size $CRT_STREAM_STATE))
 
-  ;; Unlink one tracked handle. Nodes are {next guest pointer, VFS handle}.
-  ;; Never hold the list lock across host RPC or heap allocation/free.
-  (func $crt_stream_forget (param $handle i32)
-    (local $link_w i32) (local $node i32) (local $node_w i32)
+  ;; FILE* -> its stream record (guest pointer), or 0 when this CRT did not
+  ;; hand that pointer out. Nothing is ever written through an unknown FILE*.
+  (func $crt_stream_lookup (param $file i32) (result i32)
+    (local $node i32) (local $node_w i32)
+    (if (i32.eqz (local.get $file)) (then (return (i32.const 0))))
+    (call $lock_acquire (global.get $CRT_STREAM_STATE))
+    (local.set $node (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $node_w (call $g2w (local.get $node)))
+      (br_if $done (i32.eq (i32.load offset=8 (local.get $node_w)) (local.get $file)))
+      (local.set $node (i32.load (local.get $node_w)))
+      (br $scan)))
+    (call $lock_release (global.get $CRT_STREAM_STATE))
+    (local.get $node))
+
+  (func $crt_stream_unlink (param $rec i32)
+    (local $link_w i32) (local $node i32)
     (call $lock_acquire (global.get $CRT_STREAM_STATE))
     (local.set $link_w (region.addr $CRT_STREAM_STATE 8))
     (block $done (loop $scan
       (local.set $node (i32.load (local.get $link_w)))
       (br_if $done (i32.eqz (local.get $node)))
-      (local.set $node_w (call $g2w (local.get $node)))
-      (if (i32.eq (i32.load offset=4 (local.get $node_w)) (local.get $handle))
+      (if (i32.eq (local.get $node) (local.get $rec))
         (then
-          (i32.store (local.get $link_w) (i32.load (local.get $node_w)))
+          (i32.store (local.get $link_w) (i32.load (call $g2w (local.get $node))))
           (br $done)))
-      (local.set $link_w (local.get $node_w))
+      (local.set $link_w (call $g2w (local.get $node)))
       (br $scan)))
-    (call $lock_release (global.get $CRT_STREAM_STATE))
-    (if (local.get $node) (then (call $heap_free (local.get $node)))))
+    (call $lock_release (global.get $CRT_STREAM_STATE)))
 
-  (func $crt_stream_close_all
-    (local $node i32) (local $node_w i32) (local $handle i32)
-    (block $done (loop $close
-      (call $lock_acquire (global.get $CRT_STREAM_STATE))
-      (local.set $node (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
-      (if (local.get $node)
-        (then
-          (local.set $node_w (call $g2w (local.get $node)))
-          (i32.store offset=8 (global.get $CRT_STREAM_STATE) (i32.load (local.get $node_w)))
-          (local.set $handle (i32.load offset=4 (local.get $node_w)))))
-      (call $lock_release (global.get $CRT_STREAM_STATE))
-      (br_if $done (i32.eqz (local.get $node)))
-      (call $heap_free (local.get $node))
-      ;; Writes are already synchronous/unbuffered; closing is the final step.
-      (drop (call $crt_close_unbuffered_handle (local.get $handle)))
-      (br $close))))
+  (func $crt_stream_link (param $rec i32)
+    (call $lock_acquire (global.get $CRT_STREAM_STATE))
+    (i32.store (call $g2w (local.get $rec)) (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
+    (i32.store offset=8 (global.get $CRT_STREAM_STATE) (local.get $rec))
+    (call $lock_release (global.get $CRT_STREAM_STATE)))
 
-  (func $crt_fopen (param $arg0 i32) (param $arg1 i32) (result i32)
-    (local $mode i32) (local $access i32) (local $creation i32) (local $handle i32)
-    (local $node i32) (local $node_w i32)
-    (if (i32.eqz (local.get $arg0)) (then (return (i32.const 0))))
-    (if (i32.eqz (local.get $arg1)) (then (return (i32.const 0))))
-    ;; Reserve ownership before opening so OOM cannot leak an untracked stream.
-    (local.set $node (call $heap_alloc (i32.const 8)))
-    (if (i32.eqz (local.get $node)) (then (return (i32.const 0))))
-    (local.set $mode (if (result i32) (local.get $arg1)
-      (then (call $gl8 (local.get $arg1))) (else (i32.const 0))))
-    (local.set $access (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
-    (local.set $creation (i32.const 3))        ;; OPEN_EXISTING
-    (if (i32.eq (local.get $mode) (i32.const 0x77)) ;; w
-      (then (local.set $creation (i32.const 2))))   ;; CREATE_ALWAYS
-    (if (i32.eq (local.get $mode) (i32.const 0x61)) ;; a
-      (then (local.set $creation (i32.const 4))))   ;; OPEN_ALWAYS
+  ;; Fill a FILE as MSVCRT leaves a freshly opened unbuffered stream.
+  (func $crt_file_init (param $file i32) (param $handle i32) (param $flags i32)
+    (call $gs32 (local.get $file) (i32.add (local.get $file) (i32.const 0x14)))       ;; _ptr
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x04)) (i32.const 0))          ;; _cnt
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x08))
+      (i32.add (local.get $file) (i32.const 0x14)))                                  ;; _base
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x0c))
+      (i32.or (local.get $flags) (i32.const 0x04)))                                  ;; _flag | _IONBF
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x10)) (local.get $handle))    ;; _file
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x14)) (i32.const 0))          ;; _charbuf
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x18)) (i32.const 2))          ;; _bufsiz
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x1c)) (i32.const 0)))         ;; _tmpfname
+
+  (func $crt_file_flags (param $file i32) (result i32)
+    (call $gl32 (i32.add (local.get $file) (i32.const 0x0c))))
+
+  (func $crt_file_set_flags (param $file i32) (param $flags i32)
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x0c)) (local.get $flags)))
+
+  ;; An unbuffered stream has nothing in hand after any operation.
+  (func $crt_file_reset_buffer (param $file i32)
+    (call $gs32 (local.get $file) (call $gl32 (i32.add (local.get $file) (i32.const 0x08))))
+    (call $gs32 (i32.add (local.get $file) (i32.const 0x04)) (i32.const 0)))
+
+  ;; fopen mode string -> initial _flag bits, or 0 for an invalid mode.
+  ;; 'r' reads, 'w'/'a' write, and a '+' anywhere after makes it _IORW alone.
+  (func $crt_mode_flags (param $mode i32) (result i32)
+    (local $c i32) (local $flags i32) (local $p i32)
+    (if (i32.eqz (local.get $mode)) (then (return (i32.const 0))))
+    (local.set $c (call $gl8 (local.get $mode)))
+    (if (i32.eq (local.get $c) (i32.const 0x72)) ;; r
+      (then (local.set $flags (i32.const 0x01)))
+      (else
+        (if (i32.or (i32.eq (local.get $c) (i32.const 0x77))   ;; w
+                    (i32.eq (local.get $c) (i32.const 0x61)))  ;; a
+          (then (local.set $flags (i32.const 0x02)))
+          (else (return (i32.const 0))))))
+    (local.set $p (i32.add (local.get $mode) (i32.const 1)))
+    (block $done (loop $scan
+      (local.set $c (call $gl8 (local.get $p)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (if (i32.eq (local.get $c) (i32.const 0x2b)) ;; +
+        (then (local.set $flags (i32.const 0x80))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $scan)))
+    (local.get $flags))
+
+  (func $crt_mode_is_append (param $mode i32) (result i32)
+    (i32.eq (call $gl8 (local.get $mode)) (i32.const 0x61)))
+
+  ;; Open the VFS file behind a validated mode; -1 on failure.
+  (func $crt_open_stream_handle (param $path i32) (param $mode i32) (result i32)
+    (local $c i32) (local $creation i32) (local $handle i32)
+    (local.set $c (call $gl8 (local.get $mode)))
+    (local.set $creation (i32.const 3))                  ;; OPEN_EXISTING
+    (if (i32.eq (local.get $c) (i32.const 0x77))         ;; w
+      (then (local.set $creation (i32.const 2))))        ;; CREATE_ALWAYS
+    (if (i32.eq (local.get $c) (i32.const 0x61))         ;; a
+      (then (local.set $creation (i32.const 4))))        ;; OPEN_ALWAYS
     (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $arg0))
-      (local.get $access)
+      (call $g2w (local.get $path))
+      (i32.const 0xC0000000) ;; GENERIC_READ | GENERIC_WRITE
       (local.get $creation)
       (i32.const 0x80)
       (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1))
-      (then (call $heap_free (local.get $node)) (return (i32.const 0)))
-      (else
-        (if (i32.eq (local.get $mode) (i32.const 0x61))
-          (then (drop (call $host_fs_set_file_pointer
-            (local.get $handle) (i32.const 0) (i32.const 2)))))))
-    (local.set $node_w (call $g2w (local.get $node)))
-    (i32.store offset=4 (local.get $node_w) (local.get $handle))
-    (call $lock_acquire (global.get $CRT_STREAM_STATE))
-    (i32.store (local.get $node_w) (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
-    (i32.store offset=8 (global.get $CRT_STREAM_STATE) (local.get $node))
-    (call $lock_release (global.get $CRT_STREAM_STATE))
+    (if (i32.and (i32.ne (local.get $handle) (i32.const -1))
+                 (call $crt_mode_is_append (local.get $mode)))
+      (then (drop (call $host_fs_set_file_pointer
+        (local.get $handle) (i32.const 0) (i32.const 2)))))
     (local.get $handle))
+
+  (func $crt_fopen (param $path i32) (param $mode i32) (result i32)
+    (local $flags i32) (local $rec i32) (local $rec_w i32) (local $handle i32)
+    (local $file i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (local.set $flags (call $crt_mode_flags (local.get $mode)))
+    (if (i32.eqz (local.get $flags)) (then (return (i32.const 0))))
+    ;; Reserve ownership before opening so OOM cannot leak an untracked stream.
+    (local.set $rec (call $heap_alloc (i32.const 48)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $handle (call $crt_open_stream_handle (local.get $path) (local.get $mode)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (call $heap_free (local.get $rec)) (return (i32.const 0))))
+    (local.set $file (i32.add (local.get $rec) (i32.const 16)))
+    (local.set $rec_w (call $g2w (local.get $rec)))
+    (i32.store offset=4 (local.get $rec_w) (local.get $handle))
+    (i32.store offset=8 (local.get $rec_w) (local.get $file))
+    (i32.store offset=12 (local.get $rec_w) (call $crt_mode_is_append (local.get $mode)))
+    (call $crt_file_init (local.get $file) (local.get $handle) (local.get $flags))
+    (call $crt_stream_link (local.get $rec))
+    (local.get $file))
+
+  ;; The _iob table: stdin, stdout, stderr as three consecutive FILEs, each
+  ;; with a standard-stream record. Created once per process.
+  (func $crt_iob_ensure (result i32)
+    (local $iob i32) (local $recs i32) (local $i i32) (local $file i32)
+    (local $rec i32) (local $rec_w i32) (local $winner i32)
+    (local.set $iob (i32.atomic.load offset=12 (global.get $CRT_STREAM_STATE)))
+    (if (local.get $iob) (then (return (local.get $iob))))
+    (local.set $iob (call $heap_alloc (i32.const 96)))
+    (if (i32.eqz (local.get $iob)) (then (return (i32.const 0))))
+    (local.set $recs (call $heap_alloc (i32.const 144)))
+    (if (i32.eqz (local.get $recs))
+      (then (call $heap_free (local.get $iob)) (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $iob)) (i32.const 96))
+    (call $zero_memory (call $g2w (local.get $recs)) (i32.const 144))
+    (block $done (loop $init
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
+      (local.set $file (i32.add (local.get $iob) (i32.shl (local.get $i) (i32.const 5))))
+      ;; stdin _IOREAD, stdout/stderr _IOWRT; _file is the descriptor number.
+      (call $crt_file_set_flags (local.get $file)
+        (select (i32.const 0x01) (i32.const 0x02) (i32.eqz (local.get $i))))
+      (call $gs32 (i32.add (local.get $file) (i32.const 0x10)) (local.get $i))
+      (local.set $rec_w (call $g2w
+        (i32.add (local.get $recs) (i32.mul (local.get $i) (i32.const 48)))))
+      (i32.store offset=8 (local.get $rec_w) (local.get $file))
+      (i32.store offset=12 (local.get $rec_w) (i32.const 2))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $init)))
+    (call $lock_acquire (global.get $CRT_STREAM_STATE))
+    (local.set $winner (i32.load offset=12 (global.get $CRT_STREAM_STATE)))
+    (if (i32.eqz (local.get $winner))
+      (then
+        (local.set $i (i32.const 0))
+        (block $done (loop $link
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
+          (local.set $rec (i32.add (local.get $recs) (i32.mul (local.get $i) (i32.const 48))))
+          (i32.store (call $g2w (local.get $rec)) (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
+          (i32.store offset=8 (global.get $CRT_STREAM_STATE) (local.get $rec))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $link)))
+        (i32.atomic.store offset=12 (global.get $CRT_STREAM_STATE) (local.get $iob))))
+    (call $lock_release (global.get $CRT_STREAM_STATE))
+    (if (local.get $winner)
+      (then
+        (call $heap_free (local.get $recs))
+        (call $heap_free (local.get $iob))
+        (return (local.get $winner))))
+    (local.get $iob))
+
+  ;; A standard stream that was never reopened talks to the console.
+  (func $crt_stream_is_console (param $rec i32) (result i32)
+    (local $rec_w i32)
+    (local.set $rec_w (call $g2w (local.get $rec)))
+    (i32.and (i32.eqz (i32.load offset=4 (local.get $rec_w)))
+             (i32.ne (i32.and (i32.load offset=12 (local.get $rec_w)) (i32.const 2)) (i32.const 0))))
+
+  ;; The host handle behind a record, or 0 when there is none.
+  (func $crt_stream_handle (param $rec i32) (result i32)
+    (local $rec_w i32) (local $handle i32) (local $fd i32)
+    (local.set $rec_w (call $g2w (local.get $rec)))
+    (local.set $handle (i32.load offset=4 (local.get $rec_w)))
+    (if (local.get $handle) (then (return (local.get $handle))))
+    (if (i32.eqz (i32.and (i32.load offset=12 (local.get $rec_w)) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (local.set $fd (i32.shr_u
+      (i32.sub (i32.load offset=8 (local.get $rec_w))
+               (i32.atomic.load offset=12 (global.get $CRT_STREAM_STATE)))
+      (i32.const 5)))
+    ;; STD_INPUT_HANDLE = -10, STD_OUTPUT_HANDLE = -11, STD_ERROR_HANDLE = -12
+    (local.set $handle (call $console_std_handle_get (i32.sub (i32.const -10) (local.get $fd))))
+    (select (i32.const 0) (local.get $handle) (i32.eq (local.get $handle) (i32.const -1))))
+
+  ;; Write to a raw VFS handle; bytes written, or -1. The written-count out
+  ;; parameter borrows the dword just below the guest ESP.
+  (func $crt_handle_write (param $handle i32) (param $buf i32) (param $len i32) (result i32)
+    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (i32.or (i32.eqz (local.get $handle)) (i32.eqz (local.get $buf)))
+      (then (return (i32.const -1))))
+    (if (call $host_fs_write_file
+          (local.get $handle) (local.get $buf) (local.get $len)
+          (local.get $bytes_ga))
+      (then (return (i32.load (local.get $bytes_wa)))))
+    (i32.const -1)
+  )
+
+  ;; fwrite/fputs/fputc/fprintf core: MSVCRT's _flsbuf state checks, then an
+  ;; unbuffered write. Returns bytes written, or -1 (with _IOERR set on a
+  ;; stream we own; an unknown FILE* is never written through).
+  (func $crt_file_write (param $file i32) (param $buf i32) (param $len i32) (result i32)
+    (local $rec i32) (local $flags i32) (local $handle i32) (local $written i32)
+    (local.set $rec (call $crt_stream_lookup (local.get $file)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const -1))))
+    (local.set $flags (call $crt_file_flags (local.get $file)))
+    (if (i32.or (i32.eqz (i32.and (local.get $flags) (i32.const 0x82)))  ;; !_IOWRT && !_IORW
+                (i32.ne (i32.and (local.get $flags) (i32.const 0x40)) (i32.const 0))) ;; _IOSTRG
+      (then
+        (call $crt_file_set_flags (local.get $file) (i32.or (local.get $flags) (i32.const 0x20)))
+        (return (i32.const -1))))
+    (if (i32.and (local.get $flags) (i32.const 0x01)) ;; was reading (an _IORW stream)
+      (then
+        (if (i32.and (local.get $flags) (i32.const 0x10))
+          ;; Reading reached EOF: switching direction is allowed.
+          (then (local.set $flags (i32.and (local.get $flags) (i32.const -2))))
+          (else
+            (call $crt_file_set_flags (local.get $file) (i32.or (local.get $flags) (i32.const 0x20)))
+            (return (i32.const -1))))))
+    (call $crt_file_set_flags (local.get $file)
+      (i32.and (i32.or (local.get $flags) (i32.const 0x02)) (i32.const -17))) ;; |_IOWRT, ~_IOEOF
+    (call $crt_file_reset_buffer (local.get $file))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (if (call $crt_stream_is_console (local.get $rec))
+      (then
+        (local.set $handle (call $crt_stream_handle (local.get $rec)))
+        (local.set $written (i32.const -1))
+        (if (i32.ne (local.get $handle) (i32.const 0))
+          (then
+            (if (i32.ne (call $console_buffer_record (local.get $handle)) (i32.const 0))
+              (then
+                (if (call $console_write (local.get $handle) (local.get $buf) (local.get $len) (i32.const 0))
+                  (then (local.set $written (local.get $len)))))))))
+      (else
+        (local.set $handle (call $crt_stream_handle (local.get $rec)))
+        (if (i32.and (i32.load offset=12 (call $g2w (local.get $rec))) (i32.const 1)) ;; append
+          (then (drop (call $host_fs_set_file_pointer
+            (local.get $handle) (i32.const 0) (i32.const 2)))))
+        (local.set $written (call $crt_handle_write
+          (local.get $handle) (local.get $buf) (local.get $len)))))
+    (if (i32.ne (local.get $written) (local.get $len))
+      (then (call $crt_file_set_flags (local.get $file)
+        (i32.or (call $crt_file_flags (local.get $file)) (i32.const 0x20)))))
+    (local.get $written))
+
+  ;; fread/fgets core: MSVCRT's _filbuf state checks, then an unbuffered read.
+  ;; Returns bytes read (a short count sets _IOEOF, a failure _IOERR), or -1
+  ;; for a FILE* this CRT does not own.
+  (func $crt_file_read (param $file i32) (param $buf i32) (param $len i32) (result i32)
+    (local $rec i32) (local $flags i32) (local $handle i32) (local $read i32)
+    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local.set $rec (call $crt_stream_lookup (local.get $file)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const -1))))
+    (local.set $flags (call $crt_file_flags (local.get $file)))
+    ;; Not in use (a closed standard stream) or a string stream: plain EOF.
+    (if (i32.or (i32.eqz (i32.and (local.get $flags) (i32.const 0x83)))
+                (i32.ne (i32.and (local.get $flags) (i32.const 0x40)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.and (local.get $flags) (i32.const 0x02)) ;; _IOWRT: write-only, or no seek since writing
+      (then
+        (call $crt_file_set_flags (local.get $file) (i32.or (local.get $flags) (i32.const 0x20)))
+        (return (i32.const 0))))
+    (local.set $flags (i32.or (local.get $flags) (i32.const 0x01)))
+    (call $crt_file_set_flags (local.get $file) (local.get $flags))
+    (call $crt_file_reset_buffer (local.get $file))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (local.set $handle (call $crt_stream_handle (local.get $rec)))
+    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (i32.or (i32.eqz (local.get $handle))
+                (i32.eqz (call $host_fs_read_file
+                  (local.get $handle) (local.get $buf) (local.get $len) (local.get $bytes_ga))))
+      (then
+        (call $crt_file_set_flags (local.get $file) (i32.or (local.get $flags) (i32.const 0x20)))
+        (return (i32.const 0))))
+    (local.set $read (i32.load (local.get $bytes_wa)))
+    (if (i32.lt_u (local.get $read) (local.get $len))
+      (then (call $crt_file_set_flags (local.get $file) (i32.or (local.get $flags) (i32.const 0x10)))))
+    (local.get $read))
+
+  ;; Close a raw handle (_close's descriptor contract): 0, or -1 on failure.
+  (func $crt_close_raw_handle (param $handle i32) (result i32)
+    (if (result i32) (call $host_fs_close_handle (local.get $handle))
+      (then (i32.const 0))
+      (else (i32.const -1))))
+
+  ;; fclose: an fopen stream gives its record back; a standard stream stays
+  ;; in _iob with _flag 0 (not in use), as MSVCRT leaves it.
+  (func $crt_fclose (param $file i32) (result i32)
+    (local $rec i32) (local $rec_w i32) (local $handle i32)
+    (local.set $rec (call $crt_stream_lookup (local.get $file)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const -1))))
+    (local.set $rec_w (call $g2w (local.get $rec)))
+    (local.set $handle (i32.load offset=4 (local.get $rec_w)))
+    (if (i32.and (i32.load offset=12 (local.get $rec_w)) (i32.const 2))
+      (then
+        (i32.store offset=4 (local.get $rec_w) (i32.const 0))
+        (call $crt_file_set_flags (local.get $file) (i32.const 0))
+        (if (i32.eqz (local.get $handle)) (then (return (i32.const 0)))))
+      (else
+        (call $crt_stream_unlink (local.get $rec))
+        (call $heap_free (local.get $rec))))
+    (call $crt_close_raw_handle (local.get $handle)))
+
+  ;; Process termination: close every stream still open. fopen records are
+  ;; released; standard streams keep their _iob slot and lose only a VFS
+  ;; handle a freopen gave them. One close error cannot strand the rest.
+  (func $crt_stream_close_all
+    (local $link_w i32) (local $node i32) (local $node_w i32) (local $handle i32)
+    (local $kind i32)
+    (block $finished (loop $close
+      (local.set $kind (i32.const 0))
+      (call $lock_acquire (global.get $CRT_STREAM_STATE))
+      (local.set $link_w (region.addr $CRT_STREAM_STATE 8))
+      (block $found (loop $scan
+        (local.set $node (i32.load (local.get $link_w)))
+        (br_if $found (i32.eqz (local.get $node)))
+        (local.set $node_w (call $g2w (local.get $node)))
+        (local.set $handle (i32.load offset=4 (local.get $node_w)))
+        (if (i32.eqz (i32.and (i32.load offset=12 (local.get $node_w)) (i32.const 2)))
+          (then
+            (i32.store (local.get $link_w) (i32.load (local.get $node_w)))
+            (local.set $kind (i32.const 1))
+            (br $found)))
+        (if (local.get $handle)
+          (then
+            (i32.store offset=4 (local.get $node_w) (i32.const 0))
+            (local.set $kind (i32.const 2))
+            (br $found)))
+        (local.set $link_w (local.get $node_w))
+        (br $scan)))
+      (call $lock_release (global.get $CRT_STREAM_STATE))
+      (br_if $finished (i32.eqz (local.get $kind)))
+      (if (i32.eq (local.get $kind) (i32.const 1))
+        (then (call $heap_free (local.get $node))))
+      (drop (call $crt_close_raw_handle (local.get $handle)))
+      (br $close))))
 
   (func $handle_fopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $crt_fopen (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; freopen(path, mode, stream): the same FILE* is reused, as in MSVCRT, so
+  ;; freopen(..., stdout) keeps stdout meaning the new file. Even a failed
+  ;; replacement closes the old stream; failure returns NULL and leaves the
+  ;; FILE not in use.
+  (func $crt_freopen (param $path i32) (param $mode i32) (param $file i32) (result i32)
+    (local $rec i32) (local $rec_w i32) (local $old i32) (local $flags i32)
+    (local $handle i32) (local $std i32)
+    (local.set $rec (call $crt_stream_lookup (local.get $file)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $rec_w (call $g2w (local.get $rec)))
+    (local.set $std (i32.and (i32.load offset=12 (local.get $rec_w)) (i32.const 2)))
+    (local.set $old (i32.load offset=4 (local.get $rec_w)))
+    (i32.store offset=4 (local.get $rec_w) (i32.const 0))
+    (if (local.get $old) (then (drop (call $crt_close_raw_handle (local.get $old)))))
+    (local.set $flags (if (result i32) (local.get $path)
+      (then (call $crt_mode_flags (local.get $mode))) (else (i32.const 0))))
+    (local.set $handle (if (result i32) (local.get $flags)
+      (then (call $crt_open_stream_handle (local.get $path) (local.get $mode)))
+      (else (i32.const -1))))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then
+        (if (local.get $std)
+          (then (call $crt_file_set_flags (local.get $file) (i32.const 0)))
+          (else
+            (call $crt_stream_unlink (local.get $rec))
+            (call $heap_free (local.get $rec))))
+        (return (i32.const 0))))
+    (i32.store offset=4 (local.get $rec_w) (local.get $handle))
+    (i32.store offset=12 (local.get $rec_w)
+      (i32.or (local.get $std) (call $crt_mode_is_append (local.get $mode))))
+    (call $crt_file_init (local.get $file) (local.get $handle) (local.get $flags))
+    (local.get $file))
+
   (func $handle_freopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Even a failed replacement closes the old stream; do not manufacture
-    ;; success by returning the old handle when the new path cannot be opened.
-    (drop (call $crt_close_unbuffered_handle (local.get $arg2)))
-    (i32.store offset=0 (global.get $reg_base) (call $crt_fopen (local.get $arg0) (local.get $arg1)))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $crt_freopen (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-  )
-
-  (func $crt_stream_write (param $stream i32) (param $buf i32) (param $len i32) (result i32)
-    (local $bytes_ga i32) (local $bytes_wa i32)
-    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
-    (i32.store (local.get $bytes_wa) (i32.const 0))
-    (if (i32.or (i32.eqz (local.get $stream)) (i32.eqz (local.get $buf)))
-      (then (return (i32.const -1))))
-    (if (call $host_fs_write_file
-          (local.get $stream) (local.get $buf) (local.get $len)
-          (local.get $bytes_ga))
-      (then (return (i32.load (local.get $bytes_wa)))))
-    (i32.const -1)
-  )
-
-  ;; fclose(FILE*) and _close(fd) are distinct CRT contracts: a real FILE*
-  ;; owns stream buffering while a descriptor does not. This minimal CRT has
-  ;; no stream buffer or descriptor table -- fopen/_open both expose the same
-  ;; raw VFS handle -- so only their final close/result translation is shared.
-  ;; Keep the public handlers separate so richer FILE/descriptor state can be
-  ;; added later without making one ABI front door an alias of the other.
-  (func $crt_close_unbuffered_handle (param $handle i32) (result i32)
-    (call $crt_stream_forget (local.get $handle))
-    (if (result i32) (call $host_fs_close_handle (local.get $handle))
-      (then (i32.const 0))
-      (else (i32.const -1)))
   )
 
   (func $handle_fclose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $crt_close_unbuffered_handle (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $crt_fclose (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; feof/ferror are MSVCRT macros over _flag; the functions read the same bit.
+  ;; A NULL stream answers "at end" / "in error" so a polling loop terminates.
   (func $handle_feof (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp_ga i32) (local $bytes_ga i32) (local $bytes_wa i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    (local.set $tmp_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
-    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
-    (i32.store (local.get $bytes_wa) (i32.const 0))
-    (if (call $host_fs_read_file
-          (local.get $arg0) (local.get $tmp_ga) (i32.const 1)
-          (local.get $bytes_ga))
-      (then
-        (if (i32.load (local.get $bytes_wa))
-          (then
-            (drop (call $host_fs_set_file_pointer
-              (local.get $arg0) (i32.const -1) (i32.const 1)))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
-          (else (i32.store offset=0 (global.get $reg_base) (i32.const 1)))))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 1))))
+    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $arg0)
+        (then (i32.and (call $crt_file_flags (local.get $arg0)) (i32.const 0x10)))
+        (else (i32.const 1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
   (func $handle_ferror (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $arg0)
-        (then (i32.const 0))
+        (then (i32.and (call $crt_file_flags (local.get $arg0)) (i32.const 0x20)))
         (else (i32.const 1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
-  ;; clearerr(FILE*) -> void (cdecl). Resets a stream's error and end-of-file
-  ;; indicators. This CRT keeps neither as sticky state: FILE* is the raw VFS
-  ;; handle, feof above probes the handle's position against its size on every
-  ;; call, and ferror has no failure latch to report. So after clearerr the
-  ;; stream already reads exactly as it did before -- there is nothing to reset.
-  ;; If sticky indicators are ever added to the stream node, clear them here.
-  (func $handle_clearerr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; setvbuf(FILE*, buf, mode, size) -> 0, or -1 (cdecl). msvcrt refuses a
+  ;; stream it does not know, a mode other than _IOFBF 0 / _IOLBF 0x40 /
+  ;; _IONBF 4, and for a buffered mode a size outside 2..INT_MAX. Every stream
+  ;; here stays the unbuffered FILE $crt_file_init lays out and reaches the
+  ;; VFS on each call, so an accepted request changes only when bytes become
+  ;; visible -- sooner, never later -- and the caller's buf is never retained.
+  (func $handle_setvbuf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32)
+    (local.set $ok (i32.ne (call $crt_stream_lookup (local.get $arg0)) (i32.const 0)))
+    (if (i32.and (local.get $ok)
+          (i32.eqz (i32.or (i32.eqz (local.get $arg2))
+                     (i32.or (i32.eq (local.get $arg2) (i32.const 0x40))
+                             (i32.eq (local.get $arg2) (i32.const 4))))))
+      (then (local.set $ok (i32.const 0))))
+    (if (i32.and (local.get $ok) (i32.ne (local.get $arg2) (i32.const 4)))
+      (then
+        (if (i32.or (i32.lt_u (local.get $arg3) (i32.const 2))
+                    (i32.gt_u (local.get $arg3) (i32.const 0x7FFFFFFF)))
+          (then (local.set $ok (i32.const 0))))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 0) (i32.const -1) (local.get $ok)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; clearerr(FILE*) -> void (cdecl). Resets _IOERR and _IOEOF.
+  (func $handle_clearerr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $crt_stream_lookup (local.get $arg0))
+      (then (call $crt_file_set_flags (local.get $arg0)
+        (i32.and (call $crt_file_flags (local.get $arg0)) (i32.const -49)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; fgets(buf, n, stream): up to n-1 bytes, stopping after '\n'. NULL when
+  ;; end-of-file or an error comes before any byte was stored.
   (func $handle_fgets (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $ch i32)
+    (local $count i32) (local $ch i32) (local $got i32) (local $result i32)
+    (local.set $result (local.get $arg0))
     (if (i32.or
           (i32.or (i32.eqz (local.get $arg0)) (i32.le_s (local.get $arg1) (i32.const 0)))
+          (i32.eqz (call $crt_stream_lookup (local.get $arg2))))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (return)))
+    (block $done (loop $read
+      (br_if $done (i32.ge_u (local.get $count) (i32.sub (local.get $arg1) (i32.const 1))))
+      (local.set $got (call $crt_file_read (local.get $arg2)
+        (i32.add (local.get $arg0) (local.get $count)) (i32.const 1)))
+      (if (i32.ne (local.get $got) (i32.const 1))
+        (then
+          (if (i32.eqz (local.get $count)) (then (local.set $result (i32.const 0))))
+          (br $done)))
+      (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $count))))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br_if $done (i32.eq (local.get $ch) (i32.const 0x0a)))
+      (br $read)))
+    (if (local.get $result)
+      (then (call $gs8 (i32.add (local.get $arg0) (local.get $count)) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $result))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  (func $handle_fread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $read i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
           (i32.eqz (local.get $arg2)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (return)))
-    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
-    (block $done (loop $read
-      (br_if $done (i32.ge_u (local.get $count) (i32.sub (local.get $arg1) (i32.const 1))))
-      (i32.store (local.get $bytes_wa) (i32.const 0))
-      (if (i32.eqz (call $host_fs_read_file
-            (local.get $arg2)
-            (i32.add (local.get $arg0) (local.get $count))
-            (i32.const 1)
-            (local.get $bytes_ga)))
-        (then (br $done)))
-      (br_if $done (i32.eqz (i32.load (local.get $bytes_wa))))
-      (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $count))))
-      (local.set $count (i32.add (local.get $count) (i32.const 1)))
-      (br_if $done (i32.eq (local.get $ch) (i32.const 0x0a)))
-      (br $read)))
-    (if (local.get $count)
-      (then
-        (call $gs8 (i32.add (local.get $arg0) (local.get $count)) (i32.const 0))
-        (i32.store offset=0 (global.get $reg_base) (local.get $arg0)))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-  )
-
-  (func $handle_fread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $total i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $read i32)
-    (if (i32.or
-          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
-          (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3))))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    (local.set $total (i32.mul (local.get $arg1) (local.get $arg2)))
-    (local.set $bytes_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
-    (i32.store (local.get $bytes_wa) (i32.const 0))
-    (if (call $host_fs_read_file
-          (local.get $arg3) (local.get $arg0) (local.get $total)
-          (local.get $bytes_ga))
-      (then (local.set $read (i32.load (local.get $bytes_wa))))
-      (else (local.set $read (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (i32.div_u (local.get $read) (local.get $arg1)))
+    (local.set $read (call $crt_file_read (local.get $arg3) (local.get $arg0)
+      (i32.mul (local.get $arg1) (local.get $arg2))))
+    (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.lt_s (local.get $read) (i32.const 0))
+        (then (i32.const 0))
+        (else (i32.div_u (local.get $read) (local.get $arg1)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
   (func $handle_ftell (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $arg0)
+    (local $rec i32) (local $handle i32)
+    (local.set $rec (call $crt_stream_lookup (local.get $arg0)))
+    (local.set $handle (if (result i32) (local.get $rec)
+      (then (call $crt_stream_handle (local.get $rec))) (else (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $handle)
         (then (call $host_fs_set_file_pointer
-          (local.get $arg0) (i32.const 0) (i32.const 1)))
+          (local.get $handle) (i32.const 0) (i32.const 1)))
         (else (i32.const -1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; fseek clears _IOEOF and, on an _IORW stream, the current direction.
   (func $handle_fseek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.and
-            (local.get $arg0)
-            (i32.ne
-              (call $host_fs_set_file_pointer
-                (local.get $arg0) (local.get $arg1) (local.get $arg2))
-              (i32.const -1)))
-        (then (i32.const 0))
-        (else (i32.const -1))))
+    (local $rec i32) (local $flags i32) (local $handle i32) (local $result i32)
+    (local.set $result (i32.const -1))
+    (local.set $rec (call $crt_stream_lookup (local.get $arg0)))
+    (if (i32.and (i32.ne (local.get $rec) (i32.const 0))
+                 (i32.le_u (local.get $arg2) (i32.const 2)))
+      (then
+        (local.set $flags (i32.and (call $crt_file_flags (local.get $arg0)) (i32.const -17)))
+        (if (i32.and (local.get $flags) (i32.const 0x80))
+          (then (local.set $flags (i32.and (local.get $flags) (i32.const -4)))))
+        (call $crt_file_set_flags (local.get $arg0) (local.get $flags))
+        (call $crt_file_reset_buffer (local.get $arg0))
+        (local.set $handle (call $crt_stream_handle (local.get $rec)))
+        (if (i32.and (i32.ne (local.get $handle) (i32.const 0))
+              (i32.ne
+                (call $host_fs_set_file_pointer
+                  (local.get $handle) (local.get $arg1) (local.get $arg2))
+                (i32.const -1)))
+          (then (local.set $result (i32.const 0))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $result))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1360,8 +1698,11 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; _close(fd): this CRT's descriptors are raw VFS handles. Closing one does
+  ;; not touch a FILE that wraps it -- as in MSVCRT, a later fclose of that
+  ;; FILE then fails its own close and releases the FILE.
   (func $handle__close (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $crt_close_unbuffered_handle (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $crt_close_raw_handle (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1404,7 +1745,7 @@
   )
 
   (func $handle__write (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $crt_stream_write
+    (i32.store offset=0 (global.get $reg_base) (call $crt_handle_write
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
@@ -1428,27 +1769,35 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; fflush: streams are unbuffered, so there are never bytes to push. As in
+  ;; MSVCRT's _flush, an _IORW stream that was writing drops its direction.
+  ;; fflush(NULL) flushes every stream and succeeds.
   (func $handle_fflush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (if (local.get $arg0)
       (then
-        (i32.store offset=0 (global.get $reg_base) (select
-            (i32.const 0)
-            (i32.const -1)
-            (i32.ne
-              (call $host_fs_set_file_pointer
-                (local.get $arg0) (i32.const 0) (i32.const 1))
-              (i32.const -1)))))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+        (if (call $crt_stream_lookup (local.get $arg0))
+          (then
+            (local.set $flags (call $crt_file_flags (local.get $arg0)))
+            (if (i32.eq (i32.and (local.get $flags) (i32.const 0x82)) (i32.const 0x82))
+              (then (call $crt_file_set_flags (local.get $arg0)
+                (i32.and (local.get $flags) (i32.const -3)))))
+            (call $crt_file_reset_buffer (local.get $arg0)))
+          (else (i32.store offset=0 (global.get $reg_base) (i32.const -1))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; fputs(str, stream) -> 0, or EOF (-1) when the string was not written.
   (func $handle_fputs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $len i32) (local $written i32)
     (local.set $len (if (result i32) (local.get $arg0)
       (then (call $guest_strlen (local.get $arg0))) (else (i32.const 0))))
-    (local.set $written (call $crt_stream_write
-      (local.get $arg1) (local.get $arg0) (local.get $len)))
-    (i32.store offset=0 (global.get $reg_base) (select (i32.const 0) (i32.const -1) (i32.ge_s (local.get $written) (i32.const 0))))
+    (local.set $written (if (result i32) (local.get $arg0)
+      (then (call $crt_file_write (local.get $arg1) (local.get $arg0) (local.get $len)))
+      (else (i32.const -1))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 0) (i32.const -1) (i32.eq (local.get $written) (local.get $len))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1459,7 +1808,7 @@
   ;; (queen.asd) with it at the end of the intro.
   (func $handle_fputc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $written i32)
-    (local.set $written (call $crt_stream_write (local.get $arg1)
+    (local.set $written (call $crt_file_write (local.get $arg1)
       (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))
       (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base)
@@ -1468,48 +1817,68 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; getc(FILE*) -> the next byte as an unsigned char, or EOF (-1) at end of
+  ;; file, on error, or for a stream this CRT does not own. The byte lands in
+  ;; the caller's own argument slot ([esp+4]); a cdecl callee owns its
+  ;; parameters, and the FILE* is already in $arg0.
+  (func $handle_getc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $read i32)
+    (local.set $slot (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (local.get $slot) (i32.const 0))
+    (local.set $read (call $crt_file_read (local.get $arg0) (local.get $slot) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (call $gl8 (local.get $slot)) (i32.const -1)
+        (i32.eq (local.get $read) (i32.const 1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; fgetc(FILE*) — msvcrt's getc is this function, not a macro over it.
+  (func $handle_fgetc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_getc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   (func $handle_fwrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $total i32) (local $written i32)
+    (local $written i32)
     (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (return)))
-    (local.set $total (i32.mul (local.get $arg1) (local.get $arg2)))
-    (local.set $written (call $crt_stream_write
-      (local.get $arg3) (local.get $arg0) (local.get $total)))
+    (local.set $written (call $crt_file_write
+      (local.get $arg3) (local.get $arg0) (i32.mul (local.get $arg1) (local.get $arg2))))
     (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.lt_s (local.get $written) (i32.const 0))
         (then (i32.const 0))
         (else (i32.div_u (local.get $written) (local.get $arg1)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
-  (func $handle_fprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Format into a scratch buffer, then write it to a stream. Returns the
+  ;; character count, or -1 when formatting or the write failed.
+  (func $crt_vfprintf (param $file i32) (param $fmt i32) (param $args i32) (result i32)
     (local $scratch i32) (local $written i32)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
+    (if (i32.eqz (local.get $fmt)) (then (return (i32.const -1))))
     (local.set $scratch (call $heap_alloc (i32.const 65536)))
-    (if (i32.eqz (local.get $scratch))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
+    (if (i32.eqz (local.get $scratch)) (then (return (i32.const -1))))
     (local.set $written
-      (call $sprintf_impl (local.get $scratch) (local.get $arg1)
-        (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+      (call $sprintf_impl (local.get $scratch) (local.get $fmt) (local.get $args)))
     (if (i32.ge_s (local.get $written) (i32.const 0))
-      (then (local.set $written (call $crt_stream_write
-        (local.get $arg0) (local.get $scratch) (local.get $written)))))
+      (then
+        (if (i32.ne (call $crt_file_write (local.get $file) (local.get $scratch) (local.get $written))
+                    (local.get $written))
+          (then (local.set $written (i32.const -1))))))
     (call $heap_free (local.get $scratch))
-    (i32.store offset=0 (global.get $reg_base) (local.get $written))
+    (local.get $written))
+
+  (func $handle_fprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $crt_vfprintf (local.get $arg0) (local.get $arg1)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; printf writes to stdout (_iob[1]). MSVCRT buffers stdout, so the call
+  ;; reports the formatted count even when a GUI process has no console to
+  ;; receive it; that failure surfaces only as _IOERR on the stream.
   (func $handle_printf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $scratch i32) (local $written i32)
+    (local $scratch i32) (local $written i32) (local $iob i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -1524,33 +1893,19 @@
     (local.set $written
       (call $sprintf_impl (local.get $scratch) (local.get $arg0)
         (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+    (local.set $iob (call $crt_iob_ensure))
+    (if (i32.and (i32.ne (local.get $iob) (i32.const 0))
+                 (i32.gt_s (local.get $written) (i32.const 0)))
+      (then (drop (call $crt_file_write (i32.add (local.get $iob) (i32.const 32))
+        (local.get $scratch) (local.get $written)))))
     (call $heap_free (local.get $scratch))
     (i32.store offset=0 (global.get $reg_base) (local.get $written))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
   (func $handle_vfprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $scratch i32) (local $written i32)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    (local.set $scratch (call $heap_alloc (i32.const 65536)))
-    (if (i32.eqz (local.get $scratch))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    (local.set $written
-      (call $sprintf_impl (local.get $scratch) (local.get $arg1) (local.get $arg2)))
-    (local.set $written
-      (if (result i32) (i32.lt_s (call $crt_stream_write
-            (local.get $arg0) (local.get $scratch) (local.get $written)) (i32.const 0))
-        (then (i32.const -1))
-        (else (local.get $written))))
-    (call $heap_free (local.get $scratch))
-    (i32.store offset=0 (global.get $reg_base) (local.get $written))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $crt_vfprintf (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1790,9 +2145,9 @@
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x80)))))
     (local.get $flags))
 
-  ;; _pctype() — cdecl, returns the CRT ctype table. Entry zero is EOF; byte
-  ;; values are indexed at table[ch + 1].
-  (func $handle__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; The CRT ctype table, built once. Entry zero is EOF; byte values are
+  ;; indexed at table[ch + 1]. 0 when no storage could be allocated.
+  (func $msvcrt_pctype_table (result i32)
     (local $i i32)
     (if (i32.eqz (global.get $msvcrt_pctype_ptr))
       (then
@@ -1807,7 +2162,28 @@
             (call $msvcrt_ctype_flags (local.get $i)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $fill)))))
-    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_pctype_ptr))
+    (global.get $msvcrt_pctype_ptr))
+
+  ;; _pctype() — cdecl, returns the CRT ctype table's base (see above).
+  (func $handle__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $msvcrt_pctype_table))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; __p__pctype() — cdecl, the address of msvcrt's _pctype variable. As in
+  ;; msvcrt that variable points one entry past the EOF slot, so isalpha(c)
+  ;; is (*__p__pctype())[c] & _ALPHA for c in -1..255.
+  (func $handle___p__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $table i32)
+    (local.set $table (call $msvcrt_pctype_table))
+    (if (i32.and (i32.ne (local.get $table) (i32.const 0))
+                 (i32.eqz (global.get $msvcrt_pctype_var)))
+      (then (global.set $msvcrt_pctype_var (call $heap_alloc (i32.const 4)))))
+    (if (i32.and (i32.ne (local.get $table) (i32.const 0))
+                 (i32.ne (global.get $msvcrt_pctype_var) (i32.const 0)))
+      (then (call $gs32 (global.get $msvcrt_pctype_var)
+        (i32.add (local.get $table) (i32.const 2)))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (global.get $msvcrt_pctype_var) (i32.const 0) (i32.ne (local.get $table) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
   ;; _setmode(fd, mode) — cdecl. The emulator does not distinguish text and
@@ -1976,8 +2352,32 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; A WIN32_FIND_DATA FILETIME (100ns since 1601) at guest $p as a time_t:
+  ;; -1 when it predates 1970, as msvcrt reports it, and 0 for a FILETIME of
+  ;; 0, which is how the VFS leaves a time it does not record.
+  (func $crt_filetime_to_time_t (param $p i32) (result i32)
+    (local $ft i64)
+    (local.set $ft (i64.or
+      (i64.extend_i32_u (call $gl32 (local.get $p)))
+      (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $p) (i32.const 4)))) (i64.const 32))))
+    (if (i64.eqz (local.get $ft)) (then (return (i32.const 0))))
+    (if (i64.lt_u (local.get $ft) (i64.const 116444736000000000))
+      (then (return (i32.const -1))))
+    (i32.wrap_i64 (i64.div_u (i64.sub (local.get $ft) (i64.const 116444736000000000))
+      (i64.const 10000000))))
+
+  ;; _stat(path, struct _stat*) -- cdecl. msvcrt's struct _stat is 36 bytes:
+  ;;   +0 st_dev u32  +4 st_ino u16  +6 st_mode u16  +8 st_nlink i16
+  ;;   +10 st_uid i16  +12 st_gid i16  +16 st_rdev u32  +20 st_size i32
+  ;;   +24 st_atime  +28 st_mtime  +32 st_ctime
+  ;; and nothing past +36 is ours: callers keep it at the top of their frame.
+  ;; This used to zero 64 bytes, which ran over Dark Reign's saved EBP and
+  ;; return address (a 36-byte local at [ebp-0x38]) and returned to NULL.
+  ;; Every field goes through $gs16/$gs32, so a buffer straddling two sparse
+  ;; guest pages is written correctly.
   (func $handle__stat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $attrs i32) (local $scratch i32) (local $find i32) (local $path_wa i32)
+    (local $i i32) (local $drive i32) (local $len i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -1991,21 +2391,44 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (return)))
-    (memory.fill (call $g2w (local.get $arg1)) (i32.const 0) (i32.const 64))
-    ;; _stat: st_mode at +6, st_size at +20, times at +24/+28/+32.
+    (block $zeroed (loop $zero
+      (br_if $zeroed (i32.ge_u (local.get $i) (i32.const 36)))
+      (call $gs32 (i32.add (local.get $arg1) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $zero)))
     (call $gs16 (i32.add (local.get $arg1) (i32.const 6))
       (if (result i32) (i32.and (local.get $attrs) (i32.const 0x10))
         (then (i32.const 0x41ff)) ;; _S_IFDIR | broad rwx perms
         (else (i32.const 0x81b6)))) ;; _S_IFREG | 0666
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 1)) ;; st_nlink
     (local.set $scratch (call $heap_alloc (i32.const 320)))
     (if (local.get $scratch)
       (then
+        ;; st_dev = st_rdev = the drive, 0 for A:, from the resolved path.
+        (local.set $len (call $host_fs_get_full_path_name
+          (local.get $path_wa) (i32.const 260) (local.get $scratch) (i32.const 0) (i32.const 0)))
+        (if (i32.and (i32.and (i32.gt_u (local.get $len) (i32.const 1)) (i32.lt_u (local.get $len) (i32.const 260)))
+                     (i32.eq (call $gl8 (i32.add (local.get $scratch) (i32.const 1))) (i32.const 0x3a)))
+          (then
+            (local.set $drive (i32.sub (i32.and (call $gl8 (local.get $scratch)) (i32.const 0xdf)) (i32.const 0x41)))
+            (if (i32.lt_u (local.get $drive) (i32.const 26))
+              (then
+                (call $gs32 (local.get $arg1) (local.get $drive))
+                (call $gs32 (i32.add (local.get $arg1) (i32.const 16)) (local.get $drive))))))
         (local.set $find (call $host_fs_find_first_file
           (local.get $path_wa) (local.get $scratch) (i32.const 0)))
         (if (i32.ne (local.get $find) (i32.const -1))
           (then
+            ;; WIN32_FIND_DATA: ftCreationTime +4, ftLastAccessTime +12,
+            ;; ftLastWriteTime +20, nFileSizeLow +32.
             (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
               (call $gl32 (i32.add (local.get $scratch) (i32.const 32))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 24))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 12))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 28))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 20))))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 32))
+              (call $crt_filetime_to_time_t (i32.add (local.get $scratch) (i32.const 4))))
             (drop (call $host_fs_find_close (local.get $find)))))
         (call $heap_free (local.get $scratch))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -2058,6 +2481,7 @@
   )
 
   (func $handle__endthreadex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $apc_drop_shared_current)
     (call $host_exit_thread (local.get $arg0))
     (global.set $yield_reason (i32.const 2))
     (global.set $eip (i32.const 0))
@@ -2160,6 +2584,80 @@
             (call $g2w (local.get $arg0)) (i32.const 0))
         (then (i32.const 0))
         (else (i32.const -1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; _mkdir(dirname) — cdecl. 0, or -1 with errno EEXIST when the path
+  ;; already exists (file or directory) and ENOENT otherwise, as msvcrt maps
+  ;; CreateDirectory's ERROR_ALREADY_EXISTS / ERROR_PATH_NOT_FOUND.
+  (func $handle__mkdir (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $path_wa i32) (local $ok i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
+    (local.set $ok (call $host_fs_create_directory (local.get $path_wa) (i32.const 0)))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (i32.eqz (global.get $msvcrt_errno_ptr))
+          (then (global.set $msvcrt_errno_ptr (call $heap_alloc (i32.const 4)))))
+        (if (global.get $msvcrt_errno_ptr)
+          (then (call $gs32 (global.get $msvcrt_errno_ptr)
+            (select (i32.const 17) (i32.const 2) ;; EEXIST / ENOENT
+              (i32.ne (call $host_fs_get_file_attributes (local.get $path_wa) (i32.const 0))
+                (i32.const -1))))))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.const 0) (i32.const -1) (i32.ne (local.get $ok) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; Append the NUL-terminated guest string $src at guest $dst; returns the
+  ;; new end. Byte-wise, so either string may straddle sparse guest pages.
+  (func $crt_append_str (param $dst i32) (param $src i32) (result i32)
+    (local $c i32)
+    (if (i32.eqz (local.get $src)) (then (return (local.get $dst))))
+    (block $done (loop $copy
+      (local.set $c (call $gl8 (local.get $src)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (call $gs8 (local.get $dst) (local.get $c))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (br $copy)))
+    (local.get $dst))
+
+  ;; _makepath(path, drive, dir, fname, ext) -- cdecl, void. As msvcrt: the
+  ;; drive's first character and ':', dir with a '\' added unless it ends in
+  ;; '\' or '/', fname, then ext with a '.' added unless it starts with one.
+  ;; NULL or empty components are skipped; the result is NUL-terminated and,
+  ;; as the API documents, not bounded.
+  (func $handle__makepath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $last i32)
+    (local.set $p (local.get $arg0))
+    (if (local.get $p)
+      (then
+        (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg1)) (i32.const 0)))
+          (then
+            (call $gs8 (local.get $p) (call $gl8 (local.get $arg1)))
+            (call $gs8 (i32.add (local.get $p) (i32.const 1)) (i32.const 0x3a))
+            (local.set $p (i32.add (local.get $p) (i32.const 2)))))
+        (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg2)) (i32.const 0)))
+          (then
+            (local.set $p (call $crt_append_str (local.get $p) (local.get $arg2)))
+            (local.set $last (call $gl8 (i32.sub (local.get $p) (i32.const 1))))
+            (if (i32.and (i32.ne (local.get $last) (i32.const 0x5c))
+                         (i32.ne (local.get $last) (i32.const 0x2f)))
+              (then
+                (call $gs8 (local.get $p) (i32.const 0x5c))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))))))
+        (local.set $p (call $crt_append_str (local.get $p) (local.get $arg3)))
+        (if (i32.and (i32.ne (local.get $arg4) (i32.const 0))
+                     (i32.ne (call $gl8 (local.get $arg4)) (i32.const 0)))
+          (then
+            (if (i32.ne (call $gl8 (local.get $arg4)) (i32.const 0x2e))
+              (then
+                (call $gs8 (local.get $p) (i32.const 0x2e))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+            (local.set $p (call $crt_append_str (local.get $p) (local.get $arg4)))))
+        (call $gs8 (local.get $p) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 

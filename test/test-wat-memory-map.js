@@ -190,7 +190,9 @@ const highFixedAliases = new Map(Object.entries({
   LOCK_WND: { owner: 'LOCK_TABLE' },
   COM_AUX_NEXT_SHARED: { owner: 'LOCK_TABLE' },
   VSOCK_NEXT_PORT_SHARED: { owner: 'LOCK_TABLE' },
+  VSOCK_ASYNC_SHARED: { owner: 'LOCK_TABLE' },
   THUNK_NEXT_SHARED: { owner: 'LOCK_TABLE' },
+  THREAD_APC_QUEUES: { owner: 'LOCK_TABLE' },
   console_text_base: { owner: 'CONSOLE_TEXT' },
   console_attr_base: { owner: 'CONSOLE_ATTR' },
   CONSOLE_BUFFER_TABLE: { owner: 'CONSOLE_INPUT' },
@@ -227,6 +229,11 @@ const highFixedAliases = new Map(Object.entries({
   OP_INDEX: { owner: 'OP_INDEX_REGION' },
   // The winmm timer thread record lives in TIMER_SHARED's tail.
   MM_TIMER_THREAD: { owner: 'TIMER_SHARED' },
+  // The process-wide QPC count lives at SHARED_COUNTERS+16.
+  QPC_SHARED: { owner: 'SHARED_COUNTERS' },
+  // LOCK-prefix atomic mode (+32) and its split-lock mutex (+36).
+  LOCK_MODE: { owner: 'SHARED_COUNTERS' },
+  LOCK_MUTEX: { owner: 'SHARED_COUNTERS' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

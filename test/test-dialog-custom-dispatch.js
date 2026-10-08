@@ -93,10 +93,16 @@ const extraWat = String.raw`
   const stormHwnd = 0x10024;
   assert.strictEqual(wat.test_defdlg_custom_tail(stormHwnd, proc, 0x0BD2) >>> 0, proc,
     'DefDlgProc tail-dispatches a custom message from a native dialog wrapper');
-  assert.strictEqual(wat.get_esp() >>> 0, 0x00520000,
-    'DefDlgProc reuses its live four-argument stdcall frame');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x00520000 - 20,
+    'DefDlgProc retains its API frame beneath the live callback frame');
+  assert.strictEqual(wat.guest_read32(0x00520000 - 16) >>> 0, stormHwnd,
+    'the live callback carries the original dialog HWND');
+  assert.strictEqual(wat.guest_read32(0x00520000 - 12) >>> 0, 0x0BD2,
+    'the live callback carries the application-defined message');
+  assert.notStrictEqual(wat.guest_read32(0x00520000 - 20) >>> 0, 0x006A91A2,
+    'the callback returns through the dialog result epilog');
   assert.strictEqual(wat.guest_read32(0x00520000) >>> 0, 0x006A91A2,
-    'the DLGPROC returns to the native wrapper that called DefDlgProc');
+    'the retained API frame returns to the native wrapper after the epilog');
   assert.strictEqual(wat.guest_read32(0x00520004) >>> 0, stormHwnd,
     'the reused frame retains the dialog HWND');
   assert.strictEqual(wat.guest_read32(0x00520008) >>> 0, 0x0BD2,
@@ -108,11 +114,24 @@ const extraWat = String.raw`
 
   assert.strictEqual(wat.test_defdlg_custom_tail(stormHwnd, proc, 0x0111) >>> 0, proc,
     'a native DefDlgProc wrapper keeps WM_COMMAND modal work on the main context');
-  assert.strictEqual(wat.get_esp() >>> 0, 0x00520000,
+  assert.strictEqual(wat.get_esp() >>> 0, 0x00520000 - 20,
     'wrapped WM_COMMAND preserves its live stack instead of recursively running it');
   assert.strictEqual(wat.guest_read32(0x00520008) >>> 0, 0x0111,
     'the preserved frame carries WM_COMMAND');
 
+  // A click or a key is what opens the next modal dialog: Diablo's Storm
+  // dialogs run SNetCreateGame and the next SDlgDialogBox loop from
+  // WM_LBUTTONDOWN, and through the bounded sender that loop was cut off
+  // ("Unable to create game"). Client mouse and plain key messages have no
+  // DefDlgProc default work, so they take the same tail path.
+  for (const msg of [0x0201, 0x0202, 0x0200, 0x0203, 0x020A, 0x0100, 0x0101, 0x0102]) {
+    assert.strictEqual(wat.test_defdlg_custom_tail(stormHwnd, proc, msg) >>> 0, proc,
+      `DefDlgProc tail-dispatches message 0x${msg.toString(16)} to the DLGPROC`);
+    assert.strictEqual(wat.get_esp() >>> 0, 0x00520000 - 20,
+      `message 0x${msg.toString(16)} keeps its callback and retained API frames live`);
+    assert.strictEqual(wat.guest_read32(0x00520008) >>> 0, msg,
+      `the preserved frame carries message 0x${msg.toString(16)}`);
+  }
   console.log('PASS  custom dialog dispatch preserves the native modal stack');
 })().catch(error => {
   console.error(error && error.stack || error);

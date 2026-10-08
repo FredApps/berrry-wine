@@ -1110,6 +1110,30 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
   )
 
+  ;; __p___argv() / __p___argc() — cdecl, return &__argv and &__argc, the
+  ;; same arrays __getmainargs hands out (LithTech's lithtech.exe reads its
+  ;; -rez arguments this way). __argc already lives in the command-line block;
+  ;; __argv is a variable of its own, so a program that reassigns it does not
+  ;; rewrite the block.
+  (func $handle___p___argv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    (if (i32.eqz (global.get $msvcrt_argv_ptr))
+      (then
+        (global.set $msvcrt_argv_ptr (call $heap_alloc (i32.const 4)))
+        (call $gs32 (global.get $msvcrt_argv_ptr)
+          (i32.add (global.get $fake_cmdline_addr) (i32.const 1024)))))
+    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_argv_ptr))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
+  )
+
+  (func $handle___p___argc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    (i32.store offset=0 (global.get $reg_base) (i32.add (global.get $fake_cmdline_addr) (i32.const 508)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
+  )
+
   ;; __p___initenv() — cdecl, returns &__initenv for the narrow CRT startup path.
   (func $handle___p___initenv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle___p__environ

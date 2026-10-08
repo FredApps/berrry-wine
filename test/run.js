@@ -6,20 +6,33 @@ const frameIntervals = require('../lib/frame-intervals');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
 const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
-  stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
-  setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+  stageAndLoadPe, applyVirtualAllocTop, setExeName, setExeDrive, setExtraCmdline,
+  setEnvironmentVariable, handleLoadLibraryYield, serviceLoadLibraryYieldSync,
+  handleComDllYield, findVfsDllBytes } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
   applyLaunchPreferences: applyProfileLaunchPrefs,
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
 const {
-  processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger,
+  processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger, workerApiShouldLog,
   createInheritedWasmGlobals, recordInheritedWasmGlobal,
 } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
-const { saveVfsToHost } = require('../lib/vfs-export');
+const { saveVfsToHost, mergeVfsTreeBack } = require('../lib/vfs-export');
+
+// A --spawn-processes child has ended: its C:\ and registry replace what it
+// was started with (see spawnVfsChild).
+function mergeChildState(vfs, storage, before, outDir, regOut) {
+  const { written, deleted } = mergeVfsTreeBack(vfs, before, outDir);
+  let keys = 0;
+  if (fs.existsSync(regOut)) {
+    storage.clearStore();
+    keys = storage.importStore(JSON.parse(fs.readFileSync(regOut, 'utf8')));
+  }
+  console.log(`[spawn] child state merged: ${written} file(s) written, ${deleted} deleted, ${keys} registry/INI key(s)`);
+}
 const {
   decodeMfcCString,
   g2w: translateGuest,
@@ -99,6 +112,32 @@ async function decodeMountedImage(hostPath) {
 }
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
+// WINE_RUN_EXTRA_ARGS='--lazy-ranges=5 ...': appended to every run.js command
+// line, so an existing gameplay test that spawns run.js becomes, unedited, the
+// same route under an extra flag (the lazy-loading audit runs each one this
+// way). Whitespace-separated; a flag given twice resolves as getArg reads it.
+if (process.env.WINE_RUN_EXTRA_ARGS) {
+  const extra = process.env.WINE_RUN_EXTRA_ARGS.split(/\s+/).filter(Boolean);
+  args.push(...extra);
+  process.argv.push(...extra);
+  console.error(`[run] WINE_RUN_EXTRA_ARGS: ${extra.join(' ')}`);
+}
+// --tee=PATH: also write everything this process prints (stdout and stderr)
+// to PATH. With WINE_RUN_EXTRA_ARGS it keeps the log of a run a test spawned
+// and only parsed, e.g. for tools/io-range-census.js over its --trace-fs.
+{
+  const tee = args.find(value => value.startsWith('--tee='));
+  if (tee) {
+    const fd = fs.openSync(tee.slice('--tee='.length), 'w');
+    for (const stream of [process.stdout, process.stderr]) {
+      const write = stream.write.bind(stream);
+      stream.write = (chunk, encoding, callback) => {
+        try { fs.writeSync(fd, typeof chunk === 'string' ? chunk : Buffer.from(chunk)); } catch (_) {}
+        return write(chunk, encoding, callback);
+      };
+    }
+  }
+}
 const getArg = (name, def) => {
   const prefix = `--${name}=`;
   const arg = args.find(value => value.startsWith(prefix));
@@ -213,6 +252,11 @@ const MAX_SECONDS = parseFloat(getArg('max-seconds', '0')) || 0;
 // (i32.shl (memory.size) 16): correct up to 3GB because every comparison it
 // feeds is unsigned, wrapping to 0 at exactly 4GB. 2048 is the last value that
 // is safe without auditing that arithmetic again.
+// An app whose registry entry sets `bigMemory: true` gets 2048 by default, the
+// first size the browser's ladder (host.js) tries for it; --memory-mb wins.
+// Before this the CLI ignored the flag, and Pirates! (2004) ran out of guest
+// heap loading its assets on the CLI while the page did not.
+const MEMORY_MB_EXPLICIT = getArg('memory-mb', null) !== null;
 const MEMORY_PAGES = (() => {
   const mb = parseInt(getArg('memory-mb', '512'), 10);
   if (!(mb >= 512 && mb <= 2048)) { console.error(`--memory-mb must be 512..2048, got ${mb}`); process.exit(2); }
@@ -422,14 +466,23 @@ if (TRACE_GL_RAW) {
 }
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
-// --lazy-ranges[=MS]: mount a registry entry's `httpRange` files the way the
-// page does -- provider-backed, async-only, MS of latency per chunk read -- so
+// --lazy-ranges[=MS]: mount a registry entry's lazy files (`loadMode: 'lazy'`
+// or `'background'`, and legacy `httpRange` not marked `loadMode: 'required'`)
+// the way the page does -- provider-backed, async-only, MS of latency per
+// chunk read -- so
 // a headless run parks on cache misses exactly like a browser on HTTP ranges.
 // Its `preloadRanges` are fetched and pinned before the guest starts, as in
 // host.js; --no-preload-ranges skips them (the control arm that shows why a
 // file needs them). Without the flag those files are plain eager mounts.
 const LAZY_RANGES = hasFlag('lazy-ranges') || argHas('lazy-ranges');
 const LAZY_RANGES_MS = Math.max(0, Number(getArg('lazy-ranges', '0')) || 0);
+// --lazy-cache=legacy: the streamed-file cache shape before 1MB chunks and
+// sequential prefetch (256KB x 64 chunks, read-ahead on every miss, no
+// background prefetch) -- the control arm for measuring them. Default: the
+// page's shape (lib/byte-provider.js defaults).
+const LAZY_CACHE_OPTS = getArg('lazy-cache', '') === 'legacy'
+  ? { chunkSize: 256 * 1024, maxChunks: 64, readAhead: 1, prefetch: 0, sequentialReadAhead: false }
+  : undefined;
 const NO_PRELOAD_RANGES = hasFlag('no-preload-ranges');
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
@@ -479,6 +532,28 @@ const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame 
 // over child IPC, which is how two emulators share one room switch.
 const VLAN_IP = getArg('vlan-ip', null);
 const VLAN_WIRE = hasFlag('vlan-wire');
+// --pipe-std=WHICH:END:LPORT:RIP:RPORT,... -- set by a parent run.js that
+// started this process for a guest CreateProcess with redirected std handles
+// (src/09d7-pipes.wat): each entry becomes a pipe end, connected over the
+// vlan wire to the parent, installed as std handle WHICH before the entry
+// point runs. Not meant to be typed by hand.
+const PIPE_STD = getArg('pipe-std', null);
+// --pipe-child-args="--trace-api=ReadFile --trace-from=N": extra flags for a
+// child started by process_spawn, space separated -- the only way to trace
+// the child's side. Keep them bounded: the child's output is relayed here.
+const PIPE_CHILD_ARGS = (getArg('pipe-child-args', '') || '').split(' ').filter(Boolean);
+// --spawn-processes (or `spawnProcesses: true` on the app in lib/apps.js):
+// every guest CreateProcess of an executable in the VFS starts a real child
+// emulator, not only one with redirected std handles. The child gets a
+// snapshot of this machine's C:\ and registry, and what it leaves behind is
+// merged back before the parent's wait on it returns -- so an installer that
+// runs msiexec.exe and waits for it sees what msiexec installed. Off by
+// default: without it a CreateProcess still reports success with no child,
+// which installer extraction tests rely on.
+const SPAWN_PROCESSES_FLAG = hasFlag('spawn-processes');
+// --spawned-child: this process is such a child (set by the parent, not by
+// hand): report the guest's exit code to the parent over IPC.
+const SPAWNED_CHILD = hasFlag('spawned-child');
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
@@ -651,6 +726,9 @@ const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
 // --spin-work-max=N: a clock read only counts toward a park when at most N
 // blocks retired since the previous read at that site (0 = no work check).
 const SPIN_WORK_MAX = parseInt(getArg('spin-work-max', ''), 10);
+// --virtual-alloc-top=0xADDR: start of the top-down VirtualAlloc arena (an
+// app's virtualAllocTop; see lib/process-boot.js applyVirtualAllocTop).
+const VIRTUAL_ALLOC_TOP_ARG = getArg('virtual-alloc-top', null);
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 // --host-census[=N]: count every host import, print a histogram every N calls
 // straight to stdout. For batches that never return, where buffered logs never
@@ -761,7 +839,7 @@ const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.include
 // whatever corrupted the pointer.
 const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
 const FAULT_NULL = !FAULT_NULL_RAW ? 0
-  : ({ stop: 2, raise: 3 }[FAULT_NULL_RAW.split('=')[1]] || 1);
+  : ({ stop: 2, raise: 3, page0: 4 }[FAULT_NULL_RAW.split('=')[1]] || 1);
 // Offline census mode requires the separately built instrumented artifact from
 // tools/build-page-translation-stats.js. The canonical WASM has no counter
 // branch in $g2w, so profiling cannot perturb ordinary production runs.
@@ -850,6 +928,7 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+const SAVE_VFS_PREFIX = getArg('save-vfs-prefix', null); // --save-vfs-prefix='c:\\program files\\x': only that guest tree
 // --capture-launch=DIR: snapshot the VFS when ShellExecute names a VFS-backed
 // executable, before an installer bootstrap can delete its temporary child.
 // At exit DIR contains the snapshot plus launch.json for a second CLI stage.
@@ -1032,6 +1111,10 @@ const APP_ENTRY = (() => {
     Object.keys(APPS).sort().join(' '));
   process.exit(1);
 })();
+// An explicit --fault-null wins; otherwise an app registered with
+// `nullPageFaults: true` takes Win98's NULL-guard-page rule (mode 4), the
+// same as the browser does.
+const FAULT_NULL_MODE = FAULT_NULL || (APP_ENTRY && APP_ENTRY.nullPageFaults === true ? 4 : 0);
 // An app's registry `wallClock` date pins the calendar origin like
 // --wall-clock-ms does; the flag wins. With neither, the CLI pins it to
 // DEFAULT_CALENDAR_MS, so two runs of one command see the same calendar: a
@@ -1089,7 +1172,14 @@ const EXE_PATH = getArg('exe', ZIP_LAUNCH ? ZIP_LAUNCH.exePath
   : ISO_LAUNCH ? ISO_LAUNCH.exePath
   : (APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe'));
 const EXE_GUEST_PATH = (() => {
-  const requested = getArg('exe-guest-path', null);
+  // An --iso-exe launch IS a guest path on the disc: an installer that copies
+  // "from its own directory" (Myth's VISE Setup: GetModuleFileName) must see
+  // D:\Setup.exe, not the host temp copy reported as C:\Setup.exe.
+  // A registry app's exeGuestPath is the same thing for an installed tree
+  // (lib/apps.js), and the browser honours it too.
+  const requested = getArg('exe-guest-path', null) || (ISO_LAUNCH
+    ? path.win32.join(ISO_LAUNCH.guestDir, path.basename(ISO_LAUNCH.exePath))
+    : (APP_ENTRY && !getArg('exe', null) && APP_ENTRY.exeGuestPath) || null);
   if (!requested) return null;
   const rooted = /^[a-z]:[\\/]/i.test(requested) ? requested : `c:\\${requested}`;
   const normalized = path.win32.normalize(rooted.replace(/\//g, '\\'));
@@ -1218,6 +1308,11 @@ const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],.
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
 const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
+// --audio-out-max=N: stop writing --audio-out after N bytes (the byte count
+// keeps running). The headless clock is batch-driven, so a fast app can render
+// thousands of guest seconds of PCM in a few wall seconds: Tile World wrote
+// 663 MB in 2 s of coop, and a 15 s sweep run filled the disk before its PNG.
+const AUDIO_OUT_MAX = parseInt(getArg('audio-out-max', '0'), 10) || 0;
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread in a real OS thread (node worker_threads) instead of the cooperative scheduler
@@ -1226,7 +1321,7 @@ if (WORKER_THREADS && FORCE_COOPERATIVE_THREADS) {
   console.error('error: --threads and --no-threads are mutually exclusive');
   process.exit(2);
 }
-const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
+const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE, min 1000 -- the browser's main:worker parity)
 const CS_STEAL_AFTER = parseInt(getArg('cs-steal-after', '0'), 10) || 0; // --cs-steal-after=N: fruitless EnterCriticalSection rounds before taking the section by force (0 = WAT default; huge = never, to tell "waiting forever" from "took it")
 const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
 const ESP_AUDIT = hasFlag('esp-audit'); // --esp-audit: with --threads, check every handler's stdcall epilogue (4*(nargs+1)) on the thread that actually ran it
@@ -1545,26 +1640,8 @@ async function main() {
   // plugin sitting in the VFS was "not found" for CoCreateInstance and present
   // for LoadLibrary.
   const findRuntimeDllBytes = (fileName, fullName) => {
-    if (ctx.vfs) {
-      // Resolve the name the way the guest filesystem does first, as the
-      // browser's _findDllBytes does: a bare LoadLibraryA("lang.dll") is
-      // relative to the current directory, and VFS keys are case-folded. The
-      // host-path scan below is case-sensitive on Linux, so without this MCM's
-      // LANG.DLL was found on macOS only.
-      let resolved = '';
-      try { resolved = ctx.vfs._resolvePath(fullName); } catch (_) {}
-      const own = resolved && ctx.vfs.files.get(resolved);
-      if (own && own.data) return own.data;
-      for (const p of [
-        String(fullName).toLowerCase(),
-        'c:\\' + fileName,
-        'c:\\plugins\\' + fileName,
-        'c:\\windows\\system\\' + fileName,
-      ]) {
-        const entry = ctx.vfs.files.get(p);
-        if (entry && entry.data) return entry.data;
-      }
-    }
+    const fromVfs = findVfsDllBytes(ctx.vfs, fileName, fullName);
+    if (fromVfs) return fromVfs;
     for (const dir of [
       path.join(__dirname, 'binaries/dlls'),
       path.dirname(EXE_PATH),
@@ -1597,6 +1674,7 @@ async function main() {
   // fixed-duration benchmark is asking for.
   let batchesRun = 0;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
+  let netWaitSince = 0;   // wall-clock ms of the first of them
   let apiCount = 0;
   // Set with h.log below. When on, the main instance counts its own Win32
   // calls ($api_calls) and h.log sees only non-API log lines, so the total
@@ -2507,6 +2585,12 @@ async function main() {
     // behaviour is pinned to that; turning it on silently would change what many
     // runs mean. See lib/headless-gl.js.
     createCanvas: HEADLESS_GL || GLIDE_RENDERER === 'software' ? createCanvas : null,
+    // Glide always gets one. Without it grSstWinOpen returned 0 under the
+    // default --glide-renderer=webgl, the games ignore that, and their first
+    // grBufferClear/guGammaCorrectionRGB then trapped on a closed context
+    // (NFS III, Diablo II). The bridge itself drops to software when the
+    // canvas has no WebGL, exactly as a GPU-less browser does.
+    glideCreateCanvas: createCanvas || null,
     processId: 1000,
     apiTable,
     log: VERBOSE ? console.log.bind(console) : null,
@@ -2545,6 +2629,8 @@ async function main() {
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
+    // One counter for the whole process: guest threads write the same file.
+    _audioOutCount: AUDIO_OUT ? { max: AUDIO_OUT_MAX, bytes: 0 } : undefined,
     sharedAudio: {},  // shared waveOut state across threads
     audioTap: () => (videoRecorder && videoRecorder.active ? videoRecorder : null),
     registerAudioTapPump: fn => { if (typeof fn === 'function') audioTapPumps.add(fn); },
@@ -3669,7 +3755,21 @@ async function main() {
   }
 
   // --- Override exit to also log ---
-  h.exit = code => { logs.push('[Exit] code=' + code); stopped = true; };
+  h.exit = code => {
+    logs.push('[Exit] code=' + code); stopped = true;
+    // A child process_spawn started: its parent's GetExitCodeProcess and
+    // WaitForSingleObject need the guest's own exit code, not this
+    // process's.
+    if (PIPE_STD && process.send) process.send({ t: 'child-exit', code: code >>> 0 });
+    // A --spawn-processes child has no wire to keep: once its exit code is
+    // on its way, drop the IPC channel, which otherwise keeps this process
+    // alive after its shutdown work and the parent waiting on it forever.
+    else if (SPAWNED_CHILD && process.send) {
+      process.send({ t: 'child-exit', code: code >>> 0 }, () => {
+        try { process.disconnect(); } catch (_) {}
+      });
+    }
+  };
 
   // --- Override shell_about to log; the WAT side ($handle_ShellAboutA →
   // $create_about_dialog → $host_register_dialog_frame) drives all
@@ -3721,6 +3821,206 @@ async function main() {
     };
     logs.push(`[capture-launch] snapshotted ${guestExe} (${capturedLaunch.vfs.files.size} files)`);
     return result;
+  };
+
+  // CreateProcess with redirected std handles (src/09d7-pipes.wat): start
+  // the child as another run.js over the same app manifest and build, at its
+  // own room address, with its std handles wired back here over the vlan
+  // wire. This process becomes the hub of that wire. 0 = "cannot", and the
+  // guest falls back to its old CreateProcess path.
+  const pipeChildren = [];
+  const pipeChildByPid = new Map();
+  // op 0: exit code (259 STILL_ACTIVE while running); op 1: terminate.
+  const processCtl = (op, pid, arg) => {
+    const rec = pipeChildByPid.get(pid & 0xFFFF);
+    if (!rec) return -1;
+    if (op === 0) return rec.exitCode >>> 0;
+    if (op === 1) {
+      if (rec.exitCode === 259) {
+        rec.exitCode = arg >>> 0;
+        rec.child.kill();
+      }
+      return 1;
+    }
+    return -1;
+  };
+  h.process_ctl = processCtl;
+  ctx.processCtl = processCtl;
+  const nextChildPid = () => (0x4000 + (pipeChildren.length + 1) * 4) & 0xFFFF;
+  ctx.hasLiveChildren = () => {
+    for (const rec of pipeChildByPid.values()) if (rec.exitCode === 259) return true;
+    return false;
+  };
+  const relayChild = (child, tag) => {
+    for (const stream of [child.stdout, child.stderr]) {
+      let pending = '';
+      stream.on('data', chunk => {
+        pending += chunk;
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) console.log(`${tag} ${line}`);
+      });
+    }
+  };
+  // An ordinary CreateProcess (no redirected std handles) under
+  // --spawn-processes: the executable is looked up in this guest's own C:\
+  // -- an installer's child is usually a file it has just extracted, never
+  // something beside the host EXE -- and the child runs on a snapshot of
+  // that C:\ and of the registry. When the child process ends, the files and
+  // registry it left are merged back here, and only then does its exit code
+  // stop reading STILL_ACTIVE, so a parent's WaitForSingleObject +
+  // GetExitCodeProcess sees the child's work done.
+  const spawnVfsChild = (cmd, dirArg) => {
+    const vfs = ctx.vfs;
+    if (!vfs || !(SPAWN_PROCESSES_FLAG || (APP_ENTRY && APP_ENTRY.spawnProcesses))) return 0;
+    const parsed = parseShellLaunchCommand(cmd, '', 'open');
+    const name = parsed.file.trim();
+    if (!name) return 0;
+    const cwd = dirArg || (vfs.getCurrentDirectory ? vfs.getCurrentDirectory() : 'c:\\');
+    const exeDir = EXE_GUEST_PATH ? path.win32.dirname(EXE_GUEST_PATH) : 'c:\\';
+    const names = /\.[a-z0-9]+$/i.test(path.win32.basename(name)) ? [name] : [name + '.exe', name];
+    // lpApplicationName resolves against the current directory only, and a
+    // bare command line searches the application directory, the current
+    // directory, SYSTEM and WINDOWS; the WAT side has folded the two into one
+    // string, so try the current directory first and then the search path.
+    const dirs = /^[a-z]:|^\\/i.test(name) ? [''] : name.includes('\\') ? [cwd]
+      : [cwd, exeDir, 'c:\\windows\\system', 'c:\\windows'];
+    let guestExe = null;
+    for (const d of dirs) {
+      for (const n of names) {
+        const norm = vfs._resolvePath(d ? path.win32.join(d, n) : n);
+        if (vfs.files.has(norm)) { guestExe = norm; break; }
+      }
+      if (guestExe) break;
+    }
+    if (!guestExe) {
+      console.log(`[spawn] CreateProcess "${cmd}": ${name} is not in the VFS`);
+      return 0;
+    }
+    const os = require('os');
+    const storage = require('../lib/storage');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-child-'));
+    const inDir = path.join(tmp, 'in');
+    const outDir = path.join(tmp, 'out');
+    const regIn = path.join(tmp, 'reg-in.json');
+    const regOut = path.join(tmp, 'reg-out.json');
+    const written = saveVfsToHost(vfs, inDir);
+    const before = new Map(written.map(row => [String(row.guestPath).toLowerCase(), row.outputPath]));
+    const exeRow = written.find(row => String(row.guestPath).toLowerCase() === guestExe);
+    if (!exeRow) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      console.log(`[spawn] CreateProcess "${cmd}": ${guestExe} could not be exported`);
+      return 0;
+    }
+    fs.writeFileSync(regIn, JSON.stringify(storage.exportStore()));
+    const args = [
+      `--exe=${exeRow.outputPath}`, `--vfs-tree=${inDir}`, `--exe-guest-path=${guestExe}`,
+      `--cwd=${cwd}`, `--args=${parsed.params.trim()}`,
+      '--no-build', `--wasm=${WASM_PATH}`, '--quiet-api', '--quiet-blocks',
+      '--stuck-after=0', '--max-batches=1000000000', `--max-seconds=${MAX_SECONDS || 600}`,
+      '--spawned-child', '--spawn-processes',
+      `--save-vfs=${outDir}`, `--reg-import=${regIn}`, `--reg-export=${regOut}`,
+      ...PIPE_CHILD_ARGS,
+      // and on down the tree: instmsi's msiexec is a grandchild.
+      ...(PIPE_CHILD_ARGS.length ? [`--pipe-child-args=${PIPE_CHILD_ARGS.join(' ')}`] : []),
+    ];
+    const { fork } = require('child_process');
+    const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const pid = nextChildPid();
+    relayChild(child, `[child ${pid.toString(16)} ${path.win32.basename(guestExe)}]`);
+    pipeChildren.push(child);
+    const rec = { child, exitCode: 259 };
+    pipeChildByPid.set(pid, rec);
+    let guestCode = null;
+    child.on('message', msg => { if (msg && msg.t === 'child-exit') guestCode = msg.code >>> 0; });
+    child.on('exit', code => {
+      try {
+        mergeChildState(vfs, storage, before, outDir, regOut);
+      } catch (e) {
+        console.log(`[spawn] merging ${path.win32.basename(guestExe)}'s files back failed: ${e.message}`);
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+      if (rec.exitCode === 259) rec.exitCode = (guestCode != null ? guestCode : (code == null ? 1 : code)) >>> 0;
+    });
+    if (pipeChildren.length === 1) process.on('exit', () => { for (const c of pipeChildren) c.kill(); });
+    console.log(`[spawn] CreateProcess "${cmd}" -> ${guestExe} (pid ${pid.toString(16)}, cwd ${cwd})`);
+    return pid;
+  };
+  h.process_spawn = (cmdWa, dirWa, childIp, specWa, count) => {
+    const cmd = cmdWa ? readStr(cmdWa) : '';
+    if (!cmd) return 0;
+    if (!count) return spawnVfsChild(cmd, dirWa ? readStr(dirWa) : '');
+    if (!EXE_PATH) return 0;
+    const { ParentHub } = require('../lib/vlan-wire');
+    if (ctx.vlanWire && !(ctx.vlanWire instanceof ParentHub)) {
+      console.log(`[pipe] CreateProcess "${cmd}": this process is itself on a room wire; nested children are not supported`);
+      return 0;
+    }
+    const parsed = parseShellLaunchCommand(cmd, '', 'open');
+    const want = path.basename(parsed.file.trim().replace(/\\/g, '/')).toLowerCase();
+    const wantExe = /\.[a-z0-9]+$/.test(want) ? want : want + '.exe';
+    const dir = path.dirname(canonicalPath(EXE_PATH));
+    const hostExe = fs.readdirSync(dir).find(n => n.toLowerCase() === wantExe);
+    if (!hostExe) {
+      console.log(`[pipe] CreateProcess "${cmd}": no ${wantExe} beside ${EXE_PATH}`);
+      return 0;
+    }
+    const mem = new DataView(ctx.getMemory());
+    const parentIp = instance.exports.get_vlan_local_ip
+      ? (instance.exports.get_vlan_local_ip() >>> 0) : 0x0A000001;
+    const spec = [];
+    for (let i = 0; i < count; i++) {
+      const at = specWa + i * 16;
+      spec.push([mem.getInt32(at, true), mem.getInt32(at + 4, true),
+        mem.getInt32(at + 8, true), parentIp | 0, mem.getInt32(at + 12, true)].join(':'));
+    }
+    const ip = childIp >>> 0;
+    const ipText = [ip >>> 24, (ip >>> 16) & 255, (ip >>> 8) & 255, ip & 255].join('.');
+    const args = [
+      ...(APP_ID ? [`--app=${APP_ID}`] : []),
+      `--exe=${path.join(dir, hostExe)}`, `--args=${parsed.params.trim()}`,
+      '--no-build', `--wasm=${WASM_PATH}`, '--quiet-api', '--quiet-blocks',
+      '--vlan-wire', `--vlan-ip=${ipText}`, `--pipe-std=${spec.join(',')}`,
+      '--stuck-after=0', '--vlan-max-waits=1000000000', '--max-batches=1000000000',
+      `--max-seconds=${MAX_SECONDS || 600}`,
+      // The child's side of a wire question is half the answer.
+      // (never --verbose: its per-batch output, relayed here, is unbounded)
+      ...(TRACE_NET ? ['--trace-net'] : []),
+      ...PIPE_CHILD_ARGS,
+    ];
+    const { fork } = require('child_process');
+    const child = fork(__filename, args, { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const tag = `[child ${ipText} ${hostExe}]`;
+    for (const stream of [child.stdout, child.stderr]) {
+      let pending = '';
+      stream.on('data', chunk => {
+        pending += chunk;
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) console.log(`${tag} ${line}`);
+      });
+    }
+    if (!ctx.vlanWire) {
+      ctx.vlanWire = new ParentHub();
+      if (TRACE_NET) {
+        const { describeFrame } = require('../lib/vlan-wire');
+        ctx.vlanWire.onDeliver = bytes => console.log(`[net] .. arrived ${describeFrame(bytes)}`);
+      }
+    }
+    ctx.vlanWire.addChild(child, ip);
+    pipeChildren.push(child);
+    const pid = (0x4000 + pipeChildren.length * 4) & 0xFFFF;
+    const rec = { child, exitCode: 259 };
+    pipeChildByPid.set(pid, rec);
+    child.on('message', msg => {
+      if (msg && msg.t === 'child-exit' && rec.exitCode === 259) rec.exitCode = msg.code >>> 0;
+    });
+    // An emulator that ends without a guest ExitProcess (a crash, a
+    // --max-seconds stop) still ends the child process: report it as exited.
+    child.on('exit', code => { if (rec.exitCode === 259) rec.exitCode = (code == null ? 1 : code) >>> 0; });
+    if (pipeChildren.length === 1) process.on('exit', () => { for (const c of pipeChildren) c.kill(); });
+    console.log(`[pipe] CreateProcess "${cmd}" -> ${hostExe} at ${ipText}, std ${spec.join(' ')}`);
+    return pid;
   };
 
   // --- Override set_dlg_item_text to log ---
@@ -3894,6 +4194,10 @@ async function main() {
   // driven by a fixed --input script is only reproducible when the box is
   // idle: the age the guest sees is real time spent between batches.
   if (renderer) renderer._guestNowMs = h.get_ticks;
+  // The input queue's button-release hold (renderer-input.js takeInput) is
+  // also time on the guest's clock, read without spending a step, so polling
+  // the queue cannot move the time the guest sees.
+  if (renderer) renderer._inputNowMs = () => ctx.guestPeekMs();
   // --wall-clock-ms pins the calendar's ORIGIN; the calendar then advances
   // with GUEST time. Freezing it outright was deterministic but not a clock:
   // GetSystemTime returned one instant for the whole run, so anything that
@@ -4032,7 +4336,9 @@ async function main() {
   }
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: MEMORY_PAGES, maximum: MEMORY_PAGES, shared: true });
+  const memoryPages = !MEMORY_MB_EXPLICIT && APP_ENTRY && APP_ENTRY.bigMemory === true
+    ? 2048 * 16 : MEMORY_PAGES;
+  const memory = new WebAssembly.Memory({ initial: memoryPages, maximum: memoryPages, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 
@@ -4046,6 +4352,8 @@ async function main() {
   h.duplicate_current_thread = (tid) => threadManager.duplicateCurrentThread(tid);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
+  h.thread_apc_target = (handle, tid) => threadManager.threadApcTarget(handle, tid);
+  h.thread_alert = (tid) => threadManager.alertThread(tid);
   h.get_thread_priority = (handle, tid) => threadManager.getThreadPriority(handle, tid);
   h.set_thread_priority = (handle, priority, tid) => threadManager.setThreadPriority(handle, priority, tid);
   h.get_thread_locale = (tid) => threadManager.getThreadLocale(tid);
@@ -4422,6 +4730,23 @@ async function main() {
     instance.exports.set_vlan_local_ip(octets.reduce((a, o) => ((a << 8) | o) >>> 0, 0) | 0);
     if (TRACE_NET) console.log(`[net] room address ${VLAN_IP}`);
   }
+  if (PIPE_STD && instance.exports.pipe_attach_std) {
+    const byPort = new Map();
+    for (const entry of PIPE_STD.split(',').filter(Boolean)) {
+      const [which, end, lport, rip, rport] = entry.split(':').map(v => parseInt(v, 10));
+      let h = byPort.get(lport);
+      if (h) instance.exports.pipe_set_std(which | 0, h | 0);
+      else {
+        h = instance.exports.pipe_attach_std(which | 0, end | 0, lport | 0, rip | 0, rport | 0) >>> 0;
+        if (!h) { console.error(`--pipe-std: could not open ${entry}`); process.exit(2); }
+        byPort.set(lport, h);
+      }
+      console.log(`[pipe] std ${which} = 0x${h.toString(16)} (${end ? 'write' : 'read'} end, port ${lport})`);
+    }
+    // The parent queues this child's frames until now: its std handles exist
+    // to receive them.
+    if (process.send) process.send({ t: 'child-ready' });
+  }
   // A frame that reaches this process but that no guest ever peeks is
   // indistinguishable, in the send/peek trace alone, from one that was never
   // sent. Log the arrival itself so the two failures read differently.
@@ -4482,6 +4807,11 @@ async function main() {
     wh.check_input_lparam = h.check_input_lparam;
     wh.check_input_wparam = h.check_input_wparam;
     wh.check_input_hwnd = h.check_input_hwnd;
+    // Child processes belong to the process, not to the thread that started
+    // them: Windows Installer runs its custom-action EXEs (msiexec /D, /Y)
+    // from its engine thread, and waits on them from there.
+    wh.process_spawn = (...a) => h.process_spawn(...a);
+    wh.process_ctl = (...a) => h.process_ctl(...a);
     for (const name of profileHostNames) wrapProfileHost(wh, name);
     // Worker API tracing. The decode and the "the return belongs to the call
     // just logged" latch are shared; what stays here is the CLI's own policy —
@@ -4553,8 +4883,12 @@ async function main() {
       onCall: (name) => {
         if (apiCounts) apiCounts.set(name, (apiCounts.get(name) || 0) + 1);
       },
-      shouldLog: (name) => TRACE_API && !QUIET_API &&
-        (!TRACE_API_FILTER || TRACE_API_FILTER.has(name)),
+      resolveComName: (id) => {
+        const entry = apiTable[id];
+        return entry && entry.id === id ? entry.name : null;
+      },
+      shouldLog: (name) => workerApiShouldLog(
+        { traceApi: TRACE_API, quietApi: QUIET_API, filter: TRACE_API_FILTER }, name),
       formatValue: hex,
       emit: (line) => logs.push(line),
     });
@@ -4626,8 +4960,22 @@ async function main() {
   // mode quietly wrong for a whole phase with every test still green.
   let guestThreadHost = null;
   // Computed here, not at parse time: the debug flags above rewrite BATCH_SIZE.
-  const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE * THREAD_SLICES, 20000);
+  //
+  // A worker slice is the same size as a main slice, floored at 1000 like
+  // host.js's own step count, because that is the shape the browser runs:
+  // host.js hands its main step count straight to runWorkerSlices. This used
+  // to be max(BATCH_SIZE * THREAD_SLICES, 20000), which let every worker
+  // retire ~27x the blocks main did per batch. That is a race no real machine
+  // runs and the page never does: hype_glide_demo's loader thread (MSVCRT
+  // thread 0xb98b10) reached its sprite-row table at 0x757200 while main was
+  // still filling the 64K colour table beside it at 0x466b4f, followed a NULL
+  // row, and _XcptFilter turned the fault into ExitProcess -- the only crash
+  // in the 271-app dual-mode sweep (docs/crash-sweep-dual-mode-20261006.md).
+  const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE, 1000);
   if (WORKER_THREADS) {
+    // Real parallelism: LOCK-prefixed instructions must be atomic across the
+    // worker_threads (07-decoder.wat $try_emit_locked, handler 499).
+    if (instance.exports.set_lock_atomic_mode) instance.exports.set_lock_atomic_mode(1);
     const { GuestThreadHost } = require('../lib/guest-thread-host');
     const sigs = JSON.parse(fs.readFileSync(
       path.join(ROOT, 'lib', 'host-import-sigs.generated.json'), 'utf8')).sigs;
@@ -4756,7 +5104,7 @@ async function main() {
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
-    faultUnmapped: FAULT_NULL,
+    faultUnmapped: FAULT_NULL_MODE,
     inheritedWasmGlobals,
     // Deadlines (Sleep, timed waits) must be kept on the clock the guest
     // reads. Under a capped --real-ticks run (REAL_TICK_SLEEPS) that is the wall clock: on the batch clock a
@@ -4786,6 +5134,9 @@ async function main() {
       path.basename(EXE_PATH), info, instance.exports, memory.buffer,
       { log: (m) => console.log(m) }),
   });
+  // Waits on a child process's handle (src/09d7-pipes.wat) ask the host
+  // that started it.
+  threadManager.processCtl = (op, pid, arg) => (ctx.processCtl ? ctx.processCtl(op, pid, arg) : -1);
   ctx.closeSyncHandle = handle => threadManager.closeSyncHandle(handle);
 
   const mem = new Uint8Array(memory.buffer);
@@ -4800,6 +5151,8 @@ async function main() {
   }
 
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
+  applyVirtualAllocTop(instance.exports, VIRTUAL_ALLOC_TOP_ARG !== null
+    ? Number(VIRTUAL_ALLOC_TOP_ARG) : (APP_ENTRY && APP_ENTRY.virtualAllocTop));
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
   }
@@ -4907,10 +5260,20 @@ async function main() {
       exeBytes,
       seeds: [...((ASSET_ENTRY && ASSET_ENTRY.dlls) || []), ...DLL_SEED],
       detectRequiredDlls,
-      onMissing: (name, spec) => console.warn(`[dll] ${name} is loaded as a real PE ` +
-        `but is not on disk (${spec}); its imports fall to WAT stubs and an ordinal ` +
-        `import from it crashes as "<ord>". test/binaries/dlls is gitignored: copy it ` +
-        `into a fresh worktree.`),
+      onMissing: (name, spec, { seed } = {}) => {
+        // One the app declares (`dlls`, --dll-seed) is not optional: running
+        // on without it only moves the failure into a built-in stub.
+        // A setup failure, so a nonzero exit (no guest thread exists yet).
+        if (seed) {
+          console.error(`run.js: declared DLL not found: ${spec} (test/binaries is ` +
+            `gitignored: link it into a fresh worktree)`);
+          process.exit(1);
+        }
+        console.warn(`[dll] ${name} is loaded as a real PE ` +
+          `but is not on disk (${spec}); its imports fall to WAT stubs and an ordinal ` +
+          `import from it crashes as "<ord>". test/binaries/dlls is gitignored: copy it ` +
+          `into a fresh worktree.`);
+      },
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
         // discoveries arrive as bare DLL names.
@@ -4936,9 +5299,43 @@ async function main() {
     moduleBases['exe'] = { loadAddr: exeLoad, origBase: exeOrig };
     moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
   }
+  // The page loads a registered app's files before it loads any DLL
+  // (lib/browser-shell.js loadFiles, then the DLL graph), so a DllMain that
+  // enumerates its own data already sees them -- UBER.DLL's DllMain scans
+  // C:\Modules for Myth's network modules. Mount the same manifest here first;
+  // the full mount below re-adds each path idempotently.
+  if (ctx.vfs && ASSET_ENTRY) {
+    for (const item of getAssetFiles(ASSET_ENTRY)) {
+      const url = typeof item === 'string' ? item : (item && item.url);
+      if (!url) continue;
+      const hostPath = appAsset(url);
+      let size;
+      try { size = fs.statSync(hostPath).size; } catch (_) { continue; }
+      const guests = typeof item === 'object' && Array.isArray(item.vfsPaths) ? item.vfsPaths
+        : [typeof item === 'object' && item.vfsPath ? item.vfsPath : url.replace(/^.*[\\/]/, '')];
+      for (const raw of guests) {
+        let vfsPath = String(raw).toLowerCase().replace(/\//g, '\\');
+        if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+        if (ctx.vfs.files.has(vfsPath)) continue;
+        ctx.vfs.ensureParentDirs(vfsPath);
+        ctx.vfs.setLazyFile(vfsPath, { attrs: 0x20, size,
+          load: () => new Uint8Array(fs.readFileSync(hostPath)) });
+      }
+    }
+  }
+  // A LoadLibraryA from inside a DllMain (UBER.DLL loading Myth's
+  // modules\TCPIP.DLL) is serviced in place: callDllMain cannot await. So is
+  // one from inside a nested synchronous send ($wnd_send_message asks through
+  // the service_load_library import), which cannot return to this loop either.
+  const onLoadLibraryYield = ex => serviceLoadLibraryYieldSync({
+    exports: ex, memoryBuffer: memory.buffer, resourceHost: ctx, log: console.log,
+    findDllSync: findRuntimeDllBytes, onLoadLibraryYield,
+  });
+  ctx.serviceLoadLibrary = () => onLoadLibraryYield(instance.exports);
   if (dlls.length > 0) {
     mountLoadedDllFiles(ctx.vfs, dlls);
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
+      onLoadLibraryYield,
       exeName: path.basename(EXE_PATH),
       extraArgs: EXTRA_ARGS || '',
       registerDllResources: (dllConfigs, results) => {
@@ -5022,8 +5419,49 @@ async function main() {
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
     // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
     if (ASSET_ENTRY) {
-      const assetFiles = getAssetFiles(ASSET_ENTRY);
+      // The page's download policy (lib/app-files.js), decided on the same
+      // files and sizes. Its lazy entries mount provider-backed under
+      // --lazy-ranges -- the audit of what the browser streams -- and stay
+      // ordinary eager mounts otherwise.
+      const policy = require('../lib/app-files').normalizeLazyFiles(ASSET_ENTRY, getAssetFiles(ASSET_ENTRY), {
+        isWin16: !!(instance.exports.is_win16 && instance.exports.is_win16()),
+        // Only the sizes the page has too (an entry's own `size`): a stat()
+        // size here made the CLI decide differently from the browser and
+        // hid AoE II's black screen (EULA.RTF unsized -> streamed in the page).
+      });
+      const assetFiles = policy.files;
+      const ps = policy.summary;
+      console.log(`[files] policy ${ps.policy}: ${ps.eagerFiles} eager (${ps.eagerBytes} bytes), ` +
+        `${ps.lazyFiles} on demand (${ps.lazyBytes} bytes)${LAZY_RANGES ? '' : ' -- mounted eager without --lazy-ranges'}`);
       const missing = [];
+      let lazyManifestStats = null;
+      // Every streamed file, both branches below: one exit line with the
+      // numbers the chunk-size/prefetch work is judged on -- parks (guest
+      // reads that missed and waited), parks per second of wall clock,
+      // bytes fetched, background prefetches and over-fetch (fetched bytes
+      // no read touched).
+      const lazyAll = { files: 0, bytes: 0, caches: [], t0: Date.now() };
+      const noteLazy = (cache, size) => {
+        if (!lazyAll.files) {
+          process.on('exit', () => {
+            let fetches = 0, bytes = 0, parks = 0, prefetches = 0, over = 0, touched = 0;
+            for (const c of lazyAll.caches) {
+              const st = c.stats;
+              fetches += st.fetches; bytes += st.bytesFetched; parks += st.misses;
+              prefetches += st.prefetches || 0; over += c.overFetchBytes || 0;
+              if (st.fetches) touched++;
+            }
+            const secs = Math.max(0.001, (Date.now() - lazyAll.t0) / 1000);
+            console.log(`[lazy] all streamed files: ${touched} of ${lazyAll.files} touched, ` +
+              `fetched ${fetches} chunks / ${bytes} of ${lazyAll.bytes} bytes, ` +
+              `parks ${parks} (${(parks / secs).toFixed(1)}/s over ${secs.toFixed(1)}s), ` +
+              `prefetches ${prefetches}, over-fetch ${over} bytes`);
+          });
+        }
+        lazyAll.files++;
+        lazyAll.bytes += size;
+        lazyAll.caches.push(cache);
+      };
       for (const item of assetFiles) {
         const url = typeof item === 'string' ? item : (item && item.url);
         if (!url) continue;
@@ -5043,9 +5481,46 @@ async function main() {
         const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
-        if (LAZY_RANGES && typeof item === 'object' && item.httpRange) {
+        // Same rule as host.js loadFiles: a sized manifest entry (loadMode
+        // lazy/background) is a range mount with the default cache shape (1MB
+        // chunks, read-ahead/prefetch only while sequential); a legacy
+        // httpRange entry is one unless loadMode says required.
+        const sizedLazy = typeof item === 'object' && item &&
+          (item.loadMode === 'lazy' || item.loadMode === 'background');
+        if (LAZY_RANGES && sizedLazy) {
           const bp = require('../lib/byte-provider');
-          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }));
+          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }),
+            LAZY_CACHE_OPTS);
+          for (const p of paths) {
+            let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
+            if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+            ctx.vfs.ensureParentDirs(vfsPath);
+            ctx.vfs.setProviderFile(vfsPath, { provider: cache });
+          }
+          // Thousands of these in one tree: one summary line, not one per file.
+          if (!lazyManifestStats) {
+            lazyManifestStats = { files: 0, bytes: 0, caches: [] };
+            process.on('exit', () => {
+              let fetches = 0, bytes = 0, touched = 0;
+              for (const c of lazyManifestStats.caches) {
+                const st = c.stats;
+                fetches += st.fetches; bytes += st.bytesFetched;
+                if (st.fetches) touched++;
+              }
+              console.log(`[lazy] loadMode files: ${touched} of ${lazyManifestStats.files} touched, ` +
+                `fetched ${fetches} chunks / ${bytes} of ${lazyManifestStats.bytes} bytes`);
+            });
+          }
+          lazyManifestStats.files++;
+          lazyManifestStats.bytes += size;
+          lazyManifestStats.caches.push(cache);
+          noteLazy(cache, size);
+          continue;
+        }
+        if (LAZY_RANGES && typeof item === 'object' && item.httpRange && item.loadMode !== 'required') {
+          const bp = require('../lib/byte-provider');
+          const cache = bp.cached(new bp.NodeFileProvider(hostPath, { sync: false, latencyMs: LAZY_RANGES_MS }),
+            LAZY_CACHE_OPTS);
           let preloaded = 'no preload ranges';
           if (item.preloadRanges && !NO_PRELOAD_RANGES) {
             const r = await cache.preload(bp.preloadRangesFor(item.preloadRanges, cache.size));
@@ -5059,17 +5534,35 @@ async function main() {
             ctx.vfs.ensureParentDirs(vfsPath);
             ctx.vfs.setProviderFile(vfsPath, { provider: cache });
           }
-          console.log(`[lazy] ${url}: ${size} bytes provider-backed, ${LAZY_RANGES_MS}ms/chunk, ${preloaded}`);
-          process.on('exit', () => {
-            const st = cache.stats;
-            console.log(`[lazy] ${url}: fetched ${st.fetches} chunks / ${st.bytesFetched} bytes ` +
-              `(pinned ${st.pinnedChunks} / ${st.pinnedBytes}), hits ${st.hits}, misses ${st.misses}`);
-          });
+          noteLazy(cache, size);
+          // Per-file lines only where they say something a total cannot (a
+          // preload range list), or under --verbose: the default policy
+          // streams thousands of files.
+          if (item.preloadRanges || VERBOSE) {
+            console.log(`[lazy] ${url}: ${size} bytes provider-backed, ${LAZY_RANGES_MS}ms/chunk, ${preloaded}`);
+            process.on('exit', () => {
+              const st = cache.stats;
+              console.log(`[lazy] ${url}: fetched ${st.fetches} chunks / ${st.bytesFetched} bytes ` +
+                `(pinned ${st.pinnedChunks} / ${st.pinnedBytes}), hits ${st.hits}, misses ${st.misses}`);
+            });
+          }
           continue;
         }
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await decodeMountedImage(hostPath)
           : null;
+        if (typeof item === 'object' && item.iniSet) {
+          // Registry INI edits (lib/app-files.js applyIniSet), as the page does.
+          const edited = require('../lib/app-files').applyIniSet(
+            new Uint8Array(fs.readFileSync(hostPath)), item.iniSet);
+          for (const p of paths) {
+            let vfsPath = String(p).toLowerCase().replace(/\//g, '\\');
+            if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+            ctx.vfs.ensureParentDirs(vfsPath);
+            ctx.vfs.files.set(vfsPath, { data: edited.slice(), attrs: 0x20 });
+          }
+          continue;
+        }
         for (const p of paths) {
           const entry = addFile(p, hostPath, size);
           entry.decodedImage = decodedImage;
@@ -5672,11 +6165,12 @@ async function main() {
   }
   // Arm --fault-null. Same deal: the WAT check sits in the $g2w miss path, so
   // an off-run never reaches it.
-  if (FAULT_NULL && instance.exports.set_fault_unmapped) {
-    instance.exports.set_fault_unmapped(FAULT_NULL);
-    console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
-      + `${FAULT_NULL === 2 ? 'log and trap'
-          : FAULT_NULL === 3 ? 'log and raise a guest access violation'
+  if (FAULT_NULL_MODE && instance.exports.set_fault_unmapped) {
+    instance.exports.set_fault_unmapped(FAULT_NULL_MODE);
+    console.log(`[fault] ${FAULT_NULL ? '--fault-null' : 'app nullPageFaults'} armed (mode=${FAULT_NULL_MODE}: `
+      + `${FAULT_NULL_MODE === 2 ? 'log and trap'
+          : FAULT_NULL_MODE === 3 ? 'log and raise a guest access violation'
+          : FAULT_NULL_MODE === 4 ? 'raise an access violation for the 4KB NULL guard page only'
           : 'log and continue'})`);
   }
   // Exclude PE/DLL load from the offline translation-path census.
@@ -5928,6 +6422,9 @@ async function main() {
     // Under --real-ticks the guest clock is the wall clock and pausedMs does
     // not move it; the batch loop waits the remainder out in wall time
     // instead (see mainSleepWallWait).
+    // A Sleep main made earlier in this batch (between thread slices) has not
+    // been through checkMainYield yet; record its deadline now.
+    threadManager.noteMainSleep();
     if (!REAL_TICK_SLEEPS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
       tickState.pausedMs += threadManager.mainSleepRemaining();
     }
@@ -9732,9 +10229,14 @@ async function main() {
       // parks the same way for as long as it stays open.
       if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked()) &&
           !(instance.exports.menu_track_parked && instance.exports.menu_track_parked())) {
-        netWaits++;
+        if (netWaits++ === 0) netWaitSince = Date.now();
       }
-      if (netWaits > VLAN_MAX_WAITS) {
+      // On the wall clock a guest's own timed wait (a synchronous DirectPlay
+      // EnumSessions holds for up to 5 s) does end, and a fast box makes
+      // 20000 attempts well inside it; so there the cap also needs 30 s with
+      // no progress. On the batch clock no guest deadline passes while it
+      // waits, and the count alone is what ends a stalled wire.
+      if (netWaits > VLAN_MAX_WAITS && (!REAL_TICKS || Date.now() - netWaitSince > 30000)) {
         console.log(`[net] no progress after ${VLAN_MAX_WAITS} blocking waits; stopping`);
         stopped = true;
         break;
@@ -9950,9 +10452,16 @@ async function main() {
     if (ctx.vlanWire && (batch & 63) === 0) {
       await new Promise(resolve => setImmediate(resolve));
     }
+    // The same for a --spawn-processes child: its end (and the merge of what
+    // it left behind) arrives as a child-process event, so a parent parked in
+    // WaitForSingleObject on it would otherwise spin until its own run ended.
+    else if ((batch & 63) === 0 && ctx.hasLiveChildren && ctx.hasLiveChildren()) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
     if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {
-      let audioBytes = 0;
-      try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
+      // The running count, not the file size: --audio-out-max may cap the file.
+      let audioBytes = ctx._audioOutCount ? ctx._audioOutCount.bytes : 0;
+      if (!audioBytes) try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
       if (audioBytes >= AUDIO_EXIT_BYTES) {
         console.log(`[audio] captured ${audioBytes} bytes; stopping at --audio-exit-bytes=${AUDIO_EXIT_BYTES}`);
         stopped = true;
@@ -10924,6 +11433,7 @@ if (VERBOSE) {
   if (SAVE_VFS && ctx.vfs) {
     saveVfsToHost(ctx.vfs, SAVE_VFS, {
       suffix: SAVE_VFS_SUFFIX,
+      prefix: SAVE_VFS_PREFIX,
       skipPaths: ['c:\\app.exe'],
       log: line => console.log(line),
     });
@@ -11082,6 +11592,14 @@ if (VERBOSE) {
         }
         data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
       }
+    }
+    // The display gamma ramp, as the browser presenter applies it
+    // (_presentDxSurfaceToMainWindow), so a capture matches the page.
+    const { gammaLut, applyGamma } = require('../lib/dib');
+    const gamma = DX_RAW_INDEX ? null : gammaLut(instance.exports, memory.buffer);
+    if (gamma) {
+      applyGamma(gamma, new Uint32Array(data.buffer, data.byteOffset, surface.w * surface.h),
+        0, surface.w * surface.h);
     }
     return data;
   };

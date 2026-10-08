@@ -2694,7 +2694,42 @@ Enter Name and OK are unchanged from the multiplayer recipe. Both the Choose
 Class and Enter Name screens render correctly on this path (no blue portrait
 panel — that was transient on the multiplayer route).
 
-## OPEN (2026-08-25): the multiplayer Select Connection screen is blank
+## SOLVED (2026-10-06): the multiplayer Select Connection screen was blank
+
+The dialog's WM_INITDIALOG enumerates `C:\*.snp` and calls `LoadLibraryA` on
+each (`battle.snp`, then `standard.snp`), and WM_INITDIALOG is a synchronous
+send. `LoadLibraryA` yields (reason 5) for the host to map the DLL, a nested
+`$wnd_send_message` cannot return to the host, so every later round stopped on
+the same yield: run.js printed `[sync] ABANDONED wndproc hwnd=… msg=0x110 …
+(yield_reason=5)`, `LoadLibraryA` "returned" a stack address, `standard.snp`
+was never even found, and nothing painted. The send now has the host finish
+the load in place (`service_load_library` import → `serviceLoadLibraryYieldSync`,
+the path a LoadLibrary inside a DllMain already used). The screen lists
+Battle.net, Local Area Network (IPX), Modem and Direct Cable Connection.
+Pinned by `test/test-sync-send-loadlibrary.js`.
+
+**IPX multiplayer works (2026-10-06).** `test/test-diablo-ipx-vlan-gameplay.js`
+(heavy, boat): seat 10.0.0.1 creates a Normal IPX game, seat 10.0.0.2 picks it
+("GAL", the host hero's name, the row *below* Create Game at (445,296)) and both
+land in Tristram with two warriors on screen. The route after the connection
+screen: Local Area Network (IPX) (445,295) → OK (348,446) → Join IPX Games;
+host Create Game is the first row → OK → Select Difficulty → OK. The host is in
+Tristram by about batch 4100 at `--batch-size=200000 --tick-ms-per-batch=50`.
+The last block was "Unable to create game": OK on Select Difficulty runs
+SNetCreateGame and the next SDlgDialogBox loop from WM_LBUTTONDOWN, Storm's
+class wndproc hands that to `DefDlgProcA`, and `DefDlgProcA` ran the DLGPROC
+through the bounded synchronous sender, which cut the nested modal loop after 64
+rounds (`[sync] ABANDONED … msg=0x201 … yield_reason=0`). Client mouse and plain
+key messages now tail-dispatch into the DLGPROC like WM_COMMAND already did
+(`test/test-dialog-custom-dispatch.js`). IPX itself needed nothing: standard.snp
+opens two AF_IPX datagram sockets, binds, sets SO_BROADCAST and broadcasts, and
+the virtual LAN carries it. Evidence `scratch/runs/20261006T1700Z-diablo_shareware-w4-ipx-vlan`.
+
+Reach the Select Connection screen with the multiplayer
+recipe above plus the name keys and OK, capture at batch ~2640. The original
+note follows.
+
+### Original note (2026-08-25)
 
 Clicking OK on Enter Name in *multiplayer* now advances — the name is accepted
 and no "Invalid name" box appears — to a new 640x482 top-level dialog `0x10028`

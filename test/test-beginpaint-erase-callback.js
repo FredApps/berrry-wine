@@ -40,6 +40,16 @@ const extraWat = `
     (i32.and (call $nc_flags_test (local.get $h)) (i32.const 2)))
   (func (export "test_damage_pending") (param $h i32) (result i32)
     (call $update_get_rect (local.get $h) (i32.const 0)))
+  (func (export "test_validate") (param $h i32) (param $r i32)
+    (local $sp i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_ValidateRect (local.get $h) (local.get $r) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp)))
+  (func (export "test_full_damage") (param $h i32)
+    (call $update_invalidate_rect (local.get $h) (i32.const 0) (i32.const 0) (i32.const 640) (i32.const 480))
+    (call $paint_flag_set (local.get $h)))
+  (func (export "test_paint_pending") (param $h i32) (result i32)
+    (call $paint_flag_test_hwnd (local.get $h)))
   (func (export "test_thunk") (param $id i32) (result i32)
     (local $p i32)
     (global.set $thunk_guest_base (call $w2g (global.get $THUNK_BASE)))
@@ -150,5 +160,33 @@ const u32 = v => [v, v >>> 8, v >>> 16, v >>> 24].map(b => b & 255);
   e.test_end(repeatWindow, ps);
   assert.strictEqual(e.test_damage_pending(repeatWindow), 1,
     'EndPaint must not validate newly invalidated pixels even when they equal old rcPaint');
+  // Explicit guest validation owns both the region and queued child paint.
+  // Outer paint invokes another window first, then validates itself. Neither
+  // the nested callback nor USER may consume the other window's damage.
+  const validate = e.test_thunk(apiTable.find(a => a.name === 'ValidateRect').id);
+  const update = e.test_thunk(apiTable.find(a => a.name === 'UpdateWindow').id);
+  const makeProc = code => { const p=e.guest_alloc(code.length);code.forEach((b,i)=>e.guest_write8(p+i,b));return p; };
+  const validated = makeProc([0xff,0x05,...u32(record+28),0x6a,0,0xff,0x74,0x24,8,
+    0xb8,...u32(validate),0xff,0xd0,0xb8,...u32(0x1234),0xc2,16,0]);
+  const inner = e.test_window(validated);
+  const outerProc = makeProc([0x68,...u32(inner),0xb8,...u32(update),0xff,0xd0,
+    0x6a,0,0xff,0x74,0x24,8,0xb8,...u32(validate),0xff,0xd0,
+    0xb8,...u32(0x5678),0xc2,16,0]);
+  const outer = e.test_window(outerProc);
+  e.guest_write32(record+28,0);e.test_full_damage(inner);e.test_full_damage(outer);
+  const beforeValidateSp=e.get_esp();e.test_update(outer);
+  assert.equal(e.get_esp(),beforeValidateSp,'nested validation restores the owning stack');
+  assert.equal(e.get_sync_msg_depth(),0);assert.equal(e.guest_read32(record+28),1,'nested callback runs once');
+  for(const h of [inner,outer]){
+    assert.equal(e.test_damage_pending(h),0,'NULL ValidateRect consumes all damage even beyond current client bounds');
+    assert.equal(e.test_paint_pending(h),0,'NULL ValidateRect consumes queued child paint');
+  }
+  e.test_update(outer);assert.equal(e.guest_read32(record+28),1,'clean owner does not reenter the nested callback');
+  e.test_damage(outer,0,0);assert.equal(e.test_damage_pending(outer),1,'later invalidation remains owned by next paint');
+  const partialRect=e.guest_alloc(16);[3,4,12,6].forEach((v,i)=>e.guest_write32(partialRect+i*4,v));
+  e.test_validate(outer,partialRect);assert.equal(e.test_damage_pending(outer),1,'partial validation preserves remaining damage');
+  assert.equal(e.test_paint_pending(outer),1,'remaining damage retains paint request');
+  [3,6,12,15].forEach((v,i)=>e.guest_write32(partialRect+i*4,v));e.test_validate(outer,partialRect);
+  assert.equal(e.test_damage_pending(outer),0);assert.equal(e.test_paint_pending(outer),0,'full explicit rectangle clears paint request too');
   console.log('PASS BeginPaint synchronous erase callback, paint DC, result-driven fErase and no-erase cases');
 })().catch(error => { console.error(error); process.exit(1); });

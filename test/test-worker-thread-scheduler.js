@@ -266,8 +266,10 @@ function makeManager(backend, extraOpts) {
       backend.specs[1].hwndBase === tm.workerHwndBase(2),
       'each real Worker gets the same in-app hwnd partition as the cooperative backend',
       `${s.hwndBase.toString(16)}, ${backend.specs[1].hwndBase.toString(16)}`);
-    check(s.stackSize === 0x20000 && backend.specs[1].stackSize === 0x10000,
-      'the requested stack size is honoured, with the Win32 default when zero',
+    // A nonzero dwStackSize is a commit size inside the EXE's reserve (1MB
+    // when the header gives none), as Windows sizes it.
+    check(s.stackSize === 0x100000 && backend.specs[1].stackSize === 0x100000,
+      'thread stacks get the Windows reserve, whether or not a commit size is given',
       `${s.stackSize}, ${backend.specs[1].stackSize}`);
     check(s.dllCount === 3 && s.vlanIp === 0x0A4D0001 && s.tlsNextIndex === 2,
       'process-wide state a new instance cannot infer is passed in');

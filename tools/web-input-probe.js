@@ -17,7 +17,9 @@
 //
 // Steps (semicolon separated, left to right):
 //   move:X,Y      move the pointer to guest pixel X,Y
-//   click:X,Y     move, then press and release the left button
+//   click:X,Y     move, then press and release the left button (60ms hold)
+//   qclick:X,Y    the same with no hold: press and release in one tick, as a
+//                 fast click or a tap reaches a busy guest (both queued together)
 //   tap:X,Y       a touchscreen tap (needs --touch); drives the touch bridge,
 //                 which `click` never reaches
 //   down:X,Y      / up:X,Y   — the halves of a drag
@@ -97,6 +99,8 @@ const LAUNCH_MS = Number(opt('launch', 90000));
 // (mobile-app-sweep.js records it per row) instead of passing silently.
 const LAUNCHER_MS = Number(opt('launcher-wait', 60000));
 const PROTOCOL_TIMEOUT_MS = Number(opt('protocol-timeout', 600000));
+// How long browser.close() may take before Chrome is killed outright.
+const CLOSE_TIMEOUT_MS = 20000;
 const CPU_RATE = Number(opt('cpu', 1));
 const THREADS = argv.includes('--threads');
 const PRESENTATION_SCALE = opt('scale', '');
@@ -110,6 +114,10 @@ const LAN_ANSWER = opt('lan', 'solo');
 // paths instead, so bugs that only exist there (a viewport crop the shaders
 // ignore) are invisible without --gpu, which swaps in SwiftShader.
 const GPU = argv.includes('--gpu');
+// --auto-launch: the page starts the app itself from ?app= (the private ops
+// route /emulator/?app=ID, or index.html?app=ID), so there is no Launch button
+// or desktop icon to press; skip straight to waiting for the running app.
+const AUTO_LAUNCH = argv.includes('--auto-launch');
 // --headful opens a visible Chrome window on the real GPU. Headless Chrome has
 // no compositor or display refresh, so any duration quoted from a run (how
 // long a save takes, how fast a screen advances) needs this.
@@ -140,6 +148,15 @@ const VIEWPORT = (() => {
 // semicolons in it does not have to be escaped past the shell and the step
 // splitter both.
 const FINAL_EVAL_RAW = opt('eval', '');
+// --before-load=JS (or @PATH): run in every new document before any page script,
+// as profile-web-frames.js's flag does. The seam for changing what the page
+// itself reads at startup, e.g. an app's registry args:
+//   Object.defineProperty(window, 'wineApps', { configurable: true,
+//     set(v) { v.APPS.ut348_demo.args = 'DM-Morpheus -window'; this._wa = v; },
+//     get() { return this._wa; } })
+const BEFORE_LOAD_RAW = opt('before-load', '');
+const BEFORE_LOAD = BEFORE_LOAD_RAW.startsWith('@')
+  ? fs.readFileSync(BEFORE_LOAD_RAW.slice(1), 'utf8') : BEFORE_LOAD_RAW;
 const FINAL_EVAL = FINAL_EVAL_RAW.startsWith('@')
   ? require('fs').readFileSync(FINAL_EVAL_RAW.slice(1), 'utf8')
   : FINAL_EVAL_RAW;
@@ -176,16 +193,39 @@ function startStaticServer() {
     if (pathname === '/') pathname = '/index.html';
     const file = path.normalize(path.join(root, pathname));
     if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); res.end('forbidden'); return; }
-    fs.readFile(file, (error, data) => {
-      if (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end(error.code || 'read error'); return; }
-      const isolationHeaders = THREADS ? {
+    fs.stat(file, (error, st) => {
+      if (error || !st.isFile()) {
+        res.writeHead(error && error.code !== 'ENOENT' ? 500 : 404);
+        res.end((error && error.code) || 'not a file');
+        return;
+      }
+      const headers = Object.assign({
+        'Content-Type': mimeType(file), 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
+      }, THREADS ? {
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Embedder-Policy': 'require-corp',
-      } : {};
-      res.writeHead(200, Object.assign({
-        'Content-Type': mimeType(file), 'Cache-Control': 'no-store',
-      }, isolationHeaders));
-      res.end(data);
+      } : {});
+      // One byte range, as tools/dev-server.js serves it. The page's lazy file
+      // loader (HttpRangeProvider) refuses a 200 to its Range request, so
+      // without this an app with on-demand data -- Dungeons of Dredmor's
+      // tweakdb.xml -- stopped on "the server answered HTTP 200" here only.
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? +m[1] : Math.max(0, st.size - +m[2]);
+        let end = m[1] && m[2] ? Math.min(+m[2], st.size - 1) : st.size - 1;
+        if (start >= st.size || start > end) {
+          res.writeHead(416, Object.assign(headers, { 'Content-Range': `bytes */${st.size}` }));
+          res.end();
+          return;
+        }
+        res.writeHead(206, Object.assign(headers, {
+          'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1,
+        }));
+        fs.createReadStream(file, { start, end }).pipe(res);
+        return;
+      }
+      res.writeHead(200, Object.assign(headers, { 'Content-Length': st.size }));
+      fs.createReadStream(file).pipe(res);
     });
   });
   return new Promise((resolve, reject) => {
@@ -268,6 +308,40 @@ const readCursor = page => page.evaluate(() => {
   return { inline: shorten(inline), computed: shorten(computed) };
 });
 
+// Close Chrome AND let go of its stdio, or this process never exits.
+//
+// Puppeteer spawns Chrome with stdout/stderr as pipes into this process. A
+// branded Chrome on macOS hands those same descriptors to the helpers it
+// starts, and one of them is not Chrome's to stop: on startup Chrome wakes
+// GoogleUpdater (`GoogleUpdater --wake-all --system`, reparented to launchd),
+// which inherits fds 1 and 2 and keeps running for minutes after the browser
+// is gone. Node holds the event loop open on those pipes until they EOF, so
+// the probe printed everything, closed the browser in ~400ms, and then sat
+// until mobile-app-sweep's 240s SIGKILL (`exit: null`). The wake is throttled
+// system-wide, so only the first Chrome(s) launched in a window spawn it --
+// which is why the first two jobs of a sweep hung and every later one exited.
+// No Chrome switch suppresses the wake, so the fix is here: once the browser
+// has closed, nothing it left behind may keep us alive.
+async function closeBrowser(browser) {
+  const proc = browser.process();
+  let timer;
+  const graceful = browser.close().then(() => true, () => false);
+  // Bounded fallback: a graceful close waits for the browser process to exit
+  // with no limit of its own.
+  const ok = await Promise.race([graceful,
+    new Promise(r => { timer = setTimeout(() => r(false), CLOSE_TIMEOUT_MS); })]);
+  clearTimeout(timer);
+  if (!ok && proc && proc.exitCode === null && proc.signalCode === null) {
+    console.error(`browser.close did not finish in ${CLOSE_TIMEOUT_MS}ms; killing Chrome pid ${proc.pid}`);
+    proc.kill('SIGKILL');
+  }
+  if (proc) {
+    for (const s of [proc.stdin, proc.stdout, proc.stderr, ...(proc.stdio || [])]) {
+      if (s && !s.destroyed) s.destroy();
+    }
+  }
+}
+
 async function main() {
   // --url points the probe at an already-running origin (the deployed site, or
   // a dev server) instead of serving the working tree. "It works here but not
@@ -305,6 +379,20 @@ async function main() {
     // Stack, not just the message: a bare "Cannot read properties of null"
     // names neither the file nor the caller, which is most of what you need.
     page.on('pageerror', e => problems.push((e && e.stack) || String(e)));
+    // A later step failing with "Attempted to use detached Frame" says only
+    // that the page went away. A renderer crash (OOM on a loaded box) and a
+    // reload or navigation of the main frame look identical there, so name
+    // whichever happened, with the time, the moment it happens.
+    const probeStart = Date.now();
+    const stamp = () => `+${((Date.now() - probeStart) / 1000).toFixed(1)}s`;
+    page.on('error', e => console.log(`PAGE CRASHED ${stamp()}: ${(e && e.message) || e}`));
+    page.on('close', () => console.log(`PAGE CLOSED ${stamp()}`));
+    let mainLoads = 0;
+    page.on('framenavigated', frame => {
+      if (frame === page.mainFrame() && ++mainLoads > 1) {
+        console.log(`PAGE NAVIGATED ${stamp()}: main frame is now ${frame.url()}`);
+      }
+    });
     const consoleLines = [];
     // Chrome's own console line for a failed fetch is "Failed to load resource:
     // the server responded with a status of 404 (Not Found)" and names NOTHING
@@ -331,6 +419,7 @@ async function main() {
         if (apis.length) window.__waTraceApiNames = new Set(apis);
       }, TRACE, TRACE_API);
     }
+    if (BEFORE_LOAD) await page.evaluateOnNewDocument(BEFORE_LOAD);
     if (NO_FULLSCREEN_API) {
       await page.evaluateOnNewDocument(() => {
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen',
@@ -361,6 +450,7 @@ async function main() {
     if (BEFORE_LAUNCH) {
       await page.evaluate(js => (0, eval)(js), BEFORE_LAUNCH);
     }
+    if (!AUTO_LAUNCH) {
     await page.evaluate(app => {
       const sel = document.getElementById('app-select');
       if (typeof apps === 'undefined' || !apps[app]) throw new Error(`index.html has no app named ${app}`);
@@ -424,6 +514,7 @@ async function main() {
     if (launchPoint.icon) {
       await wait(80);
       await page.mouse.click(launchPoint.x, launchPoint.y);
+    }
     }
     // The lobby appears asynchronously (it is awaited inside launchApp), so
     // poll for it rather than assuming it is up on the next tick.
@@ -538,12 +629,13 @@ async function main() {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.touchscreen.tap(p.x, p.y);
-      } else if (kind === 'move' || kind === 'click' || kind === 'dbl'
+      } else if (kind === 'move' || kind === 'click' || kind === 'qclick' || kind === 'dbl'
                  || kind === 'down' || kind === 'up') {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.mouse.move(p.x, p.y);
         if (kind === 'click') { await page.mouse.down(); await wait(60); await page.mouse.up(); }
+        else if (kind === 'qclick') { await page.mouse.down(); await page.mouse.up(); }
         // A double-click has to happen inside one step: every step is followed
         // by a settle wait, so two `click` steps are always further apart than
         // any guest's double-click time. Diablo's Choose Class screen confirms
@@ -576,8 +668,11 @@ async function main() {
       console.log(`eval => ${v}`);
     }
   } finally {
-    await browser.close();
-    if (server) server.close();
+    await closeBrowser(browser);
+    if (server) {
+      server.closeAllConnections();
+      server.close();
+    }
     fs.rmSync(profile, { recursive: true, force: true });
   }
   if (problems.length) {
@@ -586,4 +681,5 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { startStaticServer };

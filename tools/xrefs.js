@@ -77,7 +77,8 @@ function scanXrefs(fileOrBuffer, target, opts = {}) {
   for (const s of sections) {
   if (codeOnly && !s.exec) continue;
   const treatAsCode = s.isCode;
-  const end = s.rawOff + Math.min(s.rawSize, s.vsize);
+  // A truncated file (Dark Colony's dc.exe) can declare raw data past EOF.
+  const end = Math.min(buf.length, s.rawOff + Math.min(s.rawSize, s.vsize));
   // 1) Scan for literal 4-byte occurrences of target
   for (let i = s.rawOff; i + 4 <= end; i++) {
     const v = buf.readUInt32LE(i);

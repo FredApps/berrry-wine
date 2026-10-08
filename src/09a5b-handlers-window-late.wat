@@ -363,10 +363,18 @@
     ;; subclassed. Execute the per-window DLGPROC and honor DWL_MSGRESULT.
     (if (i32.eq (local.get $arg0) (global.get $WNDPROC_DIALOG))
       (then
-        (i32.store offset=0 (global.get $reg_base) (call $dialog_default_proc
-          (local.get $arg1) (local.get $arg2)
-          (local.get $arg3) (local.get $arg4)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+        ;; Remove CallWindowProc's extra lpPrevWndFunc argument, retaining
+        ;; the subclass return address and the four dialog arguments. Use the
+        ;; same default handling and modal-capable continuation as DefDlgProc;
+        ;; a bounded recursive send abandons an open nested dialog's stack.
+        (call $gs32
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))
+          (i32.load (call $g2w (i32.load offset=16 (global.get $reg_base)))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (call $handle_DefDlgProcA
+          (local.get $arg1) (local.get $arg2) (local.get $arg3)
+          (local.get $arg4) (i32.const 0) (local.get $name_ptr))
         (return)))
     ;; WAT-native wndprocs (for current controls, 0xFFFF0002) are markers,
     ;; not guest-code addresses. Dispatch them directly instead of jumping.
@@ -863,11 +871,25 @@
       (i32.const 0))
     ;; showCmd used to be read and dropped, so an app that saved "I was
     ;; maximized" and set the placement back at startup got its normal rect and
-    ;; nothing else. Only a command that actually changes the min/max state is
-    ;; forwarded: SetWindowPlacement is routinely called before the first
-    ;; ShowWindow, and a SW_SHOWNORMAL there must not put a window on screen
-    ;; that the app has not shown yet.
+    ;; nothing else.
     (local.set $show (i32.load offset=8 (local.get $wa)))
+    ;; Windows applies showCmd the way ShowWindow does (Wine: WINPOS_SetPlacement
+    ;; ends in ShowWindow(hwnd, showCmd)), so a hidden window given anything but
+    ;; SW_HIDE comes on screen here. WinBoard never calls ShowWindow on its main
+    ;; window: it creates it hidden, sizes the board, and shows it with
+    ;; SetWindowPlacement(SW_SHOWNORMAL) -- treating that as "not yet shown"
+    ;; left its whole board drawn into an invisible window. Same arity as
+    ;; ShowWindow, so its handler completes this call.
+    (if (i32.and
+          (i32.eqz (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))
+          (i32.ne (local.get $show) (i32.const 0)))
+      (then
+        (call $handle_ShowWindow (local.get $arg0) (local.get $show)
+          (i32.const 0) (i32.const 0) (i32.const 0) (local.get $name_ptr))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+        (return)))
+    ;; A window already on screen: only a command that changes the min/max
+    ;; state needs forwarding.
     (if (i32.or (i32.eq (local.get $show) (i32.const 1))
           (i32.or (i32.eq (local.get $show) (i32.const 2))
             (i32.or (i32.eq (local.get $show) (i32.const 3))
@@ -3236,6 +3258,38 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)
   )
+
+  ;; 4166: ValidateRgn(hwnd, hrgn) -> BOOL. The update region is kept as one
+  ;; rectangle, so this validates hrgn's bounding box, the same reduction
+  ;; InvalidateRgn makes; hrgn NULL validates the whole client area, as
+  ;; ValidateRect(hwnd, NULL) does. A NULL hwnd is TRUE and changes nothing.
+  ;; Dark Earth's demo calls it after drawing its window itself.
+  (func $handle_ValidateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32) (local $box i32) (local $empty i32) (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+    (if (local.get $arg0)
+      (then
+        (if (local.get $arg1)
+          (then
+            (local.set $box (call $paint_scratch_take))
+            (if (call $gdi_rgn_get_box (local.get $arg1) (local.get $box))
+              (then
+                (local.set $l (load.field PaintRect left (local.get $box)))
+                (local.set $t (load.field.memarg PaintRect top (local.get $box)))
+                (local.set $r (load.field.memarg PaintRect right (local.get $box)))
+                (local.set $b (load.field.memarg PaintRect bottom (local.get $box))))))
+          (else
+            (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+            (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
+            (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+        (local.set $empty (call $update_validate_rect (local.get $arg0)
+          (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
+        (if (local.get $empty)
+          (then
+            (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+              (then (global.set $paint_pending (i32.const 0)))
+              (else (call $paint_flag_clear_hwnd (local.get $arg0))))))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; 695: LoadStringW — load UTF-16 string resource
   (func $handle_LoadStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

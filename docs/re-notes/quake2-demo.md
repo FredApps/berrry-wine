@@ -640,3 +640,50 @@ node test/run.js --app=quake2_demo --no-build --gl-renderer=software \
 
 Census at exit: 4,710,009 triangles, 101,281 dropped at the eye plane,
 1,065,868 culled, 1,570 presents, 217 texture uploads, none refused.
+
+## 2026-10-08: ordinary `ref_gl` gameplay on emulator software OpenGL
+
+Fresh temporary-browser run
+`scratch/runs/20261008T000901Z-quake2-software-ordinary/result.json` passes the
+registered Game → Easy → forward/reverse/idle route with the original
+`+set vid_ref gl +menu_main` arguments. No `ref_soft` switch, console command,
+forced control, guest-state edit, or asset patch was used. Enter was held
+750 ms on Game and on Easy; W and S were each held 1000 ms through ordinary
+browser input, after personally reviewing the preceding screenshot.
+
+Six captures were personally reviewed. `loading-1.png` already shows the
+textured world, weapon, crosshair, and health HUD, by 49.617 seconds after the
+Easy-selection command. Forward approaches the diagonal support until it
+fills the central view and occludes the wall emblem. Reverse restores the
+wider room, support base, and right-wall emblem; idle retains that geometry.
+These landmarks establish actual viewpoint translation, beyond weapon bob.
+
+Every capture records `gl-renderer=software`, the live host GL endpoint's
+`software` option, and the same option read directly from the owning renderer
+Worker's endpoint table. The unchanged `gl-render-worker.js` passes that
+option to `OpenGLHostBridge`; its software context branch creates the WAT
+raster backend directly without creating or falling back to a WebGL GL
+context. The ordinary GL presentation layer advances throughout gameplay.
+A generic legacy endpoint is also initialized with `webgl`, and the unchanged
+synthetic GL renderer string says `WebGL fixed function`
+(`src/01-header.wat`). Both observations are retained; neither identifies the
+selected GL backend. The proof concerns this `ref_gl` workload, not an absence
+of every WebGL facility in the browser.
+
+This is an explicitly accepted **reference-build validation**: module
+`fb1be916c309bf619a9331c8fd46c4319f9051af76b05b236d3c362bb632638f`, built source
+`096889e174488a97529b8e73076d3a1e2feb2345`, and its entire unchanged matching
+host closure. All 325 host files match that Git object; with the module these
+are 326 runtime source pins, alongside 66 original fixtures and seven harness
+files. All 399 pins passed before launch and after cleanup; originals were
+also rehashed locally. This does not certify a newly built current main.
+
+Chrome exited 0, browser/server closed, streams drained, and driver/Chrome
+process absence and listening-socket baseline were independently checked.
+The owned remote prefix was removed after the complete runtime archive and
+captures were durably copied and hash-verified. Twelve refused local unpinned
+VLAN publisher API requests remain in the raw errors; network play is
+unqualified. One room and one traversal cycle were tested; combat, level
+completion, FPS, and audio were not qualified. See
+[the software handoff](../../ops/handoffs/quake2-software-ordinary-20261008.md)
+for exact identity, timings, backend proof, resource grant, and cleanup.

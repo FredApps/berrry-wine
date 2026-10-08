@@ -64,6 +64,25 @@ Run explicitly with:
 node test/test-darkstone-gameplay.js
 ```
 
+### Retained gameplay recovery, October 7
+
+Before assigning a new-game run, a read-only audit recovered all ten existing
+captures from `/tmp/wine-assembly-darkstone-gameplay/`, with file mtimes on
+October 6 from 06:31:23 to 06:31:46 UTC. They are copied and SHA-256 indexed in
+`scratch/runs/20261007-darkstone-retained-gameplay-audit/`. The reviewer
+`codex:darkstone-refill-worker` personally inspected `08-town-before-input.png`
+and `09-town-after-input.png`: both show Town, the champion and full HUD;
+the road, trees and gate rotate substantially between them, consistent with
+the ordinary Right camera-input route documented above. This is historical
+controlled gameplay, so Darkstone is excluded from a never-qualified new-game
+refill. No game was rerun during recovery.
+
+The original invocation, execution start/end, source/module hashes and exact
+renderer were not recovered. The result records these as unknown, retains
+file mtimes separately and timestamps the recovery itself. It does not
+qualify the current module or establish gameplay FPS. The later October 6
+browser results only reached the main menu and do not replace this evidence.
+
 ## `--stuck-after` kills the asset load, and it looks like an emulator bug
 
 Driving this app by hand with a plain `test/run.js` command line ends at

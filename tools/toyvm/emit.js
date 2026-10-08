@@ -25,6 +25,8 @@
 // $ip, advance it, use only locals $t0..$t7, and never dispatch.
 
 const isa = require('./isa');
+const pmTransfer = require('./pm-transfer');
+const paging = require('./paging');
 
 // ---------------------------------------------------------------------------
 // Handler table. Order IS the handler index -- the decoder emits these numbers.
@@ -112,6 +114,9 @@ function wideAccessors(b, p, a, setL) {
     s += `
 (func $rd${w}${b} ${p} (param $off i32) (result i32)
   (local $l i32)
+  (if (call $pg_on) (then (return (call $pg_read
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const ${n}) (call $pg_user)))))
   ${setL}
   (if ${plain}
     (then (return (${load} (local.get $l)))))
@@ -122,6 +127,9 @@ function wideAccessors(b, p, a, setL) {
 
 (func $wr${w}${b} ${p} (param $off i32) (param $v i32)
   (local $l i32)
+  (if (call $pg_on) (then (call $pg_write
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const ${n}) (local.get $v) (call $pg_user)) (return)))
   ${setL}
   (if (i32.and ${plain} (i32.eqz ${code}))
     (then (${store} (local.get $l) (local.get $v)) (return)))
@@ -135,17 +143,20 @@ function wideAccessors(b, p, a, setL) {
 
 function memAccessors() {
   let s = '';
-  for (const b of ['', 'b']) {
-    const p = b ? '(param $base i32)' : '(param $seg i32)';
+  for (const b of ['', 'b', 'phys']) {
+    const p = b === 'phys' ? '' : b ? '(param $base i32)' : '(param $seg i32)';
     const a = b ? '(local.get $base)' : '(local.get $seg)';
     // The ONLY difference between the families. $lin is `(sbase(seg)+off) & linmask`,
     // so passing the base in already resolved leaves exactly the same address.
-    const setL = b
+    const setL = b === 'phys' ? '(local.set $l (local.get $off))' : b
       ? '(local.set $l (i32.and (i32.add (local.get $base) (local.get $off)) (global.get $linmask)))'
       : '(local.set $l (call $lin (local.get $seg) (local.get $off)))';
     s += `
 (func $rd8${b} ${p} (param $off i32) (result i32)
   (local $l i32)
+  ${b === 'phys' ? '' : `(if (call $pg_on) (then (return (call $pg_read
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const 1) (call $pg_user)))))`}
   ${setL}
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
@@ -154,6 +165,9 @@ function memAccessors() {
 
 (func $wr8${b} ${p} (param $off i32) (param $v i32)
   (local $l i32)
+  ${b === 'phys' ? '' : `(if (call $pg_on) (then (call $pg_write
+    (i32.add ${b ? '(local.get $base)' : '(call $sbase (local.get $seg))'} (local.get $off))
+    (i32.const 1) (local.get $v) (call $pg_user)) (return)))`}
   ${setL}
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
@@ -193,7 +207,7 @@ function memAccessors() {
 ;;     and puts every byte under the same VGA key compare as the first,
 ;;   and, for a store, no byte is already compiled (the CODE_BITMAP bits,
 ;;     at most two bitmap bytes apart; the bitmap is padded to 64K after).
-${wideAccessors(b, p, a, setL)}
+${b === 'phys' ? '' : wideAccessors(b, p, a, setL)}
 `;
   }
   return s;
@@ -619,8 +633,19 @@ const bitFrom = (m, b) => {
 // 200k). So the budget is checked where a boundary already exists: the counter
 // runs to zero, the block finishes, and the handback happens on its way out.
 // The overrun is bounded by one block.
+//
+// $ifarm is the third refusal (docs: if-enable/IF-ENABLE-DESIGN.md, section 3).
+// `sti` raises it when it finds IF=0 while the host holds a pending IRQ
+// ($irqpend), and compile.js puts a block transfer on exactly the boundary that
+// STI's interrupt shadow ends at -- after the instruction FOLLOWING the STI.
+// So the first CONT after an arming `sti` is that boundary, in every arm, and
+// the refusal hands back there with $gip = the boundary. Nothing else sets it;
+// `cli` and the host clear it. COST: one global.get and one i32.or on every
+// block transfer. The zero-instruction alternative is a high bit of $smc,
+// which overloads the flag the host repairs code on; not chosen without a
+// fixed-work measurement (V8 + SpiderMonkey disassembly) of both.
 const CONT = (arena) => `(select (i32.const 0) ${arena}
-    (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0))))`;
+    (i32.or (i32.or (global.get $smc) (global.get $ifarm)) (i32.lt_s (global.get $steps) (i32.const 0))))`;
 // The handback a block boundary takes when the budget ran out or the guest
 // patched itself. It is its own function ONLY so the flag analysis can name
 // it: this exit resumes the guest at $gip -- the successor block's own head --
@@ -633,7 +658,9 @@ const SLICE_EXIT = '(call $slice_exit)';
 // host reads it after a handback that left budget unspent, to say WHICH early
 // exit the guest paid for (dos-loop.js, EXIT_WHY). It is set on the cold arm
 // alone, so it costs nothing on a linked edge and moves no dispatch count.
-const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10 };
+// `ifen` is jmp_ifen's refusal: the boundary after STI's shadow, reached with
+// $ifarm up (see CONT and jmp_ifen).
+const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10, ifen: 11, protectedTransfer: 12 };
 // Where dos.js parks every vector (its STUB_SEG:STUB_OFF+v), repeated here
 // because emit.js does not load the machine; dos-loop.js refuses to start if
 // the two ever disagree.
@@ -697,6 +724,76 @@ const GO = (arena, guest) => `
   (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
     (else (if (i32.eqz (call $jlook_edge)) (then ${EXIT('edge')}))))`;
+
+// FIX J: THE COMPILER'S OWN TRANSFER IS NOT A BUDGET TEST POINT.
+//
+// `jmp_syn` (below, and compile.js where it is emitted) is not a guest
+// transfer: it exists only because the decode reached a head this compile
+// already holds. Testing the budget there made the slice's STOP POINTS -- not
+// its charge, which jmp_syn already refunds -- a function of decode order.
+// Installing a region marks its head before anything is decoded, so code that
+// falls into the head is recompiled ending in `jmp_syn head`, and a slice can
+// then end AT the head where the interpreter, which had the first iteration
+// inlined into the setup block, ran on to the next real transfer.
+//
+// Measured on the BRW regression program
+// (scratch/claude-toyvm-brw-billing-20261005, run-20261005a/report.json):
+// equal dispatch totals (15927679 both), but the region arm delivered 811 of
+// 7951 timer IRQs in front of a different instruction, the first at
+// at=6003001 `from 100:140` (the region head) against the interpreter's
+// at=6003007 `from 100:14e` (its traced jz). The call-target control, where
+// the head is a block in both arms, was clean. That is BRW.EXE's 115.06M
+// signature: same cs:ip, one loop iteration early.
+//
+// So a jmp_syn keeps everything GO does except the `$steps < 0` test: it still
+// publishes $gip, still refuses a resolved arena address once code was
+// patched ($smc), and still asks the jump table on the cold arm -- through
+// $jlook_syn, which applies the same $smc-only test. The residual: a target the
+// jump table does not hold (never compiled, dropped, or a µop-held head) still
+// hands back through $slice_exit, and if the budget happens to be spent at that
+// moment the host sees an ordinary expired slice there. A cycle cannot consist
+// of jmp_syn edges alone (compile.js only emits one for a straight line that
+// runs forward into a head, and refuses a 16-bit wrap), so every loop still
+// passes a real transfer that tests the budget, and the overrun stays bounded.
+//
+// `--jmp-syn-budget-test` (or TOYVM_JMP_SYN_BUDGET_TEST=1) restores the old
+// test in every arm, exactly: the handler body, the absence of $jlook_syn and
+// every lowering in region-jit.js / uop-ir.js read this one switch. It is read
+// once per process because the handler table is built once per process
+// (prepareTables / TABLES_READY). Passing the flag also exports the env form so
+// a node worker thread or child process -- which do not see this argv -- builds
+// the same arm.
+const JMP_SYN_BUDGET_TEST = (() => {
+  if (typeof process === 'undefined') return false;
+  const argv = Array.isArray(process.argv) && process.argv.includes('--jmp-syn-budget-test');
+  const env = !!(process.env && process.env.TOYVM_JMP_SYN_BUDGET_TEST === '1');
+  if (argv && process.env) process.env.TOYVM_JMP_SYN_BUDGET_TEST = '1';
+  return argv || env;
+})();
+// CONT without the budget: refuse the arena only for a patched-code slice.
+const CONT_SYN = (arena) => `(select (i32.const 0) ${arena}
+    (global.get $smc))`;
+const GO_SYN = (arena, guest) => `
+  (global.set $gip ${guest})
+  (if ${CONT_SYN(arena)}
+    (then (global.set $ip ${arena}))
+    (else (if (i32.eqz (call $jlook_syn)) (then ${EXIT('edge')}))))`;
+// $jlook_edge's twin for GO_SYN: the same lookup and the same $edgelook A/B
+// switch, with the self-patch test and NOT the budget test. Named apart so the
+// flag analysis (it is event X, like $jlook_edge), handler-effects.js and
+// trace-jit.js classify it as the block transfer it is. Emitted only in the J
+// build, so a `--jmp-syn-budget-test` module is HEAD's module text exactly.
+const JLOOK_SYN_FN = `
+;; The cold arm of a compiler-synthesized edge (jmp_syn, emit.js GO_SYN):
+;; resume at $gip's block if the jump table has one and no code was patched,
+;; setting $ip; 0 to hand back. No budget test -- see FIX J above GO_SYN.
+(func $jlook_syn (result i32) (local $a i32)
+  (if (i32.eqz (global.get $edgelook)) (then (return (i32.const 0))))
+  (local.set $a ${CONT_SYN('(call $jlook (global.get $gip))')})
+  (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
+  (global.set $ip (local.get $a))
+  (i32.const 1))
+`;
 
 // A Jcc's body is its condition and nothing else, so it is built from the
 // condition rather than written out. genFusedBranches() rebuilds it with a
@@ -817,12 +914,35 @@ function genBranches() {
   // steps ahead of the interpreter at the same budget -- a "wrong frame"
   // from a region that computed nothing wrong. So this twin gives the step
   // back: the transfer stays a dispatch, the budget no longer sees it.
+  //
+  // ...and since fix J it does not TEST the budget either (see GO_SYN): the
+  // refund made the charge layout-independent, but a test here still made the
+  // stop points layout-dependent, which is the BRW 115.06M split and the
+  // 811-of-7951 IRQ misplacements of the regression program. The $smc test
+  // stays. `--jmp-syn-budget-test` puts the old GO back.
   const jmpSyn = h('jmp_syn', 2, `
   ${ops(2)}
   (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
-  ${GO('(local.get $t0)', '(local.get $t1)')}
+  ${JMP_SYN_BUDGET_TEST ? GO('(local.get $t0)', '(local.get $t1)') : GO_SYN('(local.get $t0)', '(local.get $t1)')}
 `);
   TAKEN_AT.set(jmpSyn, 1);
+  // THE BOUNDARY STI'S INTERRUPT SHADOW ENDS AT. compile.js emits this, and
+  // only this, after the instruction that follows an STI, when that
+  // instruction is not itself a transfer (a transfer's own CONT is then the
+  // boundary). It is jmp_syn in every respect -- a dispatch that gives its
+  // step back and does not test the budget, so neither the charge nor the stop
+  // points of a block without a pending IRQ move -- plus one test: an `sti`
+  // that armed ($ifarm) hands back HERE, with $gip the boundary, so the host
+  // can deliver the IRQ it is holding for IF exactly where an 8259 + CPU would
+  // (SDM Vol. 2B 4-674, Vol. 3A 7.8.1).
+  const jmpIfen = h('jmp_ifen', 2, `
+  ${ops(2)}
+  (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+  (if (global.get $ifarm)
+    (then (global.set $gip (local.get $t1)) ${EXIT('ifen')})
+    (else ${JMP_SYN_BUDGET_TEST ? GO('(local.get $t0)', '(local.get $t1)') : GO_SYN('(local.get $t0)', '(local.get $t1)')}))
+`);
+  TAKEN_AT.set(jmpIfen, 1);
   // `jmp $` is the purest spin there is, and the one a demo parks on when it
   // is finished. The compiler only offers this twin for a block that is the
   // jump and nothing else, so a `jmp` back to the head from further down a
@@ -897,8 +1017,9 @@ function genExtras() {
 `);
   h('pop_m16', 2, `
   ${ops(2)}
+  (local.set $t7 (call $pop16))
   ${EA_SETUP_PRE}
-  (call $wr16 (local.get $t5) (local.get $t4) (call $pop16))
+  (call $wr16 (local.get $t5) (local.get $t4) (local.get $t7))
 `);
   h('push_i16', 1, `
   ${ops(1)}
@@ -922,8 +1043,9 @@ function genExtras() {
 `);
   h('pop_m32', 2, `
   ${ops(2)}
+  (local.set $t7 (call $pop32))
   ${EA_SETUP_PRE}
-  (call $wr32 (local.get $t5) (local.get $t4) (call $pop32))
+  (call $wr32 (local.get $t5) (local.get $t4) (local.get $t7))
 `);
   h('push_i32', 1, `
   ${ops(1)}
@@ -952,12 +1074,21 @@ function genExtras() {
   // it just armed -- which is the whole of a DOS trace decryptor. Setting TF is
   // the only way in (nothing else writes it) and it happens a handful of times
   // in a run, so the cost is one compare on a POPF that leaves TF clear.
+  // ...and the second thing a POPF can owe at this boundary: an IRQ the host
+  // is holding for IF ($irqpend), now that the popped IF is 1. POPF has no
+  // interrupt shadow (SDM Vol. 2B 4-407ff says nothing of one), so the
+  // boundary right after it is eligible -- the same rule IRET already follows
+  // below. Only $irqpend, not $irqwant: the Sound Blaster's port-armed line
+  // keeps its existing boundaries (IRET and the next stop) unchanged.
+  const POPF_OWES = `(if (i32.or (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF})) (i32.const 0))
+              (i32.and (global.get $irqpend)
+                       (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF})) (i32.const 0))))`;
   h('popf', 1, `
   ${ops(1)}
   (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
-  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+  ${POPF_OWES}
     (then (global.set $gip (local.get $t0))
           (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
@@ -981,7 +1112,7 @@ function genExtras() {
   (call $flags_put (i32.or
     (i32.and (i32.and (call $pop32) (i32.const 0xFFFF)) ${DEFINED})
     ${RESERVED}))
-  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+  ${POPF_OWES}
     (then (global.set $gip (local.get $t0))
           (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
@@ -1202,8 +1333,17 @@ function genExtras() {
   h('cmc', 0, `(call $flags_put (i32.xor (call $flags_word) (i32.const ${1 << F.CF})))`);
   h('cld', 0, setF(F.DF, 0));
   h('std', 0, setF(F.DF, 1));
-  h('cli', 0, setF(F.IF, 0));
-  h('sti', 0, setF(F.IF, 1));
+  // `cli` also drops $ifarm: STI; CLI recognizes no interrupt (SDM Vol. 2B
+  // 4-674), and without this the boundary transfer after the CLI would hand
+  // back for nothing. `sti` arms only when it is the IF 0 -> 1 edge AND the
+  // host is holding an IRQ for IF ($irqpend, 0/1); an STI with IF already set
+  // has no shadow and needs no boundary.
+  h('cli', 0, `${setF(F.IF, 0)} (global.set $ifarm (i32.const 0))`);
+  h('sti', 0, `
+  (if (i32.and (global.get $irqpend)
+               (i32.eqz (i32.and (global.get $flags) (i32.const ${1 << F.IF}))))
+    (then (global.set $ifarm (i32.const 1))))
+  ${setF(F.IF, 1)}`);
   h('nop', 0, '');
 
   // SAHF/LAHF move the low byte of FLAGS through AH.
@@ -1413,10 +1553,14 @@ function genExtras() {
       ${GO_LOOKUP('int')})
     (else
       (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
+      (if (call $pg_on) (then (return)))
       (if (i32.eq (global.get $exitwhy) (i32.const ${EXIT_WHY.int}))
         (then (global.set $halt (i32.const 0)) ${GO_LOOKUP('int')}))))
 `);
   h('iret', 0, `
+  (if (call $pg_on) (then
+    (global.set $pg_vector (i32.const -2)) (global.set $pg_return (i32.const 2))
+    (global.set $halt (i32.const 1)) (return)))
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (call $flags_put (i32.or
@@ -1426,8 +1570,11 @@ function genExtras() {
   ;; asks for a trap after this instruction, and an IRQ the host is holding
   ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
   ;; handler) is delivered at the handback the IRET used to take.
+  ;; ...or a timer IRQ held pending since a stop found IF=0 ($irqpend, see
+  ;; dos-loop.js timerPending): IRET has no interrupt shadow, so the boundary
+  ;; right after it is an eligible delivery instant.
   (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
-              (i32.and (global.get $irqwant)
+              (i32.and (i32.or (global.get $irqwant) (global.get $irqpend))
                        (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
                                (i32.const 0))))
     (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
@@ -1448,6 +1595,9 @@ function genExtras() {
   // set is guarded on being in protected mode and not already in V86 -- without
   // that guard the guest's own IRETs would drop it back out on the first one.
   h('iret32', 0, `
+  (if (call $pg_on) (then
+    (global.set $pg_vector (i32.const -2)) (global.set $pg_return (i32.const 4))
+    (global.set $halt (i32.const 1)) (return)))
   (local.set $t0 (call $pop32))
   (local.set $t1 (call $pop32))
   (local.set $t2 (call $pop32))
@@ -1465,8 +1615,11 @@ function genExtras() {
   ;; asks for a trap after this instruction, and an IRQ the host is holding
   ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
   ;; handler) is delivered at the handback the IRET used to take.
+  ;; ...or a timer IRQ held pending since a stop found IF=0 ($irqpend, see
+  ;; dos-loop.js timerPending): IRET has no interrupt shadow, so the boundary
+  ;; right after it is an eligible delivery instant.
   (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
-              (i32.and (global.get $irqwant)
+              (i32.and (i32.or (global.get $irqwant) (global.get $irqpend))
                        (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
                                (i32.const 0))))
     (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
@@ -1585,6 +1738,7 @@ function genStrings() {
   (block $slow
     (local.set $t1 (call ${count}))
     (br_if $slow (i32.eqz (local.get $t1)))
+    (br_if $slow (call $pg_on))
     ${decl(0, '(i32.eqz (global.get $rep_fast))')}
     ${decl(1, bit(F.DF))}
     ${decl(2, '(i32.ge_u (local.get $t1) (i32.const 0x10000000))')}
@@ -1623,6 +1777,7 @@ function genStrings() {
       ${body(w, sz)}
       (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (if (call $pg_on) (then (call $pg_checkpoint)))
       (br $l)))`;
         }
         for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
@@ -1635,6 +1790,7 @@ function genStrings() {
       ${body(w, sz)}
       (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (if (call $pg_on) (then (call $pg_checkpoint)))
       ${isCompare ? `(br_if $done (i32.ne ${bit(F.ZF)} (i32.const ${zWant})))` : ''}
       (br $l)))
 `);
@@ -2355,23 +2511,26 @@ function genArithIO() {
   ${ops(4)}
   (local.set $t0 (call $rd16 (i32.const 1) (local.get $t3)))
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 2))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t1) (local.get $t2))) (then
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
-  (global.set $gip (local.get $t0))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t0))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf', 0, `
+  (if (i32.eqz (call $pm_retf (i32.const 2) (i32.const 0))) (then
   (global.set $gip (call $pop16))
-  (call $sset (i32.const 1) (call $pop16))
-  ${GO_INDIRECT}
+  (call $sset (i32.const 1) (call $pop16))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf_imm', 1, `
   ${ops(1)}
+  (if (i32.eqz (call $pm_retf (i32.const 2) (local.get $t0))) (then
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  ${GO_INDIRECT}
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   // The operand-size-32 far transfers. These are how a DOS extender enters and
   // leaves its 32-bit world, and until they existed the 66-prefixed forms were
@@ -2382,16 +2541,18 @@ function genArithIO() {
   // execute 200M dispatches of whatever it found there. The offset is a full
   // 32 bits; the selector is still 16, occupying the low half of its dword.
   h('retf32', 0, `
+  (if (i32.eqz (call $pm_retf (i32.const 4) (i32.const 0))) (then
   (global.set $gip (call $pop32))
-  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  ${GO_INDIRECT}
+  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('retf_imm32', 1, `
   ${ops(1)}
+  (if (i32.eqz (call $pm_retf (i32.const 4) (local.get $t0))) (then
   (global.set $gip (call $pop32))
   (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  ${GO_INDIRECT}
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
   h('jmp_far32', 3, `
   ${ops(3)}
@@ -2405,11 +2566,13 @@ function genArithIO() {
   ${ops(4)}
   (local.set $t0 (call $rd32 (i32.const 1) (local.get $t3)))
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 4))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t1) (local.get $t2))) (then
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
-  (global.set $gip (local.get $t0))
-  (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $gip (local.get $t0))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then
+    (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
   // The target is a runtime value, so it is looked up in the jump-target cache
   // rather than baked in. A miss hands back exactly as before; a hit keeps a
@@ -2500,11 +2663,12 @@ function genArithIO() {
   (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
     (call $off_add (local.get $t4) (i32.const 2))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t3) (local.get $t2))) (then
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
-  (global.set $gip (local.get $t7))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t7))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
 
   // The operand-size-32 twins: `66 ff /5` and `66 ff /3` read a 48-bit far
@@ -2542,11 +2706,12 @@ function genArithIO() {
   (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
     (call $off_add (local.get $t4) (i32.const 4))))
+  (if (i32.eqz (call $pm_call_gate (local.get $t3) (local.get $t2))) (then
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
-  (global.set $gip (local.get $t7))
-  ${GO_INDIRECT}
+  (global.set $gip (local.get $t7))))
+  (if (i32.eqz (global.get $pm_xfer_stop)) (then ${GO_INDIRECT}))
 `);
 
   // ENTER/LEAVE, the 186's stack-frame pair. Every C compiler of the era emits
@@ -2743,13 +2908,7 @@ function gen386() {
     }
   }
 
-  // SMSW, and reading a control register. This machine has exactly one CR0
-  // value -- real mode, no coprocessor -- and never leaves it, because nothing
-  // WRITES a control register: LMSW, MOV CR,r and LGDT/LIDT stay unimplemented,
-  // so a program that genuinely tries to switch mode is reported as blocked
-  // rather than quietly run in the wrong one. Reading is a different matter:
-  // nine corpus programs open with `smsw ax` / `test al,1` to check they are
-  // not already inside a V86 monitor, and the answer to that is no.
+  // SMSW reads the low word of CR0, including the current PE state.
   h('smsw_r16', 1, `
   ${ops(1)}
   (call $rset16 (local.get $t0) (global.get $cr0))
@@ -2759,23 +2918,28 @@ function gen386() {
   ${EA_SETUP_PRE}
   (call $wr16 (local.get $t5) (local.get $t4) (global.get $cr0))
 `);
-  // MOV r32, CRn. Only CR0 has a value; CR2 (the page-fault address) and CR3
-  // (the page directory) are zero on a machine that has never paged.
+  // CR2 and CR3 are architectural registers even while PG is clear. Keeping
+  // them is a prerequisite for paging, not an implementation of translation.
   h('mov_r_cr', 1, `
   ${ops(1)}
+  (local.set $t1 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
   (call $rset32 (i32.and (local.get $t0) (i32.const 7))
-    (select (global.get $cr0) (i32.const 0)
-      (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))))
+    (select (global.get $cr0)
+      (select (global.get $cr2)
+        (select (global.get $cr3) (i32.const 0)
+          (i32.eq (local.get $t1) (i32.const 3)))
+        (i32.eq (local.get $t1) (i32.const 2)))
+      (i32.eqz (local.get $t1))))
 `);
 
   // The segment limit out of the descriptor whose address is in $t7: twenty
   // bits split across bytes 0-1 and the low nibble of byte 6, scaled by a page
   // when the granularity bit above them is set. The low twelve bits read back
   // as 1s in that case, which is why a 4GB segment reports 0xFFFFFFFF.
-  const GRAN = '(i32.and (i32.load8_u offset=6 (local.get $t7)) (i32.const 0x80))';
+  const GRAN = '(i32.and (call $pg_read (i32.add (local.get $t7) (i32.const 6)) (i32.const 1) (i32.const 0)) (i32.const 0x80))';
   const LSL_LIMIT = `(i32.or
-    (i32.shl (i32.or (i32.load16_u (local.get $t7))
-                     (i32.shl (i32.and (i32.load8_u offset=6 (local.get $t7))
+    (i32.shl (i32.or (call $pg_read (local.get $t7) (i32.const 2) (i32.const 0))
+                     (i32.shl (i32.and (call $pg_read (i32.add (local.get $t7) (i32.const 6)) (i32.const 1) (i32.const 0))
                                        (i32.const 0x0F))
                               (i32.const 16)))
              (select (i32.const 12) (i32.const 0) ${GRAN}))
@@ -2790,8 +2954,8 @@ function gen386() {
   for (const [nm, body] of [
     ['sldt', '(call $rset16 %R% (global.get $ldt))'],
     ['str', '(call $rset16 %R% (global.get $tr))'],
-    ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase %V%))'],
-    ['ltr', '(global.set $tr %V%)'],
+    ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase (global.get $ldt))) (call $pm_cache_ldt (global.get $ldt))'],
+    ['ltr', '(global.set $tr %V%) (call $pm_cache_tr (global.get $tr))'],
     ['verr', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
     ['verw', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
   ]) {
@@ -2831,7 +2995,7 @@ function gen386() {
     // $t7 holds the second descriptor dword for LAR, the whole descriptor
     // address for LSL; $t3 holds the selector.
     const load = nm === 'lar'
-      ? '(local.set $t7 (i32.load offset=4 (local.get $t7)))'
+      ? '(local.set $t7 (call $pg_read (i32.add (local.get $t7) (i32.const 4)) (i32.const 4) (i32.const 0)))'
       : '';
     const body = (src, dst) => `
   (local.set $t3 ${src})
@@ -2871,10 +3035,8 @@ function gen386() {
     (i32.and (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 0xF))))
 `);
 
-  // MOV CRn, r32 -- the mode switch itself. Only CR0 is kept; a write to CR2 or
-  // CR3 is a paging setup this machine has nothing to page with, and is
-  // dropped rather than refused because the extenders that write them do so
-  // unconditionally on their way past.
+  // MOV CRn, r32. Retain CR2 and CR3 through real/protected-mode transitions.
+  // End cached execution on a paging transition or CR3 write.
   //
   // Setting PE does NOT reload any segment register, and that is not an
   // omission: a real 386 keeps running on the descriptors already cached in
@@ -2883,10 +3045,22 @@ function gen386() {
   // descriptors whose bases equal the real-mode segments it was just using, so
   // the instructions between MOV CR0 and the far jump address the same bytes
   // either side of the switch.
-  h('mov_cr_r', 1, `
-  ${ops(1)}
-  (if (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
-    (then (global.set $cr0 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))))
+  h('mov_cr_r', 2, `
+  ${ops(2)}
+  (local.set $t3 (local.get $t1))
+  (local.set $t1 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+  (local.set $t2 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))
+  (local.set $t4 (i32.and (i32.xor (global.get $cr0) (local.get $t2)) (i32.const 0x80000000)))
+  (if (i32.eqz (local.get $t1)) (then (global.set $cr0 (local.get $t2))))
+  (if (i32.eq (local.get $t1) (i32.const 2)) (then (global.set $cr2 (local.get $t2))))
+  (if (i32.eq (local.get $t1) (i32.const 3)) (then (global.set $cr3 (local.get $t2))))
+  (if (i32.or (i32.eq (local.get $t1) (i32.const 3))
+    (i32.and (i32.eqz (local.get $t1)) (i32.ne (local.get $t4) (i32.const 0)))) (then
+    (global.set $gip (local.get $t3))
+    (global.set $pg_epoch (i32.add (global.get $pg_epoch) (i32.const 1)))
+    (global.set $rtop (i32.const 0))
+    (global.set $edgelook (i32.const 0))
+    (call $slice_exit)))
 `);
 
   // LGDT/LIDT. Six bytes: a 16-bit limit then a 32-bit base, of which a
@@ -2900,8 +3074,7 @@ function gen386() {
   ${EA_SETUP_PRE}
   (global.set ${gl} (call $rd16 (local.get $t5) (local.get $t4)))
   (global.set ${gb} (i32.and
-    (call $rd32 (local.get $t5) (i32.and (i32.add (local.get $t4) (i32.const 2))
-                                         (i32.const 0xFFFF)))
+    (call $rd32 (local.get $t5) (call $off_add (local.get $t4) (i32.const 2)))
     (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'})))
 `);
       // The store side. Not a curiosity: SGDT is how a real-mode program asks
@@ -2914,7 +3087,7 @@ function gen386() {
   ${EA_SETUP_PRE}
   (call $wr16 (local.get $t5) (local.get $t4) (global.get ${gl}))
   (call $wr32 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))
+    (call $off_add (local.get $t4) (i32.const 2))
     (i32.or (i32.and (global.get ${gb}) (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'}))
             (i32.const ${w === 32 ? '0' : '0xFF000000'})))
 `);
@@ -3676,7 +3849,12 @@ function analyzeFlags(bodies) {
       const at = close[o] >= 0 ? close[o] : m.index;
       const sure = depthAt[m.index] <= 2 && !bails;
       if (m[1]) {
-        if (m[1] === 'slice_exit' || m[1] === 'jlook_edge') { ev.push({ t: 'X', at }); continue; }
+        // Cached/folded code runs with PG clear. Paged execution uses oneInsn
+        // without flag elimination, and a CR0/CR3 transition ends the slice.
+        // Restart-storage reads must not make a nonpaged memory op observe
+        // otherwise dead flags or diverge from the uop flag-liveness model.
+        if (m[1].startsWith('pg_')) continue;
+        if (m[1] === 'slice_exit' || m[1] === 'jlook_edge' || m[1] === 'jlook_syn') { ev.push({ t: 'X', at }); continue; }
         if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
         if (!bodies.has(m[1])) continue;              // import, or $next
         if (FLAG_KILLERS.test(m[1])) ev.push({ t: sure ? 'CK' : 'C?', n: m[1], at });
@@ -4439,7 +4617,9 @@ function helpers() {
     (then (global.set $d32 (call $segd32 (local.get $v)))))
   (if (i32.eq (local.get $i) (i32.const ${isa.SEG.indexOf('ss')}))
     (then (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)
-      (call $segd32 (local.get $v)))))))\n`;
+      (call $segd32 (local.get $v))))
+      (call $pm_cache_ss (local.get $v))))
+  (call $pm_cache_data (local.get $i) (local.get $v)))\n`;
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -4735,6 +4915,7 @@ function helpers() {
 ;; already in satisfies both, branch-free: identical to the old mask for any
 ;; offset that fits in 16 bits.
 (func $off_add (param $off i32) (param $n i32) (result i32)
+  (if (call $pg_on) (then (return (i32.add (local.get $off) (local.get $n)))))
   (i32.or
     (i32.and (i32.add (i32.and (local.get $off) (i32.const 0xFFFF)) (local.get $n))
              (i32.const 0xFFFF))
@@ -5312,6 +5493,11 @@ ${memAccessors()}
 ;; not.
 (func $fault (param $vec i32) (param $ip i32)
   (local $v i32) (local $g i32)
+  (if (call $pg_on) (then
+    (global.set $pg_vector (local.get $vec))
+    (global.set $pg_return (local.get $ip))
+    (global.set $halt (i32.const 1))
+    (global.set $left (global.get $steps)) (return)))
   (global.set $intno (local.get $vec))
   (local.set $g (call $idtgate (local.get $vec)))
   ;; A trap taken while the CPU is in virtual-8086 mode is not the same
@@ -5481,6 +5667,7 @@ ${memAccessors()}
 ;; because the handler has to be able to decode it -- hence the third operand.
 (func $faultsw (param $vec i32) (param $next i32) (param $ip i32)
   (local $g i32)
+  (if (call $pg_on) (then (call $fault (local.get $vec) (local.get $next)) (return)))
   (if (global.get $vm86)
     (then
       (local.set $g (call $idtgate (local.get $vec)))
@@ -5654,8 +5841,14 @@ ${memAccessors()}
   (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
   (global.set $ip (local.get $a))
   (i32.const 1))
-${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
-  return s;
+${JMP_SYN_BUDGET_TEST ? '' : JLOOK_SYN_FN}${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
+  s += pmTransfer.helpers(isa);
+  s += paging.helpers(isa, true);
+  s += paging.runtime(isa, [...STATE, ...MACHINE_STATE, ...FPU_STATE, 'errc',
+    'fop', 'fa', 'fb', 'fu', 'fr', 'fw', 'fcf'],
+    Array.from({length: 8}, (_, i) => `st${i}`));
+  return paging.systemLoads(s, n => n.startsWith('pm_') ||
+    ['descbase', 'descaddr', 'segd32', 'idtgate', 'v86_to_monitor'].includes(n), isa);
 }
 
 // --- x87 --------------------------------------------------------------------
@@ -5940,7 +6133,13 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook'];
+// irqpend/ifarm: the IF-enable boundary (CONT, `sti`, jmp_ifen). $irqpend is
+// set by the host before each slice, 0/1, while it holds a timer IRQ a stop
+// found IF=0 for; $ifarm is raised by an arming `sti` and cleared by `cli` and
+// by the host. Neither is guest-architectural: they are listed here for the
+// accessors and for carryState, and excluded from guest-state comparisons
+// (trace-jit.js, uop-harness.js NOT_GUEST) the way irqwant is.
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook', 'irqpend', 'ifarm'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
@@ -6041,6 +6240,8 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; encodings are available, no paging. MOV CR0,r and LMSW write it, and setting
 ;; PE is what puts $segbase on the descriptor path.
 (global $cr0 (mut i32) (i32.const 0x0010))
+(global $cr2 (mut i32) (i32.const 0))
+(global $cr3 (mut i32) (i32.const 0))
 ;; EFLAGS.VM, kept out of \$flags on purpose.
 ;;
 ;; Virtual-8086 mode is protected mode -- PE stays set -- with segmentation put
@@ -6126,7 +6327,29 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; Nothing switches tasks, so $tr is storage that STR can read back.
 (global $ldt (mut i32) (i32.const 0))
 (global $ldtb (mut i32) (i32.const 0))
-(global $tr (mut i32) (i32.const 0))`;
+(global $tr (mut i32) (i32.const 0))
+;; Checked protected transfers retain SS/TR metadata at load time. Existing
+;; general instruction protection remains separate; no exception is fabricated.
+(global $pm_es_valid (mut i32) (i32.const 0))
+(global $pm_es_access (mut i32) (i32.const 0))
+(global $pm_ds_valid (mut i32) (i32.const 0))
+(global $pm_ds_access (mut i32) (i32.const 0))
+(global $pm_fs_valid (mut i32) (i32.const 0))
+(global $pm_fs_access (mut i32) (i32.const 0))
+(global $pm_gs_valid (mut i32) (i32.const 0))
+(global $pm_gs_access (mut i32) (i32.const 0))
+(global $pm_ss_valid (mut i32) (i32.const 0))
+(global $pm_ss_limit (mut i32) (i32.const 0))
+(global $pm_ss_access (mut i32) (i32.const 0))
+(global $pm_tr_valid (mut i32) (i32.const 0))
+(global $pm_tr_base (mut i32) (i32.const 0))
+(global $pm_tr_limit (mut i32) (i32.const 0))
+(global $pm_tr_access (mut i32) (i32.const 0))
+(global $pm_ldt_valid (mut i32) (i32.const 0))
+(global $pm_ldt_limit (mut i32) (i32.const 0))
+(global $pm_ldt_access (mut i32) (i32.const 0))
+(global $pm_xfer_stop (mut i32) (i32.const 0))
+(global $pm_xfer_sel (mut i32) (i32.const 0))`;
 
 // The MACHINE's state, as opposed to the guest's.
 //
@@ -6147,8 +6370,18 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 // reads them to find a gate, so an instance swap that left them at zero would
 // take the next interrupt through the real-mode vector table instead of the
 // guest's own IDT -- silently, and only in a protected-mode program.
-const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
-  'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr'];
+const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'cr2', 'cr3', 'vm86',
+  'pg_epoch', 'pg_pending', 'pg_vector', 'pg_return',
+  'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr',
+  // Hidden bases are lowered into REGFILE_SEGB, not separate WASM globals.
+  // Replay of selectors cannot reconstruct a cache after descriptor mutation.
+  'esb', 'csb', 'ssb', 'dsb', 'fsb', 'gsb',
+  'pm_es_valid', 'pm_es_access', 'pm_ds_valid', 'pm_ds_access',
+  'pm_fs_valid', 'pm_fs_access', 'pm_gs_valid', 'pm_gs_access',
+  'pm_ss_valid', 'pm_ss_limit', 'pm_ss_access',
+  'pm_tr_valid', 'pm_tr_base', 'pm_tr_limit', 'pm_tr_access',
+  'pm_ldt_valid', 'pm_ldt_limit', 'pm_ldt_access',
+  'pm_xfer_stop', 'pm_xfer_sel'];
 
 // Emitted into BOTH modules, under names of their own so they cannot collide
 // with the hand-written get_cr0/get_linmask exports that already exist.
@@ -6250,6 +6483,8 @@ ${EXTRA_GLOBALS}
 ;; compiler shares -- see the note there)
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
+(func (export "get_cr2") (result i32) (global.get $cr2))
+(func (export "get_cr3") (result i32) (global.get $cr3))
 (func (export "get_vm86") (result i32) (global.get $vm86))
 ;; The VGA clock's host side: the phase dos-loop writes before every slice,
 ;; the attribute flip-flop the host's out 3C0h reads, and the read count.
@@ -6410,7 +6645,9 @@ function elemNames(opts) {
 }
 function regionFuncs(opts, tail) {
   return extraHandlers(opts)
-    .map(x => `(func $${x.name} ${LOCALS} ${x.locals || ''}\n${x.body}\n${tail})\n`).join('');
+    .map(x => `(func $${x.name} ${LOCALS} ${x.locals || ''}\n
+  (if (call $pg_on) (then (call $slice_exit) (return)))
+${x.body}\n${tail})\n`).join('');
 }
 
 function emitTailcall(opts = {}) {
@@ -6519,6 +6756,8 @@ function emitSwitch() {
 function runExport() {
   return `
 (func (export "run") (param $entry i32) (param $budget i32)
+  (if (i32.and (call $pg_on) (i32.eqz (global.get $pg_authorized)))
+    (then (global.set $halt (i32.const 1)) (return)))
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
   (global.set $slice_budget (local.get $budget))
@@ -6639,6 +6878,10 @@ module.exports = {
   // before emit() lowers it.
   lowerRegs, useBuild,
   EXTRA_GLOBALS,
+  // Fix J's A/B switch (see GO_SYN): true = the old behaviour, a jmp_syn tests
+  // the budget. region-jit.js, uop-ir.js and compile.js read it from here so
+  // every arm agrees with the handler body this process built.
+  JMP_SYN_BUDGET_TEST,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.
   ARITY, prepareTables,

@@ -42,7 +42,8 @@ const OPT = require('./uop-opt');
 const W = require('./uop-wasm');
 const isa = require('./isa');
 const { compileProgram } = require('./compile');
-const { EXIT_WHY } = require('./emit');
+const { EXIT_WHY, ARITY } = require('./emit');
+const { H } = require('./decode');
 const { STUB_SEG, STUB_BYTE } = require('./dos');
 const EXIT_END = EXIT_WHY.end;
 // The ways a fallback may end and still be a CLEAN handback (drive): straight
@@ -135,7 +136,7 @@ class UopOnly {
       builds: 0, fbSites: 0, entries: 0, uopSteps: 0, fbEntries: 0, fbSteps: 0,
       invalidated: 0, flushes: 0, arenaResets: 0, buildNs: 0n, tierUps: 0, tierNs: 0n, tierFails: new Map(), stays: 0, modeStays: 0, calls: 0, ioCuts: 0, farStays: 0, builtStays: 0, lineRetries: 0, progHits: 0,
       // why drive handed the slice back to the session
-      why: { budget: 0, smc: 0, fbExit: 0, mode: 0, unbuilt: 0 },
+      why: { budget: 0, smc: 0, fbExit: 0, mode: 0, unbuilt: 0, ifen: 0 },
       fbExitWhy: new Map(),    // `fallback why>exitwhy` -> handbacks
       fbWhy: new Map(),        // why -> { sites, entries, steps }
       shapes: { loop: 0, line: 0 },
@@ -161,7 +162,10 @@ class UopOnly {
   sample() {}
   resume() { return 0; }
 
-  at(ip, codeBase, mask, d32, ip32) { return this.siteOf(ip, codeBase, mask, d32, ip32).go; }
+  at(ip, codeBase, mask, d32, ip32) {
+    if (this.vm.exports.get_cr0() < 0) return null;
+    return this.siteOf(ip, codeBase, mask, d32, ip32).go;
+  }
 
   siteOf(ip, codeBase, mask, d32, ip32) {
     // Building the two string keys and hashing them cost CONTAGIO 6.7% of its
@@ -244,6 +248,14 @@ class UopOnly {
     for (;;) {
       if (!s.rec && per && left !== budget) ex.set_vga_phase0((ph0 + (budget - left)) % per);
       left = s.enter(vm, left);
+      // THE IF-ENABLE BOUNDARY (emit.js CONT, jmp_ifen). A fallback that ran an
+      // arming STI handed back at the boundary after the STI's follower --
+      // through jmp_ifen (`ifen`) or through the follower's own transfer, whose
+      // exit (`edge`, `ret`) looks clean to FB_ON below. Either way it is the
+      // session's: it may deliver the pending IRQ there, exactly where L1 hands
+      // back. A µop program never runs STI (uop-x86.js does not decode it), so
+      // only a fallback can leave $ifarm up.
+      if (!s.rec && vm.raw('ifarm')) { st.why.ifen++; return left; }
       // A port read that cut the slice (Machine.endSlice) went on running to
       // the program's next budget test, where L1 stops at its next transfer.
       // No read is known to cut; this says so if one ever does.
@@ -258,7 +270,13 @@ class UopOnly {
       // an L1 block. Handing back there rendered the SB a block early: BRW's
       // `pushad; xor; xor; cli; in al,2` read the DMA position one render
       // later than L1 at 24.26M, and 2M dispatches on the frame differed.
-      const mid = s.rec ? this.A.lineExit : (!s.refused && vm.raw('exitwhy') === EXIT_END);
+      // An STI fallback (compile.js IFEN) ends in jmp_ifen rather than `end`.
+      // When nothing was armed it passed, and its lookup of the boundary
+      // missed (`edge` AT the boundary): that too is the middle of an L1
+      // block, since jmp_ifen tests no budget in L1 -- so the same rule.
+      const mid = s.rec ? this.A.lineExit : (!s.refused && (vm.raw('exitwhy') === EXIT_END
+        || (s.ifenTo !== undefined && vm.raw('exitwhy') === EXIT_WHY.edge
+          && (ex.get_gip() >>> 0) === s.ifenTo)));
       if (left <= 0 && !(this.stay && mid && !ex.get_smc() && !(machine && machine.sliceCut >= 0))) {
         st.why.budget++; return left;
       }
@@ -272,7 +290,10 @@ class UopOnly {
       // handler at 7.44M, rendered the DMA transfer 42 dispatches early, and
       // its `in al,2` read the position 3 bytes off at 24.26M.
       const why = ex.get_exitwhy();
-      const iretMiss = !s.rec && why === EXIT_WHY.iret && !(vm.raw('irqwant') && (ex.get_flags() & IF));
+      // "Owed" now includes a timer IRQ held pending for IF ($irqpend), which
+      // the IRET handler hands back for exactly as it does for $irqwant.
+      const iretMiss = !s.rec && why === EXIT_WHY.iret
+        && !((vm.raw('irqwant') || vm.raw('irqpend')) && (ex.get_flags() & IF));
       if (s.rec ? ex.get_smc() : (s.refused || ex.get_smc() || !(FB_ON.has(why) || iretMiss))) {
         st.why[s.rec ? 'smc' : 'fbExit']++;
         if (!s.rec) { const k = `${s.why}>${vm.raw('exitwhy')}`; st.fbExitWhy.set(k, (st.fbExitWhy.get(k) || 0) + 1); }
@@ -280,6 +301,7 @@ class UopOnly {
       }
       // A µop program changes no segment, mode or flag TF: only a fallback can.
       if (!s.rec && (ex.get_flags() & TF)) { st.why.mode++; return left; }
+      if (ex.get_cr0() < 0) { st.why.mode++; return left; }
       // A mode switch (`mov cr0` setting or clearing PE, A20, a V86 entry)
       // goes on at the next instruction under the new mode's key, read the
       // way the session's step() reads it. Handing back instead was not only
@@ -332,6 +354,10 @@ class UopOnly {
       }
       // The session reads $steps; a fallback's refund lives only in `left`.
       ex.set_steps(left);
+      // ...and $exitwhy, which names the exit that ENDED the drive: a clean
+      // handback this loop ran on past must not be read as that exit by the
+      // session (dos-loop.js ifenExit reads `iret`, `edge`, `ret`).
+      vm.set('exitwhy', 0);
       st.stays++;
       s = n;
     }
@@ -572,9 +598,14 @@ class UopOnly {
     const vm = this.vm, cache = this.cache;
     const cs = vm.get('cs');
     const base = cache.arenaEnd;
+    // `ifenShadow`: an STI's fallback runs the STI, its follower and the
+    // boundary transfer after it (compile.js IFEN), as L1's block does -- one
+    // instruction alone would hand back INSIDE the shadow, and the follower
+    // would then run as a µop program with no boundary test behind it.
     const prog = spun || compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: base, maxWords: 1000,
       codeBase: env.codeBase, mask: env.mask, d32: env.d32, ip32: env.ip32, oneInsn: true,
+      ifenShadow: true,
     });
     cache.compiles++;
     const words = Int32Array.from(prog.words);
@@ -593,6 +624,14 @@ class UopOnly {
     // block is a bare `end` the session answers (and bills) itself.
     const refused = !!prog.refusedAtEntry;
     const s = { lk, ip, rec: null, covered, enter: null, refused, why };
+    // The boundary ip of a trailing jmp_ifen (an STI fallback), for drive's
+    // `mid` test. Found by walking the words by arity, so an operand word that
+    // happens to equal the handler index is never mistaken for it.
+    if (!spun) {
+      let at = -1;
+      for (let i = 0; i < words.length; i += 1 + ARITY[words[i]]) at = i;
+      if (at >= 0 && words[at] === H.jmp_ifen) s.ifenTo = words[at + 2] >>> 0;
+    }
     s.enter = (vm2, left) => {
       if (this.scratch !== s) { view.set(words); this.scratch = s; }
       // A oneInsn `call` may leave the shadow return stack pointing into these

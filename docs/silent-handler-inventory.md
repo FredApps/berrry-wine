@@ -724,3 +724,54 @@ global, exactly as GetMessageTime reads $last_msg_time. The behavior lives
 in $handle_GetMessageA / $handle_PeekMessageA, which clear it whenever a
 message is retrieved (every message source here attaches extra info 0).
 Covered by test/test-message-extra-info.js.
+
+### 2026-10-05: shared unsupported VB DirectDraw/Clipper body
+
+Inventory241 to240: remove handle_IVBDirectDraw7_DirectSlot and handle_IVBDirectDrawClipper_DirectSlot; add handle_vb_unsupported_stdcall. Exact normalized before/after lists show no other changed entry. Both interfaces still return E_NOTIMPL and consume their metadata-derived native typelib stack byte count; no success behavior is added. Existing raw fixed-pop DirectDraw unsupported methods were corrected to typelib argument counts in the preceding implementation. Pin240/d464d3604b0b773447515c35b2e427cd3e4a9b89cea8fd68e4d5b5b080583b8c accompanies this source dedup in the same commit, retaining the gate and its commit-boundary audit. Evidence: scratch/new-games-pipeline-20261004/jigssawme/directdraw34-repair-20261005/shared-unsupported/quiet-current-main-delta.json. First duplicate and stale-inventory build failures are preserved.
+
+### 2026-10-06: HeapWalk answers the Win9x ERROR_CALL_NOT_IMPLEMENTED
+
+240 -> 241: handle_HeapWalk replaces its crash_unimplemented body with the
+Windows 95/98 result (FALSE, GetLastError 120). HeapWalk and GetProcessHeaps
+are NT-only; the Win9x KERNEL32 exports both as failing entry points, and
+software tests for exactly that code: MicroQuill SmartHeap's SHW32.DLL DllMain
+(Disciples: Sacred Lands demo) calls GetProcessHeaps then HeapWalk on the
+process heap and selects its Win9x path when GetLastError() is 120. The new
+GetProcessHeaps (api id 4100) delegates to the same body, so it is not counted.
+Same precedent as OpenSCManagerA. Covered by test/test-heapwalk-win9x.js.
+Pin241/abd31896744c7b3ecd3f88552ee0bc23760f7ab9f0f43d922a645f2fddb6bcc2.
+
+### 2026-10-06: acmGetVersion reports MSACM32 4.00.1998
+
+241 -> 242: handle_acmGetVersion (new API, id 4165) is straight-line because
+the version of the Audio Compression Manager is a constant fact of the machine
+being emulated: Windows 98 ships msacm32.dll 4.00.1998, answered as
+0x040007CE (major, minor, build). Descent: FreeSpace's demo asks for it before
+it opens any stream; the ACM behaviour itself (drivers, streams, the PCM-only
+converter) lives in the other acm* handlers. Covered by
+test/test-acm-get-version.js.
+Pin242/e1c4e029d81a700a65690174bb49c78361b1476bc261b7a91a97fad4f8bc8b0f.
+
+### 2026-10-06: IDirect3DDevice7::Load copies the texture
+
+242 -> 241: handle_IDirect3DDevice7_Load returned D3D_OK without copying
+anything and popped 32 bytes for a 6-argument method (this, lpDestTex,
+lpDestPoint, lpSrcTex, lprcSrcRect, dwFlags). The extra 4 bytes shifted the
+caller's ESP, so Deus Ex's D3DDrv restored a garbage EBX after SetTexture and
+asserted in MakeNew ("Assertion failed: Pool"). It now pops 28, copies every
+level of the source mip chain into the destination's through
+$d3dim_texture_load, and fails loudly for the destination-point / source-rect
+form, which needs a sub-rectangle copy nobody has asked for yet.
+Pin241/f8ef783a7756762629ecdc59b8dd352acbd3ad08be8e42d254cb2516b779ab76.
+
+### 2026-10-06: wglGetCurrentContext / wglGetCurrentDC
+
+241 -> 243: two getters, straight-line by nature. Each returns state the GL
+frontend already tracks per guest thread: the HGLRC $gl_current_context holds
+since wglMakeCurrent, and the HDC it was made current on, which
+wglMakeCurrent/wglDeleteContext now keep in $gl_current_dc (both NULL when
+nothing is current). Unreal-engine OpenGlDrv resolves the whole GL 1.1 + WGL
+surface through GetProcAddress and refuses to bind if one name is missing
+(OPENGLDRV-GL11-SURFACE-20261006); the other GL 1.1 names it needs fail fast
+through $handle_gl_unimplemented until something calls them.
+Pin243/cbc5a1e287e085f12a7fcd0c4b4c48aeab5b9c1a9c3b9a62c4efc1afc074aa9c.

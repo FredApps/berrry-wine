@@ -294,30 +294,41 @@
     (memory.copy (local.get $dst) (local.get $entry) (i32.const 24))
     (i32.const 1))
 
-  (func $gdi_gamma_ramp_set (param $hdc i32) (param $src i32) (result i32)
-    (local $guest i32)
-    (if (i32.or (i32.eqz (local.get $src))
-          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
-      (then (return (i32.const 0))))
-    (if (i32.eqz (global.get $gdi_gamma_ramp_guest))
+  ;; The display gamma ramp, one per process: SetDeviceGammaRamp and
+  ;; IDirectDrawGammaControl::SetGammaRamp both change it, and the host applies
+  ;; it when it presents a DirectDraw primary (gammaLut in lib/dib.js). It
+  ;; lives on the guest heap, found through $SHARED_COUNTERS (+24 generation,
+  ;; +28 the ramp's guest address, 0 until one is set) rather than an instance
+  ;; global, so a ramp set on a worker thread is the one the main thread
+  ;; presents with. The generation lets the host rebuild its lookup tables
+  ;; only when the ramp changes.
+  ;; Returns 0 when the ramp's storage cannot be allocated.
+  (func $gamma_ramp_store (param $src i32) (result i32)
+    (local $guest i32) (local $won i32)
+    (local.set $guest (i32.atomic.load offset=28 (global.get $SHARED_COUNTERS)))
+    (if (i32.eqz (local.get $guest))
       (then
         (local.set $guest (call $heap_alloc (i32.const 1536)))
         (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-        (global.set $gdi_gamma_ramp_guest (local.get $guest))))
-    (memory.copy (call $g2w (global.get $gdi_gamma_ramp_guest))
-      (local.get $src) (i32.const 1536))
+        ;; Two threads setting a first ramp at once: keep whichever landed.
+        (local.set $won (i32.atomic.rmw.cmpxchg offset=28 (global.get $SHARED_COUNTERS)
+          (i32.const 0) (local.get $guest)))
+        (if (local.get $won)
+          (then
+            (call $heap_free (local.get $guest))
+            (local.set $guest (local.get $won))))))
+    (memory.copy (call $g2w (local.get $guest)) (local.get $src) (i32.const 1536))
+    (drop (i32.atomic.rmw.add offset=24 (global.get $SHARED_COUNTERS) (i32.const 1)))
     (i32.const 1))
 
-  (func $gdi_gamma_ramp_get (param $hdc i32) (param $dst i32) (result i32)
-    (local $channel i32) (local $index i32)
-    (if (i32.or (i32.eqz (local.get $dst))
-          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
-      (then (return (i32.const 0))))
-    (if (global.get $gdi_gamma_ramp_guest)
+  (func $gamma_ramp_load (param $dst i32)
+    (local $channel i32) (local $index i32) (local $guest i32)
+    (local.set $guest (i32.atomic.load offset=28 (global.get $SHARED_COUNTERS)))
+    (if (local.get $guest)
       (then
-        (memory.copy (local.get $dst) (call $g2w (global.get $gdi_gamma_ramp_guest))
-          (i32.const 1536))
-        (return (i32.const 1))))
+        (memory.copy (local.get $dst) (call $g2w (local.get $guest)) (i32.const 1536))
+        (return)))
+    ;; Never set: the identity ramp, value * 257 per entry.
     (block $channels_done (loop $channels
       (br_if $channels_done (i32.ge_u (local.get $channel) (i32.const 3)))
       (local.set $index (i32.const 0))
@@ -330,7 +341,29 @@
         (local.set $index (i32.add (local.get $index) (i32.const 1)))
         (br $entries)))
       (local.set $channel (i32.add (local.get $channel) (i32.const 1)))
-      (br $channels)))
+      (br $channels))))
+
+  ;; For the host's presenter: the ramp's address once one was set, else 0
+  ;; (identity, nothing to apply), and its generation.
+  (func (export "gamma_ramp_wa") (result i32)
+    (local $guest i32)
+    (local.set $guest (i32.atomic.load offset=28 (global.get $SHARED_COUNTERS)))
+    (if (result i32) (local.get $guest)
+      (then (call $g2w (local.get $guest))) (else (i32.const 0))))
+  (func (export "gamma_ramp_gen") (result i32)
+    (i32.atomic.load offset=24 (global.get $SHARED_COUNTERS)))
+
+  (func $gdi_gamma_ramp_set (param $hdc i32) (param $src i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $src))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (call $gamma_ramp_store (local.get $src)))
+
+  (func $gdi_gamma_ramp_get (param $hdc i32) (param $dst i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $dst))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (call $gamma_ramp_load (local.get $dst))
     (i32.const 1))
 
   (func $gdi_pixel_format_write (param $dst i32) (param $bytes i32)
@@ -381,9 +414,16 @@
     (if (i32.or (i32.ne (local.get $format) (i32.const 1))
           (i32.eqz (call $gdi_pixel_format_choose (local.get $hdc) (local.get $pfd))))
       (then (return (i32.const 0))))
+    ;; A window takes one pixel format for life, but setting the format it
+    ;; already has succeeds (Wine: only a different format is refused).
+    ;; Warcraft III sets format 1, creates and deletes a probe context, then
+    ;; sets format 1 again on the same window and creates its real context
+    ;; only if that returns TRUE; refusing it left the game with no GL
+    ;; context and not one draw. Format 1 is the only one we describe, so an
+    ;; already-set DC holds exactly the format being asked for.
     (if (i32.ne (call $gdi_dc_meta_get (local.get $hdc) (i32.const 16)
           (i32.const 0)) (i32.const 0))
-      (then (return (i32.const 0))))
+      (then (return (i32.const 1))))
     (drop (call $gdi_dc_meta_set (local.get $hdc) (i32.const 16)
       (i32.const 1) (i32.const 0)))
     (i32.const 1))

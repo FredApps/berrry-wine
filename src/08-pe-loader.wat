@@ -39,6 +39,9 @@
 
     ;; Store SizeOfImage for DLL loader
     (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
+    ;; SizeOfStackReserve (optional header +72) sizes every thread stack the
+    ;; guest does not size itself; lib/thread-manager.js reads it.
+    (global.set $exe_stack_reserve (i32.load (i32.add (local.get $pe_off) (i32.const 96))))
     ;; Set heap to be above the image. Publishes to HEAP_SHARED so guest threads,
     ;; which are separate instances and get their own copy of every global, start
     ;; from the same process heap instead of a private replica of this cursor.
@@ -458,6 +461,11 @@
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA002E))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Reinitialize the DLGPROC epilog for this PE's thunk arena. Worker
+    ;; instances restore the same address through sync_thunk_state.
+    (global.set $dialog_proc_ret_thunk
+      (call $com_cont_thunk (i32.const 0xCACA003C)))
 
     ;; SetFocus WM_SETFOCUS return continuation (marker 0xCACA002A).
     (global.set $setfocus_ret_thunk (i32.add

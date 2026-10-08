@@ -69,17 +69,54 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Jardinains! v1.2 | [jardinains.md](jardinains.md) |
 | JigSawedME 1.3 (VB6; version-resource byte counts) | [jigsawedme.md](jigsawedme.md) |
 | Moorhuhn 1, 2, Winter-Edition, 3, Tennis and CD extras | [moorhuhn.md](moorhuhn.md) |
+| Myth: The Fallen Lords (demo + retail ISO) | [myth-tfl.md](myth-tfl.md) |
 | NetHack 3.4.3 for Windows | [nethack-win32.md](nethack-win32.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | Little Fighter 2 v1.9 | [little-fighter-2.md](little-fighter-2.md) |
 | War Wind (USA) and War Wind II (Europe) CD installs | [war-wind.md](war-wind.md) |
 | Over 1000 Games for Windows (Nodtronics CD) | [over1000games-shareware.md](over1000games-shareware.md) |
 | Pawn 3 | [pawn.md](pawn.md) |
+| Plus! 98 DirectAnimation theme savers (CORBIS, FASHION, HORROR, WOTRAVEL) | [plus98-directanimation-savers.md](plus98-directanimation-savers.md) |
 | Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |
+| Tomb Raider II demo (Venice) | [tomb-raider-2-demo.md](tomb-raider-2-demo.md) |
+| Tomb Raider III demo (India/Jungle) | [tomb-raider-3-demo.md](tomb-raider-3-demo.md) |
 | Total Annihilation demo | [total-annihilation.md](total-annihilation.md) |
 | The Elder Scrolls: Arena (GOG) | [elder-scrolls-arena-gog.md](elder-scrolls-arena-gog.md) |
 | Ultima IV: Quest of the Avatar (GOG) | [ultima4-gog.md](ultima4-gog.md) |
 | Quake II (demo) | [quake2-demo.md](quake2-demo.md) |
+| Command & Conquer: Red Alert (Win95 demo) | [red-alert-95-demo.md](red-alert-95-demo.md) |
+| Die by the Sword (demo) | [die-by-the-sword-demo.md](die-by-the-sword-demo.md) |
+| Dark Colony (magazine demo) | [dark-colony-demo.md](dark-colony-demo.md) |
+| Daytona USA Deluxe (Win95 demo) | [daytona-usa-deluxe-demo.md](daytona-usa-deluxe-demo.md) |
+| Blood II: The Chosen (demo) | [blood2-demo.md](blood2-demo.md) |
+| Sid Meier's Pirates! (2004) | [pirates-2004.md](pirates-2004.md) |
+| Disciples: Sacred Lands (demo) | [disciples-demo.md](disciples-demo.md) |
+| Commandos: Behind Enemy Lines (demo) | [commandos-demo.md](commandos-demo.md) |
+| Age of Wonders (beta demo) | [age-of-wonders-demo.md](age-of-wonders-demo.md) |
+| Sid Meier's Alpha Centauri (demo) | [alpha-centauri-demo.md](alpha-centauri-demo.md) |
+| Betrayal in Antara (demo, parked) | [betrayal-in-antara-demo.md](betrayal-in-antara-demo.md) |
+| Comanche Gold (demo, parked) | [comanche-gold-demo.md](comanche-gold-demo.md) |
+| Croc 2 (demo, parked) | [croc2-demo.md](croc2-demo.md) |
+| Descent: FreeSpace (demo) | [freespace-demo.md](freespace-demo.md) |
+| Dark Earth (demo) | [dark-earth-demo.md](dark-earth-demo.md) |
+| Asghan (demo, parked) | [asghan-demo.md](asghan-demo.md) |
+| Daikatana (demo, parked) | [daikatana-demo.md](daikatana-demo.md) |
+| Crusaders of Might and Magic (demo, parked) | [crusaders-mm-demo.md](crusaders-mm-demo.md) |
+| Atlantis: The Lost Tales (demo) | [atlantis-demo.md](atlantis-demo.md) |
+| Dark Reign (demo) | [dark-reign-demo.md](dark-reign-demo.md) |
+| Descent 3 (demo) | [descent3-demo.md](descent3-demo.md) |
+| Anno 1602 (demo) | [anno1602-demo.md](anno1602-demo.md) |
+| Drakan: Order of the Flame (demo) | [drakan-demo.md](drakan-demo.md) |
+| Braveheart (demo) | [braveheart-demo.md](braveheart-demo.md) |
+| Anachronox (demo) | [anachronox-demo.md](anachronox-demo.md) |
+| Die Hard: Nakatomi Plaza (demo, in progress) | [diehard-nakatomi-demo.md](diehard-nakatomi-demo.md) |
+| Driver (demo) | [driver-demo.md](driver-demo.md) |
+| Colin McRae Rally 2.0 (demo) | [cmr2-demo.md](cmr2-demo.md) |
+| Populous: The Beginning (demo) | [populous-the-beginning-demo.md](populous-the-beginning-demo.md) |
+| Colin McRae Rally (demo) | [colin-mcrae-rally-demo.md](colin-mcrae-rally-demo.md) |
+| Aliens versus Predator (Alien demo) | [avp-alien-demo.md](avp-alien-demo.md) |
+| Aliens versus Predator (Marine demo) | [avp-marine-demo.md](avp-marine-demo.md) |
+| Carmageddon II (demo) | [carmageddon2-demo.md](carmageddon2-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | ScummVM 0.8 — Flight of the Amazon Queen | [scummvm-fotaq.md](scummvm-fotaq.md) |
 | SimCity 2000 Win95 Demo | [simcity-2000-demo.md](simcity-2000-demo.md) |
@@ -87,3 +124,4 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Snood 2.2W | [snood.md](snood.md) |
 | Worms 2 October demo | [worms2-demo.md](worms2-demo.md) |
 | Warcraft III: Reign of Chaos demo | [warcraft3-demo.md](warcraft3-demo.md) |
+| Windows Installer 2.0 for Win9x (instmsi.exe) | [windows-installer-2.0.md](windows-installer-2.0.md) |

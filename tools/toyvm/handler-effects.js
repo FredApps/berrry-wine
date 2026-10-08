@@ -62,8 +62,10 @@ const KIND = [
   [/^ea(32)?$/, 'address'],
   // The block transfer's own budget-and-self-patch test. Every branch ends in
   // one; it leaves the slice, it does not leave the analysis. $jlook_edge is
-  // the same edge resolved through the jump table instead of handed back.
-  [/^(slice_exit|jlook_edge)$/, 'transfer'],
+  // the same edge resolved through the jump table instead of handed back, and
+  // $jlook_syn (emit.js GO_SYN, fix J) is that for a jmp_syn, minus the
+  // budget test.
+  [/^(slice_exit|jlook_edge|jlook_syn)$/, 'transfer'],
   // CX by another name, in `loop` and the string ops' REP counters.
   [/^(cx16|ecx32)$/, 'countRead'],
   [/^push(16|32)$/, 'stackWrite'],
@@ -89,6 +91,9 @@ const KIND = [
   // `memory.fill` / a store loop, which this table does not see either way; the
   // byte loop beside it uses `$rd`/`$wr` and is what puts the mem effects in.
   [/^(rep_decl|rep_span_ok|code_clear)$/, 'bookkeeping'],
+  // Paging checkpoints only touch private restart storage. Optimized handlers
+  // are entered with PG clear and cannot contain a control-register transition.
+  [/^(pg_on|pg_checkpoint)$/, 'bookkeeping'],
   // Pure arithmetic helpers: the shift/rotate kernels and the offset adder.
   // They compute a value and touch nothing but the flag record, so the store
   // that consumes them is already counted at the handler's own `$rset`.

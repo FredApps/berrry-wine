@@ -35,7 +35,8 @@ const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
       [0, 0],
       [16, 0],
       [0, 16]
-    ]
+    ],
+    dev = device
   ) {
     const bytes = new Uint8Array(436),
       s = new Uint32Array(bytes.buffer, 0, 64),
@@ -71,7 +72,7 @@ const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
           1
         ])
         .forEach((x, j) => v.setFloat32(256 + i * 60 + j * 4, x, true));
-    device.submit(5, bytes);
+    dev.submit(5, bytes);
     return bytes;
   }
   const read = (x = 3, y = 3) =>
@@ -298,8 +299,27 @@ const packet = (values) => new Uint8Array(new Uint32Array(values).buffer);
     const rgbaRead = () => { const [b, g, r, a] = read(); return [r, g, b, a]; };
     assert.deepStrictEqual(glideTwoTMU(device, rgbaRead, 16), glideTwoTMU.expected,
       'native software independent TMUs, liveness and chroma');
+    // A single-buffered window (Myth TFL opens with nColBuffers=1): front and
+    // back are one surface, so a swap presents what was drawn and nothing flips.
+    // Its fresh TMU RAM was never downloaded; a Voodoo samples it anyway (Myth
+    // draws from 0x0 before downloading there), and zero RGB565 is black.
+    const single = new Device({ canvas, getExports: () => e, getMemory: () => memory.buffer });
+    try {
+      single.submit(1, packet([1, 16, 16, 0, 0, 1]));
+      assert.strictEqual(single.target(0).id, single.target(1).id, 'one color buffer backs front and back');
+      single.submit(3, packet([0x0000ff, 255, 65535]));
+      draw([255, 255, 255], 1000, { ...textured, 32: 0x100, 33: 8, 34: 8, 35: 3, 36: 10 }, 1, undefined, single);
+      const px = () => Array.from(single.native.readColor(single.target(0)).pixels.slice((3 * 16 + 3) * 4, (3 * 16 + 3) * 4 + 4));
+      assert.deepStrictEqual(px(), [0, 0, 0, 255], 'never-downloaded RGB565 texel samples zeroed TMU RAM');
+      single.submit(4, new Uint8Array());
+      assert.deepStrictEqual(px(), [0, 0, 0, 255], 'swap keeps the drawn surface displayed');
+      assert.throws(() => draw([255, 255, 255], 1000, { ...textured, 32: 0x3f0000, 33: 0, 34: 0, 35: 3, 36: 10 }, 1, undefined, single),
+        /exceeds|texture source/, 'a texture past TMU RAM still fails');
+    } finally {
+      single.destroy();
+    }
     console.log(
-      'PASS Glide WAT software color, Z/W depth, table fog, palette, chroma, line/point, swap and LFB'
+      'PASS Glide WAT software color, Z/W depth, table fog, palette, chroma, line/point, swap, LFB, single buffer and raw TMU RAM'
     );
   } finally {
     device.destroy();

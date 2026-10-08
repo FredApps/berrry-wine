@@ -158,8 +158,8 @@ pendingWaitMemory[pendingWaitHandlesWA >>> 2] = pendingWaitEvent;
 pendingWaitMemory[(pendingWaitHandlesWA >>> 2) + 1] = pendingWaitHandle;
 assert.strictEqual(
   pendingWaitTm.waitSingle(pendingWaitHandle, 0),
-  0xFFFF,
-  'a thread handle remains unsignaled while its worker instance is pending'
+  0x102,
+  'a zero-timeout poll reports WAIT_TIMEOUT while its worker instance is pending'
 );
 assert.strictEqual(
   pendingWaitTm.waitMultiple(2, pendingWaitHandlesWA, false, 0),
@@ -421,6 +421,28 @@ mainSleepNow = 110;
 assert.strictEqual(mainSleepTm.checkMainYield(), false,
   'main-thread Sleep resumes when the full timeout has elapsed');
 assert.strictEqual(mainSleepTm._mainSleepUntil, 0);
+
+// The CLI re-runs main between cooperative thread slices and asks
+// isMainSleeping() first. A Sleep main made earlier in the same batch has not
+// been through checkMainYield yet, so noteMainSleep() must record it on its
+// own; otherwise Red Alert's Sleep(1000) after starting its timer thread
+// returned on the next slice and the game reported a timer error.
+let midBatchNow = 500, midBatchPending = 1;
+const midBatchTm = makeThreadManager({ now: () => midBatchNow });
+midBatchTm.mainInstance.exports = {
+  get_sleep_yielded: () => { const v = midBatchPending; midBatchPending = 0; return v; },
+  get_sleep_timeout: () => 1000,
+  get_yield_reason: () => 0,
+};
+assert.strictEqual(midBatchTm.isMainSleeping(), false, 'no deadline before the flag is read');
+midBatchTm.noteMainSleep();
+assert.strictEqual(midBatchTm.isMainSleeping(), true,
+  'a mid-batch Sleep parks main before the end-of-batch checkMainYield');
+assert.strictEqual(midBatchTm._mainSleepUntil, 1500);
+midBatchTm.noteMainSleep();
+assert.strictEqual(midBatchTm._mainSleepUntil, 1500, 'a consumed flag leaves the deadline alone');
+midBatchNow = 1500;
+assert.strictEqual(midBatchTm.checkMainYield(), false, 'the same deadline still expires normally');
 
 let waitClock = 100, wallClock = 9000, splitSleepPending = 1;
 const splitClockTm = makeThreadManager({ now: () => wallClock, waitNow: () => waitClock });
@@ -718,6 +740,20 @@ assert.strictEqual(
   'finite waits should retain normal cooperative scheduler semantics'
 );
 assert.strictEqual(finiteRuns, 0, 'finite waits should not synchronously pump workers');
+
+// Worker backend: the other threads already run on their own host threads,
+// so a nested INFINITE wait has nothing to pump inline and must answer as the
+// ordinary wait does. run.js --threads used to reach the cooperative-only
+// runSlice() here and throw (Diablo's Storm loader waits inside WM_INITDIALOG).
+const workerBackendNestedTm = makeThreadManager({ workerBackend: {} });
+let workerBackendNestedRuns = 0;
+workerBackendNestedTm.threads.set(0xe1015, makeRunnableThread(1, () => { workerBackendNestedRuns++; }));
+assert.strictEqual(workerBackendNestedTm.waitSingleCooperative(0xe1015, 0xFFFFFFFF), 0xFFFF,
+  'worker backend: a nested single wait keeps the ordinary pending answer');
+new DataView(workerBackendNestedTm.memory.buffer).setUint32(0x200, 0xe1015, true);
+assert.strictEqual(workerBackendNestedTm.waitMultipleCooperative(1, 0x200, 0, 0xFFFFFFFF), 0xFFFF,
+  'worker backend: a nested multiple wait keeps the ordinary pending answer');
+assert.strictEqual(workerBackendNestedRuns, 0, 'worker backend: nothing is run inline');
 
 // The browser's isolated-Worker main thread uses resolveMainWorkerWait rather
 // than checkMainYield. Keep a short guest-clock timeout from winning after only

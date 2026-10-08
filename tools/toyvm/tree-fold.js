@@ -1409,6 +1409,7 @@ class TreeFolder {
   // decoded normally, so the code bitmap already covers it).
   async install() {
     const vm = this.vm;
+    if (vm.exports.get_cr0() < 0) return;
     const old = vm.exports;
     const t0 = now();
     const next = await makeVm(vm.variant, {

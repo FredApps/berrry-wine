@@ -90,7 +90,20 @@
     (global.set $api_log_on (i32.ne (local.get $on) (i32.const 0))))
   (func (export "get_api_calls") (result i32) (global.get $api_calls))
 
+  ;; Depth of Win32 handler execution. $g2w_miss uses it to tell a guest
+  ;; instruction's access from a handler translating a NULL pointer argument
+  ;; it was handed (GetPrivateProfileStringA(NULL, ...)): only the former may
+  ;; take --fault-null=page0's access violation. $run saves and clears it, so
+  ;; guest code run from inside a handler (a COM callback's nested run()) is
+  ;; guest code again.
+  (global $api_handler_depth (mut i32) (i32.const 0))
   (func $win32_dispatch (param $thunk_idx i32)
+    (global.set $api_handler_depth (i32.add (global.get $api_handler_depth) (i32.const 1)))
+    (call $win32_dispatch_inner (local.get $thunk_idx))
+    (global.set $api_handler_depth (i32.sub (global.get $api_handler_depth) (i32.const 1))))
+
+  (func $win32_dispatch_inner (param $thunk_idx i32)
+    (local $esp i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32) (local $ending_dlg i32)
@@ -117,6 +130,10 @@
     ;; wake, so a park costs exactly one tick, same as any other call.
     (global.set $spin_dispatch_seq
       (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    ;; Any call after an alertable sleep or wait parked means that wait is over
+    ;; (09a7d, cross-thread user APCs); the Ex handlers set these again.
+    (global.set $apc_alert_sleep (i32.const 0))
+    (global.set $wait_alertable (i32.const 0))
 
     ;; Worker threads instantiate a fresh module over the process's shared
     ;; memory. Restore per-instance COM vtable globals before any imported API
@@ -184,6 +201,25 @@
 
     ;; ── Continuation thunks (CACA markers) ──────────────────────
 
+    ;; DLGPROC returned: ESP points at this invocation's retained DefDlgProc
+    ;; frame (return address + four arguments), including contracted
+    ;; CallWindowProc frames. Callback BOOL is in EAX, not shared state.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA003C))
+      (then
+        (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+        (i32.store offset=0 (global.get $reg_base)
+          (call $dialog_proc_result
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 4))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 8))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 12))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 16))))
+            (i32.load offset=0 (global.get $reg_base))))
+        (global.set $eip (i32.load (call $g2w (local.get $esp))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (local.get $esp) (i32.const 20)))
+        (global.set $handler_set_eip (i32.const 1))
+        (return)))
+
     ;; Catch-return thunk — SEH catch handler returned
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0000))
       (then (global.set $eip (i32.load offset=0 (global.get $reg_base))) (return)))
@@ -192,10 +228,25 @@
     ;; clean the handler's cdecl arguments and invoke the next registration.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000E))
       (then
+        ;; This dispatch's state, from its own frame: the handler's record and
+        ;; frame arguments, and the node's saved head and resume point. A
+        ;; nested raise inside the handler overwrote the globals; Unreal
+        ;; Tournament's `throw;` from an unguard catch block left the outer
+        ;; walk holding the rethrow's null-ThrowInfo record, so every outer
+        ;; frame declined it and the int went unhandled.
+        (global.set $delphi_exception_record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+        (global.set $delphi_seh_rec
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+        (global.set $delphi_seh_head_before
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+        (global.set $delphi_resume_eip
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+        (global.set $delphi_resume_esp
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         ;; Then the dispatcher node $dispatch_delphi_exception_handler linked.
         (call $seh_pop_dispatch_node (i32.load offset=16 (global.get $reg_base)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
         (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 1))
           (then
             (call $delphi_seh_continue_search)
@@ -1344,13 +1395,9 @@
         ;; ESP; restore the USER caller and the successful Get/PeekMessage
         ;; result. (Hook suppression on nonzero return is not modeled yet.)
         (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x314B484B))
-          (then
-            (call $hook_dispatch_leave
-              (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
-            (global.set $eip (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
-            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
-            (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-            (return)))
+          (then (call $keyboard_hook_finish) (return)))
+        (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x314B4D47))
+          (then (call $getmessage_hook_continue) (return)))
         ;; TranslateAccelerator's WM_COMMAND returned: the accelerator was
         ;; translated, so the API reports TRUE whatever the wndproc said.
         (if (i32.eq (call $gl32 (i32.load offset=16 (global.get $reg_base))) (i32.const 0x43434154))
@@ -1522,6 +1569,22 @@
         ;; This direct handler deliberately completes its own stdcall frame,
         ;; so resume at the return address instead of relying on thunk auto-pop.
         (global.set $eip (call $gl32 (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+        (return)))
+
+    ;; _EH_prolog's job is to build the caller's frame: it leaves EBP pointing
+    ;; at the slot where it saved the old EBP. Restoring EBP here undid that, so
+    ;; every MSVC function that opens with it ran on its caller's frame and its
+    ;; `leave; ret` returned through garbage (LithTech's lithtech.exe returned
+    ;; into NULL at startup). The other nonvolatiles are still restored.
+    (if (i32.eq (local.get $api_id) (global.get $API_ID__EH_prolog))
+      (then
+        (call $handle__EH_prolog
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (call $restore_win32_nonvolatile
+          (local.get $saved_ebx) (local.get $saved_esi)
+          (local.get $saved_edi) (i32.load offset=20 (global.get $reg_base)))
+        (if (global.get $api_log_on) (then (call $host_log_api_exit)))
         (return)))
 
     ;; Delegate to generated br_table

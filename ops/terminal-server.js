@@ -7,7 +7,7 @@ const { promisify } = require('node:util');
 const exec = promisify(execFile);
 const {parseApproval,approvalIdentity}=require('./approval-prompt');
 const {chatReady,hasCodexChild,chatSubmitKey}=require('./telegram-guard');
-const {workReady,workSubmitKey}=require('./work-guard');
+const {workReady,workSubmitKey,claudeChatReady,claudeChatSubmitKey,plainScreen}=require('./work-guard');
 
 function createTerminalBridge(server, options = {}) {
   const root = options.root || path.resolve(__dirname, '..');
@@ -22,8 +22,8 @@ function createTerminalBridge(server, options = {}) {
   const signature=value=>crypto.createHash('sha256').update(value).digest('hex');
   async function capture(target) {
     if(!await exists(target))throw Error('Registered pane changed or unavailable');
-    const {stdout}=await exec(tmux,[...tmuxArgs,'capture-pane','-p','-J','-t',target.pane],{timeout:2000,maxBuffer:131072});
-    return stdout;
+    const {stdout}=await exec(tmux,[...tmuxArgs,'capture-pane','-p','-e','-J','-t',target.pane],{timeout:2000,maxBuffer:524288});
+    return plainScreen(stdout);
   }
   async function approvals() {
     const targets=await mappings(),items=[],warnings=[];
@@ -103,16 +103,18 @@ function createTerminalBridge(server, options = {}) {
     decisions.add(target.id);
     try {
       const processes=await exec('ps',['-ax','-o','pid=,ppid=,comm='],{timeout:2000,maxBuffer:2*1024*1024});
-      if(provider(target)==='codex' ? !hasCodexChild(processes.stdout,target.panePid) : !work || provider(target)!=='claude' || !processes.stdout.split('\n').some(l=>new RegExp('^\\s*'+target.panePid+'\\s+\\d+\\s+(?:.*/)?claude\\s*$').test(l)))return fail(409,'Registered pane is not running its agent');
+      if(provider(target)==='codex' ? !hasCodexChild(processes.stdout,target.panePid) : provider(target)!=='claude' || !processes.stdout.split('\n').some(l=>new RegExp('^\\s*'+target.panePid+'\\s+\\d+\\s+(?:.*/)?claude\\s*$').test(l)))return fail(409,'Registered pane is not running its agent');
       if(JSON.stringify((await mappings()).find(t=>t.id===target.id))!==JSON.stringify(target))return fail(409,'Orchestrator registration changed');
       const initial=await capture(target);
-      if(work ? !workReady(initial,provider(target)) || signature(initial)!==input.screenHash : !chatReady(initial))return fail(409,'Agent is busy, changed, or has a prompt/draft open');
+      // A Claude orchestrator uses the Claude screen guards for Telegram chat too.
+      const claudeChat=!work && provider(target)==='claude';
+      if(work ? !workReady(initial,provider(target)) || signature(initial)!==input.screenHash : claudeChat ? !claudeChatReady(initial) : !chatReady(initial))return fail(409,claudeChat?'Orchestrator has a prompt or draft open.':'Agent is busy, changed, or has a prompt/draft open');
       // One literal line, with a fixed prefix: never a slash command or terminal control sequence.
       const message=(work?'[Work watchdog] ':'[Telegram] ')+input.message.replace(/\s+/g,' ').trim();
       await exec(tmux,[...tmuxArgs,'send-keys','-l','-t',target.pane,'--',message],{timeout:2000,maxBuffer:65536});
       // Let the TUI finish processing pasted text before choosing its submit key.
       await new Promise(resolve=>setTimeout(resolve,300));
-      const submitted=screen=>work?workSubmitKey(screen,message,provider(target)):chatSubmitKey(screen,message);
+      const submitted=screen=>work?workSubmitKey(screen,message,provider(target)):claudeChat?claudeChatSubmitKey(screen,message):chatSubmitKey(screen,message);
       const key=submitted(await capture(target));
       if(!key)return fail(409,'Message entered but not submitted. Inspect the terminal before resending');
       await exec(tmux,[...tmuxArgs,'send-keys','-t',target.pane,key],{timeout:2000,maxBuffer:65536});

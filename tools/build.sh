@@ -3,6 +3,8 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+node tools/check-claude-size.js
+
 mkdir -p build
 
 # The shipped wasm IS src/main.watx's (include ...) closure, so an include that

@@ -48,7 +48,9 @@ const manifestChecks = [
 const inputSpec = [
   // Full EULA Accept, then the 800x600 DirectDraw menu through the renderer's
   // 640x480 exclusive transform.
-  '10:click:104:415',
+  // The EULA dialog is centred on the screen; Accept sits at about
+  // (126-201, 421-444).
+  '10:click:161:433',
   '120:click:290:25',                 // Single Player
   '145:click:335:240',                // player-name input child
   '150:keypress:67', '152:keypress:111', '154:keypress:100',

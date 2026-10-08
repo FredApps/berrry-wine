@@ -1168,3 +1168,26 @@ Next, compare the affected URL, build, browser/device and onset route with
 this local identity, then capture output audio if the complaint persists.
 No guest state, engine code or pacing was changed, and no gameplay, FPS or
 release-readiness claim follows from this menu observation.
+
+## Menu audio (2026-10-06, claude:65967384)
+
+The menu theme is `data\global\music\common\options.wav` (d2music.mpq), first in
+d2sound's music table at `0x1000f668`. The playlist (`#10033`, `0x10004640`,
+driven by d2sound's thread T3 at `0x100027f0`) opens it via Fog and hands it to
+**Storm's DDA streaming**: `SFileDdaBeginEx` (Storm `#255`, called through
+`0x1000511a`). Storm creates the 256 KB 22 kHz stereo buffer itself (flags 0xe0)
+on the IDirectSound d2sound gave `SFileDdaInitialize` (`#260`), and its own
+thread T2 (start `storm+0x6ffc59d0`) Locks/fills it (Lock site `0x6ffc6dc1`) and
+Plays it once (`0x6ffc6e89`). So the music never shows as a d2sound
+Lock/Play, and a worker's COM calls are not named in `--trace-api`: count the
+Storm sites with `--count=storm+0x6ffc6dc4,storm+0x6ffc6e8c` instead.
+
+- d2sound keeps 3D sound only when `DSCAPS.dwMaxHw3DAllBuffers >= 16` (check at
+  `0x1000189b`) and otherwise refuses every sound flagged 3D (`#10007`,
+  `0x100032a0`). We used to report 0 (and wrote the max rate into +56); fixed in
+  1b4d12a1.
+- On the CLI's 200 ms/batch clock Storm's decoder is starved: the theme starts
+  ~760 guest-s after batch 2500. Record CLI audio with `--video-fps=5` (one video
+  second = one guest second) or the mux's `-shortest` cuts the audio away.
+- Browser (record-probe, 180 s): continuous music over the live menu, no stuck
+  loop (`scratch/runs/20261006T1300Z-diablo2_glide_demo-w4-browser-audio`).

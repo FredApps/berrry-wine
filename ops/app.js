@@ -2,7 +2,7 @@
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-let state, view = location.hash.slice(1) || 'overview', filter = 'all', query = '', loading = false;
+let state, view = location.hash.slice(1) || 'home', filter = 'all', query = '', loading = false;
 let analyticsData=null,analyticsPending=false,analyticsError='',analyticsDay='';
 async function loadAnalytics() {
   if(analyticsPending || analyticsData && Date.now()-Date.parse(analyticsData.generatedAt)<60000)return;
@@ -50,6 +50,8 @@ let corpusGroup='all';
 let corpusCategory='all';
 let corpusRelease='all';
 let corpusLaunch='all';
+let corpusQuery='';
+let corpusType='all';
 let queueBriefingOpen=false;
 const taskState = status => taskStates.find(s => s[0] === status) || taskStates.at(-1);
 const sortedTasks = tasks => [...tasks].sort((a,b) => taskStates.indexOf(taskState(a.status)) - taskStates.indexOf(taskState(b.status)) || a.line - b.line);
@@ -168,9 +170,18 @@ function subagentRows(a) {
   const rows=children.map(child=>{const signal=agentSignal(child);return `<li class="subagent-row"><div class="agent-line1"><span aria-hidden="true">↳</span><button class="agent-title" data-agent="${escape(child.id)}" title="${escape(child.title || child.id)}">${escape(agentName(child))}</button><span class="agent-status ${signal.color}">${escape(signal.label)}</span>${agentActivity(child)}</div><div class="agent-line2 sub" title="${escape(agentLine2(child,signal))}">${escape(agentLine2(child,signal))}</div></li>`;});
   return `<ul class="subagent-rows" aria-label="Subagents of ${escape(agentName(a))}">${rows.slice(0,3).join('')}</ul>${rows.length>3?`<details class="subagent-more"><summary>Show ${rows.length-3} more subagents</summary><ul class="subagent-rows">${rows.slice(3).join('')}</ul></details>`:''}`;
 }
+// The standing /goal of a top-level Claude session: an active goal keeps it going
+// after each turn, a met goal no longer does, and without one it stops when idle.
+function agentGoal(a) {
+  if(a.provider!=='claude' || a.parentAgentId)return '';
+  const g=a.goal;
+  if(!g)return `<div class="agent-goal goal-none sub" title="No /goal recorded in the observed log: the session stops when its turn ends.">◌ No /goal</div>`;
+  const label=g.met?'✓ Goal met — no longer driving':'◎ Goal';
+  return `<div class="agent-goal ${g.met?'goal-met':'goal-active'}" title="${escape(g.condition)}${g.at?' · recorded '+escape(when(g.at)):''}"><strong>${label}:</strong> ${escape(g.condition)}</div>`;
+}
 function agentCard(a) {
   const signal=agentSignal(a),line2=agentLine2(a,signal);
-  return `<article class="agent-row panel ${signal.rank<3?'agent-attention':'agent-routine'}"><div class="agent-line1"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span><span class="agent-short sub" title="${escape(a.id)}">${escape(a.id.split(':').at(-1).replace(/^agent-/,'').slice(0,6))}</span><button class="agent-title" data-agent="${escape(a.id)}" title="${escape(a.title || a.id)}">${escape(agentName(a))}</button><span class="agent-status ${signal.color}">${escape(signal.label)}</span>${agentActivity(a)}${terminalLink(a)}<button class="details-button row-open" data-agent="${escape(a.id)}" aria-label="Details for ${escape(agentName(a))}">▸</button></div><div class="agent-line2 ${signal.reason?'agent-decision':'sub'}" title="${escape(line2)}">${escape(line2)}</div>${subagentRows(a)}</article>`;
+  return `<article class="agent-row panel ${signal.rank<3?'agent-attention':'agent-routine'}"><div class="agent-line1"><span class="provider ${escape(a.provider)}">${escape(a.provider.toUpperCase())}</span><span class="agent-short sub" title="${escape(a.id)}">${escape(a.id.split(':').at(-1).replace(/^agent-/,'').slice(0,6))}</span><button class="agent-title" data-agent="${escape(a.id)}" title="${escape(a.title || a.id)}">${escape(agentName(a))}</button><span class="agent-status ${signal.color}">${escape(signal.label)}</span>${agentActivity(a)}${terminalLink(a)}<button class="details-button row-open" data-agent="${escape(a.id)}" aria-label="Details for ${escape(agentName(a))}">▸</button></div><div class="agent-line2 ${signal.reason?'agent-decision':'sub'}" title="${escape(line2)}">${escape(line2)}</div>${agentGoal(a)}${subagentRows(a)}</article>`;
 }
 const matchesTree = a => matches(a) || state.agents.some(c=>c.parentAgentId===a.id && matches(c));
 // A current subagent is shown under its parent, so its parent row is current too.
@@ -199,7 +210,8 @@ function feedRows(rows, truncate = false) { return rows.map(row => {
   const github=commit && typeof row.url==='string' && /^https:\/\/github\.com\//i.test(row.url) && !/[\u0000-\u0020]/.test(row.url)?`<a class="commit-link" href="${escape(row.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escape('Open commit '+(row.shortHash || row.hash || '')+' on GitHub')}">GitHub ↗</a>`:'';
   return `<div class="feed-row${commit?' feed-commit':''}"><div class="sub activity-meta"><span>${commit?'COMMIT':'MESSAGEBOARD'}</span>${metadata}${date}${github}</div><div class="feed-text${commit?' commit-subject':''}">${escape(truncate && text.length>360?text.slice(0,360)+'…':text)}</div>${commit?`<div class="code-chips">${codeChips(row)}</div>`:''}</div>`;
 }).join('') || empty('No messageboard entries.'); }
-function title(name, subtitle, action = '') { return `<div class="title-row"><div><div class="eyebrow"><span class="file-dot"></span> WINE-ASSEMBLY // LOCAL OBSERVER</div><h1>${escape(name)}</h1><div class="sub">${escape(subtitle)}</div></div>${action}</div>`; }
+// The page name lives in the header now; a view keeps its one-line purpose and actions.
+function title(name, subtitle, action = '') { return `<div class="title-row"><p class="lead">${escape(subtitle)}</p>${action}</div>`; }
 function section(name, target) { return `<div class="section-head"><h2>${name}</h2>${target ? `<a href="#${target}">View all →</a>` : ''}</div>`; }
 function notice() { return state.warnings.length ? `<div class="notice"><details><summary>${state.warnings.length} source notices</summary><ul>${state.warnings.map(w => `<li>${escape(w)}</li>`).join('')}</ul></details></div>` : ''; }
 function statusSummary(compact=false) {
@@ -296,12 +308,27 @@ function perfComparisonHtml(c) {
   const side=(name,m)=>`${name} ${m.fps.toFixed(1)} · wasm ${wasm(m.wasmSha256)} · ${escape(when(m.measuredAt))}${m.reviewed?'':' · unreviewed'}`;
   return `<section class="perf-compare"><h3>Before / after</h3><p class="sub">${escape(cmp.text)}. Only identical scene, counter, renderer, host and GPU with recorded module hashes are compared.</p>${cmp.pairs.map(p=>`<p><strong>${p.deltaPct===null?'change unknown (before was 0)':(p.deltaPct>=0?'+':'')+p.deltaPct.toFixed(1)+'%'}</strong> ${escape(p.label)} · ${p.sameBuild?'same build (repeat)':'different builds'}<br><span class="sub">${side('Before',p.before)}</span><br><span class="sub">${side('After',p.after)}</span></p>`).join('')}${cmp.notComparable.length?`<details><summary>${cmp.notComparable.length} not comparable</summary><ul>${cmp.notComparable.map(n=>`<li>${side('Earlier',n.before)}: ${escape(n.reasons.join(', '))}</li>`).join('')}</ul></details>`:''}</section>`;
 }
+// Corpus search covers identity fields only (names, ids, executables, source,
+// category), unlike the header search, which matches any text in the record.
+const nonGameCategories=['tools','graphics-demos','unclassified','collections'];
+function corpusKind(c) {
+  const scope=c.releaseReadiness?.scope;
+  if(scope==='game' || scope==='non-game')return scope==='game'?'games':'apps';
+  return c.category && !nonGameCategories.includes(c.category.id)?'games':'apps';
+}
+function matchesCorpusSearch(c,text=corpusQuery,type=corpusType) {
+  if(type!=='all' && corpusKind(c)!==type)return false;
+  const words=text.toLowerCase().split(/\s+/).filter(Boolean);
+  if(!words.length)return true;
+  const hay=[c.name,c.id,c.version,c.sourceGroup,c.category?.label,c.kind,...(c.appIds||[]),...(c.executables||[])].filter(Boolean).join(' ').toLowerCase();
+  return words.every(w=>hay.includes(w));
+}
 function corpusFps(c,details=false) {
   const gameCategory = c.category && !['tools','graphics-demos','unclassified','collections'].includes(c.category.id);
   if(!c.performance && !gameCategory && !/game/i.test(c.kind) && !['Shareware / demos','Retail / archived games','Freeware / community'].includes(c.assessment?.origin))return '';
   const p=c.performance;if(!p)return '<p class="sub corpus-fps">FPS — no linked measurement</p>';
-  const flipEvents=p.counterKind==='guest-flip-events',logical=p.metric==='guest-logical-frame-submissions',rateLabel=logical?'logical gameplay frames/s':flipEvents?'guest Flip events/s':'guest presentation events/s',intervalLabel=logical?'p95 submission interval':flipEvents?'p95 Flip interval':'p95 presentation interval';
-  return `<div class="corpus-fps"><strong>${p.fps.toFixed(1)} ${rateLabel}</strong> <span class="sub">${p.historical?'Historical · ':''}${escape(p.renderer)} · ${age(p.measuredAt)} ago</span>${details?`<p>${escape(p.scene)} · ${escape(p.host)}</p><p class="sub">${escape(p.notes)} Measured ${escape(when(p.measuredAt))}.</p><div class="process-table"><table><tr><th>Sample</th><th>${rateLabel}</th><th>Duration</th><th>${intervalLabel}</th></tr>${p.samples.map((s,i)=>`<tr><td>${i+1}</td><td>${s.fps.toFixed(1)}</td><td>${(s.durationMs/1000).toFixed(1)}s</td><td>${s.p95FrameMs===null?'—':s.p95FrameMs.toFixed(1)+'ms'}</td></tr>`).join('')}</table></div><button data-run="${escape(p.runKey)}">Measurement source →</button>`:''}</div>`;
+  const flipEvents=p.counterKind==='guest-flip-events',logical=p.metric==='guest-logical-frame-submissions',rateLabel=p.metric==='selected-window-presentations'?'window presentations/s (coalesced GDI)':logical?'logical gameplay frames/s':flipEvents?'guest Flip events/s':'guest presentation events/s',intervalLabel=p.metric==='selected-window-presentations'?'p95 window-presentation interval':logical?'p95 submission interval':flipEvents?'p95 Flip interval':'p95 presentation interval';
+  return `<div class="corpus-fps"><strong>${p.fps.toFixed(1)} ${rateLabel}</strong> <span class="sub">${p.historical?'Historical · ':''}${escape(p.renderer)} · ${age(p.measuredAt)} ago</span>${details?`<p>${escape(p.scene)} · ${escape(p.host)}</p><p class="sub">${escape(p.notes)}${p.visibility?` Visible client ${escape(JSON.stringify(p.visibility.client))}; ${(p.visibility.fraction*100).toFixed(2)}% visible. Physical-display FPS not measured.`:''} Measured ${escape(when(p.measuredAt))}.</p><div class="process-table"><table><tr><th>Sample</th><th>${rateLabel}</th><th>Duration</th><th>${intervalLabel}</th></tr>${p.samples.map((s,i)=>`<tr><td>${i+1}</td><td>${s.fps.toFixed(1)}</td><td>${(s.durationMs/1000).toFixed(1)}s</td><td>${s.p95FrameMs===null?'—':s.p95FrameMs.toFixed(1)+'ms'}</td></tr>`).join('')}</table></div><button data-run="${escape(p.runKey)}">Measurement source →</button>`:''}</div>`;
 }
 const releaseStates = [['ready','Ready for release','good'],['review-needed','Release review needed','warn'],['blocked','Release blocked','bad'],['unknown','Release readiness unknown',''],['already-production','Already in production','']];
 function releaseState(c) { return releaseStates.find(([id])=>id===c.releaseReadiness?.status) || releaseStates[3]; }
@@ -320,7 +347,7 @@ function corpusReleaseReview(c,details=false) {
   if(!details)return `<div class="corpus-release">${heading}${r?.summary?`<p class="sub release-summary">${escape(r.summary)}</p>`:''}</div>`;
   const gates=Object.entries(r?.gates||{}),blockers=r?.blockers||[];
   const performanceStatus=({'recorded-review-needs-release-qualification':'Recorded measurement; release qualification still needed','not-measured':'No measurement recorded'})[r?.performance?.status] || 'Review status unknown';
-  const performanceMetric=({'guest-logical-frame-submissions':'Logical gameplay frame submissions','guest-flip-events':'Guest Flip events','guest-presentation-events':'Guest presentation events'})[r?.performance?.metric];
+  const performanceMetric=({'selected-window-presentations':'Window presentations (coalesced GDI)','guest-logical-frame-submissions':'Logical gameplay frame submissions','guest-flip-events':'Guest Flip events','guest-presentation-events':'Guest presentation events'})[r?.performance?.metric];
   return `<section class="corpus-release release-detail"><h2>Release readiness</h2>${heading}<p>${escape(r?.summary || 'No release review recorded.')}</p>${r?.next?`<p><strong>Next:</strong> ${escape(r.next)}</p>`:''}${blockers.length?`<h3>Release blockers</h3><ul>${blockers.map(b=>`<li>${escape(b.summary)}${b.source?`<div class="sub">${escape(b.source)}</div>`:''}</li>`).join('')}</ul>`:''}${gates.length?`<div class="release-gates">${gates.map(([name,g])=>`<div><strong>${escape(name)}</strong>${badge(String(g.status || 'unknown').replaceAll('-',' '),g.status==='blocked'?'bad':g.status==='passed'?'good':'')}<p>${escape(g.summary)}</p>${g.source?`<p class="sub">${escape(g.source)}</p>`:''}</div>`).join('')}</div>`:''}${r?.reviewedGameplay?.runKey?`<button data-run="${escape(r.reviewedGameplay.runKey)}">Reviewed gameplay evidence →</button>`:''}${r?.performance?`<p class="sub">Performance review: ${escape(performanceStatus)}${performanceMetric?' · '+escape(performanceMetric):''}</p>`:''}<p class="sub">Release review: ${escape(when(r?.reviewedAt))}. Gameplay screenshots and successful runs alone do not establish release readiness.</p></section>`;
 }
 function corpusReleaseBar() {
@@ -351,10 +378,11 @@ function corpusView() {
   const workRank = c => ({active:0,review:1,blocked:2,ready:3})[candidateWork(c)?.status] ?? 4;
   const resultRank = c => ({failed:0,'harness-error':0,timeout:0,running:1,unknown:2,passed:3})[c.latestRun?.outcome] ?? 4;
   const categories = [...new Map(state.candidates.map(c => [c.category?.id || 'unclassified', c.category || {id:'unclassified',label:'Unclassified'}])).values()].sort((a,b) => Number(a.id==='unclassified')-Number(b.id==='unclassified') || a.label.localeCompare(b.label));
-  const candidates = state.candidates.filter(c => matches(c) && matchesRelease(c) && (corpusLaunch==='all' || launchableCandidate(c)) && (corpusCategory==='all' || (c.category?.id || 'unclassified')===corpusCategory) && (corpusGroup==='all' || c.sourceGroup===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
+  const candidates = state.candidates.filter(c => matches(c) && matchesCorpusSearch(c) && matchesRelease(c) && (corpusLaunch==='all' || launchableCandidate(c)) && (corpusCategory==='all' || (c.category?.id || 'unclassified')===corpusCategory) && (corpusGroup==='all' || c.sourceGroup===corpusGroup) && (filter === 'all' || filter === 'working' && candidateWork(c)?.status === 'active' || filter === 'no-run' && !c.latestRun || filter === 'with-shot' && candidateCapture(c).shot || filter === 'no-shot' && !candidateCapture(c).shot || c.latestRun?.outcome === filter))
     .sort((a,b) => (corpusRelease==='all'?0:(a.releaseReadiness?.rank??999)-(b.releaseReadiness?.rank??999)) || workRank(a)-workRank(b) || resultRank(a)-resultRank(b) || (a.name || a.id).localeCompare(b.name || b.id));
   return title('EXE corpus', 'Browse by category, release readiness and recorded evidence.') + corpusLaunchBar() + corpusReleaseBar() +
     `<div class="coverage-bar"><strong>${state.candidates.filter(c=>candidateCapture(c).shot).length} / ${state.candidates.length} with linked screenshots</strong><span>Historical images do not establish current compatibility.</span><button data-corpus-filter="with-shot">With screenshots</button><button data-corpus-filter="no-shot">Missing screenshots</button></div>`+
+    `<div class="toolbar corpus-search-bar"><input id="corpus-query" type="search" placeholder="Search games and apps by name, id or exe…" aria-label="Search the EXE corpus" value="${escape(corpusQuery)}" autocomplete="off"><select id="corpus-type" aria-label="Entry type">${[['all','Games and apps'],['games','Games only'],['apps','Apps and tools only']].map(([id,label])=>`<option value="${id}" ${corpusType===id?'selected':''}>${label} (${id==='all'?state.candidates.length:state.candidates.filter(c=>corpusKind(c)===id).length})</option>`).join('')}</select>${corpusQuery||corpusType!=='all'?'<button data-corpus-search-clear="1">Clear search</button>':''}</div>`+
     `<div class="toolbar"><select id="corpus-launch" aria-label="Launch availability"><option value="all" ${corpusLaunch==='all'?'selected':''}>All launch states</option><option value="available" ${corpusLaunch==='available'?'selected':''}>Launchable now</option></select><select id="corpus-release" aria-label="Release readiness">${[['all','All release states'],['unreleased','Unreleased games'],['gameplay-reviewed','Unreleased · gameplay reviewed'],...releaseStates.map(([id,label])=>[id,label])].map(([id,label])=>`<option value="${id}" ${corpusRelease===id?'selected':''}>${escape(label)}</option>`).join('')}</select><select id="corpus-category" aria-label="Category"><option value="all">All categories</option>${categories.map(g=>`<option value="${escape(g.id)}" ${corpusCategory===g.id?'selected':''}>${escape(g.label)} (${state.candidates.filter(c=>(c.category?.id || 'unclassified')===g.id).length})</option>`).join('')}</select><select id="corpus-group" aria-label="Source group"><option value="all">All source groups</option>${[...new Set(state.candidates.map(c=>c.sourceGroup).filter(Boolean))].sort().map(g=>`<option ${corpusGroup===g?'selected':''} value="${escape(g)}">${escape(g)}</option>`).join('')}</select><select id="filter" aria-label="Corpus status">${[['all', 'All candidates'], ['working', 'In progress'], ['with-shot', 'With screenshots'], ['no-run', 'No recorded run'], ['no-shot', 'Missing screenshots'], ['passed', 'Latest run passed'], ['failed', 'Latest run failed'], ['harness-error', 'Harness error']].map(([s, label]) => `<option value="${s}" ${s === filter ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="sub">${candidates.length} candidates · ${state.candidates.filter(c => candidateWork(c)?.status === 'active').length} in progress</span></div><p class="sub">Includes manifest and registered apps. Unclassified entries need category review. Source group does not imply redistribution permission.</p>${categories.map(category => {
       const members = candidates.filter(c => (c.category?.id || 'unclassified') === category.id);
       if (!members.length) return '';
@@ -405,26 +433,68 @@ function activityView() {
   return title('Activity', 'Recent Git commits and messageboard entries. Undated messages retain their board order.')+(cs?`<p class="source-note">Commit state: ${cs.available?escape(cs.note)+(cs.mainRef?' Merged means reachable from '+escape(cs.mainRef)+'.':' No remote default branch found.')+(cs.fetchedAt?' Last fetch '+escape(when(cs.fetchedAt))+'.':' Last fetch time unknown.'):escape(cs.note)}</p>`:'')+`${state.activityWarning?`<p class="notice" role="status">${escape(state.activityWarning)}</p>`:''}<div class="toolbar"><select id="activity-filter" aria-label="Activity type">${[['all','All activity'],['commit','Commits'],['message','Messages']].map(([id,label])=>`<option value="${id}" ${activityFilter===id?'selected':''}>${label}</option>`).join('')}</select><span class="sub">Showing ${Math.min(activityLimit,rows.length)} of ${rows.length} matching entries</span></div><div class="panel">${rows.length?feedRows(rows.slice(0,activityLimit)):empty(query?'No activity matches this search and filter.':activityFilter==='commit'?'No commits available.':activityFilter==='message'?'No messages available.':'No activity available.')}</div>${rows.length>activityLimit?'<div class="form-actions"><button data-more-activity="25">Show 25 more</button><button data-more-activity="all">Show all matching entries</button></div>':''}`;
 }
 function matchingActivity() { return (state.activity || []).filter(row=>matches(row) && (activityFilter==='all' || (row.type==='commit'?'commit':'message')===activityFilter)); }
+// The 5s poll re-renders the whole view. Assigning innerHTML would rebuild
+// every node, so screenshots reload (blink), the focused search box loses its
+// caret and opened <details> collapse. Patch the live tree instead: nodes that
+// did not change are left alone, and user-owned state (an open <details>, the
+// value of the field being typed in) survives the refresh.
+let lastMainHtml=null;
+function morphHtml(target, html) {
+  if (html === lastMainHtml && target.childNodes.length) return;
+  lastMainHtml = html;
+  const next = document.createElement(target.tagName); next.innerHTML = html;
+  morphChildren(target, next);
+}
+function morphChildren(live, next) {
+  const a = [...live.childNodes], b = [...next.childNodes];
+  for (let i = 0; i < b.length; i++) {
+    const have = a[i], want = b[i];
+    if (!have) { live.appendChild(want); continue; }
+    if (have.nodeType !== want.nodeType || have.nodeName !== want.nodeName) { live.replaceChild(want, have); continue; }
+    if (have.nodeType !== 1) { if (have.nodeValue !== want.nodeValue) have.nodeValue = want.nodeValue; continue; }
+    morphAttributes(have, want);
+    morphChildren(have, want);
+  }
+  for (let i = b.length; i < a.length; i++) a[i].remove();
+}
+function morphAttributes(have, want) {
+  for (const {name, value} of [...want.attributes]) if (have.getAttribute(name) !== value) have.setAttribute(name, value);
+  for (const {name} of [...have.attributes]) {
+    if (want.hasAttribute(name)) continue;
+    if (name === 'open' && have.tagName === 'DETAILS') continue;
+    have.removeAttribute(name);
+  }
+  if ((have.tagName === 'INPUT' || have.tagName === 'TEXTAREA') && have !== document.activeElement && have.value !== (want.getAttribute('value') ?? '')) have.value = want.getAttribute('value') ?? '';
+  if (have.tagName === 'SELECT') { const sel = want.querySelector('option[selected]'); if (sel && have.value !== sel.value && have !== document.activeElement) have.value = sel.value; }
+}
 function render() {
   if (!state) return;
   renderApprovals();
-  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
-  $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length;
+  renderChrome();
+  $('#task-count').textContent = state.tasks.filter(t=>!['done','deferred','unknown'].includes(t.status)).length; $('#task-count').title='Open tasks; completed, deferred and historical records excluded'; $('#corpus-count').textContent = state.candidates.length; $('#dos-count').textContent = state.dosCorpus?.rows?.length || '';
   $('#blocker-count').textContent = state.tasks.filter(t => t.status === 'blocked').length || '';
-  $('#main').innerHTML = stoppedAgentBanner() + ({ overview, tasks: tasksView, blockers: blockersView, corpus: corpusView, release: desktopView, agents: agentsView, analytics: analyticsView, activity: activityView }[view] || overview)();
   $('#updated').textContent = `Snapshot ${new Date(state.generatedAt).toLocaleTimeString()} · refresh every 5s`;
+  const views = { home: homeView, games: gamesView, tasks: tasksBoard, agents: agentsGrouped, activity: activityView, more: moreView, overview, tasklist: tasksView, agentlist: agentsView, blockers: blockersView, corpus: corpusView, dos: dosView, release: desktopView, analytics: analyticsView };
+  const classic = ['overview', 'tasklist', 'agentlist', 'blockers', 'corpus', 'dos', 'release', 'analytics'].includes(view);
+  morphHtml($('#main'), (classic ? stoppedAgentBanner() : '') + (views[view] || homeView)());
+  document.body.dataset.view = views[view] ? view : 'home';
 }
 function show(label, html) { currentTaskId=null;$('#detail-label').textContent = label; $('#detail-body').innerHTML = html; if (!$('#detail').open) $('#detail').showModal(); }
 function runRows(runs) { return runs.map(r => `<div class="run"><div class="run-head"><button data-run="${escape(r.key)}">${escape(r.id)} · ${escape(r.route || 'route unspecified')}</button>${badge(r.outcome, tone(r.outcome))}</div><div class="sub">${escape(when(r.startedAt))} · ${escape(r.verification)} · ${escape(r.source)}</div></div>`).join('') || empty('No run folders recorded yet. See ops/README.md.'); }
 function candidateDetail(id) {
   const c = state.candidates.find(c => c.id === id); if (!c) return;
+  show('EXE CORPUS / ' + c.id, candidateDetailHtml(c));
+}
+function candidateDetailHtml(c) {
+  const id = c.id;
   const {shot,run:captureRun,older,gameplay} = candidateCapture(c);
-  show('EXE CORPUS / ' + c.id, `<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${badge(c.category?.label || 'Unclassified')}<p class="sub">${escape(c.category?.basis)}</p>${corpusLaunchActions(c,true)}${corpusReleaseReview(c,true)}${corpusAssessment(c,true)}${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c,true)}${perfComparisonHtml(c)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt: '+escape(c.latestRun?.outcome || 'unknown'):'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id || c.appIds?.includes(r.candidateId)))}</div>`);
+  return (`<h1>${escape(c.name)}</h1><p class="sub">${escape(c.version)} · Fixture ${escape(c.fixtureStatus)}${c.localOnly ? ' · Local only' : ''}</p>${badge(c.category?.label || 'Unclassified')}<p class="sub">${escape(c.category?.basis)}</p>${corpusLaunchActions(c,true)}${corpusReleaseReview(c,true)}${corpusAssessment(c,true)}${gameplay?badge('Reviewed gameplay scene','good'):''}${corpusFps(c,true)}${perfComparisonHtml(c)}<div class="detail-grid"><div>${shot ? `<img class="detail-shot" src="${escape(shot.url)}" alt="${older?'Earlier run':'Latest run'} capture"><p class="sub">${older?'Earlier capture; latest attempt: '+escape(c.latestRun?.outcome || 'unknown'):'Latest attempt'} · ${escape(captureRun.verification)} · ${escape(when(captureRun.startedAt))}</p>` : empty('No screenshot for the latest attempt.')}<p class="sub">Last reviewed success: ${c.lastVerifiedRun ? escape(c.lastVerifiedRun.id + ' · ' + c.lastVerifiedRun.route) : 'none recorded'}</p></div><div><h3>Linked TODOs</h3><div class="panel">${taskRows(state.tasks.filter(t => c.taskIds.includes(t.id)))}</div><div class="links">${c.noteLinks.map(n => link(n.url, 'Investigation notes')).join('')}${c.sourcePage ? link(c.sourcePage, 'Source page') : ''}</div></div></div><p>${escape(c.notes)}</p><pre>${escape(c.executables.join('\n'))}</pre>${section('Run history')}<div class="panel">${runRows(state.runs.filter(r => r.candidateId === id || c.appIds?.includes(r.candidateId)))}</div>`);
 }
 function agentDetail(id) {
   const a = state.agents.find(a => a.id === id); if (!a) return;
   const fields = [['Session', a.id], ['Model', a.model || 'unknown'], ['Worktree', a.cwd], ['Assigned task', a.taskId || 'unknown — no explicit owner match'], ['On task', age(a.taskStartedAt)], ['Current turn started', when(a.turnStartedAt)], ['Latest activity', when(a.lastActivityAt)], ['Last progress', when(a.progressAt)], ['Observed state', a.state], ['Process health', 'unknown — no process attachment'], ['Last operation', a.lastEvent], ['Last-request input', num(a.inputTokens)], ['Last-request output', num(a.outputTokens)], ['Cache read', num(a.cacheReadTokens)], ['Cache write', num(a.cacheWriteTokens)], ['Reported context limit', num(a.contextLimit)], ['Session total tokens', num(a.totalTokens)], ['Usage observed', when(a.usageAt)], ['Compactions observed', a.compactions + (a.partial ? ' in sampled log windows' : '')], ['Log coverage', a.partial ? 'head + tail only; history may be incomplete' : 'complete file']];
   fields.find(f => f[0] === 'Process health')[1] = 'unknown — PID presence does not establish responsiveness';
+  if(a.provider==='claude' && !a.parentAgentId)fields.unshift(['Goal', a.goal ? (a.goal.met ? 'met (no longer driving): ' : 'active: ') + a.goal.condition : 'none recorded — stops when its turn ends']);
   fields.push(['Latest result', a.summary || 'not recorded'], ['Parent session', a.parentAgentId || 'none'], ['Context estimate', num(a.contextEstimate)], ['Cache reuse', a.cachePercent === null ? 'unknown' : Math.round(a.cachePercent) + '%']);
   show('AGENT / ' + a.provider.toUpperCase(), `<h1>${escape(a.taskTitle || a.title)}</h1>${processDetails(a.process)}${subagentSummary(a)}${visualCards(agentRuns(a))}<dl>${fields.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl><p class="source-note">Input tokens estimate the last request’s context, not current live occupancy. Cache reuse is cache-read / total request input. A quiet session may be waiting, stopped, or running a long tool; it is not automatically stuck.</p>`);
 }
@@ -448,6 +518,13 @@ document.addEventListener('change',event=>{if(event.target.id==='corpus-group'){
 document.addEventListener('change',event=>{if(event.target.id==='corpus-launch'){corpusLaunch=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-release'){corpusRelease=event.target.value;render();}});
 document.addEventListener('change',event=>{if(event.target.id==='corpus-category'){corpusCategory=event.target.value;render();}});
+document.addEventListener('change',event=>{if(event.target.id==='corpus-type'){corpusType=event.target.value;render();}});
+document.addEventListener('input',event=>{
+  if(event.target.id!=='corpus-query')return;
+  const caret=event.target.selectionStart;corpusQuery=event.target.value;render();
+  const field=document.getElementById('corpus-query');if(field){field.focus();field.setSelectionRange(caret,caret);}
+});
+document.addEventListener('click',event=>{if(event.target.closest?.('[data-corpus-search-clear]')){corpusQuery='';corpusType='all';render();}});
 document.addEventListener('click', event => {
   const el = event.target.closest('button'); if (!el || !state) return;
   if(el.dataset.launchFilter){corpusLaunch=el.dataset.launchFilter;render();}
@@ -487,6 +564,7 @@ document.addEventListener('submit', async event => {
 $('#refresh').onclick = refresh;
 $('#search').addEventListener('input', e => { query = e.target.value.toLowerCase(); activityLimit=25; render(); });
 document.addEventListener('change', e => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
-window.addEventListener('hashchange', () => { view = location.hash.slice(1) || 'overview'; filter = 'all'; query = ''; $('#search').value = ''; render(); });
+window.addEventListener('hashchange', () => { view = location.hash.slice(1) || 'home'; window.scrollTo(0, 0); filter = 'all'; query = ''; $('#search').value = ''; render(); });
+paintIcons();
 refresh();
 setInterval(refresh, 5000);

@@ -50,6 +50,17 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
   )
 
+  ;; DebugBreak() — 0 args stdcall. KERNEL32's body is an int3, so it raises
+  ;; EXCEPTION_BREAKPOINT to the caller's SEH chain; with no debugger an
+  ;; unhandled one ends the process. A handler that continues execution
+  ;; resumes after the call. Carmageddon 2's BRender driver loader resolves
+  ;; KERNEL32:DebugBreak by name and refuses to load its renderer without it.
+  (func $handle_DebugBreak (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $delphi_resume_eip (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (global.set $delphi_resume_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $raise_delphi_exception (i32.const 0x80000003) (i32.const 0) (i32.const 0) (i32.const 0)))
+
   ;; 413: GetUserDefaultLCID — STUB: unimplemented
   (func $handle_GetUserDefaultLCID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Return 0x0409 = English (US)
@@ -239,6 +250,24 @@
   ;; 422: DuplicateHandle
   (func $handle_DuplicateHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $duplicate i32) (local $file_duplicate i32) (local $stack_w i32)
+    ;; An anonymous pipe handle: a new handle on the same end, carrying the
+    ;; caller's bInheritHandle ([ESP+24]); DUPLICATE_CLOSE_SOURCE ([ESP+28]
+    ;; bit 0) closes the original. This is how a parent keeps a
+    ;; non-inheritable copy of its own end of a child's pipe.
+    (if (i32.ne (call $pipe_slot (local.get $arg1)) (i32.const 0))
+      (then
+        (local.set $stack_w (call $g2w (i32.load offset=16 (global.get $reg_base))))
+        (if (i32.eqz (local.get $arg3))
+          (then (call $pipe_ret (i32.const 0) (i32.const 87) (i32.const 32)) (return)))
+        (local.set $duplicate (call $pipe_duplicate (local.get $arg1)
+          (i32.load offset=24 (local.get $stack_w))))
+        (if (i32.eqz (local.get $duplicate))
+          (then (call $pipe_ret (i32.const 0) (i32.const 4) (i32.const 32)) (return)))
+        (if (i32.and (i32.load offset=28 (local.get $stack_w)) (i32.const 1))
+          (then (drop (call $pipe_close (local.get $arg1)))))
+        (call $gs32 (local.get $arg3) (local.get $duplicate))
+        (call $pipe_ret (i32.const 1) (i32.const 0) (i32.const 32))
+        (return)))
     ;; Pseudo handles are contextual and cannot be copied into a durable output
     ;; handle. Miles duplicates GetCurrentThread() during startup, then its
     ;; WinMM callback suspends and resumes that real handle while servicing
@@ -318,6 +347,24 @@
     (global.set $yield_reason (i32.const 12))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))
+
+  ;; A consumer that opens a file itself, reads it whole and closes it
+  ;; (PlaySound, BASS_SampleLoad, LoadImage from a file) cannot close before
+  ;; it parks: the close drops the VFS pending-read record, and the host fill
+  ;; needs that record and its still-open handle, so the retry parked again
+  ;; forever (Dark Colony's cursor LoadImageA: 2716 parks, one chunk). The
+  ;; handle is held here instead, and released when the consumer is entered
+  ;; again -- which on this thread is the retry of the same call, after the
+  ;; fill has put the bytes in the shared cache the fresh handle then reads.
+  (global $lazy_park_handle (mut i32) (i32.const 0))
+  (func $lazy_park_release
+    (if (global.get $lazy_park_handle)
+      (then
+        (drop (call $host_fs_close_handle (global.get $lazy_park_handle)))
+        (global.set $lazy_park_handle (i32.const 0)))))
+  (func $lazy_park_hold (param $handle i32)
+    (call $lazy_park_release)
+    (global.set $lazy_park_handle (local.get $handle)))
 
   ;; ---- spin parking ----------------------------------------------------
   ;; See the block comment on $spin_dispatch_seq in src/01-header.wat for why
@@ -515,7 +562,9 @@
   ;; The VFS may complete cached reads during submission; completion routines
   ;; are nevertheless queued until an alertable wait. Lazy residency uses the
   ;; existing IO_WAIT retry before submission completes (not a JS guest call).
-  ;; Queue nodes: next,error,byteCount,OVERLAPPED,callback. hEvent is untouched.
+  ;; Queue nodes: next,arg0,arg1,arg2,callback,argc. A ReadFileEx completion
+  ;; passes (error, byteCount, OVERLAPPED); a QueueUserAPC routine its one
+  ;; dwData. hEvent is untouched.
   (func $handle_ReadFileEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $node i32) (local $wa i32) (local $error i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -524,9 +573,10 @@
       (br_if $done (i32.eqz (local.get $arg3)))
       (br_if $done (i32.eqz (local.get $arg4)))
       (br_if $done (i32.and (i32.ne (local.get $arg2) (i32.const 0)) (i32.eqz (local.get $arg1))))
-      (local.set $node (call $heap_alloc (i32.const 20)))
+      (local.set $node (call $heap_alloc (i32.const 24)))
       (if (i32.eqz (local.get $node)) (then (global.set $last_error (i32.const 8)) (br $done)))
       (local.set $wa (call $g2w (local.get $node)))
+      (i32.store offset=20 (local.get $wa) (i32.const 3))
       (local.set $error (call $host_fs_read_file_at (local.get $arg0) (local.get $arg1) (local.get $arg2)
         (i32.add (local.get $node) (i32.const 8))
         (call $gl32 (i32.add (local.get $arg3) (i32.const 8)))
@@ -541,20 +591,196 @@
       (i32.store offset=16 (local.get $wa) (local.get $arg4))
       (call $gs32 (local.get $arg3) (select (i32.const 0xc0000011) (i32.const 0) (local.get $error)))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (i32.load offset=8 (local.get $wa)))
-      (if (global.get $io_apc_tail) (then
-        (call $gs32 (global.get $io_apc_tail) (local.get $node)))
-      (else (global.set $io_apc_head (local.get $node))))
-      (global.set $io_apc_tail (local.get $node))
+      (call $io_apc_enqueue (local.get $node))
       (global.set $last_error (i32.const 0)) (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+
+  (func $io_apc_enqueue (param $node i32)
+    (call $gs32 (local.get $node) (i32.const 0))
+    (if (global.get $io_apc_tail) (then
+      (call $gs32 (global.get $io_apc_tail) (local.get $node)))
+    (else (global.set $io_apc_head (local.get $node))))
+    (global.set $io_apc_tail (local.get $node)))
+
+  ;; ---- Cross-thread user APCs -------------------------------------------
+  ;; Every guest thread is its own WASM instance, so the $io_apc_head queue
+  ;; above is private to the thread that owns it. QueueUserAPC therefore
+  ;; publishes into a shared per-thread inbox: one dword per Win32 thread id
+  ;; (1..16, main is 1) holding the guest address of the newest node. Producers
+  ;; push with a compare-exchange (any thread may queue to any other), and only
+  ;; the owning thread ever consumes, by swapping the whole list out at once
+  ;; and reversing it back into arrival order onto its private queue. Nodes are
+  ;; the 24-byte io_apc layout and come from the process-wide guest heap.
+  ;;
+  ;; A queued APC runs only inside an alertable wait on its target. Three
+  ;; places consume the inbox:
+  ;;   * $io_apc_start, on entry to SleepEx/WaitFor*Ex with bAlertable set;
+  ;;   * $apc_resume_alert_sleep at run() entry, for a thread that parked in
+  ;;     an alertable SleepEx and is being resumed (early, by thread_alert, or
+  ;;     at its timeout) — the sleep had already returned 0, so delivery here
+  ;;     replays it as the APC followed by a WAIT_IO_COMPLETION return;
+  ;;   * the apc_wake_wait export, which the scheduler calls on a thread
+  ;;     parked (yield_reason 1) in an alertable WaitFor*Ex.
+  ;; Set by an alertable SleepEx that parked, with the return address and ESP
+  ;; it will resume at. Cleared by the next API dispatch or run() resumption.
+  (global $apc_alert_sleep (mut i32) (i32.const 0))
+  (global $apc_alert_ret (mut i32) (i32.const 0))
+  (global $apc_alert_esp (mut i32) (i32.const 0))
+  ;; Set by an alertable WaitForSingleObjectEx/WaitForMultipleObjectsEx that
+  ;; parked with yield_reason 1. Cleared by the next API dispatch.
+  (global $wait_alertable (mut i32) (i32.const 0))
+
+  (func $apc_shared_slot (param $tid i32) (result i32)
+    (if (i32.or (i32.lt_u (local.get $tid) (i32.const 1))
+                (i32.gt_u (local.get $tid) (i32.const 16)))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $THREAD_APC_QUEUES)
+      (i32.shl (i32.sub (local.get $tid) (i32.const 1)) (i32.const 2))))
+
+  (func $apc_shared_push (param $slot i32) (param $node i32)
+    (local $old i32)
+    (loop $retry
+      (local.set $old (i32.atomic.load (local.get $slot)))
+      (call $gs32 (local.get $node) (local.get $old))
+      (br_if $retry (i32.ne
+        (i32.atomic.rmw.cmpxchg (local.get $slot) (local.get $old) (local.get $node))
+        (local.get $old)))))
+
+  ;; Move this thread's inbox onto its private queue, oldest first.
+  (func $apc_import_shared
+    (local $slot i32) (local $list i32) (local $rev i32) (local $next i32)
+    (local.set $slot (call $apc_shared_slot (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (if (i32.eqz (i32.atomic.load (local.get $slot))) (then (return)))
+    (local.set $list (i32.atomic.rmw.xchg (local.get $slot) (i32.const 0)))
+    (block $rev_done (loop $rev_loop
+      (br_if $rev_done (i32.eqz (local.get $list)))
+      (local.set $next (call $gl32 (local.get $list)))
+      (call $gs32 (local.get $list) (local.get $rev))
+      (local.set $rev (local.get $list))
+      (local.set $list (local.get $next))
+      (br $rev_loop)))
+    (block $app_done (loop $app_loop
+      (br_if $app_done (i32.eqz (local.get $rev)))
+      (local.set $next (call $gl32 (local.get $rev)))
+      (call $io_apc_enqueue (local.get $rev))
+      (local.set $rev (local.get $next))
+      (br $app_loop))))
+
+  (func $apc_pending (result i32)
+    (local $slot i32)
+    (if (global.get $io_apc_head) (then (return (i32.const 1))))
+    (local.set $slot (call $apc_shared_slot (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (i32.ne (i32.atomic.load (local.get $slot)) (i32.const 0)))
+
+  ;; A thread that ends drops whatever is still queued to it, so a later
+  ;; thread reusing the id does not run a stranger's APCs.
+  (func $apc_drop_shared_current
+    (local $slot i32) (local $list i32) (local $next i32)
+    (local.set $slot (call $apc_shared_slot (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (local.set $list (i32.atomic.rmw.xchg (local.get $slot) (i32.const 0)))
+    (block $done (loop $free
+      (br_if $done (i32.eqz (local.get $list)))
+      (local.set $next (call $gl32 (local.get $list)))
+      (call $heap_free (local.get $list))
+      (local.set $list (local.get $next))
+      (br $free))))
+
+  ;; run() entry: the thread is resuming at the return address of an alertable
+  ;; SleepEx it parked in. If an APC arrived meanwhile, run it now and return
+  ;; WAIT_IO_COMPLETION from the sleep instead of the 0 it already holds.
+  ;; Anything else running at this point (a host-injected callback) leaves the
+  ;; mark for the real resumption.
+  (func $apc_resume_alert_sleep
+    (if (i32.eqz (global.get $apc_alert_sleep)) (then (return)))
+    (if (i32.or (i32.ne (global.get $eip) (global.get $apc_alert_ret))
+                (i32.ne (i32.load offset=16 (global.get $reg_base)) (global.get $apc_alert_esp)))
+      (then (return)))
+    (global.set $apc_alert_sleep (i32.const 0))
+    (if (i32.eqz (call $apc_pending)) (then (return)))
+    (call $io_apc_ensure_thunk)
+    (call $io_apc_push (global.get $eip))
+    (call $io_apc_continue)
+    (global.set $handler_set_eip (i32.const 0)))
+
+  ;; Scheduler hook for a thread parked in an alertable WaitFor*Ex: if an APC
+  ;; is pending, abandon the wait and run it; the wait returns
+  ;; WAIT_IO_COMPLETION. ESP still holds the call's return address and its
+  ;; arguments, exactly as $_completeWait in lib/thread-manager.js expects.
+  (func (export "apc_wake_wait") (result i32)
+    (local $frame i32)
+    (if (i32.or (i32.ne (global.get $yield_reason) (i32.const 1))
+                (i32.eqz (global.get $wait_alertable)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $apc_pending)) (then (return (i32.const 0))))
+    (local.set $frame (global.get $wait_stack_bytes))
+    (global.set $wait_alertable (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $wait_handles_ptr (i32.const 0))
+    (global.set $wait_all (i32.const 0))
+    (global.set $wait_timeout (i32.const 0xFFFFFFFF))
+    (global.set $wait_stack_bytes (i32.const 12))
+    (drop (call $io_apc_start (local.get $frame)))
+    (global.set $handler_set_eip (i32.const 0))
+    (i32.const 1))
+
+  ;; Whether thread_alert should cut this instance's sleep short.
+  (func (export "apc_alertable_sleeping") (result i32)
+    (global.get $apc_alert_sleep))
+
+  ;; QueueUserAPC(pfnAPC, hThread, dwData) -> nonzero on success. The routine
+  ;; runs on the target thread the next time it is in an alertable wait
+  ;; (SleepEx, WaitForSingleObjectEx, WaitForMultipleObjectsEx), through the
+  ;; same CACA0032 continuation as ReadFileEx completions, and the wait then
+  ;; returns WAIT_IO_COMPLETION. A target already parked in an alertable sleep
+  ;; is woken by thread_alert.
+  (func $handle_QueueUserAPC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $node i32) (local $wa i32) (local $tid i32) (local $slot i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (global.set $last_error (i32.const 87))
+    (block $done
+      (br_if $done (i32.eqz (local.get $arg0)))
+      (local.set $tid
+        (if (result i32) (i32.eq (local.get $arg1) (i32.const -2))
+          (then (global.get $current_thread_id))
+          (else (call $host_thread_apc_target (local.get $arg1) (global.get $current_thread_id)))))
+      (if (i32.eqz (local.get $tid)) (then (global.set $last_error (i32.const 6)) (br $done)))
+      (local.set $slot (call $apc_shared_slot (local.get $tid)))
+      ;; The host only hands out ids 1..16; anything else is a host bug.
+      (if (i32.eqz (local.get $slot)) (then (call $crash_unimplemented (local.get $name_ptr))))
+      (local.set $node (call $heap_alloc (i32.const 24)))
+      (if (i32.eqz (local.get $node)) (then (global.set $last_error (i32.const 8)) (br $done)))
+      (local.set $wa (call $g2w (local.get $node)))
+      (i32.store offset=4 (local.get $wa) (local.get $arg2))
+      (i32.store offset=8 (local.get $wa) (i32.const 0))
+      (i32.store offset=12 (local.get $wa) (i32.const 0))
+      (i32.store offset=16 (local.get $wa) (local.get $arg0))
+      (i32.store offset=20 (local.get $wa) (i32.const 1))
+      (call $apc_shared_push (local.get $slot) (local.get $node))
+      (if (i32.ne (local.get $tid) (global.get $current_thread_id))
+        (then (call $host_thread_alert (local.get $tid))))
+      (global.set $last_error (i32.const 0))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   (func $io_apc_push (param $value i32)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $value)))
 
   (func $io_apc_start (param $frame i32) (result i32)
-    (local $ret i32) (local $wa i32)
+    (local $ret i32)
+    (call $apc_import_shared)
     (if (i32.eqz (global.get $io_apc_head)) (then (return (i32.const 0))))
+    (call $io_apc_ensure_thunk)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $frame)))
+    (call $io_apc_push (local.get $ret))
+    (call $io_apc_continue) (i32.const 1))
+
+  (func $io_apc_ensure_thunk
+    (local $wa i32)
     (if (i32.eqz (global.get $io_apc_thunk)) (then
       (global.set $num_thunks (call $thunk_reserve))
       (local.set $wa (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))))
@@ -562,11 +788,7 @@
       (i32.store offset=4 (local.get $wa) (i32.const 0))
       (global.set $io_apc_thunk (i32.add (i32.sub (local.get $wa) (global.get $GUEST_BASE)) (global.get $image_base)))
       (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
-      (call $update_thunk_end)))
-    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $frame)))
-    (call $io_apc_push (local.get $ret))
-    (call $io_apc_continue) (i32.const 1))
+      (call $update_thunk_end))))
 
   (func $io_apc_continue
     (local $node i32) (local $wa i32) (local $callback i32)
@@ -574,6 +796,9 @@
     ;; EIP. handler_set_eip alone protects only the outer thunk-zone path.
     (global.set $steps (i32.const 0))
     (global.set $handler_set_eip (i32.const 1))
+    ;; An APC queued from another thread while the previous one ran is still
+    ;; delivered inside this same wait, as Windows drains the whole queue.
+    (call $apc_import_shared)
     (local.set $node (global.get $io_apc_head))
     (if (i32.eqz (local.get $node)) (then
       (global.set $eip (call $gl32 (i32.load offset=16 (global.get $reg_base))))
@@ -583,8 +808,9 @@
     (global.set $io_apc_head (i32.load (local.get $wa)))
     (if (i32.eqz (global.get $io_apc_head)) (then (global.set $io_apc_tail (i32.const 0))))
     (local.set $callback (i32.load offset=16 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=12 (local.get $wa)))
-    (call $io_apc_push (i32.load offset=8 (local.get $wa)))
+    (if (i32.ge_u (i32.load offset=20 (local.get $wa)) (i32.const 3)) (then
+      (call $io_apc_push (i32.load offset=12 (local.get $wa)))
+      (call $io_apc_push (i32.load offset=8 (local.get $wa)))))
     (call $io_apc_push (i32.load offset=4 (local.get $wa)))
     (call $io_apc_push (global.get $io_apc_thunk))
     (call $heap_free (local.get $node))
@@ -605,6 +831,10 @@
     ;; A handle with an OVERLAPPED but no port binding falls through to the
     ;; ordinary path below, which is what Win32 does for a file opened
     ;; without FILE_FLAG_OVERLAPPED.
+    ;; Anonymous pipes (09d7-pipes.wat) finish or park the call themselves.
+    (if (call $pipe_read_file (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3))
+      (then (return)))
     (if (i32.and (i32.ne (local.get $arg4) (i32.const 0))
                  (i32.ne (call $iocp_assoc_find (local.get $arg0)) (i32.const 0)))
       (then
@@ -964,6 +1194,46 @@
       (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
+
+  ;; GetLongPathNameA/W(lpszShortPath, lpszLongPath, cchBuffer): Win98
+  ;; KERNEL32. The VFS keeps no 8.3 aliases (GetShortPathName hands back the
+  ;; path it was given), so the long form of a path that exists is that path.
+  ;; Windows Installer 2.0 binds this by name and has no fallback of its own:
+  ;; without it msi.dll logs "Could not create LFN path for package" and
+  ;; msiexec fails every install with 1619. Returns the length copied, or the
+  ;; size needed including the terminator when the buffer is too small (and
+  ;; writes nothing), or 0 with ERROR_FILE_NOT_FOUND for a missing path.
+  (func $long_path_name (param $src i32) (param $dst i32) (param $size i32) (param $wide i32)
+                        (result i32)
+    (local $len i32) (local $unit i32)
+    (if (i32.eqz (local.get $src))
+      (then (global.set $last_error (i32.const 87)) (return (i32.const 0))))
+    (if (i32.eq (call $host_fs_get_file_attributes (call $g2w (local.get $src)) (local.get $wide))
+                (i32.const -1))
+      (then (global.set $last_error (i32.const 2)) (return (i32.const 0))))
+    (local.set $unit (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $end (loop $count
+      (br_if $end (i32.eqz (if (result i32) (local.get $wide)
+        (then (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $len) (i32.const 1)))))
+        (else (call $gl8 (i32.add (local.get $src) (local.get $len)))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $count)))
+    (if (i32.or (i32.eqz (local.get $dst)) (i32.le_u (local.get $size) (local.get $len)))
+      (then (return (i32.add (local.get $len) (i32.const 1)))))
+    (if (i32.ne (local.get $dst) (local.get $src))
+      (then (call $guest_memmove (local.get $dst) (local.get $src)
+        (i32.mul (i32.add (local.get $len) (i32.const 1)) (local.get $unit)))))
+    (local.get $len))
+
+  (func $handle_GetLongPathNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $long_path_name (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  (func $handle_GetLongPathNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $long_path_name (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3287,6 +3557,82 @@
     (i32.store offset=0 (global.get $reg_base) (call $shell_path_append_w (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; PathAppendA(pszPath, pszMore): PathAppendW's rules over byte strings.
+  ;; Every decision in $shell_path_append_w looks only at '\\', '.', ':' and
+  ;; NUL, so widening each byte to a code unit and narrowing the result back is
+  ;; exact for a single-byte code page. The narrowed result (the joined path,
+  ;; or the emptied string PathAppendW's overflow rule leaves) is written back
+  ;; only when it fits the caller's buffer.
+  (func $handle_PathAppendA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wdst i32) (local $ok i32)
+    (local.set $wdst (call $shell_path_widen_pair (local.get $arg0) (local.get $arg1)))
+    (if (local.get $wdst) (then
+      (local.set $ok (call $shell_path_append_w (local.get $wdst) (i32.add (local.get $wdst) (i32.const 520))))
+      (if (i32.eqz (call $shell_path_narrow_into (local.get $arg0) (local.get $wdst)))
+        (then (local.set $ok (i32.const 0))))
+      (call $heap_free (local.get $wdst))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; Widen two MAX_PATH byte strings into one heap block: the first at +0, the
+  ;; second at +520. 0 when either is NULL, unreadable or unterminated.
+  (func $shell_path_widen_pair (param $a_g i32) (param $b_g i32) (result i32)
+    (local $a i32) (local $b i32) (local $w i32)
+    (local.set $a (call $shell_path_alen (local.get $a_g)))
+    (local.set $b (call $shell_path_alen (local.get $b_g)))
+    (if (i32.or (i32.lt_s (local.get $a) (i32.const 0)) (i32.lt_s (local.get $b) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $w (call $heap_alloc (i32.const 1040)))
+    (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
+    (call $shell_path_widen (local.get $w) (local.get $a_g) (local.get $a))
+    (call $shell_path_widen (i32.add (local.get $w) (i32.const 520)) (local.get $b_g) (local.get $b))
+    (local.get $w))
+
+  ;; Widen one MAX_PATH byte string into a fresh heap buffer; 0 as above.
+  (func $shell_path_widen_one (param $a_g i32) (result i32)
+    (local $a i32) (local $w i32)
+    (local.set $a (call $shell_path_alen (local.get $a_g)))
+    (if (i32.lt_s (local.get $a) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $w (call $heap_alloc (i32.const 520)))
+    (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
+    (call $shell_path_widen (local.get $w) (local.get $a_g) (local.get $a))
+    (local.get $w))
+
+  ;; Copy n bytes plus the terminator into code units.
+  (func $shell_path_widen (param $dst i32) (param $src i32) (param $n i32)
+    (local $i i32)
+    (block $d (loop $l
+      (call $shell_path_put (local.get $dst) (local.get $i) (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+
+  ;; Narrow a MAX_PATH UTF-16 string back into a guest byte buffer; 0 when it
+  ;; is unterminated or the destination cannot hold it.
+  (func $shell_path_narrow_into (param $dst i32) (param $src i32) (result i32)
+    (local $n i32) (local $i i32)
+    (local.set $n (call $shell_path_wlen (local.get $src) (i32.const 260)))
+    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (return (i32.const 0))))
+    (if (call $ptr_range_access_bad (local.get $dst) (i32.add (local.get $n) (i32.const 1)) (i32.const 1))
+      (then (return (i32.const 0))))
+    (block $d (loop $l
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (call $shell_path_wc (local.get $src) (local.get $i)))
+      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (i32.const 1))
+
+  ;; Bounded byte-string length for the ANSI MAX_PATH shell APIs; -1 for NULL,
+  ;; an unreadable byte, or no terminator within MAX_PATH.
+  (func $shell_path_alen (param $path i32) (result i32)
+    (local $n i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
+    (loop $scan
+      (if (i32.ge_u (local.get $n) (i32.const 260)) (then (return (i32.const -1))))
+      (if (call $ptr_range_access_bad (i32.add (local.get $path) (local.get $n)) (i32.const 1) (i32.const 0))
+        (then (return (i32.const -1))))
+      (if (i32.eqz (call $gl8 (i32.add (local.get $path) (local.get $n)))) (then (return (local.get $n))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1))) (br $scan))
+    (i32.const -1))
+
   (func $shell_path_attrs_w (param $path i32) (param $len i32) (result i32)
     (local $copy i32) (local $attrs i32)
     ;; Per-call heap allocation avoids sharing a gather arena across Workers.
@@ -3296,7 +3642,9 @@
     (local.set $attrs (call $host_fs_get_file_attributes (call $g2w (local.get $copy)) (i32.const 1)))
     (call $heap_free (local.get $copy)) (local.get $attrs))
 
-  (func $handle_PathFileExistsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; PathFileExists core over a UTF-16 guest string; sets ERROR_FILE_NOT_FOUND
+  ;; when the answer is FALSE.
+  (func $shell_path_file_exists_w (param $arg0 i32) (result i32)
     (local $len i32) (local $found i32) (local $i i32) (local $slashes i32)
     (local.set $len (call $shell_path_wlen (local.get $arg0) (i32.const 260)))
     ;; UNC server/share roots are not file objects for this API.
@@ -3313,8 +3661,26 @@
     (if (i32.gt_s (local.get $len) (i32.const 0)) (then
       (local.set $found (i32.ne (call $shell_path_attrs_w (local.get $arg0) (local.get $len)) (i32.const -1)))))
     (if (i32.eqz (local.get $found)) (then (global.set $last_error (i32.const 2))))
+    (local.get $found))
+
+  (func $handle_PathFileExistsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $shell_path_file_exists_w (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+  ;; PathFileExistsA(pszPath): widen the byte string and ask the same core.
+  ;; NULL, unreadable or over-long input answers FALSE / ERROR_FILE_NOT_FOUND,
+  ;; as the wide spelling does for the same input.
+  (func $handle_PathFileExistsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $w i32) (local $found i32)
+    (local.set $w (call $shell_path_widen_one (local.get $arg0)))
+    (if (local.get $w)
+      (then
+        (local.set $found (call $shell_path_file_exists_w (local.get $w)))
+        (call $heap_free (local.get $w)))
+      (else (global.set $last_error (i32.const 2))))
     (i32.store offset=0 (global.get $reg_base) (local.get $found))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
 
   ;; Wide recursive directory creation uses actual VFS attributes and creation,
   ;; never a success-only stub. SECURITY_ATTRIBUTES descriptors are unsupported:

@@ -191,8 +191,11 @@ function snapshot(){
     assert.strictEqual(queue.inflight,0);assert.strictEqual(queue.bytes,0);
     assert(cancelConsumer.shutdownInfo.heapAdopted>0);
     const handedSize=new DataView(memory.buffer).getUint32(e.guest_to_wasm(adoptedHead)>>>0,true);
-    const reuse=e.guest_alloc(1)>>>0;
-    assert.strictEqual(reuse,adoptedHead+(handedSize>=32?handedSize-16:0)+4,
+    // Ask for more than HEAP_BIN_MAX (256): a small request is served from the
+    // exact-size bins (0e43eff2) before the free list, so it proves nothing
+    // about the adopted block. 1024 bytes is a 1032-byte block.
+    const reuse=e.guest_alloc(1024)>>>0;
+    assert.strictEqual(reuse,adoptedHead+(handedSize>=1048?handedSize-1032:0)+4,
       'parent allocator really reuses handed-off worker storage (tail-split allocator)');
     e.guest_free(reuse);
   }finally{await cancelConsumer.cancel();}

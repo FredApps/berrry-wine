@@ -836,14 +836,33 @@ class CodeCache {
       // paragraphs no cached program covers: a dragged-in prologue paragraph
       // may still be held by the cached block that was cut there, and that
       // block needs its bits for as long as it stands.
-      for (const [from, to] of prog.covered) {
+      //
+      // ...but only BEHIND the program's first store. "Its stores land behind
+      // the program counter" holds for the bytes that run before the first
+      // store; everything from that store on can still run, later in this same
+      // straight line, after a store has patched it. BRW.EXE's span routine
+      // stores the immediates of the loop it runs next (8:c314 -> 8:c35d), and
+      // with those bits down the interpreter ran the previous span's
+      // immediates from 330,588,088 on. Kept up, the store raises $smc and the
+      // block ends at its next transfer, before the patched code runs.
+      // TOYVM_PURE_CLEAR_ALL=1 restores clearing everything (A/B control).
+      const clearAll = typeof process !== 'undefined' && process.env && process.env.TOYVM_PURE_CLEAR_ALL === '1';
+      let stored = false;
+      prog.covered.forEach(([from, to], i) => {
+        const s = clearAll ? -1 : (prog.coveredStore ? prog.coveredStore[i] : -2);
+        let clearTo;
+        if (stored) clearTo = from;
+        else if (s === -1) clearTo = to;
+        else if (s === -2) { clearTo = from; stored = true; }   // no information: keep all
+        else { clearTo = Math.min(to, Math.max(from, s)); stored = true; }
         // Paragraph by paragraph: one volPara/byPara test per 16 bytes.
         for (let p = from >>> 4; p <= (to - 1) >>> 4; p++) {
           if (this.volPara[p] !== 1 || this.byPara.has(p)) continue;
-          const lo = Math.max(from, p << 4), hi = Math.min(to, (p + 1) << 4);
+          const lo = Math.max(from, p << 4), hi = Math.min(clearTo, (p + 1) << 4);
           for (let b = lo; b < hi; b++) this.codeBits[b >> 3] &= ~(1 << (b & 7));
         }
-      }
+        for (let b = clearTo; b < to; b++) this.codeBits[b >> 3] |= 1 << (b & 7);
+      });
       this.armWatch();
       this.volatilePure++;
     }
@@ -1221,6 +1240,10 @@ class DosSession {
     this.stuck = 0;
     this.stuckAt = null;
     this.lastIrq = 0;
+    // A timer IRQ a stop found due but could not deliver because IF was 0 --
+    // and only for that reason. Held until the guest's own IF-enable boundary
+    // (ifenExit) or the next stop that finds IF=1. See step().
+    this.timerPending = false;
     // Dispatch count the audio was last rendered up to. See the render call in
     // step(): rendering happens at quantum crossings, not at every handback.
     this.audioAt = 0;
@@ -1234,6 +1257,10 @@ class DosSession {
     this.vgaLines = 449;
     this.vgaFrame = 0;
     this.retraceEdge = false;
+    // The last date a handback REACHED (atStop's clockAt), and whether the last
+    // handback reached its stop: see `from` in step() and the run loops.
+    this.reachedAt = -1;
+    this.lastAtStop = true;
     this.lastKey = -1;
     this.lastWritten = 0;
     this.lastRegs = 0;
@@ -1243,7 +1270,8 @@ class DosSession {
   get done() {
     return this.machine.exited || this.machine.blockedOnKey || this.machine.stopHit
       || this.stuckAt !== null
-      || this.blockedOn32 !== undefined || this.badSelector !== undefined;
+      || this.blockedOn32 !== undefined || this.badSelector !== undefined
+      || this.protectedTransferStop !== undefined;
   }
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
@@ -1279,7 +1307,9 @@ class DosSession {
     // cs:gip is the handler and every line would name the same two numbers.
     const cs = this.hooks.onIrq ? this.vm.get('cs') : 0;
     const ip = this.hooks.onIrq ? this.vm.get('gip') : 0;
-    this.vm.exports.raise_irq(vec);
+    if (this.vm.exports.get_cr0() < 0) {
+      require('./paging-exec').exception(this.vm, vec, 0, this.vm.get('gip'), false, this.vm.get('gip'), true);
+    } else this.vm.exports.raise_irq(vec);
     this.irqs++;
     const ik = `irq ${src}`;
     this.exitKinds.set(ik, (this.exitKinds.get(ik) || 0) + 1);
@@ -1349,15 +1379,30 @@ class DosSession {
     // flags the guest gets back (CF for a DOS error, ZF for "no key"), so it is
     // edited in place on the stack rather than in the live register.
     const ss = vm.get('ss'), sp = vm.get('sp');
-    const lin = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
-    const rd = (of) => vm.mem[lin(of)] | (vm.mem[lin(of + 1)] << 8);
+    const paging = vm.exports.get_cr0?.() < 0;
+    const lin = (of) => paging ? ((vm.exports.get_ssb() >>> 0) + ((sp + of) & 0xffff)) >>> 0
+      : ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
+    const rd = (of) => paging ? machine.guestRd(lin(of)) | (machine.guestRd(lin(of + 1)) << 8)
+      : vm.mem[lin(of)] | (vm.mem[lin(of + 1)] << 8);
     const wr = (of, v) => {
-      vm.mem[lin(of)] = v & 0xFF;
-      vm.mem[lin(of + 1)] = (v >> 8) & 0xFF;
+      if (paging) {
+        machine.guestWrite(lin(of), [v & 0xff]);
+        machine.guestWrite(lin(of + 1), [v >>> 8 & 0xff]);
+      } else { vm.mem[lin(of)] = v & 0xff; vm.mem[lin(of + 1)] = v >>> 8 & 0xff; }
+    };
+    // DOS/BIOS return 16-bit register words even when the guest uses a
+    // 386 real-mode extender. VM.set initializes a whole register; using it
+    // here erased EAX/EDX's upper halves across a seek in Comanche 3's
+    // free-space calculation. Word writes, including IRET's SP advance,
+    // must merge with the current full general register.
+    const setWord = (n, v) => {
+      if (isa.REG16.includes(n)) {
+        vm.exports[`set_${n}`]((vm.raw(n) & 0xFFFF0000) | (v & 0xFFFF));
+      } else vm.set(n, v);
     };
     const r = {
       get: (n) => vm.get(n),
-      set: (n, v) => vm.set(n, v),
+      set: setWord,
       setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
       setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
       // Where this INT returns to, and the SP it returns with. EXEC needs it:
@@ -1398,7 +1443,7 @@ class DosSession {
     vm.set('gip', rd(0));
     vm.set('cs', rd(2));
     vm.set('flags', rd(4));
-    vm.set('sp', (sp + 6) & 0xFFFF);
+    setWord('sp', sp + 6);
     // A service that transfers control -- EXEC into a child program, or a
     // child's exit back into its parent -- says so here rather than editing the
     // registers behind the IRET's back, which would just be overwritten by the
@@ -1428,7 +1473,15 @@ class DosSession {
 
     const cs = vm.get('cs'), ip = vm.get('gip');
     if (cs === STUB_SEG) {
-      this.serviceInterrupt();
+      if (vm.exports.get_cr0() < 0) {
+        vm.exports.pg_checkpoint();
+        try { this.serviceInterrupt(); }
+        catch (err) {
+          const pending = vm.exports.pg_pending();
+          if (!pending || pending === 3) throw err;
+          require('./paging-exec').exception(vm, 14, vm.exports.pg_error(), ip);
+        }
+      } else this.serviceInterrupt();
       return 'int';
     }
 
@@ -1441,6 +1494,22 @@ class DosSession {
     // change under the guest's feet when it switches to protected mode or opens
     // A20, and both decide which bytes get decoded.
     const codeBase = vm.exports.get_csb();
+    const paging = vm.exports.get_cr0() < 0;
+    const epoch = vm.exports.pg_epoch();
+    if (this.pagingEpoch !== epoch || this.pagingActive !== paging) {
+      if (this.uop) {
+        this.uop.exit = null;
+        if (this.uop.heads && this.uop.release) {
+          for (const h of this.uop.heads.values()) this.uop.release(h);
+          this.uop.heads.clear();
+        }
+      }
+      this.cache.flush();
+      this.cache.benign.clear(); this.cache.patchMisses.clear(); this.cache.siteRange.clear();
+      this.cache.volPara.fill(0); this.cache.volHits.fill(0); this.cache.volList.length = 0;
+      this.cache.volState.clear();
+      this.pagingEpoch = epoch; this.pagingActive = paging;
+    }
     const mask = vm.exports.get_linmask();
     // A 32-bit code segment. The D bit changes the default operand and address
     // size of every instruction in the segment and widens EIP past 0xFFFF, so
@@ -1460,23 +1529,9 @@ class DosSession {
     // Where the limit is 64K or less this changes nothing: the guest cannot be
     // above 0xFFFF in the first place.
     const ip32 = d32 || ((vm.exports.get_cr0() & 1) !== 0 && !vm.exports.get_vm86());
-    // A CS that names no descriptor while PE is set. $segbase deliberately
-    // reads such a selector as a real-mode paragraph, which is right for a DATA
-    // segment in an extender running unreal -- but a real CPU cannot execute
-    // through one at all, it faults, and here the fallback quietly hands the
-    // decoder a plausible base pointing at whatever happens to be there.
-    // COUNTDWN.EXE spent 60M dispatches and 700MB of arena walking the zeros
-    // above 9BF00 that way, and the run looked slow rather than wrong. Stopping
-    // is the honest report: something earlier loaded a selector we got wrong.
-    // ...unless this is virtual-8086 mode, where a CS naming no descriptor is
-    // not a mistake, it is the definition: PE is set and segmentation is back
-    // to paragraphs. $segbase already reads it that way; the guard has to agree
-    // or every V86 guest stops on its first instruction.
-    if ((vm.exports.get_cr0() & 1) && !vm.exports.get_vm86() && (cs & 0xFFF8) !== 0
-        && (cs & 0xFFF8) > (vm.exports.get_gdtl() & 0xFFFF)) {
-      this.badSelector = `${cs.toString(16)}:${ip.toString(16)}`;
-      return 'badselector';
-    }
+    // CR0 changes retain the already loaded hidden CS cache. In particular,
+    // the first instruction after setting PE may be the far jump that loads
+    // a protected selector; the old real-mode CS need not index the new GDT.
     // F1 is ICEBP, and it is also the byte every IVT stub is made of -- chosen
     // precisely because the decoder refuses it, which is what puts control back
     // here when a vector is taken. The catch is that the decoder refuses it
@@ -1491,7 +1546,7 @@ class DosSession {
     // So: step over it and take vector 1 the way the hardware would. In
     // protected mode `raise` declines (see its comment) and stepping over is
     // all that happens, which is still the right answer for an unhooked INT 1.
-    if (cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
+    if (!paging && cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
       vm.set('gip', (ip + 1) & 0xFFFF);
       this.icebps++;
       this.raise(1, 'icebp');
@@ -1526,11 +1581,11 @@ class DosSession {
     const stepping = int1Hooked && (vm.get('flags') & (1 << isa.F.TF)) !== 0;
     // A µop program's head (uop-live.js): the program runs this slice instead
     // of the compiled code. Null when there is none, or it has been dropped.
-    const uopEnter = !stepping && this.uop ? this.uop.at(ip, codeBase, mask, d32, ip32) : null;
+    const uopEnter = !paging && !stepping && this.uop ? this.uop.at(ip, codeBase, mask, d32, ip32) : null;
     // Where a µop program left, the program it stands in for resumes: its
     // own edge to that block, not a fresh entry (uop-live.js resume).
-    const resumed = !uopEnter && !stepping && this.uop ? this.uop.resume(ip, codeBase, d32, ip32) : 0;
-    const entry = uopEnter ? 0 : resumed ? resumed : stepping
+    const resumed = !paging && !uopEnter && !stepping && this.uop ? this.uop.resume(ip, codeBase, d32, ip32) : 0;
+    const entry = paging ? 0 : uopEnter ? 0 : resumed ? resumed : stepping
       ? this.cache.stepOne(cs, ip, codeBase, mask, d32, ip32)
       : this.cache.entryFor(cs, ip, codeBase, mask, d32, ip32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
@@ -1681,10 +1736,32 @@ class DosSession {
     // caps the budget below, so a small --slice still hands back sooner; it
     // just no longer re-quantizes the audio while it does.
     const grain = Math.max(1, Math.floor(shortest / 4));
-    let stopAt = Math.floor(this.dispatched / grain) * grain + grain;
-    const due = (at) => { if (at > this.dispatched && at < stopAt) stopAt = at; };
+    // The lattice point AT the odometer, not the one after it, when the
+    // odometer sits exactly on one: only an early handback can (a budget stop
+    // ends past its date, see `atStop`), and that point has not been reached.
+    // BRW jit-sepc handed back early on 89,250,000 and the old floor+grain
+    // skipped that stop, so the arms stopped on different dates from there.
+    // The earliest date not yet reached: the odometer itself unless the last
+    // handback REACHED it (a machine cut that ended exactly on its stop).
+    const from = Math.max(this.dispatched, this.reachedAt + 1);
+    let stopAt = Math.ceil(from / grain) * grain || grain;
+    // `>=`, not `>`: a date equal to the odometer is one an EARLY handback
+    // landed on exactly (see `atStop` below), and it has not been reached yet.
+    // Cutting the next slice to it gives a budget of 1, so the guest runs on to
+    // its next block transfer and stops where an arm that never handed back
+    // early stops. The one handback that REACHED a date equal to the odometer
+    // is a machine cut ending exactly on its stop; `from` skips that date.
+    const due = (at) => { if (at >= from && at < stopAt) stopAt = at; };
     // The Sound Blaster block's last sample (already a date, not a rate).
-    if (sbInterval !== Infinity) due(this.audioAt + sbInterval);
+    // OVERDUE is clamped to the odometer: a block can overshoot a date by
+    // thousands of dispatches (BRW.EXE: 16,398 at 160,191,298, in every arm),
+    // and a block end that fell inside that overshoot used to be skipped by
+    // `due()` and then rendered at whichever handback came next -- the
+    // interpreter's next stop, or a region's early exit 3.5k dispatches
+    // sooner. Cut to the odometer, the next slice has a budget of 1 and both
+    // arms render it at the same transfer. Only this date: a timer nobody
+    // hooked stays overdue forever, and clamping it would make every slice 1.
+    if (sbInterval !== Infinity) due(this.irqSchedule ? Math.max(this.audioAt + sbInterval, from) : this.audioAt + sbInterval);
     // The timer, the keyboard and the vertical retrace, each on the cadence its
     // own rung below tests -- written once here and once there would drift, so
     // these read the same expressions.
@@ -1706,7 +1783,7 @@ class DosSession {
     // phase advanced at every handback the two arms read different counts and
     // ran their timers at different rates from there on.
     const tickUnit = this.dispatchesPerTick / (this.tickScale || 1);
-    due(Math.round(Math.ceil((this.dispatched + 1) / tickUnit) * tickUnit));
+    due(Math.round(Math.ceil(from / tickUnit) * tickUnit));
     const budget = this.irqSchedule
       ? Math.max(1, Math.min(this.slice, stopAt - this.dispatched))
       : (this.latticeClock
@@ -1719,6 +1796,13 @@ class DosSession {
     // IRET handlers in emit.js. Only the Sound Blaster's port-armed line is
     // delivered off the schedule, so only it needs the boundary.
     if (vm.exports.set_irqwant) vm.exports.set_irqwant(machine.sbForced && machine.sbForced() ? 1 : 0);
+    // ...and whether the guest's IF-enable boundaries have to stop here for a
+    // timer IRQ held for IF (emit.js `sti`/CONT, `popf`, `iret`). Separate
+    // from $irqwant so the Sound Blaster's port-armed line keeps exactly the
+    // boundaries it had. Schedule only: without it every handback is a stop.
+    // $ifarm starts every slice down; only an `sti` inside it raises it.
+    if (vm.exports.set_irqpend) vm.exports.set_irqpend(this.irqSchedule && this.timerPending ? 1 : 0);
+    if (vm.exports.set_ifarm) vm.exports.set_ifarm(0);
     // Unresolved direct edges resolve through the jump table (emit.js GO) --
     // not while single-stepping: a oneInsn block leaves its branch targets
     // unresolved so that the handback after one instruction can raise INT 1,
@@ -1741,7 +1825,13 @@ class DosSession {
       vm.exports.set_mousex(m.x); vm.exports.set_mousey(m.y); vm.exports.set_mousebtn(m.buttons);
       vm.exports.set_intfast(on ? (1 | (m.buttons ? 0 : 2)) : 0);
     }
-    if (uopEnter) vm.exports.set_steps(uopEnter(vm, budget));
+    if (paging) {
+      if (!require('./paging-exec').step(vm, budget)) {
+        this.cache.unimplemented.set(ip, true);
+        return 'unimplemented';
+      }
+    }
+    else if (uopEnter) vm.exports.set_steps(uopEnter(vm, budget));
     else vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
@@ -1771,6 +1861,21 @@ class DosSession {
     const left = cut >= 0 ? cut : vm.raw('steps');
     this.dispatched += budget - left;
     this.handbacks++;
+    // The transfer helper validates before stack/register mutation. Ordinary
+    // protected exception delivery is not complete, so a rejected operation
+    // stops explicitly rather than fabricating a guest exception or continuing
+    // with a system descriptor misread as code. Do not deliver IRQ/TF after it.
+    if (vm.exports.mget_pm_xfer_stop && vm.exports.mget_pm_xfer_stop()) {
+      const reason = vm.exports.mget_pm_xfer_stop() >>> 0;
+      const names = require('./pm-transfer').STOP;
+      this.protectedTransferStop = {
+        reason, reasonName: Object.keys(names).find(k => names[k] === reason) || 'unknown',
+        selector: vm.exports.mget_pm_xfer_sel() >>> 0,
+        cs: vm.get('cs'), blockIp: vm.get('gip'),
+        exceptionDelivered: false,
+      };
+      return;
+    }
     // Did this handback reach the date the slice was cut to, or is it one the
     // guest caused on its way past -- an unresolved jump, a store into compiled
     // code, a port write? Only the first kind is a point on the clock, and only
@@ -1780,7 +1885,16 @@ class DosSession {
     // dependence into what the guest hears. It is billed, it is counted, and
     // then the next slice is cut to the same date again -- so the two arms meet
     // at that date whatever either did in between.
-    const atStop = !this.irqSchedule || this.dispatched >= stopAt;
+    // STRICTLY PAST THE DATE. The budget is tested as `$steps < 0` at a block
+    // transfer, so a slice that spent it always ends at least one dispatch
+    // beyond the date; landing exactly ON it is an early handback that happened
+    // to coincide. BRW.EXE's region 0x423a did that at a side exit (8:4299,
+    // `left` 0) and the timer went in there, three ops before the interpreter's
+    // loop head -- 116 interrupts on different instructions by 330.6M and a
+    // different frame at 500M. A slice the machine cut (a port write) is the
+    // guest's own instant and keeps the old test.
+    const atStop = !this.irqSchedule || this.dispatched > stopAt
+      || (cut >= 0 && this.dispatched >= stopAt);
     // THE CLOCK READS THE DATE, NOT THE ODOMETER. A slice cut to a date still
     // overshoots it: a block only tests its budget at its transfer, so the
     // handback is a few ops past, and how few is a property of the block that
@@ -1793,12 +1907,16 @@ class DosSession {
     // overshoot where it belongs -- billed to the window it ran in, which is
     // the next one -- and every later date is the same number in every arm.
     const clockAt = atStop && this.irqSchedule ? stopAt : this.dispatched;
+    if (atStop && this.irqSchedule) this.reachedAt = stopAt;
+    this.lastAtStop = atStop;
     // The retrace IRQ is the rising edge of the bit the port reports, so it is
     // armed when the dispatch count crosses into a new frame -- the interrupt
     // and the status the guest polls come from ONE clock. It is delivered at
     // the next handback (interrupts only go in at instruction boundaries) and
     // stays armed until the rung below fires it or finds nobody listening.
-    if (this.vgaPeriod) {
+    // Only at a stop: an early handback ON a frame edge has not reached it,
+    // and arming the edge there consumes the date `due()` would keep.
+    if (this.vgaPeriod && atStop) {
       const frame = Math.floor(clockAt / this.vgaPeriod);
       if (frame !== this.vgaFrame) { this.vgaFrame = frame; this.retraceEdge = true; }
     }
@@ -1833,12 +1951,38 @@ class DosSession {
     // that spent its budget is a `date` when it reached the schedule's stop
     // and `budget` when a host cap ended it first; anything else with budget
     // left is `early` -- an unresolved transfer or an uncompiled target.
+    // ...and whether it ended on the guest's own IF-enable boundary, read here
+    // for the same reason (the rungs below raise vectors). Only these exits
+    // are such a boundary (IF-ENABLE-DESIGN.md section 3):
+    //   ifen  -- jmp_ifen after an arming STI's follower (emit.js);
+    //   popf  -- POPF loaded IF=1 with an IRQ pending (or TF: same boundary);
+    //   iret  -- IRET, likewise (its lookup miss names it too, and is still
+    //            the boundary right after the IRET);
+    //   edge/ret/indirect/far32 WITH $ifarm up -- the STI's follower was itself
+    //            a transfer, and its CONT refused on $ifarm: the boundary is
+    //            that transfer's target.
+    // Not `end`: an armed `end` is the trap flag's one-instruction block or an
+    // unimplemented follower, i.e. INSIDE the shadow. HLT is `end` too, and is
+    // left for a later cut (see CANDIDATE.md). $ifarm is dropped here whatever
+    // happens: it never outlives the boundary it was raised for.
+    const endWhy = vm.raw('exitwhy');
+    const armed = vm.exports.get_ifarm ? vm.raw('ifarm') : 0;
+    if (armed) vm.set('ifarm', 0);
+    const ifenExit = endWhy === EXIT_WHY.ifen || endWhy === EXIT_WHY.popf || endWhy === EXIT_WHY.iret
+      || (armed !== 0 && (endWhy === EXIT_WHY.edge || endWhy === EXIT_WHY.ret
+        || endWhy === EXIT_WHY.indirect || endWhy === EXIT_WHY.far32));
+    // An eligible delivery instant: an EARLY handback (budget left; a stop
+    // keeps the stop's own rungs and clockAt) on such a boundary, IF=1 there,
+    // a timer IRQ pending, not single-stepping (the trap owns that handback)
+    // and not a port-write cut (the Sound Blaster's own instant).
+    const ifen = this.irqSchedule && this.timerPending && ifenExit && !atStop && left >= 0
+      && cut < 0 && !stepping && (vm.get('flags') & 0x200) !== 0;
     const endCs = vm.get('cs');
     let exitKind = stepping ? 'trap'
       : endCs === STUB_SEG
         ? `int ${(vm.get('gip') & 0xFF).toString(16).padStart(2, '0')}:${(vm.get('ax') >> 8).toString(16).padStart(2, '0')}`
         : cut >= 0 ? 'cut'
-          : left <= 0 ? (atStop ? 'date' : 'budget')
+          : left < 0 ? (atStop ? 'date' : 'budget')
             : `early ${WHY_NAME[vm.raw('exitwhy')] || '?'}`;
     vm.set('exitwhy', 0);
     if (vm.raw('smc')) {
@@ -1940,12 +2084,24 @@ class DosSession {
     // render, so `dispatched - audioAt >= sbInterval` means the block's last
     // sample is behind us. That is a function of the transfer and the guest
     // clock, and of nothing about the cut.
-    const sbDueNow = sbInterval !== Infinity && this.dispatched - this.audioAt >= sbInterval;
+    // Under the schedule, STRICTLY past the block's end, for the same reason
+    // `atStop` is strict: an early handback that lands exactly on the block's
+    // last sample has not reached it. Rendering there consumed the date (audioAt
+    // := it) while the interrupt waited for the next real stop, so BRW.EXE's
+    // interpreter-only run took its Sound Blaster interrupts hundreds of
+    // dispatches late once `atStop` stopped counting such handbacks. Left
+    // alone, `due()` keeps the date and the next slice reaches it.
+    const sbDueNow = sbInterval !== Infinity && (this.irqSchedule
+      ? this.dispatched - this.audioAt > sbInterval
+      : this.dispatched - this.audioAt >= sbInterval);
     // Under the schedule this is simply "did we reach a stop": the render
     // lattice is one of the dates the slice is cut to, and the block's end is
-    // another, so both of the old clauses are already in `stopAt`.
+    // another -- overdue ones included, see `due` -- so both of the old
+    // clauses are already in `stopAt`. `sbDueNow` no longer renders here: at
+    // an early handback it stamped audioAt with the ODOMETER, which is where
+    // the code cache happened to hand back, not a date.
     if (machine.audioAdvance && (this.irqSchedule
-      ? (atStop || sbDueNow)
+      ? atStop
       : (!this.latticeClock
         || Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
         || sbDueNow))) {
@@ -2016,7 +2172,15 @@ class DosSession {
     // every GUS module player here, so it is not rate-limited the way the
     // Sound Blaster's block is; the slice above is already cut to it.
     const gvec = atStop && (vm.get('flags') & 0x200) && machine.gusIrq ? machine.gusIrq() : 0;
-    const tvec = atStop ? machine.timerVector() : 0;
+    // The timer is asked at a stop, as before, and at an eligible IF-enable
+    // boundary (`ifen`, above) while one is pending -- the one rung allowed off
+    // the schedule's stops besides the Sound Blaster's forced line, and for the
+    // same reason: the instant is the guest's own instruction boundary, at the
+    // same dispatch count in every arm. Keyboard, retrace and GUS would follow
+    // the same pattern; this first cut does the timer only.
+    const tvec = atStop || ifen ? machine.timerVector() : 0;
+    // IF as this handback found it, before any rung below raises a vector.
+    const ifHere = (vm.get('flags') & 0x200) !== 0;
     // A frame, not a tick: the vertical retrace comes round about 70 times a
     // second against the timer's 18.2, so it is the fastest thing here. Asked
     // for the vector up front like the Sound Blaster's, so that a rung which
@@ -2042,10 +2206,15 @@ class DosSession {
       // that overshoot differently by one single op walk apart over a run.
       // Advancing by whole intervals keeps every later date the same number in
       // every arm, which is the point of having a schedule at all.
+      // At an IF-enable boundary `clockAt` is the boundary's own dispatch
+      // count (not a stop, so it is `dispatched`), and the grid advance below
+      // is the same expression: every later date is unchanged. No audio render
+      // is added there -- renders stay on stops.
       const ti = this.timerInterval();
       this.lastIrq = this.irqSchedule
         ? this.lastIrq + Math.floor((clockAt - this.lastIrq) / ti) * ti
         : this.dispatched;
+      this.timerPending = false;
       this.raise(tvec, 'timer');
     } else if (rvec) {
       this.retraceEdge = false;
@@ -2061,6 +2230,17 @@ class DosSession {
         && (vm.get('flags') & 0x200)) {
       const kvec = machine.keyboardIrq();
       if (kvec) { this.lastKbIrq = clockAt; this.raise(kvec, 'kbd'); }
+    }
+    // PENDING: a stop where the timer rung's condition held except for IF.
+    // Decided only at a stop (a date, the same in every arm), from IF as the
+    // stop found it -- a higher rung winning the stop is not "blocked by IF".
+    // An unhooked timer drops it, so a stale pending cannot keep the guest's
+    // POPFs handing back. An eligible boundary that found the timer unhooked
+    // drops it the same way.
+    if (this.irqSchedule && (atStop || ifen)) {
+      const tv = machine.timerVector();
+      if (!tv) this.timerPending = false;
+      else if (atStop && !ifHere && clockAt - this.lastIrq >= this.timerInterval()) this.timerPending = true;
     }
 
     this.checkProgress(cs, ip, this.cache.refusedEntries.has(entry));
@@ -2157,12 +2337,18 @@ class DosSession {
     }
   }
 
+  // An early handback landing exactly ON the run's end date has not reached
+  // it (see atStop); one more slice, of budget 1, takes the run past it.
+  owesEnd(budget) {
+    return this.irqSchedule && !this.lastAtStop && this.dispatched === budget;
+  }
+
   // Run until the budget is spent or the program is finished. The headless
   // driver's whole loop; the browser one calls step() instead so it can hand
   // the thread back between chunks.
   runUntil(budget) {
     this.endAt = budget;
-    while (this.dispatched < budget && !this.done) this.step();
+    while ((this.dispatched < budget || this.owesEnd(budget)) && !this.done) this.step();
     return this;
   }
 
@@ -2260,6 +2446,7 @@ class DosSession {
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,
+      protectedTransferStop: this.protectedTransferStop ?? null,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,
       deadFlagsDropped: this.cache.deadFlagsDropped,
       tracedBlocks: this.cache.tracedBlocks,

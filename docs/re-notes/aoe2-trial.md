@@ -84,6 +84,26 @@ also holds Left through gameplay and checks the central fog band: the broken
 frame contained 1,800 colored pixels in repeated islands; the fixed CLI and web
 captures contain none.
 
+## LAN multiplayer over the virtual LAN (works 2026-10-06, 904b5e50)
+
+`test/test-aoe2-vlan-gameplay.js` (heavy, run on a boat): seat 10.0.0.1 hosts
+as "Host", seat 10.0.0.2 finds "Host's Game" and joins as "Guest", and both
+lobbies list both names. Evidence `scratch/runs/20261006T1450Z-aoe2-w4-vlan`.
+
+- **Route.** EULA Accept (161,433), Multiplayer (248,185), name field
+  (335,240) + OK (259,284), Local (LAN) TCP/IP Connection (430,102); host
+  Create (480,365); guest selects the list row (480,195) then Join (480,318).
+- **IDirectPlay4W only.** `EnumSessions(DPENUMSESSIONS_ASYNC|AVAILABLE)` polled
+  from the UI loop, `Open`, `CreatePlayer`, `GetCaps`/`GetPlayerCaps` into a
+  **40-byte** stack local (a fill of 64 bytes smashed the return address),
+  `GetSessionDesc(NULL, &size)` as a size probe (an unwritten size became a
+  SmartHeap out-of-memory), `GetPlayerName` on the remote player, then its own
+  lobby protocol over `Send`/`GetMessageCount`/`Receive`.
+- **1252 bytes in W fields.** `lpszSessionName` and the player DPNAME point at
+  ANSI buffers passed as UTF-16. Real DirectPlay copies W strings opaquely, so
+  they round-trip; a provider that narrows to 1252 and widens back shows "?".
+  The dpl/1 session record and PLAYER_ADD now carry the W units verbatim.
+
 ## Manifest and acceptance route
 
 `lib/apps.js` now mounts 95 required files (68.8 MiB): the EULA DLL/document,
@@ -104,3 +124,26 @@ a 640x480 capture with a substantial green terrain region, detailed world
 pixels, and the dark lower command/minimap HUD; it also rejects clean early
 `ExitProcess` as a failure. It then pans from batch 1602 through 1640 and rejects
 stale cursor-background rectangles in the fog.
+
+## 2026-10-06: startup regressions and the invisible cursor
+
+Three things had broken the trial on main, all fixed:
+
+- **"requires DirectX 6.1a or higher".** `DirectPlayCreate` then QueryInterface
+  for the Unicode `IDirectPlay4` {0AB1C530-…} returned E_NOINTERFACE (since the
+  2026-09-09 QI validation). Codex's DPLAY4W-UNICODE implementation, never
+  committed, was landed in 91bbc717.
+- **"Could not initialize graphics system".** The game opens `data\*.drs`
+  relative to its directory. The manifest's bare URLs mount at
+  `C:\<basename>`, and the VFS basename fallback that used to bridge that had
+  been narrowed. Subdirectory files now mount at their relative paths too
+  (a87fced6).
+- **The EULA Accept button** moved to about (161,433) when dialogs started
+  being centred; the test clicks there now.
+
+The in-game cursor shares AoE I's mechanism and its fix (see
+`age-of-empires.md`: `GetClipper` must answer DDERR_NOCLIPPERATTACHED).
+
+Open: on the test route the frame stops changing after batch 1600 (byte-identical
+captures with full 50k-block batches and few API calls), so the camera-pan
+check fails. This is independent of the cursor fix (A/B).

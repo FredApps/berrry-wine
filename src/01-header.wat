@@ -121,6 +121,7 @@
   (import "host" "set_mouse_position" (func $host_set_mouse_position (param i32 i32)))
   ;; set_mouse_position(x, y) — update the renderer's virtual cursor
   (import "host" "get_mouse_buttons" (func $host_get_mouse_buttons (result i32)))
+  (import "host" "get_mouse_buttons_live" (func $host_get_mouse_buttons_live (result i32)))
   ;; get_mouse_buttons() → MK_* style button bitmask (1=left, 2=right)
   (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
   ;; set_window_class(hwnd, class_name_ptr)
@@ -486,6 +487,11 @@
   ;; DLL file check (for dynamic LoadLibrary)
   (import "host" "has_dll_file" (func $host_has_dll_file (param i32) (result i32)))
   ;; has_dll_file(nameWA) → 1 if DLL file exists in VFS/host, 0 if not
+  (import "host" "service_load_library" (func $host_service_load_library (result i32)))
+  ;; service_load_library() → 1 when the host finished a pending LoadLibraryA
+  ;; yield (reason 5) in place: DLL mapped, DllMain run, EAX/ESP/EIP set and the
+  ;; yield cleared. 0 leaves it pending (bytes need I/O, or no such host). For
+  ;; a nested synchronous send, which cannot return to the host's event loop.
 
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
@@ -507,6 +513,25 @@
   (import "host" "duplicate_current_thread" (func $host_duplicate_current_thread (param i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
+  ;; QueueUserAPC's two halves. thread_apc_target resolves a thread HANDLE to
+  ;; its Win32 thread id (main is 1), or 0 for an unknown or exited thread;
+  ;; thread_alert, called after the APC is published in $THREAD_APC_QUEUES,
+  ;; ends that thread's alertable SleepEx early so the APC runs now rather than
+  ;; at the sleep's timeout.
+  (import "host" "thread_apc_target" (func $host_thread_apc_target (param i32 i32) (result i32)))
+  (import "host" "thread_alert" (func $host_thread_alert (param i32)))
+  ;; CreateProcess with redirected standard handles (09d7-pipes.wat): start
+  ;; the command line as a real child process at room address child_ip, whose
+  ;; std handles are the pipe ends described by count 16-byte entries at spec
+  ;; {which (-10/-11/-12), end, child_port, parent_port}. Returns the child's
+  ;; pid, or 0 when this host cannot start one -- CreateProcessA then takes
+  ;; its old shell_execute path, so a host that never implements this keeps
+  ;; behaving exactly as before.
+  (import "host" "process_spawn" (func $host_process_spawn (param i32 i32 i32 i32 i32) (result i32)))
+  ;; A child that process_spawn started, by pid: op 0 = its exit code (259
+  ;; STILL_ACTIVE while it runs), op 1 = terminate it with exit code arg (1 on
+  ;; success). -1 = no such child.
+  (import "host" "process_ctl" (func $host_process_ctl (param i32 i32 i32) (result i32)))
   (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
   (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
   (import "host" "get_thread_locale" (func $host_get_thread_locale (param i32) (result i32)))
@@ -1207,7 +1232,11 @@
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide state; +0 class atom,
-  ;;                                     +4 decoded-code cache generation)
+  ;;                                     +4 decoded-code cache generation,
+  ;;                                     +16 last QPC count, i64,
+  ;;                                     +24 gamma ramp generation,
+  ;;                                     +28 gamma ramp guest address,
+  ;;                                     +32 LOCK atomic mode, +36 its mutex)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
   ;; main. They move here on the merge into the threads branch, which grew
@@ -1924,10 +1953,10 @@
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
-  ;; GDI batching is synchronous in this emulator, but the public limit and
-  ;; display gamma ramp remain observable process state.
+  ;; GDI batching is synchronous in this emulator, but the public limit remains
+  ;; observable process state. (The display gamma ramp is the shared
+  ;; process state in $SHARED_COUNTERS, see $gamma_ramp_store in 10f-gdi-dc.wat.)
   (global $gdi_batch_limit (mut i32) (i32.const 310))
-  (global $gdi_gamma_ramp_guest (mut i32) (i32.const 0))
   ;; Set while a window's backing surface is being replaced after a resize and
   ;; its chrome is being drawn back onto the new one. The repaint allocates a
   ;; window DC, which comes back through $gdi_window_surface_ensure; this stops
@@ -2413,6 +2442,16 @@
   ;; it: the comments are documentation, that test is the authority.
   (global $SHARED_COUNTERS i32 (region.addr $SHARED_COUNTERS 0))
   (global $SHARED_COUNTERS_SIZE i32 (region.size $SHARED_COUNTERS))
+  ;; +16: the last QueryPerformanceCounter count handed to any guest thread
+  ;; (i64, see $qpc_next).
+  (global $QPC_SHARED i32 (region.addr $SHARED_COUNTERS 0x00000010))
+  ;; +24 / +28: the display gamma ramp's generation and guest address
+  ;; ($gamma_ramp_store in 10f-gdi-dc.wat).
+  ;; +32: nonzero once guest threads run concurrently on Workers; the decoder
+  ;; then emits LOCK-prefixed RMW (and memory XCHG) as handler 499, an atomic
+  ;; compare-and-swap ($th_lock_rmw). +36: that handler's split-lock mutex.
+  (global $LOCK_MODE i32 (region.addr $SHARED_COUNTERS 0x00000020))
+  (global $LOCK_MUTEX i32 (region.addr $SHARED_COUNTERS 0x00000024))
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; 256 bytes of scratch that belong to the TEST HARNESS, not to the emulator.
   ;; No WAT reads any of it. The layout is fixed by offset so tests in separate
@@ -2446,6 +2485,11 @@
   ;; the second bind, so the symptom is a connect that fails rather than a
   ;; crossed wire — still wrong, and invisible. 0 means "not seeded yet".
   (global $VSOCK_NEXT_PORT_SHARED i32 (region.addr $LOCK_TABLE 0x00000100))
+  ;; Guest address of the WSAAsyncSelect registration table (09d-winsock.wat
+  ;; $vsock_async_rec), published once with cmpxchg. Process-wide for the same
+  ;; reason: a registration made on one guest thread's instance has to be seen
+  ;; by whichever instance pumps the wire and posts the event. 0 = not made yet.
+  (global $VSOCK_ASYNC_SHARED i32 (region.addr $LOCK_TABLE 0x00000104))
   ;; The next free thunk index, process-wide. $num_thunks is BOTH the count and
   ;; the next free index, and it is a per-instance global — so two instances that
   ;; both call GetProcAddress hand out the same thunk address, and the guest then
@@ -2453,6 +2497,11 @@
   ;; to nowhere with no bad pointer anywhere in the guest's own code.
   ;; $thunk_reserve allocates from here; $update_thunk_end keeps the two in step.
   (global $THUNK_NEXT_SHARED i32 (region.addr $LOCK_TABLE 0x00000140))
+  ;; The cross-thread user-APC inboxes (09a7d, $apc_shared_slot): one dword per
+  ;; Win32 thread id 1..16, the guest address of the newest queued node, 0 when
+  ;; empty. Lock-free (cmpxchg push, xchg take-all), so no lock line is needed;
+  ;; this is the table's last free 64-byte line, which is exactly 16 dwords.
+  (global $THREAD_APC_QUEUES i32 (region.addr $LOCK_TABLE 0x000001C0))
   ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
   ;; the WAT exports directly and still expect HeapAlloc to work. This was the
   ;; old initial value of the $heap_ptr global.
@@ -2483,7 +2532,15 @@
   (global $DIB_PAGE_USED_SIZE i32 (region.size $DIB_PAGE_USED))
   (global $DIB_PAGE_RUNS i32 (region.addr $DIB_PAGE_RUNS 0))
   (global $DIB_PAGE_RUNS_SIZE i32 (region.size $DIB_PAGE_RUNS))
-  (global $DIB_PAGE_COUNT i32 (i32.const 16384))
+  ;; The arena hands out exactly the pages $g2w translates: $DIB_GUEST_CAPACITY
+  ;; / 4096. It stayed at 16384 (64MB) when the capacity above dropped to 63MB,
+  ;; so the arena's top megabyte was allocatable but untranslatable: $g2w
+  ;; answered the NULL sentinel, $d3d9_create_surface zeroed `size` bytes from
+  ;; wasm 0xF0 and the software GL texture store wrote its texels there --
+  ;; through the guest image. Deus Ex on OpenGlDrv filled the arena that far
+  ;; after Escape and overwrote deusex.exe's own vtables with magenta.
+  ;; test/test-dib-arena-translates.js holds the two together.
+  (global $DIB_PAGE_COUNT i32 (i32.const 16128))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $WNDPROC_CONSOLE_NATIVE i32 (i32.const 0xFFFF0003))  ;; WAT-native console window
@@ -2665,7 +2722,8 @@
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
   (global $msvcrt_acmdln_ptr  (mut i32) (i32.const 0))
   (global $msvcrt_environ_ptr (mut i32) (i32.const 0))
-  (global $msvcrt_iob_ptr     (mut i32) (i32.const 0))
+  ;; Guest address of the CRT's __argv variable (__p___argv returns it).
+  (global $msvcrt_argv_ptr (mut i32) (i32.const 0))
   (global $msvcrt_pctype_ptr  (mut i32) (i32.const 0))
   (global $msvcrt_strerror_ptr (mut i32) (i32.const 0))
   (global $msvcrt_tmpnam_ptr  (mut i32) (i32.const 0))
@@ -2815,8 +2873,11 @@
   (global $qsort_thunk     (mut i32) (i32.const 0))
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE_CAPACITY i32 (i32.const 32))
-  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 32 DLLs = 1024 bytes
+  ;; 64: Daikatana loads ~30 Miles providers (*.flt, *.m3d, mp3dec.asi) before
+  ;; its own dlls\physics.dll, and at 32 that load failed and its levels never
+  ;; finished loading.
+  (global $DLL_TABLE_CAPACITY i32 (i32.const 64))
+  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 64 DLLs = 2048 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 32 = 256B.
   (global $DLL_RSRC_TABLE i32 (region.addr $DLL_RSRC_TABLE 0))
   ;; Full path used to load each module, as a guest string pointer. Keeping it
@@ -2831,6 +2892,9 @@
   (global $rsrc_ctx_base (mut i32) (i32.const 0))
   (global $rsrc_ctx_rva  (mut i32) (i32.const 0))
   (global $exe_size_of_image (mut i32) (i32.const 0))
+  ;; The EXE's SizeOfStackReserve. Windows gives CreateThread(dwStackSize=0)
+  ;; this much stack, not a fixed default, and code is compiled against it.
+  (global $exe_stack_reserve (mut i32) (i32.const 0))
   ;; The EXE's own export directory RVA (data directory 0), 0 when it exports
   ;; nothing. An EXE that exports is the provider for its companion DLLs'
   ;; imports — Warcraft III's Game.dll imports 460 ordinals from War3Demo.exe.
@@ -2848,7 +2912,6 @@
   (global $TLS_NEXT_INDEX_SHARED i32 (region.addr $TLS_NEXT_INDEX_SHARED 0))
   (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (region.size $TLS_NEXT_INDEX_SHARED))
   ;; Performance counter (monotonic, incremented per query)
-  (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd
   ;; stores them here and pushfd ORs them back, so a bit the interpreter has no
   ;; opinion about still round-trips. Starts at the usual user-mode value:
@@ -3577,7 +3640,8 @@
   ;; letting $g2w absorb it into NULL_SENTINEL. 0=off (the shipping behaviour,
   ;; and the only one that costs nothing: the check lives in the miss path,
   ;; after every translation attempt has already failed), 1=log and continue,
-  ;; 2=log and trap. A real Windows program that dereferences NULL takes an
+  ;; 2=log and trap, 3=log and raise, 4=raise silently for the 4KB NULL guard
+  ;; page only (Win98's rule). A real Windows program that dereferences NULL takes an
   ;; access violation; the sentinel makes that read zero and write nowhere,
   ;; which keeps buggy guests alive at the cost of hiding where they went
   ;; wrong. Turn this on when a symptom appears far from its cause.
@@ -4201,3 +4265,7 @@
   (global $wave_callback_saved_wait_stack_bytes (mut i32) (i32.const 0))
   (global $wave_callback_saved_yield_reason (mut i32) (i32.const 0))
   (global $wave_callback_saved_yield_flag (mut i32) (i32.const 0))
+
+  (global $getmessage_owner_generation (mut i32) (i32.const 0))
+  (global $GETMESSAGE_HOOKS i32 (region.addr $GETMESSAGE_HOOKS 0))
+  (global $GETMESSAGE_HOOKS_SIZE i32 (region.size $GETMESSAGE_HOOKS))

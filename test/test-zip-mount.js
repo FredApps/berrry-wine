@@ -261,6 +261,22 @@ function testHostileArchives() {
     'encryption and both budgets all refused');
 }
 
+// A self-extractor can leave bytes after the end-of-central-directory record
+// (WinZip's SFX for The Movies demo appends 261). unzip(1) reads such an
+// archive with an "extra bytes" note; the catalog must too, and still find
+// every entry where the central directory says it is.
+function testSfxTrailer() {
+  const zip = Buffer.from(makeRawZip([{ name: 'GAME.EXE', data: Buffer.from('MZ demo bytes') },
+    { name: 'DATA/PAK.BIN', data: Buffer.alloc(300, 7) }]));
+  const withTrailer = new Uint8Array(Buffer.concat([zip, Buffer.alloc(261, 0xAB)]));
+  const entries = zipMount.readCatalogSync(withTrailer);
+  const files = entries.filter(e => !e.isDirectory).map(e => e.name).sort();
+  assert.deepStrictEqual(files, ['DATA/PAK.BIN', 'GAME.EXE'], 'every entry is still catalogued');
+  const exe = entries.find(e => e.name === 'GAME.EXE');
+  assert.strictEqual(Buffer.from(zipMount.extractSync(withTrailer, exe)).toString(), 'MZ demo bytes');
+  console.log('  SFX trailer: 261 bytes after the end record, catalog and extract intact');
+}
+
 async function main() {
   const fixture = makeTestZip();
   if (!fixture) {
@@ -274,6 +290,7 @@ async function main() {
     await testAsyncProviderMount(fixture);
     testUnsupportedMethod();
     testHostileArchives();
+    testSfxTrailer();
     console.log('PASS test-zip-mount');
   } finally {
     fs.rmSync(fixture.dir, { recursive: true, force: true });

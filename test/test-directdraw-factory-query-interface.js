@@ -71,8 +71,11 @@ const extraWat = String.raw`
   };
   const out = wat.guest_alloc(4) >>> 0;
   const iunknown = allocGuid([0, 0, 0x000000c0, 0x46000000]);
-  const factoryIid = allocGuid([0x4fd2a823, 0x11d086c8, 0xc000ca8f, 0x9d18d94f]);
-  const sameData1 = allocGuid([0x4fd2a823, 0, 0, 0]);
+  // ddrawex.h: IID_IDirectDrawFactory is ...833, one above the CLSID. The
+  // handlers used to compare ...823, and these assertions encoded the typo.
+  const factoryIid = allocGuid([0x4fd2a833, 0x11d086c8, 0xc000ca8f, 0x9d18d94f]);
+  const sameData1 = allocGuid([0x4fd2a833, 0, 0, 0]);
+  const typoIid = allocGuid([0x4fd2a823, 0x11d086c8, 0xc000ca8f, 0x9d18d94f]);
   const clsid = allocGuid([0x4fd2a832, 0x11d086c8, 0xc000ca8f, 0x9d18d94f]);
   const corruptClsid = allocGuid([0x4fd2a832, 0, 0, 0]);
 
@@ -95,6 +98,9 @@ const extraWat = String.raw`
     assert.strictEqual(wat.test_refcount(object), 2, `${name} query AddRefs`);
     assert.strictEqual(wat.test_release(object), 1, `${name} query reference balances`);
   }
+  wat.guest_write32(out, 0xcccccccc);
+  assert.strictEqual(wat.test_query_interface(object, typoIid, out) >>> 0, 0x80004002,
+    'the former ...823 spelling is not IDirectDrawFactory');
 
   wat.guest_write32(out, 0xcccccccc);
   assert.strictEqual(wat.test_query_interface(object, sameData1, out) >>> 0, 0x80004002,

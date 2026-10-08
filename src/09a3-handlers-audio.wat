@@ -355,6 +355,107 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; 5 args stdcall
   )
 
+  ;; The one ACM driver acmMetrics counts: the built-in PCM converter, under
+  ;; a fixed HACMDRIVERID. No installable codec exists, so an app looking for
+  ;; one by name (Tomb Raider III wants "MS-ADPCM") finds only this and goes
+  ;; on without it, as on a machine where that codec was never installed.
+  (func $acm_pcm_driver_id (result i32) (i32.const 0x0ACD0001))
+
+  ;; acmDriverEnum(fnCallback, dwInstance, fdwEnum) calls
+  ;; fnCallback(hadid, dwInstance, fdwSupport) once per driver. With one
+  ;; driver the callback's continue/stop answer changes nothing, so this
+  ;; makes the single call and lets the CACA0007 continuation return
+  ;; MMSYSERR_NOERROR (0) to the caller. NOLOCAL (0x40000000) and DISABLED
+  ;; (0x80000000) are the only flags; the PCM converter is global and enabled,
+  ;; so neither one removes it.
+  (func $handle_acmDriverEnum (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32) (local $result i32)
+    (local.set $result (i32.const 0))
+    (if (i32.eqz (local.get $arg0))
+      (then (local.set $result (i32.const 11))))                          ;; MMSYSERR_INVALPARAM
+    (if (i32.and (local.get $arg2) (i32.const 0x3FFFFFFF))
+      (then (local.set $result (i32.const 10))))                          ;; MMSYSERR_INVALFLAG
+    (if (local.get $result)
+      (then
+        (i32.store offset=0 (global.get $reg_base) (local.get $result))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    ;; Drop the stdcall frame, keeping the caller's return address for the
+    ;; continuation, then build the callback frame on top of it.
+    (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0x2))   ;; fdwSupport = SUPPORTF_CONVERTER
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $arg1))  ;; dwInstance
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (call $acm_pcm_driver_id))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0)))
+
+  ;; One dword of ACMDRIVERDETAILS, written only if it lies inside the
+  ;; caller's cbStruct: a short struct is valid and gets just its prefix.
+  (func $acm_dd_put32 (param $padd i32) (param $cb i32) (param $off i32) (param $value i32)
+    (if (i32.le_u (i32.add (local.get $off) (i32.const 4)) (local.get $cb))
+      (then (call $gs32 (i32.add (local.get $padd) (local.get $off)) (local.get $value)))))
+
+  ;; acmDriverDetailsA(hadid, padd, fdwDetails). ACMDRIVERDETAILSA is 920
+  ;; bytes: +0 cbStruct +4 fccType +8 fccComp +12 wMid/wPid +16 vdwACM
+  ;; +20 vdwDriver +24 fdwSupport +28 cFormatTags +32 cFilterTags +36 hicon
+  ;; +40 szShortName[32] +72 szLongName[128] +200 szCopyright[80]
+  ;; +280 szLicensing[128] +408 szFeatures[512]. cbStruct is the caller's
+  ;; and is kept; everything else up to it is rewritten. The guest address
+  ;; is written field by field, so the struct may straddle pages.
+  (func $acm_driver_details (param $hadid i32) (param $padd i32) (param $fdw i32) (result i32)
+    (local $cb i32) (local $i i32)
+    (if (local.get $fdw) (then (return (i32.const 10))))                   ;; MMSYSERR_INVALFLAG
+    (if (i32.ne (local.get $hadid) (call $acm_pcm_driver_id))
+      (then (return (i32.const 5))))                                       ;; MMSYSERR_INVALHANDLE
+    (if (i32.eqz (local.get $padd)) (then (return (i32.const 11))))        ;; MMSYSERR_INVALPARAM
+    (local.set $cb (call $gl32 (local.get $padd)))
+    (if (i32.lt_u (local.get $cb) (i32.const 4)) (then (return (i32.const 11))))
+    (if (i32.gt_u (local.get $cb) (i32.const 920)) (then (local.set $cb (i32.const 920))))
+    (local.set $i (i32.const 4))
+    (block $done (loop $zero
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cb)))
+      (call $gs8 (i32.add (local.get $padd) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $zero)))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 4) (i32.const 0x63647561))  ;; 'audc'
+    ;; wMid MM_MICROSOFT (1), wPid MM_MSFT_ACM_PCM (38)
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 12) (i32.const 0x00260001))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 16) (i32.const 0x03320000)) ;; ACM 3.50
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 20) (i32.const 0x03320000))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 24) (i32.const 0x2))        ;; SUPPORTF_CONVERTER
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 28) (i32.const 1))          ;; PCM tag only
+    ;; "MS-PCM"
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 40) (i32.const 0x502D534D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 44) (i32.const 0x00004D43))
+    ;; "Microsoft PCM Converter"
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 72) (i32.const 0x7263694D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 76) (i32.const 0x666F736F))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 80) (i32.const 0x43502074))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 84) (i32.const 0x6F43204D))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 88) (i32.const 0x7265766E))
+    (call $acm_dd_put32 (local.get $padd) (local.get $cb) (i32.const 92) (i32.const 0x00726574))
+    (i32.const 0))
+
+  ;; acmGetVersion() -> 0xAABBCCCC: major, minor, build of MSACM32. Windows 98
+  ;; ships ACM 4.00 (msacm32.dll 4.00.1998); FreeSpace asks before it opens
+  ;; any stream. No arguments, so only the return address is popped.
+  (func $handle_acmGetVersion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0x040007CE))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  (func $handle_acmDriverDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_driver_details
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))  ;; 3 args stdcall
+  )
+
   ;; acmStreamOpen(phas, had, pwfxSrc, pwfxDst, pwfltr, dwCallback,
   ;;               dwInstance, fdwOpen) — 8 args stdcall.
   ;; No codec is installed, so any stream with a non-PCM end is
@@ -809,6 +910,7 @@
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
     (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
     (local $data_offset i32) (local $parent_wa i32)
+    (local $start_pos i32) (local $saved_id i32) (local $saved_type i32) (local $ok i32)
     ;; RIFF parsing below reads through the host filesystem.
     (if (call $mmio_mem_slot (local.get $arg0))
       (then (call $crash_unimplemented (local.get $name_ptr))))
@@ -830,6 +932,14 @@
         (local.set $end_pos (i32.add
           (i32.load offset=12 (local.get $parent_wa))  ;; parent dwDataOffset
           (i32.load offset=4 (local.get $parent_wa))))))  ;; + parent cksize
+    ;; A streamed (lazy) file whose header bytes are not resident parks the
+    ;; call and reruns it once the host has them (Little Fighter 2 reported
+    ;; "Could not Descend into Wave File"). The search moves the file pointer
+    ;; and writes into lpck as it goes, so the rerun must start from exactly
+    ;; what the caller handed us: remember both, restore both before parking.
+    (local.set $start_pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+    (local.set $saved_id (i32.load (local.get $ck_wa)))
+    (local.set $saved_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
     ;; Scratch area for bytesRead on stack
     (local.set $bytes_read_ga (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
@@ -842,11 +952,20 @@
         (br_if $done (i32.ge_u (local.get $pos) (local.get $end_pos)))
         ;; Read 8 bytes: ckid (4) + cksize (4) into the MMCKINFO struct
         (i32.store (local.get $bytes_read_wa) (i32.const 0))
-        (drop (call $host_fs_read_file
+        (local.set $ok (call $host_fs_read_file
           (local.get $arg0)
           (local.get $arg1)  ;; write directly into MMCKINFO (guest addr)
           (i32.const 8)
           (local.get $bytes_read_ga)))
+        (if (i32.eqz (local.get $ok))
+          (then
+            (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+              (then
+                (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $start_pos) (i32.const 0)))
+                (i32.store (local.get $ck_wa) (local.get $saved_id))
+                (i32.store offset=8 (local.get $ck_wa) (local.get $saved_type))
+                (call $io_block (i32.const 0))
+                (return)))))
         ;; Check if we read 8 bytes
         (br_if $done (i32.lt_u (i32.load (local.get $bytes_read_wa)) (i32.const 8)))
         (local.set $ckid (i32.load (local.get $ck_wa)))
@@ -866,11 +985,20 @@
           (then
             ;; Read fccType (4 bytes) into MMCKINFO+8
             (i32.store (local.get $bytes_read_wa) (i32.const 0))
-            (drop (call $host_fs_read_file
+            (local.set $ok (call $host_fs_read_file
               (local.get $arg0)
               (i32.add (local.get $arg1) (i32.const 8))  ;; fccType field (guest addr)
               (i32.const 4)
               (local.get $bytes_read_ga)))
+            (if (i32.eqz (local.get $ok))
+              (then
+                (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+                  (then
+                    (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $start_pos) (i32.const 0)))
+                    (i32.store (local.get $ck_wa) (local.get $saved_id))
+                    (i32.store offset=8 (local.get $ck_wa) (local.get $saved_type))
+                    (call $io_block (i32.const 0))
+                    (return)))))
             (local.set $fcc_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
           ))
         ;; Store dwDataOffset
@@ -958,15 +1086,16 @@
     (if (call $mmio_mem_slot (local.get $arg0))
       (then (call $crash_unimplemented (local.get $name_ptr))))
     (local.set $ck_wa (call $g2w (local.get $arg1)))
-    ;; End of chunk = dwDataOffset + cksize, word-aligned
+    ;; End of chunk = dwDataOffset + cksize, plus the pad byte when cksize is
+    ;; odd. The padding is relative to the chunk, not the file: Daytona USA
+    ;; Deluxe packs WAVE files back to back at odd offsets, and aligning the
+    ;; absolute position landed one byte past 'fmt ' so 'data' was never found.
     (local.set $end_pos
-      (i32.and
+      (i32.add
         (i32.add
-          (i32.add
-            (i32.load (i32.add (local.get $ck_wa) (i32.const 12)))  ;; dwDataOffset
-            (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))  ;; cksize
-          (i32.const 1))
-        (i32.const 0xFFFFFFFE)))
+          (i32.load (i32.add (local.get $ck_wa) (i32.const 12)))  ;; dwDataOffset
+          (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))  ;; cksize
+        (i32.and (i32.load (i32.add (local.get $ck_wa) (i32.const 4))) (i32.const 1))))
     (drop (call $host_fs_set_file_pointer (local.get $arg0) (local.get $end_pos) (i32.const 0)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
@@ -3121,7 +3250,8 @@
     (local $max i32) (local $flags i32) (local $handle i32) (local $file_size i32)
     (local $size i32) (local $blk i32) (local $data_guest i32) (local $data i32)
     (local $ok i32) (local $parse i32) (local $out i32) (local $i i32)
-    (local $record i32) (local $sample_handle i32)
+    (local $record i32) (local $sample_handle i32) (local $parked i32)
+    (call $lazy_park_release)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (local.set $max (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
     (local.set $flags (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
@@ -3167,7 +3297,21 @@
       (i32.store (call $g2w (local.get $blk)) (i32.const 0))
       (local.set $ok (call $host_fs_read_file
         (local.get $handle) (local.get $data_guest) (local.get $size) (local.get $blk)))
-      (drop (call $host_fs_close_handle (local.get $handle)))
+      ;; A streamed sample file not resident yet: park on IO_WAIT and rerun
+      ;; once the host has the bytes, as _lread and PlaySound do. Ask before
+      ;; the close, which clears the pending-read state.
+      (if (i32.eqz (local.get $ok))
+        (then
+          (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+            (then (local.set $parked (i32.const 1))))))
+      ;; A parked read keeps its handle open for the host fill ($lazy_park_hold).
+      (if (local.get $parked)
+        (then (call $lazy_park_hold (local.get $handle)))
+        (else (drop (call $host_fs_close_handle (local.get $handle)))))
+      (if (local.get $parked)
+        (then
+          (call $heap_free (local.get $blk))
+          (br $done)))
       (if (i32.or (i32.eqz (local.get $ok))
                   (i32.ne (i32.load (call $g2w (local.get $blk))) (local.get $size)))
         (then
@@ -3209,7 +3353,8 @@
       (i32.store offset=36 (local.get $record) (local.get $flags))
       (call $bass_set_error (i32.const 0))
       (i32.store offset=0 (global.get $reg_base) (local.get $sample_handle)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (local.get $parked) (then (call $io_block (i32.const 32)))))
 
   (func $handle_BASS_SampleGetChannel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sample i32) (local $i i32) (local $channel i32) (local $free i32)

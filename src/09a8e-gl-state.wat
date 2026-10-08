@@ -156,7 +156,9 @@
     ;; Switch first so the context-zero snapshot is restored before the dying
     ;; state is unlinked and freed.
     (if (i32.eq (global.get $gl_current_context) (local.get $context))
-      (then (call $gl_state_context_changed (i32.const 0))))
+      (then
+        (call $gl_state_context_changed (i32.const 0))
+        (global.set $gl_current_dc (i32.const 0))))
     (local.set $node (global.get $gl_state_contexts))
     (block $done
       (loop $find
@@ -345,6 +347,12 @@
       (global.set $gl_color_g (f32.div (f32.convert_i32_u (i32.load8_u offset=1 (local.get $p))) (f32.const 255)))
       (global.set $gl_color_b (f32.div (f32.convert_i32_u (i32.load8_u offset=2 (local.get $p))) (f32.const 255)))
       (global.set $gl_color_a (f32.const 1)) (return (i32.const 1))))
+    ;; 111 glColor3ub(r, g, b): GLubyte arguments widened to stack words.
+    (if (i32.eq (local.get $op) (i32.const 111)) (then
+      (global.set $gl_color_r (f32.div (f32.convert_i32_u (i32.and (i32.load offset=4 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_g (f32.div (f32.convert_i32_u (i32.and (i32.load offset=8 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_b (f32.div (f32.convert_i32_u (i32.and (i32.load offset=12 (local.get $stack)) (i32.const 255))) (f32.const 255)))
+      (global.set $gl_color_a (f32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $op) (i32.const 28)) (then
       (global.set $gl_tex_s (f32.load offset=4 (local.get $stack))) (global.set $gl_tex_t (f32.load offset=8 (local.get $stack))) (return (i32.const 1))))
     (if (i32.eq (local.get $op) (i32.const 95)) (then
@@ -479,6 +487,26 @@
           (then (local.set $unit (i32.trunc_sat_f64_s (f64.load (local.get $w))))))
         (call $gl_state_array_element (local.get $unit))
         (local.set $p (i32.add (local.get $p) (local.get $b))) (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $indices))))
+      (drop (call $gl_finish_immediate))
+      (drop (call $gl_state_intercept (i32.const 77) (local.get $stack)))
+      (return (i32.const 1))))
+    ;; glDrawArrays(mode, first, count): DrawElements with the implicit index
+    ;; sequence first .. first+count-1, under the same array preconditions.
+    (if (i32.eq (local.get $op) (i32.const 108)) (then
+      (local.set $a (i32.load offset=8 (local.get $stack)))
+      (local.set $count (i32.load offset=12 (local.get $stack)))
+      (if (i32.or (i32.lt_s (local.get $count) (i32.const 1)) (i32.lt_s (local.get $a) (i32.const 0)))
+        (then (return (i32.const 1))))
+      (if (i32.or (i32.eqz (i32.and (global.get $gl_client_bits) (i32.const 1)))
+          (i32.or (i32.eqz (i32.and (global.get $gl_state_pointer_bits) (i32.const 1)))
+            (i32.eqz (call $gl_array_type_bytes (global.get $gl_vp_type)))))
+        (then (return (i32.const 1))))
+      (drop (call $gl_state_intercept (i32.const 76) (local.get $stack)))
+      (global.set $gl_immediate_mode (i32.load offset=4 (local.get $stack)))
+      (global.set $gl_immediate_floats (i32.const 0))
+      (loop $elements (if (i32.lt_u (local.get $i) (local.get $count)) (then
+        (call $gl_state_array_element (i32.add (local.get $a) (local.get $i)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $elements))))
       (drop (call $gl_finish_immediate))
       (drop (call $gl_state_intercept (i32.const 77) (local.get $stack)))
       (return (i32.const 1))))

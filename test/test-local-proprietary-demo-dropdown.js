@@ -21,7 +21,8 @@ const proprietaryLocalIds = [
   'deus_ex_demo', 'icewind_dale_demo',
   'baldurs_gate_noninteractive_demo', 'baldurs_gate_interactive_demo',
   'baldurs_gate_chapters_1_2_demo',
-  'civ2_win16', 'civ2_mge',
+  'civ2_win16', 'civ2_mge', 'tomb_raider_3_demo',
+  'tomb_raider_2_demo', 'populous_tb_demo',
 ];
 
 for (const id of proprietaryLocalIds) {
@@ -42,8 +43,14 @@ for (const id of proprietaryLocalIds) {
 const deus = APPS.deus_ex_demo;
 assert.strictEqual(deus.exe,
   'test/binaries/candidates/deus-ex-demo/installed/system/deusex.exe');
-assert.strictEqual(deus.args, '-windowed');
-assert.strictEqual(deus.dlls.length, 13);
+// Fullscreen since 4f4eeb22, not -windowed: exclusive presentation is what
+// engages pointer lock (WinDrv's relative mouse), and UE1's GlideDrv cannot
+// draw into a window. The mode is set through the DeusEx.ini iniSet.
+assert.strictEqual(deus.args, undefined, 'Deus Ex starts fullscreen, not -windowed');
+const deusIni = deus.files.find(file => file.iniSet);
+assert.strictEqual(deusIni && deusIni.iniSet['WinDrv.WindowsClient'].StartupFullscreen, 'True');
+// The 13 engine DLLs plus D3DDrv, mounted so the D3D renderer is one edit away.
+assert.strictEqual(deus.dlls.length, 14);
 for (const suffix of [
   '/system/deusex.ini', '/maps/entry.dx', '/maps/00_training.dx',
   '/help/logo.bmp', '/textures/dxfonts.utx', '/system/deusexui.u',

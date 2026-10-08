@@ -22,14 +22,19 @@ const {Bridge}=require('../lib/d3d9-host');
   (call $handle_IDirect3DDevice9_${n} (local.get $a) (local.get $b) (local.get $c) (local.get $d) (local.get $f) (i32.const 0)) (i32.load offset=0 (global.get $reg_base)))`).join('\n')}`});
  const wa=p=>e.guest_to_wasm(p)>>>0,alloc=n=>e.guest_alloc(n)>>>0;
  let descriptors=0;
- const native={...e,d3d_software_create(p){
+ // Every raster constructor takes the descriptor first; the backend picks the
+ // deferred/typed/clipped one per draw, so check the ABI on whichever it uses.
+ const checked=name=>(p,...rest)=>{
   const d=new Uint32Array(memory.buffer,p,32);assert.strictEqual(d[1],4,'PSIZE uses explicit input ABI4');
   const original=d[31],stride=d[10];
   d[31]=original|0x1000000;assert.strictEqual(e.d3d_software_create(p),0,'reserved PSIZE map bits reject');
   d[31]=(original&0xfffff)|((d[29]&15)<<20);assert.strictEqual(e.d3d_software_create(p),0,'duplicate PSIZE register rejects');
   d[31]=original;d[10]=48;assert.strictEqual(e.d3d_software_create(p),0,'missing PSIZE bytes reject');d[10]=stride;
-  descriptors++;return e.d3d_software_create(p);
- }};
+  descriptors++;return e[name](p,...rest);
+ };
+ const native={...e};
+ for(const name of ['d3d_software_create','d3d_software_create_typed','d3d_software_create_deferred','d3d_software_create_deferred_clipped'])
+  if(typeof e[name]==='function')native[name]=checked(name);
  bridge=new Bridge({backend:'software',enableProgrammable:true,getExports:()=>native,getMemory:()=>memory.buffer,guestToWasm:wa});
  e.init_dx_com_thunks();
  const pp=alloc(56),out=alloc(4),vertices=alloc(72),v=new DataView(memory.buffer);

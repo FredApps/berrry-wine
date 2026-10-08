@@ -146,8 +146,15 @@ const extraWat = String.raw`
     assert.strictEqual(apis[read(read(lobbyTable + (15 + i) * 4) + 4)].name, `IDirectPlayLobby3_${name}`));
   assert.strictEqual(e.test_sync_lobby() >>> 0, lobbyTable);
   e.guest_write32(iid, 0x2db72490);
-  assert.strictEqual(call(lobby, 0, iid, out), 0x80004002, 'Unicode Lobby3 remains unsupported');
-  assert.strictEqual(read(out), 0);
+  assert.strictEqual(call(lobby, 0, iid, out), 0, 'Unicode Lobby3 is the same identity');
+  assert.strictEqual(read(out), lobby);
+  assert.notStrictEqual(read(lobby), lobbyTable, 'Unicode Lobby3 gets its own W vtable');
+  assert.strictEqual(call(lobby, 2), 2);
+  e.guest_write32(iid, 0x2db72491);
+  assert.strictEqual(call(lobby, 0, iid, out), 0);
+  assert.strictEqual(read(lobby), lobbyTable, 'an ANSI query restores the ANSI vtable');
+  assert.strictEqual(call(lobby, 2), 2);
+  e.guest_write32(iid, 0x2db72490);
   e.guest_write32(out, 0xfeedface);
   assert.strictEqual(call(lobby, 15, 0, iid, out, 0), 0x80004001);
   assert.strictEqual(read(out), 0, 'ConnectEx cannot fabricate a connected object');

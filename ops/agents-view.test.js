@@ -100,3 +100,17 @@ test('stopped work is prominent across pages, but active workers and real blocke
   assert.equal(vm.runInContext('stoppedAgentBanner()',browserApp(s)),'');
   assert.equal(vm.runInContext('agentSignal(state.agents[0]).label',browserApp(s)),'Workers active');
 });
+
+test('top-level Claude rows show their /goal: active, met, or missing', () => {
+  const s = snapshot();
+  s.agents[0].goal = {condition: 'Finish <the> Myth lane', met: false, at: ago(5)};
+  s.agents.push({id: 'claude:met-1', provider: 'claude', state: 'idle', lastActivityAt: ago(3), title: 'Met lane', goal: {condition: 'Ship UT348', met: true}});
+  s.agents.push({id: 'claude:none-1', provider: 'claude', state: 'idle', lastActivityAt: ago(4), title: 'No goal lane'});
+  const html = vm.runInContext('agentsView()', browserApp(s));
+  const row = id => rows(html).find(r => r.includes(`data-agent="${id}"`));
+  assert.match(row('claude:parent-1863d2b5'), /goal-active[\s\S]*◎ Goal:<\/strong> Finish &lt;the&gt; Myth lane/);
+  assert.match(row('claude:met-1'), /goal-met[\s\S]*Goal met — no longer driving/);
+  assert.match(row('claude:none-1'), /goal-none[^>]*>◌ No \/goal/);
+  assert.doesNotMatch(row('codex:quiet'), /agent-goal/, 'Codex sessions have no /goal');
+  assert.doesNotMatch(html.match(/<li class="subagent-row"[\s\S]*?<\/li>/)[0], /agent-goal/, 'subagents inherit the parent goal');
+});

@@ -69,11 +69,14 @@ assert(shellSource.includes("document.body.classList.remove('exclusive-fullscree
   'stale display ownership must not make ordinary apps inherit a black fullscreen shell');
 
 // --- The shell: one app, maximized when it can be ---
-assert(shellSource.includes('if (SINGLE_APP() && runningApps.length)'),
+// 83f0a302 lets an in-page child process (process_spawn) through with
+// launchOpts.bypassSingleApp; any other second launch is still refused.
+assert(shellSource.includes('if (SINGLE_APP() && runningApps.length && !(launchOpts && launchOpts.bypassSingleApp))'),
   'single-app mode should refuse a second launch');
 assert(shellSource.includes('sharedRenderer.singleAppMode = SINGLE_APP()'),
   'the renderer needs to know to zoom');
-assert(shellSource.includes('const resizable = !!(style & (WS_MAXIMIZEBOX | WS_THICKFRAME))'),
+// Registry `singleAppMaximize: false` can only take maximize away (Snood).
+assert(shellSource.includes('const resizable = mayMaximize && !!(style & (WS_MAXIMIZEBOX | WS_THICKFRAME))'),
   'only a window Windows would let you maximize should be maximized');
 assert(shellSource.includes('e.send_message(win.hwnd | 0, 0x0112, 0xF030, 0)'),
   'maximizing should go through WM_SYSCOMMAND/SC_MAXIMIZE, not a renderer-side resize');
@@ -660,8 +663,49 @@ for (const mode of ['fit', 'zoom']) {
       'Snake', 0, null, null);
     assert.strictEqual(fitting._pendingBackingGrowth, undefined,
       'a fixed window already inside the backing causes no resize');
+
     delete global.window;
   })();
+}
+
+// MINIMUM DESKTOP: `singleAppMinDesktop` is the smallest screen an app may
+// start on, met by scaling BOTH axes together. Snood builds its back buffer
+// from the screen size it starts on; the phone desktop began at 400x711, so
+// everything past x=400 -- danger meter, score, a third of the board -- stayed
+// black for the whole run ("Snood wasn't fully rendering game board").
+{
+  const r = makeRenderer(400, 711, 375, 667);
+  r.singleAppMinDesktop = { w: 1024, h: 768 };
+  const portrait = r.singleAppBackingSize(400, 711);
+  assert.ok(portrait.w >= 1024 && portrait.h >= 768, 'portrait meets the minimum on both axes');
+  assert.ok(Math.abs(portrait.w / portrait.h - 400 / 711) < 0.01,
+    'portrait is scaled uniformly, so guest pixels stay square');
+  const landscape = r.singleAppBackingSize(667, 375);
+  assert.ok(landscape.w >= 1024 && landscape.h >= 768, 'landscape meets the minimum on both axes');
+  assert.ok(Math.abs(landscape.w / landscape.h - 667 / 375) < 0.01, 'landscape keeps its aspect too');
+
+  const plain = makeRenderer(400, 711, 375, 667);
+  assert.deepStrictEqual(plain.singleAppBackingSize(400, 711), { w: 400, h: 711 },
+    'an app without the option keeps the phone-sized desktop byte for byte');
+
+  const snood = require('../lib/apps').APPS.snood;
+  assert.deepStrictEqual(snood.singleAppMinDesktop, { w: 1024, h: 768 },
+    'Snood starts on a desktop its Medium/Big layouts and back buffer fit');
+  assert.strictEqual(snood.singleAppMaximize, false,
+    'Snood is not auto-maximized: its maximize picks a fixed layout');
+
+  // The 2026-10-06 phone sweep over DESKTOP_APPS found the same class in
+  // three more: fixed layouts that a phone maximize squeezed or left mostly
+  // empty (Bricks, CWordZap), and a window sized from the 400-wide screen
+  // that clipped its own status bar (EmPipe).
+  const apps = require('../lib/apps').APPS;
+  for (const id of ['bricks', 'cwordzap', 'empipe']) {
+    assert.deepStrictEqual(apps[id].singleAppMinDesktop, { w: 1024, h: 768 },
+      `${id} starts on a desktop its fixed window fits`);
+  }
+  for (const id of ['bricks', 'cwordzap']) {
+    assert.strictEqual(apps[id].singleAppMaximize, false, `${id} is not auto-maximized`);
+  }
 }
 
 // MAGNIFICATION: `mobileZoom` shrinks the guest's desktop so the single-app

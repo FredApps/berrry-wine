@@ -2297,6 +2297,59 @@
         ]
       },
       "notes": "2026-09-29: DirectSoundCreate8/DSOUND.DLL#11 and backbuffer owner identity fixes allow native WebGL/software main menus. Fresh software CLI with --tick-ms-per-batch=5 reached Mission 01, character/camera movement and aiming. Combat and browser gameplay unverified. Setup accepts --input=50:dlg-click:1. See docs/re-notes/alien-shooter.md."
+    },
+    {
+      "id": "myth-the-fallen-lords",
+      "name": "Myth: The Fallen Lords",
+      "kind": "game",
+      "version": "1.0 retail hybrid Mac/PC CD (Bungie, 1997)",
+      "executables": [
+        "installed/myth_tfl.exe",
+        "disc/Myth_TFL.exe"
+      ],
+      "sourcePage": "https://archive.org/details/Myth_The_Fallen_Lords_Bungie_1997",
+      "license": "proprietary retail release; local compatibility fixture only. A demo route is preferred if one is found",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/Myth_The_Fallen_Lords_Bungie_1997/Myth%20-%20The%20Fallen%20Lords%20%28Bungie%29%281997%29.ISO",
+          "sha1": "715d804373f50d77b7314b3fcd2c19b1e92a74ef",
+          "type": "file",
+          "destination": "sources/myth-tfl.iso"
+        }
+      ],
+      "postExtract": [
+        { "type": "extractArchive", "archive": "sources/myth-tfl.iso", "into": "disc" }
+      ],
+      "notes": "NEW-GAME-MYTH-20261005. Registered as myth_tfl: installed/ is the Small install Setup.exe writes from the mounted ISO, and the ISO mounts as CD D: (sources/myth-tfl.cue). ISO md5 1edda1890e32e7bde09ce3bf563c0479, 538191872 bytes."
+    },
+    {
+      "id": "populous-the-beginning-demo",
+      "name": "Populous: The Beginning demo",
+      "kind": "game",
+      "version": "Release Demo v1.0 (Sep 26 1998)",
+      "executables": [
+        "extracted/popTBDemo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/POPULOUS",
+      "license": "original Bullfrog playable demo; keep it as an ignored local fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/POPULOUS/POPULOUS.EXE",
+          "sha1": "abf9dcba52eac145ae5a893565ec0061c88b6210",
+          "type": "file",
+          "destination": "sources/POPULOUS.EXE"
+        }
+      ],
+      "postExtract": [
+        { "type": "extractArchive", "archive": "sources/POPULOUS.EXE", "into": "extracted" }
+      ],
+      "browser": {
+        "fileRoot": "extracted",
+        "exe": "extracted/popTBDemo.exe"
+      },
+      "notes": "NEW-GAME-POPULOUS-TB-DEMO-20261006. Registered as populous_tb_demo (software renderer). The WinZip SFX holds the InstallShield setup beside the uncompressed game tree; the game only needs the two registry values setup writes (startupRegistry). md5 5328fd544622c74cc649114dd9e1fe2c, 19193856 bytes."
     }
   ]
 }

@@ -23,7 +23,7 @@ enforced by `tools/install-unreal-demo.js`.
 | Candidate | Authentic setup result | Installed payload | Installed-game result |
 | --- | --- | ---: | --- |
 | Unreal Special Edition | InstallShield bootstrap launched `_INS*.MP`; license and destination flow completed | 191 MB, `System/Unreal.exe` SHA-256 `5fbc5853a8669a802446ac12e102351053bc6a5ce9f554b03483eb634269f408` | Software launch loads `SoftDrv`, opens `WindowsViewport0`, initializes the game engine/player, and renders the playable intro |
-| Unreal Tournament 348 | Unreal `System/Setup.exe` completed | 104 MB, `System/UnrealTournament.exe` | Reaches the renderer-selection wizard |
+| Unreal Tournament 348 | Unreal `System/Setup.exe` completed | 104 MB, `System/UnrealTournament.exe` | `--app=ut348_demo`: first-run wizard, UWindow menu, DM-Morpheus practice match on SoftDrv with walk + mouse-look (see "UT 348 route" below) |
 | UT2003 2206 | Unreal `System/Setup.exe` completed with the shipped `MSVCR70.dll` | 344 MB, `System/UT2003.exe` SHA-256 `97e027dc9765f048beacfa461bc93c71ba1831cd3e8dff0cd7d71c1b478f88a2` | The D3D8 wrapper renders textured first-person Antalus gameplay; an authentic dedicated server and direct-connect client exchange the native protocol over `vln/1` |
 | UT2004 new demo | Unreal `System/Setup.exe` completed with the shipped `MSVCR71.dll` | 525 MB, `System/UT2004.exe` SHA-256 `2a95e2fa8c22ae94eb1c361fdb49ea8ec44c5e2a93faa00831308c01e951db8d` | Uses the same pre-renderer D3D8 probe; further post-probe launch diagnosis remains |
 
@@ -531,3 +531,321 @@ Route (box2; flags as for UT2003 above):
 6. By batch 8200: DM-Rankin with "Press [Fire] to join the match!".
 7. Click in the viewport (340,300). By 8600 the player has spawned, with the
    HUD, the weapon bar and the assault rifle.
+
+## UT 348 route (2026-10-06)
+
+`--app=ut348_demo` mounts `test/binaries/candidates/unreal-tournament-348-demo/extracted/`
+through a manifest written by `node tools/gen-tree-manifest.js <root>
+--exe=System/UnrealTournament.exe --flatten=System`. The game opens
+`UnrealTournament.ini` relative to the exe and its packages through
+`..\System`, `..\Maps` etc., so `System\` files are mounted at both
+`c:\<name>` and `c:\System\<name>`. Without the mapping it dies early with
+"Can't find file for package 'Engine'" (an `appThrowf`; Core's static message
+buffer is at `core+0x101f65fc`, readable with `--dump` after the exit).
+
+- `FirstRun=0` in the shipped INI opens the setup wizard. Its device probe
+  (`exe+0x1090d9e0`) runs inside the WM_PAINT that `UpdateWindow(0x1000c)`
+  sends synchronously. It ShellExecutes a second copy
+  (`testrendev=D3DDrv.D3DRenderDevice log=Detected.log`), then polls the log
+  with `GFileManager->FileSize` and `Sleep(100)` up to 100 times (a 10000 ms
+  budget counted down by iteration, not by the clock), then lists the
+  devices. Two emulator bugs used to stop it (fixed in dd0d6dc8):
+  - `$wnd_send_message` abandoned the paint after 64 rounds, because every
+    Sleep ends a round (`[sync] ABANDONED wndproc hwnd=0x0001000c msg=0xf at
+    0x1090dbfe`). The wizard then sat on "Detecting 3D video devices, please
+    wait..." for good.
+  - In the browser the ShellExecute really starts the child. The child had no
+    `dlls` seeds, so Core/Engine/Window.dll bound to stubs and it trapped on
+    `?appPackage@@YAPBGXZ`, or threw an `int` that went unhandled (the
+    "C++ throw .H ... UNHANDLED EXCEPTION 0xe06d7363" console the user
+    reported, in both thread modes). The CLI's ShellExecute starts no child,
+    so it never showed this.
+  The child's log never reaches the parent (a VFS child gets a copy of the
+  file map), so the wizard always settles on Software Rendering.
+- Engine errors (`appErrorf` throws an `int` while guarded; every `unguard` is
+  `catch(...) { appUnwindThrow(...); throw; }`) went **unhandled** until
+  867f35a3: the nested rethrow dispatch overwrote the software SEH walk's
+  globals, so the outer walk carried on with the rethrow's null-ThrowInfo
+  record. Now they reach UT's own "Critical Error" box. Quick repro:
+  `--args="DM-Morpheus -window"` (the demo's map is `DM-MorpheusDEMO`) plus
+  wizard clicks gives "Failed to enter DM-Morpheus: Can't find file".
+- `--args="DM-MorpheusDEMO -window"` goes from the wizard straight into a
+  match. In the browser, `tools/web-input-probe.js --before-load=` can set
+  `wineApps.APPS.ut348_demo.args` (evidence
+  `scratch/runs/20261006T141000Z-ut348-web-cxx-throw-fixed`, both thread modes).
+  With Threads on, wizard button clicks needed 61686c8e: the renderer had been
+  pressing them on the idle shadow instance.
+- The child mode by itself (`--args="testrendev=D3DDrv.D3DRenderDevice
+  log=Detected.log"`) loads D3DDrv, tests it and exits 0 headlessly. Pass
+  `--stuck-after=1000000`: its CPU-speed loop trips the stuck detector.
+- Wizard buttons render without labels (Back/Next at about (223,418), Cancel at
+  (401,418)). Next x3 by mouse reaches the UWindow menu.
+- Once the wizard ended, its last page stayed in the renderer over the game
+  window and ate every click: `$wnd_destroy_tree` never told the host about
+  windows below the root. Fixed in 09c3a; covered by
+  `test/test-dialog-teardown-grandchild.js`.
+- In the UWindow menus the cursor moves by `relmousemove` at roughly 46% of the
+  requested delta. Game > Start Practice Session opens on DM-Morpheus; Start
+  (about (598,418)) loads the map; "Waiting for ready signals" until a fire
+  click. VK_UP then walks and relmousemove turns the view.
+- Not evaluated: audio, FPS, browser. Some frames between kills are black with
+  only the HUD (death/respawn view).
+
+Evidence: `scratch/runs/20261006T001500Z-ut348-demo-claude202b4b39-dm-morpheus`.
+
+## Deus Ex demo on OpenGlDrv (2026-10-06, OPENGLDRV-GL11-SURFACE)
+
+OpenGlDrv resolves the whole GL 1.1 + WGL table by name and aborts ("Missing
+symbols") if one is absent; since 5f17bb07 every GL 1.1 name is an API
+(unimplemented ones fail fast by name) and it binds. Select it locally by
+setting `deusExRenderer` in lib/apps.js to `OpenGlDrv.OpenGLRenderDevice`
+(the committed default stays SoftDrv) and run the CLI with
+`--gl-renderer=software`.
+
+- The calls it really makes beyond the old set: glMultMatrixf (GL op 109)
+  and glClearDepth (op 110), both implemented. glGetString is queried for
+  GL_EXTENSIONS eleven times (one per extension it probes); no glGet*v or
+  glReadPixels at all.
+- It then plays the 3D logo intro for 170 s with no trap (run
+  `20261006T1440Z-opengldrv-deusex`, intro.png).
+- **Open: Escape out of the intro crashes, on OpenGlDrv only** (SoftDrv
+  with the same `--input=200000:keydown:27,200100:keyup:27` reaches the
+  menu). The last GL calls are a 256x256 GL_RGBA8 upload with nine mip
+  levels and two glTexParameteri, then engine+0x1030cba6 (`call
+  [eax+0x28]` on the object at `[esi+4]`, a per-element loop over an
+  array of 0x28-byte records) jumps to 0x410054 ("execution entered
+  zeros"). That object's vtable pointer is 0x7da2f600, the same value the
+  caller holds in EBX, i.e. a heap address where a vtable should be:
+  most likely a use-after-free (a freed block's link word read as a
+  vtable), not a GL write -- no GL call that writes guest memory runs in
+  that window. Next: --watch the object's first dword
+  (`--watch=0x7e2f17d0 --watch-log`, addresses deterministic) to name
+  the free that recycled it, and compare HeapFree/HeapReAlloc semantics.
+
+Correction and narrowing (same day, watchpoints): the object's vtable is
+NOT overwritten -- `--watch=0x7e2f17d0 --watch-log` shows only its
+construction (batches 45598-45599). engine+0x1030cb70 is a lazy loader's
+Load: `this` = 0x7e2f17d0 (a two-slot vtable whose slot 0 is this very
+function), `[this+4]` = the FArchive (0x7e9b46a4, vtable in Core), `[this+8]`
+= the saved file position. It calls Tell (`+0x28`), Seek (`+0x34`),
+serializes the array at `this+0xc` (engine 0x10303904), then Seeks back.
+So the jump into zeros happens while OpenGlDrv's texture upload lazily reads
+texture data out of a package: the suspect is the serialized data (a count
+or size from the file) smashing the stack, i.e. a file-read difference, not
+a GL call. SoftDrv may never touch that texture. Next: `--trace-fs` on the
+package reads in batches 211000-211300 and a stack-guard watch on the
+caller's frame (EBP 0x179ff694).
+
+Static follow-up (same day): engine 0x10303904 -> 0x1030cc60 is
+`operator<<(FArchive&, TArray<BYTE>&)` (compact-index count, Realloc, then
+Serialize into the heap buffer) -- nothing there writes the stack. The
+FArchive at `[this+4]` has Core's vtable 0x1017a3f8 (file 0x10c443f8 at
+runtime), and its slot 10 (Tell, 0x101634b0) and slot 13 (Seek, 0x10163410)
+are real functions, so the loader's two virtual calls are sound. The jump
+into zeros therefore happens later, inside Seek/Serialize or after the
+loader returns; the next runtime step is `--trace-at=core+0x10163410` on
+the last hits before batch 211297 and a `--trace-stack-scan` at the crash.
+
+Boat runs (2026-10-06, main 99e861e6, boat bx_n53xdjmt, fresh `npm ci`;
+`deusExRenderer` = OpenGlDrv and `OpenGlDrv.dll` added to the DLL list as a
+boat-local edit; `--gl-renderer=software --quiet-api --quiet-blocks
+--stuck-after=0 --input=200000:keydown:27,200100:keyup:27`). Module bases in
+that build: engine 0x10e82000 (orig 0x10300000), core 0x10bca000 (orig
+0x10100000), opengldrv 0x120d0000.
+
+- The crash is ESI clobbered across a call, not a bad object. It lands in
+  the lazy loader's Load (engine 0x1030cb70, `this` in ESI): the first
+  virtual call (`[eax+0x28]`, ULinkerLoad::Tell, core 0x101634b0) returns,
+  then `mov ecx,[esi+4]` reads garbage because ESI = 0x179ff644, a stack
+  address (crash regs: ESI 0x179ff644, ECX 0x7e2f1848, EDX 0x10fa97fc =
+  the TLazyArray vtable, ESP 0x179ff668 = the Seek call's return slot), so
+  `call [edx+0x34]` indexes past the two-slot TLazyArray vtable into zeros
+  at 0x410054.
+- Ruled out: the linker is not freed (`--watch=0x7e9b46a4` never fires);
+  the mip records (FMipmap, 0x28 bytes, lazy DataArray at +0x10) are well
+  formed (dumped at batch 211263); the micro-op tier (`--no-uop` crashes
+  identically at batch 211244); an unbalanced inner call (at core
+  0x101634e3, just after Tell's inner `call [eax+0x28]`, ESP = EBP-0x24
+  exactly as the frame needs, every hit).
+- It is not a plain race either. Batch 211244 reproduces with the same
+  flags (runs 3 and 4), a dword watch on the linker (0x7e9b46a4) leaves it
+  in place, but `--watch=0x179ff648` -- the slot Tell's `pop esi` reads
+  back -- makes it vanish (211300 batches, no crash, no watch hit), and so
+  does `--trace-api=SetFilePointer,ReadFile,...`. Main's stack (0x179ff...)
+  is outside the direct guest window, so it goes through the sparse page
+  translation; a watched page takes the checked write path. Lead: a stale
+  translation or fast-path write on that sparse stack page, so `pop esi`
+  reads a value the guest never stored there.
+- Side note: guest thread 1 (start 0x109010b9) ends at EIP 0 from
+  prev_eip 0x10901a29 early in the run; not yet looked at.
+
+CORRECTION and narrowing (same day, boat bx_rdw8tsqd, main 85141552;
+evidence `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
+
+- Main's stack is NOT on a sparse page. deusex.exe's image base is
+  0x10900000, so guest 0x17900000-0x17a00000 is `$GUEST_STACK` inside the
+  direct window, and the "sparse page translation" lead above is wrong. The
+  translator is single-mode now (flat PTE table), so there is nothing to
+  toggle either.
+- The mechanism, caught with `--trace-eip-range=core+0x101634b0-core+0x101634f4
+  --trace-eip-from=211275 --trace-eip-detail` (run 10, which still crashed):
+  at Tell's landing after its inner `call [eax+0x28]` (core 0x101634e3)
+  every normal hit has ESP 0x179ff644 and EAX = the file position; in the
+  crashing call ESP is 0x179ff654 (+0x10) and EAX = 0. So the inner call
+  came back as if a `ret 0x10` function returning 0 had run. Tell's
+  `pop edi; pop esi` then read 16 bytes too high, and the second slot is
+  `[ebp-0x10]`, where Tell's `mov [ebp-0x10],esp` saved 0x179ff644 -- that
+  is the ESI. Load's next `mov ecx,[esi+4]` reads `this` back from the stack
+  and calls through the two-slot TLazyArray vtable into zeros.
+- The inner call's target is sound and unchanged: `[linker+0x440]` =
+  0x7e9b4100 (watched in run 1), whose vtable 0x109267e4 never changes after
+  construction at batch 9097 (`--watch=0x7e9b4100 --watch-log`, run 11);
+  slot 10 is deusex.exe's ILT thunk 0x10901131 (`jmp 0x109063b0`), and
+  0x109063b0 is a two-instruction `mov eax,[ecx+0x38]; ret`. So the emulator
+  ran different code for that call than the guest bytes say.
+- Ruled out inside the crash batch: a full cache clear (`cache: full
+  clears M 2` already at batch 211281, the same total as a non-crashing run
+  to 211300), any code write or block retirement (`--trace-code-writes
+  --trace-from=211270`, crash still at 211282, nothing logged).
+- Reproduction that survives probes: adding
+  `--input=B:dump-mem:0x179ff600:256` for every B in 211265..211320 makes the
+  crash land at batch 211282 every time, and core-range `--trace-eip-range`
+  / `--decode-stats` / `--trace-code-writes` keep it there; an exe-range
+  trace (0x10901100-0x10906500) or `--trace-at` does not.
+- Leads: (a) the block run for the call target -- the decoder extends runs
+  through `jmp` and fuses `mov esp,ebp; pop ebp; ret` into a pop run + RET
+  whose RET immediate is a thread word; an imm of 0x10 would give exactly
+  +0x10; and the stats show 77 decodes that "evicted a live block". (b)
+  guest thread 3 ends the run with ESP 0xd9f40000 (printed as -0x260c0000),
+  which is not a stack -- worth a look on its own.
+- Tooling trap: `--trace-eip-range=0x00400000-0x7fffffff --trace-eip-from=211282
+  --trace-eip-stream` traced from batch 0 (11 GB log, run reached only
+  104,203 batches in 800 s); check `--trace-eip-from` with an explicit
+  range before reusing it.
+
+The overwrite (same day, boat bx_e35gh894, main 8c360029; evidence appended
+to `scratch/runs/20261006T1810Z-deusex-opengldrv-esi/key-lines.txt`):
+
+- The decoded code is NOT at fault. A boat-local `--input=B:dump-stream:0xGA`
+  probe (two throwaway exports over `$page_cached_stream`, never committed)
+  shows the threaded streams for the ILT thunk 0x10901131, the reader Tell
+  0x109063b0, and core Tell's entry and landing decoded exactly as the guest
+  bytes say (pop run + RET imm 0, push runs, rop loads/stores), and their
+  chunk addresses do not move in batches 211270-211282.
+- What changes is the vtable itself: `--watch=0x1092680c --watch-log`
+  (slot 10 of the reader vtable 0x109267e4 in deusex.exe .rdata) fires at
+  batch 211227, `0x10901131 -> 0xffff00ff` (a pixel value), 17 batches
+  before the crash. With the slot reading 0xffff00ff the inner call goes
+  into an API thunk-like target that pops 16 bytes and returns 0 -- the
+  ESP+0x10 / EAX 0 seen at Tell's landing. Same overwrite with `--no-uop`.
+- The watch names main at OpenGlDrv's P8->RGBA converter (opengldrv
+  0x10008fde..0x10009024: `mov al,[ecx+edi]; mov ecx,[pal+eax*4];
+  mov eax,[ebp-0x18]; mov [eax],ecx; add eax,4`), but that attribution is
+  probably wrong: the converter's destination `[ebp-0x18]` holds plain heap
+  addresses (0x7ce3d408 / e408 / f408 at the row heads of batches
+  211226-211228) that NO mapping covers (`--dump-virtual-maps`: the nearest
+  record is guest 0x7cdf0000..0x7ce31000; a boat-local `--input=B:g2w:`
+  probe gives `test_g2w_slow` = 0xf0 sentinel for them before AND after the
+  write), `--fault-null` reports none of its stores, and a value-filtered
+  watch on `[ebp-0x18]` never sees 0x1092680c. A watch is only checked on
+  the watching instance's own block boundaries.
+- Lead: guest thread 3 (spawned at 0x17a06908 -- inside the THUNK_BASE window
+  for this image base, guest 0x17a00000+ -- with ESP 0x7d0afff8) ends every
+  run in msvcrt with a garbage ESP that differs run to run (0xd9f40000,
+  0xa1fe0000, 0xa68a0000; printed signed). A thread whose ESP sweeps through
+  guest 0x108EE000..0x188EE000 writes deusex.exe's image through the direct
+  window with every push, and the cooperative interleaving would explain why
+  every probe moves the crash. Next: `--trace-thread`/`--trace-sched` on T3,
+  find what sets its ESP, and identify the callback behind thunk
+  0x17a06908.
+- Separately: the converter writing through an unmapped destination is
+  itself wrong on real hardware (it would fault), so either an allocation
+  path failed to record a mapping for 0x7ce3xxxx or the guest overruns its
+  buffer; check after the thread lead.
+
+Thread 3 (same day, boat bx_tdvuwpfj, main 1945acdd; boat-local probes in
+lib/thread-manager.js and src/03-registers.wat, never committed):
+
+- Thread 3 is Galaxy's audio mixer (its slices start in galaxy.dll at
+  0x11f43xxx-0x11f47xxx) calling runtime-generated MMX mixing code at
+  0x1224ed00-0x1224f4xx (no module covers it). That code saves ESP to a
+  galaxy global (`mov [0x11f7c224], esp`), loads `mov sp,[ebp+0x20]`,
+  `shl esp,0x10` and uses ESP as a fixed-point step (`add edx,esp`) and EBP
+  as `sar ebp,0x10` -- so the "garbage ESP" (0x80000000, 0x72060000,
+  0x1f560000, 0x40000000 at slice ends) is legitimate, and it makes no
+  push/call while ESP is repurposed.
+- It IS the writer. A slot guard that reads guest 0x1092680c after every
+  guest-thread slice fired twice, both times in a T3 slice: 0x10901131 ->
+  0xffff00ff (two 16-bit samples). Once mid-mixer (EDI 0x1227dfc8, EAX
+  0x12280048, EBX 0x122820c8), once in a slice that began at the mixer's
+  second path (eipBefore 0x1224f143) and ended back in galaxy.
+- Not an instance mismatch: T3's `get_image_base()` = main's = 0x10900000.
+  Not the uop tier (same overwrite with `--no-uop`). Not `$gs32`/`$gs64`: a
+  trap on any store within 8 bytes of the slot in both never fired, so the
+  store goes through an inline `g2w-fast` path, which for a direct-window
+  address is a correct translation -- i.e. the guest store's own address is
+  0x1092680c.
+- The mixer's stores are only `movd/movq [edi|eax|ebx](+8), mmN`, with
+  EDI/EAX/EBX loaded from its arguments `[ebp+8]`, `[ebp+0xc]`,
+  `[ebp+0x10]`. So in the writing slice galaxy passed an output pointer of
+  ~0x10926804 -- inside deusex.exe -- for one mix call. DirectSound
+  Lock/Unlock is not per-call (4 calls on T3 in batches 211150-211282), so
+  the pointer comes from galaxy's own buffer bookkeeping, not straight from
+  our IDirectSoundBuffer_Lock.
+- Next (boat): log the mixer's three output arguments at its entry
+  (0x1224ed20, T3) per call in the batch before the overwrite to catch the
+  call with ~0x109268xx, then trace where galaxy computes that pointer
+  (its globals near 0x11f7c2xx and the table at 0x11fbd914 are the leads);
+  suspects in our emulation are the inputs galaxy derives buffer positions
+  from -- DirectSound play/write cursors (GetCurrentPosition), buffer sizes,
+  or a 16-bit op in the mixer setup (`mov sp,[m16]`, `adc esi,ebp`).
+
+ROOT CAUSE, and a correction to the Galaxy attribution above (same day,
+boat bx_k5x5vqk5): the writer is our own software GL, not Galaxy and not the
+guest.
+
+- The thread-3 attribution was an artifact: a check after each T3 slice
+  compares with the value from T3's previous slice, so anything main wrote
+  in between was charged to T3. A value check in the `dispatch-next` macro
+  and at `$branch_end_at`, in every instance, fired in MAIN at the landing
+  of opengldrv `call [0x10014fe0]` (0x10009232 -> 0x10009238), which is
+  `glTexImage2D(GL_TEXTURE_2D, level, internal, w, h, 0, GL_RGBA,
+  GL_UNSIGNED_BYTE, pixels)`.
+- A guard in `$gl_sw_tex_store_to` (trap when a texel's wasm destination is
+  inside the direct window) logged `dib=0xF0`: the texture's surface was
+  created over the NULL sentinel. `$d3d9_create_surface` takes
+  `$dib_alloc`'s guest address and `$g2w`s it; the arena had 16384 pages
+  (64MB) while `$g2w` maps only `$DIB_GUEST_CAPACITY` = 63MB, so once
+  OpenGlDrv's texture uploads after Escape filled the arena past 63MB every
+  new surface translated to 0xF0. The surface was zeroed from 0xF0 and its
+  texels stored from there, through the emulator's low memory and the guest
+  image at 0x12000 -- e.g. texel (3,226) of a 256x256 level is wasm
+  0x3880c, deusex.exe's reader vtable slot 10, written opaque magenta
+  0xffff00ff.
+- Fix: `$DIB_PAGE_COUNT` = 16128 (= capacity / 4096), with
+  `test/test-dib-arena-translates.js` filling the arena and checking every
+  block translates (fails on 16384).
+- The Galaxy mixer's repurposed ESP/EBP and thread 3's "garbage ESP" are
+  legitimate. The OpenGlDrv conversion buffer at 0x7ce3xxxx that no
+  mapping covered (above) is not the cause of this crash; whether it is a
+  separate mapping bug is still open.
+
+## Deus Ex demo on GlideDrv in the page (2026-10-06, DEUSEX-GLIDE-PAGE-EXIT)
+
+GlideDrv played the 3D intro on the CLI but "exited to the desktop" in the
+browser. The page actually showed Critical Error `Assertion failed: RenDev
+[File:C:\Unreal\WinDrv\Src\WinViewport.cpp] [Line: 345]`, with the software
+Glide backend (`?glide-renderer=software`) as well as WebGL, and its console
+never logged a LoadLibrary of `glidedrv.dll`. UE1 loads the device class from
+the guest's own `C:\System`; `lib/apps.js` mounted `GlideDrv.int` but not
+`GlideDrv.dll`, and the CLI hid that by finding the DLL on the host disk beside
+the exe. 7229c754 mounts the Glide, OpenGl, MeTaL and SGL driver DLLs beside
+their `.int` files; GlideDrv then plays the intro in the page on the WebGL
+Glide backend. `test/test-unreal-renderer-dll-mounts.js` checks that every
+registry app mounting a `*Drv.int` mounts the DLL too. Evidence:
+`scratch/runs/20261006T1815Z-deusex-glide-page-w6`.
+
+Repro trap on a fresh clone or boat: the gitignored `test/binaries/dlls`
+(msvcrt, comctl32) and `fonts/*.fon` are absent and there is no top-level
+`binaries -> test/binaries` link, so the page falls back to stubs and fails for
+an unrelated reason. Ship those first.

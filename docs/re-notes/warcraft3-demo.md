@@ -2151,3 +2151,111 @@ probes, no FPU_UNIMPL.
 Still shared and still racy in worker mode, not fixed: `$BX_RG_BASE` (block
 executor region builder, only with `--block-exec`) and `$PAGE_OVFL_MEMO`
 (a heuristic memo; a lost update costs a decision, not correctness).
+
+## Software GL drew nothing, 2026-10-06: a second SetPixelFormat was refused
+
+The GLD3D sweep found `--gl-renderer=software` black from boot: 2.85M
+`glLightfv`, 413 texture uploads, 2677 presents, zero `glDrawElements`. The
+context creator at Game.dll `0x6f0bc180` (runtime `0x61d180`) does GetDC,
+DescribePixelFormat, SetPixelFormat, and calls `wglCreateContext` only if
+SetPixelFormat returned TRUE. WC3 sets format 1, creates and deletes a probe
+context, destroys its BlockingWindow, then sets format 1 again on the same
+window for the real context. `$gdi_pixel_format_set` refused any second set,
+so no real context was ever made. Setting the format a window already has
+succeeds on Windows and in Wine (only a different format is refused): fixed in
+`579ee802`, and the main menu renders on software GL again by batch 2000.
+Evidence `scratch/runs/20261006T030624Z-warcraft3_demo-swgl-regress`.
+
+## Original Prologue browser preparation, October 8
+
+The September 28 CLI controlled gameplay above remains historical evidence;
+the October 6 WebGL menu result does not supersede it or establish fresh browser
+control. Prepared ordinary browser harness `tools/warcraft3-prologue/` uses
+accepted source/host `f62ab3c9` and module `4dc5ac2c`, retaining SetPixelFormat
+`579ee802` and sparse-page GL reads `604f0fd14`. No new build is needed.
+
+All 12 registered media paths are present in the shared fixture tree, including
+War3Demo.exe SHA `4bfa825510527235c2a14f7682dba1d4b339664f312f85206f01206e98d8000a`,
+Game.dll SHA `286823c37a1083e91f07d040e46a9df7af4c4952e01fcbba460589bd4e297654`,
+Storm.dll SHA `99974ea6dab31eff68a6c22d259dd6d8abcab0b2947417b3b41ebf01ab366e61`,
+and war3.mpq SHA `9e19d7ffb65054e4bdd3add7e26d70e16f063cdc20fa5b57639f3b9b7a196f9c`.
+The isolated worktree lacks private fixtures; preparation hardlinks originals
+from the shared fixture tree and authenticates the immutable baseline closure.
+A broken historical `Warcraft` symlink is outside the registered route.
+
+Prepared run `20261008T0135Z-warcraft3-prologue-ready` passes 542 SHA pins,
+542 HTTP HEADs, eight full GET hashes, range and drain checks. This is source
+and local HTTP readiness, not browser execution. The input harness requires
+personally reviewed actual state before every ordinary ABC/Create/Select,
+Campaign/Prologue, chapter Space, cinematic Escape, Thrall/right-click action.
+It checks live host AND owning renderer `api: gl` WebGL endpoints; neutral D3D
+endpoint proof is rejected. FPS/audio are unknown. Budget and serialized
+runtime conditions are in the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md).
+
+
+### Fresh ordinary WebGL navigation reached Campaign, October 8
+
+Run `20261008T0134Z-warcraft3-prologue-runtime` used the unchanged accepted
+`f62ab3c9` / `4dc5ac2c` closure on temporary bx_qms4q3z7. The original demo
+renders and ordinary trusted inputs reach Single Player Profiles, visibly type
+ABC, create/highlight that profile, Select, and reach Campaign with Prologue
+visible. Fourteen reviewed captures and live host AND owning `api: gl` WebGL
+endpoints are retained. Pointer Lock was false in every scene. The former
+October 3 inability to type a profile is not reproduced on this reference.
+
+Actual screenshot targets at this viewport were 594,327 (Single Player),
+228,391 (Create), 226,542 (Select), 593,365 (Campaign). A first 750 ms click
+remained at main-menu hover; a later five-second click reached Profiles.
+Create similarly responded only in a later capture after another reviewed
+click. Select/Campaign used separate reviewed hover before five-second holds.
+This records ordinary input response; the precise first-click cause is unknown.
+The GPU backing canvas's zero DOM rectangle is not valid target geometry.
+
+The original 600-second deadline stopped the run after Campaign, before any
+Prologue bullet/map/chapter/cinematic/Thrall input. **Fresh Prologue gameplay
+is not qualified.** September 28 gameplay is retained historical evidence.
+Next queue a fresh <=600-second ordinary route with these reviewed hover/hold
+steps and the majority of time reserved for actual map loading and controls.
+No engine patch, rebuild or optimization is justified by this route cap.
+
+354 actual served hashes (261 full, 93 range) match the source pins; actual
+full WASM response is `4dc5ac2c`. Original 12 registered paths remain present
+and unmodified. FPS/audio are unknown. Deadline cleanup at 01:45:38.601 closed
+Chrome with exit 0 and streams 0; independent PIDs/socket/pins checked, all
+34 actual attempt files downloaded, prefix removed at 01:46:29.223 within the
+90-second cleanup budget. Shell auth/stdole2 probes were strictly refused and
+retained. See the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md)
+for exact source/media identity, cleanup receipts and transient local disk-floor
+violation; no original media or evidence was deleted.
+
+## Fresh original Prologue unit movement (2026-10-08)
+
+Run `20261008T0156Z-warcraft3-campaign-world-runtime` advances beyond the
+previous Campaign-only result on the same unchanged `f62ab3c9` reference and
+actual served module `4dc5ac2c`. The reviewed `b17bb614d` browser helper is
+unchanged. Original media, source and archives were reused through hardlinks;
+all 542 pins and 788 served full/range hashes match.
+
+Ordinary ABC/Create/Select/Campaign followed by the actual Prologue bullet at
+page (473,373) reaches Chapter One: Chasing Visions. The chapter subsequently
+says PRESS ANY KEY TO CONTINUE. Space enters the visible cinematic; Escape
+leads to the gameplay HUD. The first Thrall click at (255,524) shows his hover
+label; the next selects him with Level 1 Far Seer, health 500/500, mana 285/285.
+Right-click (375,430) moves him from the lower path to below the stone circle;
+right-click (220,480) moves him back left/down. Compare `thrall-selected.png`,
+`move-order.png`, `move-return.png` and the settled `gameplay-final.png`:
+the hut, circle, rocks and camera remain fixed. Worker reviewed these actual
+screenshots. Coordinator review/integration is pending at worker exit.
+
+Matching host AND owning OpenGL WebGL endpoints and Pointer Lock false are
+retained with every state; trusted ordinary inputs and host right DOWN/UP
+receipts are recorded. No guest-state or clock changes, engine fix, rebuild,
+native run or performance benchmark was made. FPS/audio/combat/completion and
+whole-game compatibility remain unmeasured. Ordinary quit at 02:15:53.697
+closed Chrome with exit 0 before the original 02:17:36.858 deadline; all 67
+actual files were SHA-checked, independent PID/socket/pin checks passed, and
+the scoped remote prefix was removed at 02:16:07.994. Root owns the adopted
+temporary box. The [scoped handoff](../../ops/handoffs/warcraft3-campaign-world-20261008.md)
+records exact screenshot/source identities, strict shell probe refusals,
+resource checks, and a preparation receipt hardlink mistake restored exactly
+against both prior sealed indices. No further phase follows in budget mode.

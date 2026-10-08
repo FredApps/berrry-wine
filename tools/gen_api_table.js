@@ -263,6 +263,13 @@ const extra = [
   { name: '_beginthreadex', nargs: 6, convention: 'cdecl' },
   { name: '_endthreadex', nargs: 1, convention: 'cdecl' },
   { name: '_chdir', nargs: 1, convention: 'cdecl' },
+  { name: '_mkdir', nargs: 1, convention: 'cdecl' },
+  { name: 'setvbuf', nargs: 4, convention: 'cdecl' },
+  { name: 'getc', nargs: 1, convention: 'cdecl' },
+  { name: '__p___mb_cur_max', nargs: 0, convention: 'cdecl' },
+  { name: '__p__pctype', nargs: 0, convention: 'cdecl' },
+  { name: 'fgetc', nargs: 1, convention: 'cdecl' },
+  { name: '_makepath', nargs: 5, convention: 'cdecl' },
   { name: 'feof', nargs: 1, convention: 'cdecl' },
   { name: 'ferror', nargs: 1, convention: 'cdecl' },
   { name: 'fgets', nargs: 3, convention: 'cdecl' },
@@ -1498,7 +1505,7 @@ const cdeclCrtApis = new Set([
   '__getmainargs', '__p__acmdln', '__p__commode', '__p__environ', '__p__fmode', '__p__wcmdln',
   '__mb_cur_max',
   '__set_app_type', '__setusermatherr', '__wgetmainargs', '_adjust_fdiv',
-  '_cexit', '_chdir', '_close', '_controlfp', '_dup', '_exit', '_ftol', '_fullpath', '_getcwd', '_getdcwd', '_getdrive', '_global_unwind2', '_initterm',
+  '_cexit', '_chdir', '_close', '_controlfp', '_dup', '_exit', '_ftol', '_fullpath', '_getcwd', '_getdcwd', '_getdrive', '_global_unwind2', '_initterm', '_mkdir', 'setvbuf', 'getc', '__p___mb_cur_max', '__p__pctype', 'fgetc', '_makepath',
   '_iob',
   '_itoa', '_itow', '_ltoa', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit', '_unlink',
   '_isctype', '_pctype', '_purecall', '_setmode', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
@@ -1566,9 +1573,12 @@ for (const iface of d3d8Ifaces) {
       current.nargs = m.nargs;
       if (m.handler) current.handler = m.handler;
       else delete current.handler;
+      // A typed return lets --trace-api print the HRESULT a method gave.
+      if (m.ret) current.ret = m.ret;
     } else {
       const api = { id: existing.length, name: fullName, nargs: m.nargs, convention: 'stdcall', hash: 0 };
       if (m.handler) api.handler = m.handler;
+      if (m.ret) api.ret = m.ret;
       existing.push(api);
       seen.add(fullName);
     }
@@ -1641,19 +1651,13 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_BltColorFill",
     "nargs": 4,
     "convention": "stdcall",
-    "stub": {
-      "pop": 20,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltColorFill"
   },
   {
     "name": "IVBImageSurface7_BltFast",
     "nargs": 7,
     "convention": "stdcall",
-    "stub": {
-      "pop": 32,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_BltFast"
   },
   {
     "name": "IVBImageSurface7_BltFx",
@@ -1740,10 +1744,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_DrawText",
     "nargs": 5,
     "convention": "stdcall",
-    "stub": {
-      "pop": 24,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_DrawText"
   },
   {
     "name": "IVBImageSurface7_Flip",
@@ -1989,19 +1990,13 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetClipper",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": {
-      "pop": 12,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetClipper"
   },
   {
     "name": "IVBImageSurface7_SetColorKey",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetColorKey"
   },
   {
     "name": "IVBImageSurface7_setDrawStyle",
@@ -2061,10 +2056,7 @@ const vbImageMethods = [
     "name": "IVBImageSurface7_SetForeColor",
     "nargs": 2,
     "convention": "stdcall",
-    "stub": {
-      "pop": 12,
-      "ret": 2147500033
-    }
+    "handler": "VBImage_SetForeColor"
   },
   {
     "name": "IVBImageSurface7_SetLockedPixel",
@@ -2221,6 +2213,186 @@ const vbImageFile=existing.find(api=>api.name==='IVBDirectDraw7_DirectSlot008');
 if (!vbImageFile) throw Error('Missing established VB image API');
 vbImageFile.nargs=4; vbImageFile.handler='VBDD_CreateSurfaceFromFile';
 
+
+// Native DX7VB DirectDraw7 has34slots. Preserve old API IDs and correct
+// unsupported ABI cleanup; append only the missing tail.
+const vbDd34Unsupported=[
+  {
+    "name": "IVBDirectDraw7_DirectSlot003",
+    "nargs": 2,
+    "slot": 3,
+    "nativeName": "InternalSetObject"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot004",
+    "nargs": 2,
+    "slot": 4,
+    "nativeName": "InternalGetObject"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot006",
+    "nargs": 4,
+    "slot": 6,
+    "nativeName": "CreatePalette"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot009",
+    "nargs": 5,
+    "slot": 9,
+    "nativeName": "CreateSurfaceFromResource"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot010",
+    "nargs": 3,
+    "slot": 10,
+    "nativeName": "DuplicateSurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot011",
+    "nargs": 1,
+    "slot": 11,
+    "nativeName": "FlipToGDISurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot012",
+    "nargs": 3,
+    "slot": 12,
+    "nativeName": "GetAvailableTotalMem"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot013",
+    "nargs": 3,
+    "slot": 13,
+    "nativeName": "GetCaps"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot014",
+    "nargs": 2,
+    "slot": 14,
+    "nativeName": "GetDirect3D"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot015",
+    "nargs": 2,
+    "slot": 15,
+    "nativeName": "GetDisplayMode"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot016",
+    "nargs": 4,
+    "slot": 16,
+    "nativeName": "GetDisplayModesEnum"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot017",
+    "nargs": 2,
+    "slot": 17,
+    "nativeName": "GetFourCCCodes"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot018",
+    "nargs": 3,
+    "slot": 18,
+    "nativeName": "GetFreeMem"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot019",
+    "nargs": 2,
+    "slot": 19,
+    "nativeName": "GetGDISurface"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot020",
+    "nargs": 2,
+    "slot": 20,
+    "nativeName": "GetMonitorFrequency"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot021",
+    "nargs": 2,
+    "slot": 21,
+    "nativeName": "GetNumFourCCCodes"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot022",
+    "nargs": 3,
+    "slot": 22,
+    "nativeName": "GetScanLine"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot023",
+    "nargs": 3,
+    "slot": 23,
+    "nativeName": "GetSurfaceFromDC"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot024",
+    "nargs": 4,
+    "slot": 24,
+    "nativeName": "GetSurfacesEnum"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot025",
+    "nargs": 2,
+    "slot": 25,
+    "nativeName": "GetVerticalBlankStatus"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot026",
+    "nargs": 3,
+    "slot": 26,
+    "nativeName": "LoadPaletteFromBitmap"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot027",
+    "nargs": 1,
+    "slot": 27,
+    "nativeName": "RestoreAllSurfaces"
+  },
+  {
+    "name": "IVBDirectDraw7_DirectSlot028",
+    "nargs": 1,
+    "slot": 28,
+    "nativeName": "RestoreDisplayMode"
+  }
+];
+for(const row of vbDd34Unsupported){const a=existing.find(a=>a.name===row.name);if(!a)throw Error('Missing existing VB DD method '+row.name);a.nargs=row.nargs;a.convention='stdcall';}
+const vbDd34Tail=[
+  {
+    "name": "IVBDirectDraw7_SetDisplayMode",
+    "nargs": 6,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 28,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBDirectDraw7_TestCooperativeLevel",
+    "nargs": 2,
+    "convention": "stdcall",
+    "handler": "IVBDirectDraw7_TestCooperativeLevel"
+  },
+  {
+    "name": "IVBDirectDraw7_WaitForVerticalBlank",
+    "nargs": 4,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 20,
+      "ret": 2147500033
+    }
+  },
+  {
+    "name": "IVBDirectDraw7_GetDeviceIdentifier",
+    "nargs": 3,
+    "convention": "stdcall",
+    "stub": {
+      "pop": 16,
+      "ret": 2147500033
+    }
+  }
+];
+for(const row of vbDd34Tail){let a=existing.find(a=>a.name===row.name);if(!a){a={id:existing.length,...row};existing.push(a);seen.add(row.name);}Object.assign(a,row);}
 // Full native IDirectX7 typelib ABI:55 declared methods plus IUnknown3.
 // Old API IDs are retained; new table fixes missing/incorrect slots.
 const vbDirectX7Methods = [
@@ -2644,10 +2816,7 @@ const vbDirectX7Methods = [
     "name": "IVBDirectX7_GetWindowRect",
     "nargs": 3,
     "convention": "stdcall",
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    }
+    "handler": "IVBDirectX7_GetWindowRect"
   },
   {
     "name": "IVBDirectX7_CreateEvent",
@@ -2723,6 +2892,15 @@ const vbDirectX7Methods = [
   }
 ];
 for(const row of vbDirectX7Methods){let current=existing.find(api=>api.name===row.name);if(!current){current={id:existing.length,...row};existing.push(current);seen.add(row.name);}Object.assign(current,row);}
+
+// Full separate Unicode DirectPlay4 ABI, appended after established interfaces.
+for (const api of existing.filter(a => /^IDirectPlay[34]_/.test(a.name))) {
+  const name = 'IDirectPlay4W_' + api.name.split('_')[1];
+  if (!seen.has(name)) {
+    existing.push({ id: existing.length, name, nargs: api.nargs, convention: 'stdcall', hash: 0 });
+    seen.add(name);
+  }
+}
 
 // Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
 // belongs to the API row rather than the name/hash generator.

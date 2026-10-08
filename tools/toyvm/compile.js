@@ -38,6 +38,35 @@ function handlerFacts() {
   for (let i = 0; i < HANDLERS.length; i++) if (/call/.test(HANDLERS[i].name)) CALL_OP[i] = 1;
 }
 
+// IFEN: THE BOUNDARY AN STI'S INTERRUPT SHADOW ENDS AT IS A BLOCK TRANSFER.
+//
+// STI with IF=0 inhibits maskable interrupts on the boundary right after it,
+// until the NEXT instruction completes; STI;RET runs the RET first, STI;CLI
+// recognizes none (Intel SDM 325462-093 Vol. 2B 4-674; Vol. 3A 7.8.1 p. 7-8;
+// Vol. 3C Table 27-3 p. 27-7). So the first boundary an IRQ held for IF may go
+// in at is after the instruction FOLLOWING the STI. The loop below decodes
+// that follower into the STI's own block, whatever starts there, and ends the
+// block right after it: with the follower's own transfer when it is one, and
+// with `jmp_ifen` (emit.js) otherwise. Every arm already honours a block
+// transfer -- CONT, which now also refuses on $ifarm -- so the handback lands
+// on that one boundary at the same dispatch count everywhere. Room for an STI,
+// two followers and the jmp_ifen is far below this.
+const IFEN_ROOM = 48;
+// STI IMMEDIATELY FOLLOWED BY AN SS LOAD -- UNCONFIRMED, INFORMATIONAL ONLY.
+// No primary source states this combination. The only related statements are
+// SDM Vol. 3A 7.8.3 p. 7-9 ("only the first of consecutive SS loads is
+// guaranteed to inhibit") and Vol. 3C 29.3.1.5 p. 29-14 (VMX guest state never
+// shows blocking by STI and blocking by MOV SS at once). Two behaviours fit:
+//   true  -- defer once more: the boundary is after the instruction FOLLOWING
+//            the MOV SS / POP SS (both shadows applied independently; what
+//            test-toyvm-irq-if-enable.js's informational sti_movss case expects);
+//   false -- the boundary is right after the MOV SS / POP SS (STI's shadow
+//            alone, the SS load's own shadow not composed onto it).
+// Whichever is set, the boundary is still a block transfer, so every arm agrees
+// with every other; only which boundary is architecturally right is open.
+// Change it here and nowhere else.
+const IFEN_STI_MOVSS = true;
+
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
   // require time (emit.js says why), and they are held here by reference.
@@ -89,6 +118,12 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
+  // Parallel to `covered`: the linear address just past the first instruction
+  // in that block that writes memory, or -1 when it writes none (-2: no
+  // per-block information, e.g. a region guard). dos-loop.js's pure uncached
+  // compile reads it: bytes from the first store on can still run in the same
+  // straight line after that store, so their code bits must stay up.
+  const coveredStore = [];
   // Word index -> guest ip of the instruction emitted there. Only a branch
   // publishes an ip into the arena, so without this a reader of the words
   // cannot say where a mid-block op sits in the guest; region-jit needs
@@ -478,7 +513,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // `regionCodeBits: false` (region-jit's --no-region-code-bits) turns it
       // off, so the two can be compared on one program.
       if (opts.regionCodeBits !== false) {
-        for (const g of guard || []) covered.push([g.lin, g.lin + g.bytes.length]);
+        for (const g of guard || []) { covered.push([g.lin, g.lin + g.bytes.length]); coveredStore.push(-2); }
       }
       continue;
     }
@@ -499,18 +534,40 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // decoded from memory as it is by then.
     let wrote = false;
     let bulkWrote = false;
+    let firstStoreEnd = -1;
     let refusedAt = -1;
     // The block head extendThrough() just opened inside this very block. The
     // "we already emitted this one, jump to it" test below has to skip it, or
     // the trace's first act would be to jump to itself.
     let justOpened = -1;
+    // STI's interrupt shadow (IFEN, see the constants at the top): 0 outside
+    // one, 1 while the instruction(s) the STI covers are being decoded.
+    // `shadowSs` records that the one SS-load deferral has been taken.
+    let shadow = 0, shadowSs = false, shadowFrom = -1;
     for (;;) {
-      if (words.length > maxWords) { words.push(H.end_cut, cur); break; }
+      if (words.length > maxWords && !shadow) { words.push(H.end_cut, cur); break; }
       wordIp.set(words.length, cur);
 
       // Reaching the head of a block we already emitted: jump to it rather than
       // emitting a second copy of an entire loop body.
-      if (cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
+      // NOT inside STI's shadow: the instruction after an STI is decoded into
+      // the STI's own block whatever else starts there, so that nothing --
+      // jmp_syn, a volatile cut, a region or µop head, the wasm decoder -- can
+      // put a boundary between the two, or carry the guest past the eligible
+      // boundary without a transfer. Duplicating one instruction is the price.
+      if (!shadow && cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
+        // Fix J (emit.js GO_SYN): a jmp_syn no longer tests the budget, which
+        // is safe only because it always runs FORWARD -- `cur` is the end of a
+        // straight line from `curHead`, so any loop through it also passes a
+        // real, still-tested transfer. The one way a straight line lands at or
+        // below where it started is a 16-bit ip wrap at 0xFFFF; there a cycle
+        // made of nothing but straight lines and jmp_syn edges is possible in
+        // principle (a segment of non-transfers), so end the line with a cut
+        // that hands back instead. Never reached by any known program.
+        if (cur <= curHead && !require('./emit').JMP_SYN_BUDGET_TEST) {
+          words.push(H.end_cut, cur);
+          break;
+        }
         // The synthetic twin: a dispatch, but not a step (see emit.js).
         words.push(H.jmp_syn, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
@@ -521,7 +578,19 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // and hand back, so the host compiles the far side the way it wants it.
       // Checked before the wasm decoder is offered the run, because wasm skips
       // the head test for the first instruction it is given.
-      if (cutLine(cur)) { words.push(H.end_cut, cur); volatileCuts.push({ head: curHead, at: cur }); break; }
+      // Inside STI's shadow a volatile follower is decoded into this (cached)
+      // block anyway: cutting there would hand back INSIDE the shadow, and the
+      // uncached compile on the far side would run the follower with no
+      // boundary transfer after it. A store into those bytes still raises $smc
+      // through the code bitmap (they are in `covered`), but $smc is acted on
+      // at the NEXT block transfer -- so a store earlier in THIS block into the
+      // follower's bytes runs the OLD follower. That is the same-block forward
+      // SMC behaviour of TOYVM-SMC-SAME-BLOCK-FORWARD-PATCH, whose CPU contract
+      // is unresolved; no claim is made here that the follower is never stale.
+      // Coverage this needs (not yet written): a block that stores into its
+      // own STI follower before the STI, on every arm, compared under whatever
+      // contract that task settles.
+      if (!shadow && cutLine(cur)) { words.push(H.end_cut, cur); volatileCuts.push({ head: curHead, at: cur }); break; }
 
       // Hand the rest of the block to wasm. It stops at the first opcode it does
       // not implement, so the worst case is that it decodes nothing and this
@@ -534,7 +603,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // the blocks around it end elsewhere, the guest takes its interrupts at
       // different instructions, and COMPOVRS.EXE rendered a different frame from
       // 4M dispatches on while both decoders agreed instruction for instruction.
-      if (wd) {
+      // Never inside STI's shadow: wasm would decode straight past the
+      // boundary. (It does not implement STI itself, so it already stops in
+      // front of one and hands it to decodeOne below.)
+      if (wd && !shadow) {
         const room = Math.min(isa.DEC_SCRATCH_WORDS, maxWords - words.length);
         const n = room > 32
           ? wd.exports.compile_block(cur, codeBase, mask,
@@ -602,15 +674,31 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         // An opcode we do not implement ends the trace and hands the guest IP
         // back, so the host can report exactly where coverage ran out instead
         // of executing something plausible-looking.
+        // (Inside STI's shadow this hands back between the STI and its
+        // follower. The host does not deliver there -- the exit is `end`, not
+        // a boundary kind -- and an opcode nobody implements stops the run
+        // anyway.)
         unimplemented.add(cur);
         words.push(H.end, cur);
         refusedAt = cur;
         break;
       }
 
+      // An STI opens a shadow only where the boundary after it can be laid
+      // out: a normal compile, or the µop-only arm's one-instruction fallback
+      // (`ifenShadow`). Under the trap flag's own oneInsn compile it stays one
+      // instruction long -- the single-step trap after STI is owed and is not
+      // a maskable interrupt -- and the host simply does not deliver at that
+      // handback (dos-loop.js, ifenExit).
+      const opens = d.sti && !shadow && (!opts.oneInsn || opts.ifenShadow);
+      // Room for the STI, its follower(s) and the boundary transfer, checked
+      // before any of it is emitted: the shadow suspends the maxWords cut.
+      if (opens && words.length + IFEN_ROOM > maxWords) { words.push(H.end_cut, cur); break; }
+
       const base = words.length;
       words.push(...d.words);
       if (d.writesMem) wrote = true;
+      if ((d.writesMem || d.bulkWrite) && firstStoreEnd < 0) firstStoreEnd = (codeBase + d.nextIp) & mask;
       // A backward edge out of a block that wrote memory makes every FORWARD
       // edge suspect -- that is the loop-then-fall-through shape of a
       // decryptor. The backward edge itself is still resolved, so the loop
@@ -634,6 +722,30 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       }
 
       cur = d.nextIp;
+      if (opens) { shadow = 1; shadowFrom = d.nextIp; continue; }
+      if (shadow) {
+        // The instruction STI covers has just been emitted. An SS load here
+        // extends the shadow by one more instruction (IFEN_STI_MOVSS: an
+        // UNCONFIRMED composition, see the constant), once.
+        if (IFEN_STI_MOVSS && d.ssLoad && !shadowSs && !d.endsBlock) { shadowSs = true; continue; }
+        shadow = 0; shadowSs = false;
+        // A follower that is itself a transfer IS the boundary: its own CONT
+        // refuses on $ifarm. It is never traced through (extendThrough would
+        // put the not-taken edge inline, with no transfer at the boundary).
+        if (d.endsBlock) break;
+        // Otherwise the boundary gets a transfer of its own. A 16-bit wrap
+        // could make it a backward edge that tests no budget, the case fix J
+        // refuses for jmp_syn above; refuse it the same way.
+        if (cur <= shadowFrom && !require('./emit').JMP_SYN_BUDGET_TEST) { words.push(H.end_cut, cur); break; }
+        // No wordIp entry: these words are not an instruction, and the fast
+        // operand repair (dos-loop.js repairProg) must not try to decode them.
+        words.push(H.jmp_ifen, 0, cur);
+        fixups.push({ wordIndex: words.length - 2, ip: cur });
+        // The successor is what straight-line decoding would have reached next,
+        // so it is queued like the straight line (oneInsn queues nothing).
+        if (!opts.oneInsn) pending.push(cur);
+        break;
+      }
       if (d.endsBlock) {
         const nx = extendThrough(blockStart, wrote || bulkWrote);
         if (nx < 0) break;
@@ -663,6 +775,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     const extent = refusedAt >= 0 ? cur + 1 : cur;
     if (extent > blockIp) {
       covered.push([(codeBase + blockIp) & mask, (codeBase + extent) & mask]);
+      coveredStore.push(firstStoreEnd);
     }
   }
 
@@ -1120,7 +1233,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   }
 
   return {
-    words, blocks, fixups, unresolved, covered, wordIp, volatileCuts, calls, cyclic,
+    words, blocks, fixups, unresolved, covered, coveredStore, wordIp, volatileCuts, calls, cyclic,
     // Guest byte ranges whose ops are inlined into ANOTHER block's tree here.
     // Their own arena words are still live (other callers enter them directly),
     // so a store into them is not repairable in place -- see repairProg.
@@ -1188,7 +1301,9 @@ let gsEffects = null;
 // step back. Any other write to $steps is not a fixed charge (undefined).
 function gsCharge(x) {
   const sets = (x.body.match(/global\.set \$steps/g) || []).length;
-  if (x.name === 'jmp_syn') return 0;
+  // jmp_ifen (IFEN) gives its step back exactly as jmp_syn does; its armed arm
+  // is a handback, which ends a route.
+  if (x.name === 'jmp_syn' || x.name === 'jmp_ifen') return 0;
   if (sets === 0) return 1;
   if (sets === 1 && /_j[a-z]+(_t)?$/.test(x.name)
     && x.body.includes('(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))')) return 2;

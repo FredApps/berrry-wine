@@ -210,6 +210,25 @@ async function main() {
   draw(GL_LINES, [[0, 20, -0.5], [60, 20, -0.5]], [0, 1, 0, 1]); // farther
   snap();
   assert.strictEqual(at(30, VP - 20) & 0xFFFFFF, 0xFF0000, 'a farther line is hidden by a nearer one');
+
+  // --- glClearDepth sets what a depth clear writes ---------------------------
+  // GLclampd is a double: two stack words (UE1 OpenGlDrv calls it).
+  const clearDepth = d => {
+    new Int32Array(memory.buffer, stack, 16).fill(0);
+    new DataView(memory.buffer).setFloat64(stack + 4, d, true);
+    e.gl_sw_observe(CALL_INDEX.glClearDepth, stack);
+  };
+  clear();
+  clearDepth(0);
+  glCall(CALL_INDEX.glClear, 0x100);
+  draw(GL_LINES, [[0, 40, 0.5], [60, 40, 0.5]], [1, 0, 0, 1]);
+  snap();
+  assert.strictEqual(at(30, VP - 40) & 0xFFFFFF, 0, 'depth cleared to 0 hides everything under GL_LESS');
+  clearDepth(1);
+  glCall(CALL_INDEX.glClear, 0x100);
+  draw(GL_LINES, [[0, 40, 0.5], [60, 40, 0.5]], [1, 0, 0, 1]);
+  snap();
+  assert.strictEqual(at(30, VP - 40) & 0xFFFFFF, 0xFF0000, 'and depth cleared to 1 shows it again');
   glCall(CALL_INDEX.glDisable, 0x0B71);
 
   assert.ok(e.gl_sw_lines() > 10, 'lines counted');

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 259,
+  "count": 265,
   "sigs": {
     "log": {
       "params": [
@@ -354,6 +354,12 @@
       "results": []
     },
     "get_mouse_buttons": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
+    },
+    "get_mouse_buttons_live": {
       "params": [],
       "results": [
         "i32"
@@ -1882,6 +1888,12 @@
         "i32"
       ]
     },
+    "service_load_library": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
+    },
     "com_create_instance": {
       "params": [
         "i32",
@@ -1968,6 +1980,43 @@
     },
     "resume_thread": {
       "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "thread_apc_target": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "thread_alert": {
+      "params": [
+        "i32"
+      ],
+      "results": []
+    },
+    "process_spawn": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "process_ctl": {
+      "params": [
+        "i32",
+        "i32",
         "i32"
       ],
       "results": [

@@ -8,12 +8,14 @@ const { createReader, safeFile, parseTasks } = require('./readers');
 const { createTerminalBridge } = require('./terminal-server');
 const { createTaskStore } = require('./task-store');
 const { createEmulatorHandler } = require('./emulator-server');
+const { createToyvmHandler } = require('./toyvm-server');
 const { createAnalytics } = require('./analytics');
 
 function createServer(options = {}) {
   const reader = createReader(options);
   const analytics = createAnalytics(reader.root);
-  const serveEmulator = createEmulatorHandler(reader.root);
+  const serveEmulator = createEmulatorHandler(reader.emulatorRoot);
+  const serveToyvm = createToyvmHandler(reader.root);
   const taskStore=createTaskStore(reader.root);
   let cached, refreshedAt = 0, pending;
   let appendQueue = Promise.resolve();
@@ -34,6 +36,7 @@ function createServer(options = {}) {
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return fail(403, 'Same-origin requests only');
     try {
       if (await serveEmulator(req,res)) return;
+      if (await serveToyvm(req,res)) return;
       const url = new URL(req.url, `http://${host}`);
       if(req.method==='GET' && url.pathname==='/api/analytics') { const data=await analytics(await reader.analyticsSnapshot());res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(data));return; }
       if(req.method==='POST' && url.pathname==='/api/terminal-ticket') return await terminals.ticket(req,res);
@@ -107,10 +110,16 @@ function createServer(options = {}) {
         return res.end(req.method === 'HEAD' ? undefined : JSON.stringify({...data,terminals:await terminals.list(),approvals:await terminals.approvals()}));
       }
       let file, type = 'text/plain; charset=utf-8';
-      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/blocker-model.js': ['blocker-model.js', 'text/javascript; charset=utf-8'], '/release-model.js': ['release-model.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
+      const statics = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/blocker-model.js': ['blocker-model.js', 'text/javascript; charset=utf-8'], '/release-model.js': ['release-model.js', 'text/javascript; charset=utf-8'], '/dos-view.js': ['dos-view.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/terminal.js':['terminal.js','text/javascript; charset=utf-8'],
         '/task-ui.js':['task-ui.js','text/javascript; charset=utf-8'],
         '/approval-ui.js':['approval-ui.js','text/javascript; charset=utf-8'],
+        '/views.js':['views.js','text/javascript; charset=utf-8'],
+        '/favicon.svg':['favicon.svg','image/svg+xml'],
+        '/fonts/chakra-petch-400.woff2':['fonts/chakra-petch-400.woff2','font/woff2'],
+        '/fonts/chakra-petch-600.woff2':['fonts/chakra-petch-600.woff2','font/woff2'],
+        '/fonts/chakra-petch-700.woff2':['fonts/chakra-petch-700.woff2','font/woff2'],
+        '/fonts/jetbrains-mono.woff2':['fonts/jetbrains-mono.woff2','font/woff2'],
         '/vendor/xterm.js':['node_modules/@xterm/xterm/lib/xterm.js','text/javascript; charset=utf-8'],
         '/vendor/xterm.css':['node_modules/@xterm/xterm/css/xterm.css','text/css; charset=utf-8'],
         };

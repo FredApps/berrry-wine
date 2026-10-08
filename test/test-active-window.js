@@ -758,6 +758,8 @@ const extraWat = String.raw`
     e.test_focus_api(focusA, stack);
     e.test_mouse_clear_nc();
     resetRecords(); hostCalls.length = 0;
+    let inputClock = 1000;
+    r._inputNowMs = () => inputClock;
     r.handleMouseDown(40, 60, button);
     r.handleMouseUp(40, 60, button);
     assert.deepStrictEqual(r.inputQueue.map(event => event.msg), [0x84, down, up],
@@ -781,6 +783,12 @@ const extraWat = String.raw`
     assert.strictEqual(records().filter(event => event.msg === 0x21).length, 1);
     assert.strictEqual(records().find(event => event.msg === 0x21).lParam, (down << 16) | 1,
       'activation query identifies the actual initiating button');
+    // Since 37ff2f8d a release is never handed over in the pump that took its
+    // press: the guest's next, empty poll ends that pump, then 30 ms of
+    // input-clock time (renderer._inputNowMs) must pass.
+    assert.strictEqual(e.test_mouse_pump(mouseMsg, stack, 1, 1, up, up), 0,
+      'the queued release waits out the pump that took its press');
+    inputClock += 30;
     assert.strictEqual(e.test_mouse_pump(mouseMsg, stack, 1, 1, up, up), 1,
       'even an eaten down retains its queued release');
   }

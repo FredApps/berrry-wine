@@ -83,7 +83,12 @@ function call(name, args = [], instance = a) {
     name + ' consumes exactly the decorated stdcall frame');
   return instance.get_eax() >>> 0;
 }
-for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28', '_grTexCombineFunction@8', '_guFogGenerateExp@8']) {
+// guDrawTriangleWithClip clips to grClipWindow; both backends already scissor
+// every draw to that window, so it is grDrawTriangle. Driver resolves it by
+// name and calls the pointer it gets back, so a missing export jumped to 0.
+for (const name of ['guDrawTriangleWithClip', '_guDrawTriangleWithClip@12'])
+  assert.strictEqual(table.find(x => x.name === name).handler, 'grDrawTriangle', name);
+for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28', '_grTexCombineFunction@8', '_guFogGenerateExp@8', '_guDrawTriangleWithClip@12']) {
   const p = wa(0x410000);
   new Uint8Array(memory.buffer, p, name.length + 1).set(Buffer.from(name + '\0'));
   assert.strictEqual(a.glide_test_lookup(p), table.find(x => x.name === name).id);
@@ -210,6 +215,13 @@ assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 1);
 assert.strictEqual(submissions.at(-1).op, 10);
 assert.strictEqual(submissions.at(-1).bytes.readUInt16LE(20), 0xf800);
 assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 0, 'unmatched unlock is rejected');
+// Retail glide2x does not check info->size (GR_CHECK_F is debug-only), and
+// Die by the Sword's rl3dfx.dll locks with whatever its stack held there.
+view.setUint32(wa(info), 0x7661772e, true);
+assert.strictEqual(call('_grLfbLock@24', [1, 1, 0, 0, 0, info]), 1,
+  'a lock with an uninitialised info->size succeeds');
+assert.strictEqual(view.getUint32(wa(info + 4), true), lfb, 'and still reports the LFB');
+assert.strictEqual(call('_grLfbUnlock@8', [1, 1]), 1);
 const sparseInfo = sparseBase + 4094;
 fillGuest(sparseInfo - 4, 28, 0xcc);
 a.guest_write32(sparseInfo, 20);
@@ -230,6 +242,10 @@ assert.strictEqual(call('_grSstVRetraceOn@0'), 0);
 ticks = 16;
 assert.strictEqual(call('_grSstVRetraceOn@0'), 1, 'virtual retrace advances with clock');
 assert.strictEqual(call('_grSstStatus@0') & 64, 0, 'status retrace bit is active low');
+assert.strictEqual(call('_grSstControl@4', [3]), 1, 'GR_CONTROL_RESIZE succeeds');
+assert.strictEqual(call('_grSstControl@4', [4]), 1,
+  'GR_CONTROL_MOVE succeeds (Driver closes its window when it fails)');
+assert.strictEqual(call('_grSstControl@4', [99]), 0, 'unknown control code fails');
 assert.strictEqual(call('_grSstControl@4', [2]), 1);
 call('_grBufferSwap@4', [0]);
 assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(244), 0, 'deactivation accompanies presentation');
@@ -272,6 +288,91 @@ const missingMoveCount = moves.length;
 call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]);
 assert.strictEqual(a.get_dx_exclusive_hwnd(), 0, 'headless context does not claim a missing HWND');
 assert.strictEqual(moves.length, missingMoveCount);
+// The open packet carries nColBuffers as word 5 (backends: 1 = single-buffered).
+assert.strictEqual(submissions.at(-1).op, 1);
+assert.strictEqual(submissions.at(-1).bytes.length, 24, 'open packet carries the color buffer count');
+assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(20), 2);
+// grDrawPolygonVertexList: a convex polygon is a fan from vlist[0], stepping
+// the SDK's 60-byte GrVertex (Myth TFL's terrain path; it abandons Glide
+// entirely when this export is missing). Each vertex's x names it.
+const poly = 0x4150f0;
+for (let v = 0; v < 5; ++v) for (let f = 0; f < 15; ++f)
+  view.setFloat32(wa(poly + v * 60 + f * 4), f === 0 ? 100 + v : 0.5, true);
+const beforePoly = submissions.length;
+call('_grDrawPolygonVertexList@8', [5, poly]);
+call('_grDrawPolygonVertexList@8', [2, poly]);   // fewer than three vertices draws nothing
+call('_grBufferSwap@4', [1]);
+const polyBatch = submissions.slice(beforePoly).find(s => s.op === 0).bytes;
+const fans = [];
+for (let at = 0; at < polyBatch.length; at += 8 + polyBatch.readUInt32LE(at + 4)) {
+  if (polyBatch.readUInt32LE(at) !== 5) continue;
+  fans.push([256, 316, 376].map(o => polyBatch.readFloatLE(at + 8 + o)));
+}
+assert.deepStrictEqual(fans, [[100, 101, 102], [100, 102, 103], [100, 103, 104]],
+  'five vertices draw exactly three fan triangles; a two-vertex list draws none');
+// Myth opens single-buffered with two aux buffers, which the release Glide 2.4
+// driver accepts on a 4 MiB board; triple buffering has no surface and fails.
+call('_grSstWinClose@0');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 1, 2]), 1, 'single-buffered open accepted');
+assert.strictEqual(submissions.at(-1).bytes.readUInt32LE(20), 1, 'backend is told there is one color buffer');
+call('_grSstWinClose@0');
+// Triple buffering has no surface: FXFALSE with nothing opened, as a board
+// short of frame-buffer memory answers. Deus Ex's GlideDrv then retries with 2.
+const beforeTriple = submissions.length;
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 3, 0]), 0,
+  'triple buffering is refused, not silently double-buffered');
+assert(!submissions.slice(beforeTriple).some(s => s.op === 1), 'a refused open reaches no backend');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1, 'the double-buffered retry opens');
+// gu.c presets: guColorCombineFunction -> grColorCombine state (+0..+16),
+// guAlphaSource -> grAlphaCombine state (+20..+36).
+const glideState = (from, n) => Array.from({length: n}, (_, i) =>
+  view.getUint32(regions.BASE.GLIDE_STATE + 256 + from + i * 4, true));
+for (const [fnc, expected] of [
+  [0, [0, 0, 1, 2, 0]], [1, [1, 0, 1, 2, 0]], [2, [1, 0, 0, 2, 0]], [4, [3, 8, 1, 1, 0]],
+  [5, [3, 1, 1, 1, 0]], [6, [3, 1, 0, 1, 0]], [8, [5, 1, 0, 1, 0]], [9, [3, 3, 1, 1, 0]],
+  [10, [4, 3, 0, 1, 0]], [11, [4, 8, 0, 1, 0]], [12, [6, 8, 0, 1, 0]], [13, [7, 4, 1, 0, 0]],
+  [14, [4, 3, 0, 1, 0]], [15, [5, 1, 0, 1, 0]], [16, [0, 0, 1, 2, 1]],
+]) {
+  call('_guColorCombineFunction@4', [fnc]);
+  assert.deepStrictEqual(glideState(0, 5), expected, 'guColorCombineFunction ' + fnc);
+}
+assert.throws(() => call('_guColorCombineFunction@4', [3]), WebAssembly.RuntimeError,
+  'ITRGB_DELTA0 needs flat iterated colour, which is not modelled');
+for (const [mode, expected] of [
+  [0, [1, 0, 1, 2, 0]], [1, [1, 0, 0, 2, 0]], [2, [3, 8, 1, 1, 0]], [3, [3, 1, 0, 1, 0]],
+]) {
+  call('_guAlphaSource@4', [mode]);
+  assert.deepStrictEqual(glideState(20, 5), expected, 'guAlphaSource ' + mode);
+}
+call('_guTexCombineFunction@8', [0, 6]);
+assert.deepStrictEqual(glideState(184, 6), [7, 12, 7, 12, 0, 0],
+  'guTexCombineFunction is grTexCombineFunction (digutex.c)');
+// grTexDownloadMipMapLevel[Partial]: one level of a 256..1 8-bit 1x1-aspect
+// mipmap at 0x1000; level 2 (64x64) sits after the 256x256 and 128x128 levels.
+const levelData = 0x416000;
+for (let i = 0; i < 4096; ++i) a.guest_write8(levelData + i, i & 0xff);
+const beforeLevels = submissions.length;
+call('_grTexDownloadMipMapLevel@32', [0, 0x1000, 2, 0, 3, 0, 3, levelData]);
+call('_grTexDownloadMipMapLevelPartial@40', [0, 0x1000, 2, 0, 3, 0, 3, levelData, 3, 5]);
+call('_grTexDownloadMipMapLevel@32', [0, 0x1000, 1, 0, 3, 0, 1, levelData]); // odd level, even mask: skipped
+call('_grBufferSwap@4', [1]);
+const levelBatch = submissions.slice(beforeLevels).find(s => s.op === 0).bytes;
+const uploads = [];
+for (let at = 0; at < levelBatch.length; at += 8 + ((levelBatch.readUInt32LE(at + 4) + 3) & ~3)) {
+  if (levelBatch.readUInt32LE(at) !== 6) continue;
+  const r = at + 8;
+  uploads.push({
+    head: Array.from({length: 7}, (_, i) => levelBatch.readUInt32LE(r + i * 4)),
+    first: levelBatch[r + 28], last: levelBatch[r + 28 + levelBatch.readUInt32LE(r + 24) - 1],
+  });
+}
+assert.deepStrictEqual(uploads, [
+  {head: [0x1000 + 65536 + 16384, 2, 2, 3, 0, 3, 4096], first: 0, last: 4095 & 0xff},
+  {head: [0x1000 + 65536 + 16384 + 3 * 64, 8, 8, 3, 0, 3, 192], first: 0, last: 191},
+], 'whole level at its packed offset; rows 3..5 at their row offset; a level outside the mask is skipped');
+call('_grGlideShutdown@0');
+call('_grGlideInit@0');
+assert.strictEqual(call('_grSstWinOpen@28', [0, 7, 0, 0, 0, 2, 1]), 1);
 call('_grBufferClear@12', [0, 255, 65535]);
 rejectBatch = true;
 assert.throws(() => call('_grBufferSwap@4', [0]), WebAssembly.RuntimeError,

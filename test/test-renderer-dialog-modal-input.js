@@ -19,7 +19,10 @@ const wasm = {
     wnd_get_owner: () => 0x90001,
     wnd_mouse_msg_origin_x: () => 40,
     wnd_mouse_msg_origin_y: () => 50,
-    ctrl_get_class: () => 1,
+    // A native registered (x86) control: class 0. Since 4de7c7cc a WAT-owned
+    // BUTTON (class 1) is released synchronously on purpose -- its procedure
+    // only queues BN_CLICKED -- so only a native control's UP must be queued.
+    ctrl_get_class: () => 0,
     send_message: () => { routedSynchronously++; return 0; },
     dialog_route_mouse: () => { routedSynchronously++; return 1; },
   },

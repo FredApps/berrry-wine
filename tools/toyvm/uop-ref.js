@@ -225,6 +225,9 @@ const scribbles = () => scribble;
 //   { exit: 'go', ip, steps, n: µops executed, blocks, why }.
 // `opts.maxOps` bounds a runaway program.
 function runRef(vm, p, opts = {}) {
+  if (vm.exports.get_cr0() < 0) return {
+    exit: 'go', ip: vm.get('gip'), steps: opts.steps || 0, n: 0, blocks: 0, heads: [], why: 'paging',
+  };
   const mem = vm.mem;
   const dv = new DataView(vm.memory.buffer);
   const ex = vm.exports;

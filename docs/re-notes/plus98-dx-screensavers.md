@@ -12,6 +12,51 @@ DirectDraw and Direct3D Immediate Mode underneath it. That makes them a good
 test of the D3DIM surface: d3drm is unmodified and will simply decline to
 render if it does not like what it is given.
 
+## Status 2026-10-06 (software D3DIM arm, main 80dfe68e)
+
+All seven render. Reviewed runs: `scratch/runs/20261006T0250Z-<app>-w4-software/`
+(architec, fallingl, geometry, oasaver, rockroll, scifi; jazz is in
+claude:1863d2b5's `20261006T02*-scr_jazz-gld3d-sw`). The command is
+
+```
+node test/run.js --app=scr_rockroll --quiet-api --no-close --max-batches=120000 \
+  --tick-ms-per-batch=2 --dx-surfaces --png=out.png
+```
+
+**Use `--tick-ms-per-batch=2` (or 1-5).** At the default 200 ms/batch one
+software-rasterized frame costs minutes of guest time, every form's display
+timer has expired by the time it flips, and Organic Art tears the whole D3DRM
+device down after *every* frame (the app's own log says `SwitcherSetScene ...
+Forcing device recreation` right after the first `Flipping buffers`).
+rockroll then shows 5 Flips and 6 `IDirect3D2_CreateDevice` in 120000 batches and
+the capture is a freshly cleared target; at tick 2 it is 579 Flips and 3
+devices. Even at tick 2 an exit capture can land on a form change, so take
+mid-run `--input=N:png:` captures (geometry and oasaver need this).
+
+**Each device rebuild used to leak the flip chain's back buffer** (one 640x480
+surface per form change, out of the 63 MB DIB arena). The final Release of the
+front never released the implicit attachment; fixed in 80dfe68e with
+`test/test-ddraw-complex-surface-release.js`. The leak also hid the rebuild:
+`--png=` would pick a stale leaked back buffer that still held the previous
+form's last frame, which is how oasaver looked "rendered" in some older
+captures that were really at a form change.
+
+**fallingl's solid black leaves are d3drm's shadow pass, not a rasterizer
+fault.** Each gold 3D leaf has a black twin offset below it. `--trace-dx`
+shows the pass: `STIPPLEDALPHA` (rs 33) on, texture off, the
+`D3DSTATE_OVERRIDE_BIAS` (+256) locks on TEXTUREHANDLE/ALPHABLENDENABLE/
+SPECULARENABLE/COLORKEYENABLE (the `rs257/283/285/297` lines), then 156
+untextured triangles whose vertex colour d3drm itself wrote as `0xff000000` —
+opaque black. Stippled alpha with alpha 0xff is solid, so we draw what we are
+given. Not checked against real hardware; if a real Win98 capture shows
+translucent shadows, the alpha has to come from somewhere other than the TL
+vertex (we report every `ALPHA*STIPPLED` shade cap, and neither arm implements
+`STIPPLEDALPHA` at all).
+
+WebGL arm: not re-checked on this build (no `@node-3d` headless GL on the ops
+box; needs a browser run). Last browser verification was 2026-09-23
+(`3aa3db04`, all seven on `?d3dim-gpu`).
+
 ## It renders. Everything below about "where it stops" was a budget artifact
 
 **`scr_architec` draws its scene correctly.** At 120000 batches the primary

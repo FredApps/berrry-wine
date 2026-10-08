@@ -2,12 +2,22 @@
   ;; 1-based thread ID. Browser broker tables may be shared across Workers;
   ;; host closure identity is therefore not the identity of the guest caller.
   (func $host_fs_read_file (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (result i32)
+    ;; Ordinary filesystem reads keep the signed import count; negative
+    ;; counts copy no bytes. Positioned reads explicitly normalize to uint32.
+    (if (i32.gt_s (local.get $a2) (i32.const 0)) (then
+      (call $d3dim_host_write_fence (local.get $a1) (local.get $a2))))
+    (if (local.get $a3) (then (call $d3dim_host_write_fence (local.get $a3) (i32.const 4))))
     (call $host_fs_read_file_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (global.get $current_thread_id)))
   (func $host_fs_read_file_at (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32) (param $a5 i32) (result i32)
+    (call $d3dim_host_write_fence (local.get $a1) (local.get $a2))
+    (if (local.get $a3) (then (call $d3dim_host_write_fence (local.get $a3) (i32.const 4))))
     (call $host_fs_read_file_at_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (local.get $a4) (local.get $a5) (global.get $current_thread_id)))
   (func $host_fs_read_pending  (result i32)
     (call $host_fs_read_pending_owned  (global.get $current_thread_id)))
   (func $host_fs_read_file_result (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (result i32)
+    (if (i32.gt_s (local.get $a2) (i32.const 0)) (then
+      (call $d3dim_host_write_fence (local.get $a1) (local.get $a2))))
+    (if (local.get $a3) (then (call $d3dim_host_write_fence (local.get $a3) (i32.const 4))))
     (call $host_fs_read_file_result_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (global.get $current_thread_id)))
   (func $host_fs_map_view_of_file (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32) (result i32)
     (call $host_fs_map_view_of_file_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (local.get $a4) (global.get $current_thread_id)))
@@ -19,6 +29,7 @@
 
 ;; 469: ExitThread(dwExitCode) — 1 arg, no return
   (func $handle_ExitThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $apc_drop_shared_current)
     (call $host_exit_thread (local.get $arg0))
     (global.set $yield_reason (i32.const 2))
     (global.set $eip (i32.const 0))
@@ -362,19 +373,20 @@
   ;; form of the same geometry, so both calls always agree. No quotas: the
   ;; caller's share is the whole free count. msi.dll requires this export on
   ;; any Win9x build above 1000 and fails the install when it is missing.
-  (func $handle_GetDiskFreeSpaceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; The shared A/W core: $wide selects how lpDirectoryName is read.
+  ;; Returns 1, or 0 with last_error set.
+  (func $disk_free_space_ex (param $dir i32) (param $avail i32) (param $total_out i32)
+                            (param $free_out i32) (param $wide i32) (result i32)
     (local $geo i32) (local $unit i64) (local $free i64) (local $total i64)
     (local.set $geo (call $heap_alloc (i32.const 16)))
     (if (i32.eqz (local.get $geo))
       (then
         (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
-        (return)))
-    (call $disk_free_space (local.get $arg0)
+        (return (i32.const 0))))
+    (call $disk_free_space (local.get $dir)
       (local.get $geo) (i32.add (local.get $geo) (i32.const 4))
       (i32.add (local.get $geo) (i32.const 8)) (i32.add (local.get $geo) (i32.const 12))
-      (i32.const 0))
+      (local.get $wide))
     (local.set $unit (i64.mul
       (i64.extend_i32_u (call $gl32 (local.get $geo)))
       (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 4))))))
@@ -383,10 +395,22 @@
     (local.set $total (i64.mul (local.get $unit)
       (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 12))))))
     (call $heap_free (local.get $geo))
-    (if (local.get $arg1) (then (call $gs64 (local.get $arg1) (local.get $free))))
-    (if (local.get $arg2) (then (call $gs64 (local.get $arg2) (local.get $total))))
-    (if (local.get $arg3) (then (call $gs64 (local.get $arg3) (local.get $free))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (if (local.get $avail) (then (call $gs64 (local.get $avail) (local.get $free))))
+    (if (local.get $total_out) (then (call $gs64 (local.get $total_out) (local.get $total))))
+    (if (local.get $free_out) (then (call $gs64 (local.get $free_out) (local.get $free))))
+    (i32.const 1))
+
+  (func $handle_GetDiskFreeSpaceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $disk_free_space_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
+  )
+
+  ;; GetDiskFreeSpaceExW: the same answer for a wide path. The Movies demo
+  ;; checks the space on its drive with it right after its first-run notice.
+  (func $handle_GetDiskFreeSpaceExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $disk_free_space_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
   )
 
@@ -766,6 +790,20 @@
 
   ;; 498: GetExitCodeProcess — STUB: unimplemented
   (func $handle_GetExitCodeProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; A child CreateProcess started (09d7-pipes.wat): the host knows.
+    (if (call $pipe_child_pid (local.get $arg0))
+      (then
+        (local.set $arg2 (call $host_process_ctl (i32.const 0)
+          (call $pipe_child_pid (local.get $arg0)) (i32.const 0)))
+        (if (i32.eq (local.get $arg2) (i32.const -1))
+          (then
+            (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+            (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+          (else
+            (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $arg2))))
+            (i32.store offset=0 (global.get $reg_base) (i32.const 1))))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (return)))
     (if (local.get $arg1)
       (then (call $gs32 (local.get $arg1)
         (if (result i32)
@@ -792,6 +830,20 @@
       (then
         (global.set $last_error (i32.const 2)) ;; ERROR_FILE_NOT_FOUND
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
+        (return)))
+    ;; A real child process when the host can start one: always for
+    ;; redirected standard handles (bInheritHandles + STARTF_USESTDHANDLES
+    ;; naming inheritable pipe ends), and for every launch on a host that runs
+    ;; children for CreateProcess (09d7-pipes.wat). Otherwise this falls
+    ;; through unchanged.
+    (if (call $pipe_create_process
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))
+          (local.get $arg0) (local.get $arg1) (local.get $arg4) (local.get $launch_dir)
+          (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 40))))
+      (then
+        (global.set $last_error (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
         (return)))
     (local.set $launch_result (call $host_shell_execute
@@ -1266,10 +1318,20 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
-  ;; 503: HeapWalk — STUB: unimplemented
+  ;; 503: HeapWalk(hHeap, lpEntry) and GetProcessHeaps(NumberOfHeaps,
+  ;; ProcessHeaps) are NT-only: the Windows 95/98 KERNEL32 exports both, and
+  ;; both fail with ERROR_CALL_NOT_IMPLEMENTED. Software probes for exactly that.
+  ;; SmartHeap's SHW32.DLL DllMain calls GetProcessHeaps, then HeapWalk on the
+  ;; process heap, and takes its Win9x path when GetLastError() is 120.
   (func $handle_HeapWalk (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; Same two stdcall arguments, same Win9x answer (0, ERROR_CALL_NOT_IMPLEMENTED).
+  (func $handle_GetProcessHeaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_HeapWalk (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; HeapSetInformation(hHeap, HeapInformationClass, HeapInformation, HeapInformationLength)
   ;; Win9x-era heaps have no LFH mode to apply. Accept recognized heap handles so
@@ -1338,10 +1400,7 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
-  ;; 509: PeekNamedPipe — STUB: unimplemented
-  (func $handle_PeekNamedPipe (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+  ;; 509: PeekNamedPipe lives in 09d7-pipes.wat.
 
   ;; 510: ReadConsoleInputA(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
   ;; Blocking, like the real API: it returns only once at least one event is
@@ -1368,10 +1427,7 @@
       (then (return)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; 513: CreatePipe — STUB: unimplemented
-  (func $handle_CreatePipe (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+  ;; 513: CreatePipe lives in 09d7-pipes.wat.
 
   ;; 514: GetSystemTimeAsFileTime(lpFileTime) — exact UTC wall-clock FILETIME.
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1725,7 +1781,9 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (i32.const 0) (local.get $name_ptr))
     (if (i32.eq (global.get $yield_reason) (i32.const 1))
-      (then (global.set $wait_stack_bytes (i32.const 24)))
+      (then
+        (global.set $wait_alertable (i32.ne (local.get $arg4) (i32.const 0)))
+        (global.set $wait_stack_bytes (i32.const 24)))
       (else
         (i32.store offset=16 (global.get $reg_base)
           (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))))

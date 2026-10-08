@@ -199,7 +199,9 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   // past that point is another block's code that readTrace ran into.
   const blockOps = (blk) => {
     const t = traceAt(blk);
-    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    // ...and the IF-enable boundary's ops: a region through one is declined
+    // by buildRegion, so neither walk goes through one (IF_BOUNDARY_OPS).
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name) || IF_BOUNDARY_OPS.test(o.name));
     let cut = t.ops.length;
     for (let i = 0; i < t.ops.length - 1; i++) {
       const fa = fallArena(t.ops[i]);
@@ -609,7 +611,9 @@ function traceFrom(head, headByAddr, traceAt, maxOps, why, heat, maxDepth = 3, a
     const blk = headByAddr.get(cur);
     if (!blk) { stop = `0x${cur.toString(16)} is not a block head`; break; }
     const t = traceAt(blk);
-    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    // ...and the IF-enable boundary's ops: a region through one is declined
+    // by buildRegion, so neither walk goes through one (IF_BOUNDARY_OPS).
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name) || IF_BOUNDARY_OPS.test(o.name));
     if (bad) { stop = `0x${cur.toString(16)} contains ${bad.name}`; break; }
     let cut = t.ops.length;
     for (let i = 0; i < t.ops.length - 1; i++) {
@@ -988,10 +992,18 @@ function arenaSlots(fn) {
 // half of them are `(local.get $tN)` and half are a bare `(i32.const 16904168)`
 // -- and matching only the first left CARRIE.EXE exactly as wrong as before.
 const ARENA_EXPR = String.raw`(?:\(i32\.const \d+\)|\(local\.get \$t\d\))`;
+// The second alternative is emit.js GO_SYN's condition (fix J): a jmp_syn
+// selects on $smc alone, and its baked arena is just as stale as GO's.
+// The first alternative is emit.js CONT's condition, which reads $ifarm since
+// the IF-enable boundary. It must match CONT's text exactly: a GO this misses is
+// left with its stale profiling-run arena, silently (see above).
 const GO_RE = new RegExp(
   String.raw`\(if \(select \(i32\.const 0\) ${ARENA_EXPR}`
-  + String.raw`(\s*\(i32\.or \(global\.get \$smc\) \(i32\.lt_s \(global\.get \$steps\)`
-  + String.raw` \(i32\.const 0\)\)\)\)\s*\(then \(global\.set \$ip )${ARENA_EXPR}`, 'g');
+  + String.raw`(\s*(?:\(i32\.or \(i32\.or \(global\.get \$smc\) \(global\.get \$ifarm\)\) \(i32\.lt_s \(global\.get \$steps\)`
+  + String.raw` \(i32\.const 0\)\)\)|\(global\.get \$smc\))\)\s*\(then \(global\.set \$ip )${ARENA_EXPR}`, 'g');
+// The ops the IF-enable boundary lives in (emit.js `sti`, `popf`/`popf32`,
+// `jmp_ifen`). See buildRegion.
+const IF_BOUNDARY_OPS = /^(sti|popf|popf32|jmp_ifen)$/;
 
 function resolveGoArena(body) {
   if (flag('keep-go-arena')) return body;
@@ -1249,6 +1261,23 @@ const EXIT_SITES = [];   // --exit-census: one entry per `br $out` site, across 
 
 function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], forwards = []) {
   prepareTables();
+  // THE IF-ENABLE BOUNDARY IS NOT LOWERED: a region holding one declines.
+  // The interpreter hands back mid-block after a POPF that owes an IRQ, and at
+  // the transfer after STI's follower when `sti` armed $ifarm. Neither is a
+  // test this lowering makes: `edge()`'s boundaryTest reads $smc/$halt/$steps
+  // and not $ifarm, and an inlined op body that sets $halt is only noticed at
+  // the NEXT edge, so the ops behind a halting POPF would run on inside the
+  // region. Rather than diverge from the interpreter there, refuse to compile
+  // across it (tree-fold's loop and call trees go through here too).
+  // The scan covers EVERY op the region would compile: the path's AND each
+  // detour arm's (appended below, and compiled into the region like the path).
+  // `inner` loops and non-detour forwards add no ops of their own -- they index
+  // into the path -- so path + detours is the whole list. It runs before the
+  // loop below writes `f.start` onto the caller's forwards, so a declined
+  // region leaves its inputs untouched.
+  const ifOp = rawOps.find(o => IF_BOUNDARY_OPS.test(o.name))
+    || forwards.flatMap(f => (f.detour ? f.detour.ops : [])).find(o => IF_BOUNDARY_OPS.test(o.name));
+  if (ifOp) return { declined: `contains ${ifOp.name} (IF-enable boundary)` };
   // Detour arms ride behind the path's ops so the tiers see them as part of
   // one region (the same promoted registers, the same folded operands); each
   // one remembers where its ops start. The path is ops 0..mainLen-1.
@@ -1329,6 +1358,25 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
   const edge = (ip, act) => (!exact ? (act || '')
     : `(global.set $gip (i32.const ${ip}))`
       + `\n(if ${boundaryTest}\n  (then (br $out))\n  (else ${act || '(nop)'}))`);
+  // FIX J (emit.js GO_SYN): the interpreter's `jmp_syn` -- the compiler's own
+  // transfer into a head it already held -- tests $smc but not the budget, so
+  // the region's copy of that edge must not test the budget either, or the
+  // region stops at a head the interpreter runs straight through. That is the
+  // T4 row of the BRW billing design: a region body frozen from the profiling
+  // run's layout carries that layout's jmp_syn edges, and testing them puts the
+  // profile-time layout's stop points into the install-time run. `$halt` stays
+  // (an inlined body that handed back must still leave). Under
+  // `--jmp-syn-budget-test` this is `edge` itself, i.e. HEAD's lowering.
+  const synNoBudget = !require('./emit').JMP_SYN_BUDGET_TEST;
+  const synTest = '(i32.or (global.get $smc) (global.get $halt))';
+  const edgeSyn = (ip, act) => (!exact || !synNoBudget ? edge(ip, act)
+    : `(global.set $gip (i32.const ${ip}))`
+      + `\n(if ${synTest}\n  (then (br $out))\n  (else ${act || '(nop)'}))`);
+  // A straight region whose last op is a jmp_syn leaves through the epilogue's
+  // `leave`, which tests the budget on every exit. This local marks that one
+  // exit so `leave` can skip the budget half of its test for it (wasm zeroes
+  // locals on entry, so every other exit reads 0).
+  let synOut = false;
   // With the boundary already taken on the edge, everything downstream of it
   // has a budget by construction, so the looping tests below are the
   // interpreter's `>= 0` and not a second, stricter bar. Under `--once` there
@@ -1618,15 +1666,22 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       // A straight region ends where its walk stopped, so its last jump is an
       // exit like any other: publish the ip and fall out through the back-edge
       // test, which cannot pass because the ip is not the head.
+      const syn = op.name === 'jmp_syn';
       if (isLast && !closed && jump.ip !== headIp) {
         parts.push(jump.pre);
         parts.push(`(global.set $gip (i32.const ${jump.ip}))`);
+        // Fix J: this exit is a jmp_syn, so `leave` must not test the budget.
+        if (syn && exact && synNoBudget) {
+          parts.push('(local.set $syn_out (i32.const 1))');
+          synOut = true;
+        }
         continue;
       }
       if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
       parts.push(jump.pre);
-      // An unconditional transfer is a block boundary too -- see edge().
-      parts.push(edge(jump.ip,
+      // An unconditional transfer is a block boundary too -- see edge(). A
+      // jmp_syn is one only for $smc (fix J, edgeSyn).
+      parts.push((syn ? edgeSyn : edge)(jump.ip,
         closing(i, jump.ip) !== undefined ? innerBr(closing(i, jump.ip))
           : jump.ip === headIp ? `(if ${okToLoop} (then (br $again))`
             + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`
@@ -1722,10 +1777,16 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
   // `(if <arena> (then ...) (else (call $slice_exit)))` treats it as false.
   // (Left in as a comment because it is the bug that made the first working
   // region stop the machine at cs 0.)
+  // Fix J: the budget half of the test is skipped for the one exit that was a
+  // jmp_syn (`$syn_out`, set only by a straight region's last op). Every other
+  // exit tests exactly as before; with no such exit the text is unchanged.
+  const leaveBudget = synOut
+    ? '(i32.and (i32.lt_s (global.get $steps) (i32.const 0)) (i32.eqz (local.get $syn_out)))'
+    : '(i32.lt_s (global.get $steps) (i32.const 0))';
   const leave = `
   (local.set $t3 (select (i32.const 0) (call $jlook (global.get $gip)) (global.get $smc)))
   (if (select (i32.const 0) (local.get $t3)
-        (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0))))
+        (i32.or (global.get $smc) ${leaveBudget}))
     (then (global.set $ip (local.get $t3)))
     (else (call $slice_exit)))`;
   // Give back the step `$next` charged to dispatch INTO the region. The region
@@ -1772,7 +1833,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
   const body = flag('trap') ? '(unreachable)'
     : `${entry}\n${t3.pro}\n(block $out (loop $again\n${inner_parts}\n))\n${t3.epi}\n${leave}`;
   return {
-    name, body, locals: t3.locals, exits, unlowered, unloweredWhy, fwdKept: fwdSpans.length, fwdDropped, detours: detoursBuilt,
+    name, body, locals: synOut ? `${t3.locals || ''} (local $syn_out i32)` : t3.locals, exits, unlowered, unloweredWhy, fwdKept: fwdSpans.length, fwdDropped, detours: detoursBuilt,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
     inlined: t3.inlined, strippedArena: stripped,

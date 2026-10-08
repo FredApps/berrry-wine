@@ -1,11 +1,15 @@
-// Usage: node tools/disasm_fn.js <exe> <VA_hex>[,VA_hex,...] [count=30]
+// Usage: node tools/disasm_fn.js <exe> <VA_hex>[,VA_hex,...] [count=30] [--linear]
+// --linear keeps going past ret/jmp/int3 for `count` instructions, for reading a
+// long function whose early-return paths would otherwise end the listing.
 const { disasmAt } = require('./disasm');
 const fs = require('fs');
 const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 
-const exe = process.argv[2] || 'test/binaries/winamp.exe';
-const vaList = (process.argv[3] || '').split(',').map(s => parseInt(s, 16));
-const count = parseInt(process.argv[4] || '30', 10);
+const linear = process.argv.includes('--linear');
+const argv = process.argv.filter(a => a !== '--linear');
+const exe = argv[2] || 'test/binaries/winamp.exe';
+const vaList = (argv[3] || '').split(',').map(s => parseInt(s, 16));
+const count = parseInt(argv[4] || '30', 10);
 
 const pe = readPE(exe);
 const buf = pe.buf;
@@ -30,7 +34,7 @@ for (const va of vaList) {
   const off = va2off(va);
   if (off < 0) { console.error(`VA 0x${va.toString(16)} not found in any section`); continue; }
   if (vaList.length > 1) console.log(`--- 0x${va.toString(16)} ---`);
-  const lines = disasmAt(buf, off, va, count);
+  const lines = disasmAt(buf, off, va, count, undefined, linear ? { linear: true } : undefined);
   if (looksDesync(lines)) {
     console.log(`[WARN] output may be desynchronized — start VA is likely mid-instruction.`);
     console.log(`       Try \`node tools/find_fn.js <exe> 0x${va.toString(16)}\` to locate a known entry.`);

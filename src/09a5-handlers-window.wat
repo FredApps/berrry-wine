@@ -1664,7 +1664,11 @@
   ;; (nCode, wParam, lParam). CACA0011's KHK1 context restores the USER API's
   ;; caller and its BOOL result after the callback pops those three arguments.
   (func $keyboard_hook_begin
-      (param $ret i32) (param $ncode i32) (param $vkey i32) (param $lparam i32)
+      (param $ret i32) (param $ncode i32) (param $vkey i32) (param $lparam i32) (param $msg_ptr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.ne (local.get $ncode) (i32.const 3)))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $msg_ptr))
     ;; Context below the callback frame: magic, saved USER caller EIP, and
     ;; the outer active hook node for re-entrant input dispatch.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -1713,7 +1717,7 @@
     (call $keyboard_hook_begin
       (local.get $ret) (local.get $ncode)
       (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 8)))
-      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 12))))
+      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 12))) (local.get $msg_ptr))
     (i32.const 1))
 
   ;; 73: GetMessageA
@@ -1862,13 +1866,17 @@
   ;; wait, and it consumed its stack frame) replaces the thread's extra info
   ;; with that message's, and every source here attaches 0.
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sp i32)
+    (local $sp i32) (local $ret i32)
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ret (call $gl32 (local.get $sp)))
     (call $handle_GetMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (if (i32.and (i32.eqz (global.get $yield_flag))
                  (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
-      (then (global.set $msg_extra_info (i32.const 0)))))
+      (then (global.set $msg_extra_info (i32.const 0))))
+    (if (i32.and (i32.eqz (global.get $code16))
+          (i32.and (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $sp) (i32.const 20))) (i32.ge_s (i32.load (global.get $reg_base)) (i32.const 0))))
+      (then (call $getmessage_hook_begin (local.get $ret) (local.get $arg0) (i32.const 1) (i32.load (global.get $reg_base))))))
 
   (func $handle_GetMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
@@ -1936,6 +1944,10 @@
             (return)))))
     (if (i32.eq (global.get $quit_flag) (i32.const 2))
       (then
+        ;; Retrieving WM_QUIT removes it, as from the real queue: a loop that
+        ;; drains with PeekMessage(PM_NOREMOVE) + GetMessage (Driver's
+        ;; 0x513335) otherwise sees the same quit forever and never returns.
+        (global.set $quit_flag (i32.const 0))
         ;; Fill MSG with WM_QUIT (0x0012).
         (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))
@@ -2031,7 +2043,7 @@
         (call $keyboard_hook_begin
           (local.get $ret) (i32.const 0)
           (i32.shr_u (local.get $packed) (i32.const 16))
-          (global.get $pending_input_lparam))
+          (global.get $pending_input_lparam) (local.get $msg_ptr))
         (return)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)))
@@ -2186,15 +2198,19 @@
   ;; A PeekMessage that returned a message (removed or not, as in USER)
   ;; replaces the thread's extra info with that message's: always 0 here.
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sp i32)
+    (local $sp i32) (local $ret i32)
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ret (call $gl32 (local.get $sp)))
     (call $handle_PeekMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (if (i32.and
           (i32.and (i32.eqz (global.get $yield_flag))
                    (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
           (i32.ne (i32.load (global.get $reg_base)) (i32.const 0)))
-      (then (global.set $msg_extra_info (i32.const 0)))))
+      (then (global.set $msg_extra_info (i32.const 0))))
+    (if (i32.and (i32.eqz (global.get $code16))
+          (i32.and (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $sp) (i32.const 24))) (i32.ne (i32.load (global.get $reg_base)) (i32.const 0))))
+      (then (call $getmessage_hook_begin (local.get $ret) (local.get $arg0) (i32.and (local.get $arg4) (i32.const 1)) (i32.load (global.get $reg_base))))))
 
   (func $handle_PeekMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
@@ -2420,7 +2436,7 @@
                   (select (i32.const 0) (i32.const 3)
                     (i32.ne (i32.and (local.get $arg4) (i32.const 1)) (i32.const 0)))
                   (i32.shr_u (local.get $packed) (i32.const 16))
-                  (global.get $pending_input_lparam))
+                  (global.get $pending_input_lparam) (local.get $arg0))
                 (return)))
             (i32.store offset=0 (global.get $reg_base) (i32.const 1))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
@@ -3313,6 +3329,23 @@
     ;; Consume the request before entering the guest, exactly as BeginPaint
     ;; does, so a nested BeginPaint in the callback cannot redispatch this one.
     (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+    ;; A 16-bit window procedure cannot be entered from inside this call, so
+    ;; the send below becomes a queued message that runs after we return. A
+    ;; transient DC would be released before it is delivered: the procedure
+    ;; would erase with a dead DC, and narrowing that DC at delivery took a
+    ;; fresh Win16 handle-map slot on every WM_PAINT until the 4096-entry map
+    ;; trapped (Tetravex hands each WM_PAINT to DefWindowProc; batch ~20300).
+    ;; Name the window's synthetic client DC instead, as the Win16 pending-
+    ;; erase path does: it is rebuilt with the erase-visible region at
+    ;; delivery and its narrow handle is dropped with the window.
+    (if (call $win16_is_far_proc (call $wnd_table_get (local.get $hwnd)))
+      (then
+        (local.set $result (call $wnd_send_message (local.get $hwnd) (i32.const 0x14)
+          (i32.add (local.get $hwnd) (i32.const 0x40000)) (i32.const 0)))
+        (if (i32.and (i32.eqz (local.get $result))
+              (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+          (then (call $nc_flags_set (local.get $hwnd) (i32.const 2))))
+        (return)))
     (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
     (if (local.get $hdc)
       (then (call $host_paint_begin (local.get $hwnd))))
@@ -3622,7 +3655,7 @@
   ;; handling. The latter is also what makes DefDlgProc usable as a registered
   ;; class procedure, as Storm does for Diablo's front-end window.
   (func $handle_DefDlgProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result i32) (local $slot i32) (local $proc i32)
+    (local $result i32) (local $slot i32) (local $proc i32) (local $frame i32)
     ;; A registered dialog class can wrap DefDlgProc in its own WNDPROC. Mark
     ;; the window on the first call so a following SetWindowLong(DWLP_DLGPROC)
     ;; is not mistaken for an ordinary class-extra offset-4 write. The spare
@@ -3638,15 +3671,41 @@
     ;; that live x86 stack when the recursive budget expires. DefDlgProc and a
     ;; DLGPROC have the same four-argument stdcall frame, and dialog default
     ;; processing for messages >= WM_USER is zero. Tail-dispatch the existing
-    ;; frame directly to the stored proc and let its RET 16 return to the
-    ;; native wrapper that called DefDlgProc.
+    ;; frame to a stored proc, then apply the dialog epilog in a guest
+    ;; continuation. The original API frame is retained beneath the callback,
+    ;; so nested sends, modal loops and thread switches cannot replace it.
+    ;;
+    ;; Client mouse messages and WM_KEYDOWN/KEYUP/CHAR/DEADCHAR go the same way:
+    ;; A click can open the next modal dialog; callers can also inspect the
+    ;; result, so TRUE must still become DWL_MSGRESULT rather than raw BOOL.
+    ;; Diablo's Storm dialogs do it from WM_LBUTTONDOWN (OK on Select
+    ;; Difficulty runs SNetCreateGame and the next SDlgDialogBox loop), and
+    ;; through the bounded sender that loop was cut after 64 rounds: "Unable to
+    ;; create game". System keys stay below; DefWindowProc acts on those.
     (local.set $proc (call $dialog_proc_get (local.get $arg0)))
     (if (i32.and
           (i32.or
-            (i32.ge_u (local.get $arg1) (i32.const 0x0400))
-            (i32.eq (local.get $arg1) (i32.const 0x0111)))
+            (i32.or
+              (i32.ge_u (local.get $arg1) (i32.const 0x0400))
+              (i32.eq (local.get $arg1) (i32.const 0x0111)))
+            (i32.or
+              (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x0200))
+                       (i32.le_u (local.get $arg1) (i32.const 0x020D)))
+              (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x0100))
+                       (i32.le_u (local.get $arg1) (i32.const 0x0103)))))
           (i32.ne (local.get $proc) (i32.const 0)))
       (then
+        (if (i32.eqz (global.get $dialog_proc_ret_thunk))
+          (then (global.set $dialog_proc_ret_thunk
+            (call $com_cont_thunk (i32.const 0xCACA003C)))))
+        (local.set $frame (i32.sub
+          (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (call $gs32 (local.get $frame) (global.get $dialog_proc_ret_thunk))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $arg0))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg1))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg2))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $arg3))
+        (i32.store offset=16 (global.get $reg_base) (local.get $frame))
         (global.set $eip (local.get $proc))
         (global.set $steps (i32.const 0))
         (return)))

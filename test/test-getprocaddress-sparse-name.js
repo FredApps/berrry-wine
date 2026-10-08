@@ -8,6 +8,9 @@ const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
   (global $test_sparse_thunk (mut i32) (i32.const 0))
 
+  (func (export "test_last_error") (result i32) (global.get $last_error))
+  (func (export "test_clear_last_error") (global.set $last_error (i32.const 0)))
+
   (func (export "test_get_proc_image") (param $module i32) (param $name i32) (param $stack i32) (result i32)
     ;; A secondary instance has not run load_pe: its per-instance export RVA
     ;; remains zero even though the process-shared image is already mapped.
@@ -95,6 +98,17 @@ const extraWat = String.raw`
   assert.strictEqual(lookup(2228), 0, 'ordinal below base returns NULL');
   assert.strictEqual(lookup(2231), 0, 'ordinal beyond table returns NULL');
   assert.strictEqual(lookup(image + 0x10100), 0, 'unknown callback returns NULL');
+  // The image base also stands in for a bare DLL name nothing on disk
+  // provides. COM self-registration belongs to a real server image, so the
+  // API-by-name fallback must not hand out a registration entry point
+  // (Explorer registers ACTXPRXY.DLL this way at startup).
+  string(0x10200, 'DllRegisterServer');
+  string(0x10300, 'DllUnregisterServer');
+  for (const at of [0x10200, 0x10300]) {
+    wat.test_clear_last_error();
+    assert.strictEqual(lookup(image + at), 0, 'COM self-registration is not an API-by-name export');
+    assert.strictEqual(wat.test_last_error() >>> 0, 127, 'ERROR_PROC_NOT_FOUND');
+  }
 
   string(0x850, 'KERNEL32.GetTickCount');
   put(0x900, 0x850);

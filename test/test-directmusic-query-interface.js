@@ -51,6 +51,16 @@ const extraWat = String.raw`
       (local.get $iid) (local.get $out) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
 
+  ;; Call vtable slot $slot of $obj with two arguments, as the guest would.
+  (func (export "test_slot_call") (param $obj i32) (param $slot i32) (param $a i32) (param $b i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $dispatch_api_table
+      (call $gl32 (i32.add (call $gl32 (i32.add (call $gl32 (local.get $obj))
+        (i32.shl (local.get $slot) (i32.const 2)))) (i32.const 4)))
+      (local.get $obj) (local.get $a) (local.get $b)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
+
   (func (export "test_enum_port") (param $obj i32) (param $index i32) (param $caps i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $dispatch_api_table
@@ -174,9 +184,18 @@ async function main() {
     e.test_enum_port(obj,index,caps)===1 && e.get_esp()===0x00300010 &&
     Buffer.from(capBytes).equals(unchanged));
   check('EnumPort null caps is E_POINTER', (e.test_enum_port(obj,0,0)>>>0)===0x80004003);
+  // Croc 2's ads.dll: SetDirectSound(pDS, hWnd) right after creation, and
+  // Activate(FALSE) in its teardown. With no ports both only succeed.
+  check('SetDirectSound records the DirectSound object and succeeds (stdcall, 3 args)',
+    (e.test_slot_call(obj, 11, 0x12345678, 0x10001) >>> 0) === 0 && e.get_esp() === 0x00300010);
+  check('Activate(FALSE) succeeds with no ports to switch (stdcall, 2 args)',
+    (e.test_slot_call(obj, 9, 0, 0) >>> 0) === 0 && e.get_esp() === 0x0030000c);
   dv.setUint32(wa(caps),307,true);
   check('empty enumeration never reads or changes descriptor content', e.test_enum_port(obj,0,caps)===1 && dv.getUint32(wa(caps),true)===307);
+  // The port-producing methods still trap; Activate (9) and SetDirectSound
+  // (11) are answered above.
   for(let slot=4;slot<methods.length;++slot) {
+    if (slot === 9 || slot === 11) continue;
     const thunk=dv.getUint32(wa(vtable)+slot*4,true), id=dv.getUint32(wa(thunk)+4,true);
     assert.throws(()=>e.test_ref_dispatch(id,obj),WebAssembly.RuntimeError,methods[slot]+' fails explicitly');
   }

@@ -97,7 +97,7 @@ async function buildCatalog(inputRoot) {
     const missingPaths = [];
     for (const name of dependencies) if (!await realFile(root, name)) missingPaths.push(name);
     const available = !!localPath(fileUrl(app.exe)) && !missingPaths.length && !invalid.length;
-    routes.push({appId,label:labels.get(appId) || appId,available,url:available ? PREFIX + '?app=' + encodeURIComponent(appId) : null,
+    routes.push({appId,label:labels.get(appId) || appId,available,url:available ? PREFIX + '?debug&app=' + encodeURIComponent(appId) : null,
       reason:available ? 'Registered local files are present; launch does not certify compatibility.' : invalid[0] || 'Registered files are missing.',missingPaths});
   }
   return {root,allowed,routes};
@@ -161,6 +161,20 @@ function createEmulatorHandler(root) {
     const fail = (status,message,headers={}) => {res.writeHead(status,{'Content-Type':'text/plain; charset=utf-8',...headers});res.end(req.method === 'HEAD' ? undefined : message);return true;};
     if (!['GET','HEAD'].includes(req.method)) return fail(405,'Read-only emulator route',{Allow:'GET, HEAD'});
     if (raw === '/emulator') {res.writeHead(308,{Location:PREFIX+(req.url.includes('?')?'?'+req.url.split('?').slice(1).join('?'):'')});res.end();return true;}
+    // The page's eager files in one response (lib/file-bundle.js). Every name
+    // passes exactly the checks a single GET of it would: a local path, in
+    // the catalog allowlist, a real file inside the root. index.html is never
+    // bundled (it is rewritten per request below).
+    if (raw === PREFIX + '__bundle' && req.method === 'GET') {
+      const catalog = await getCatalog(root);
+      const { bundleNames, writeBundle } = require('../lib/file-bundle');
+      const resolveName = async name => (localPath(name) && name !== 'index.html' && catalog.allowed.has(name))
+        ? realFile(catalog.root, name) : null;
+      await writeBundle(res, bundleNames(new URL(req.url,'http://localhost').searchParams), resolveName, {
+        'X-Content-Type-Options':'nosniff','Cross-Origin-Opener-Policy':'same-origin',
+        'Cross-Origin-Embedder-Policy':'require-corp','Cross-Origin-Resource-Policy':'same-origin'});
+      return true;
+    }
     let relative;
     try { relative = decodeURIComponent(raw.slice(PREFIX.length)) || 'index.html'; } catch { return fail(400,'Invalid path'); }
     if (/%2f|%5c/i.test(raw) || !localPath(relative)) return fail(403,'Path not allowed');
@@ -194,7 +208,7 @@ function launchFor(candidate,catalog,production,build) {
   const pin = build?.wasmSha256 && /^[0-9a-f]{64}$/.test(build.wasmSha256) ? '&build=' + build.wasmSha256 : '';
   const ids = candidate.appIds || [], routes=ids.map(id=>catalog.routes.find(route=>route.appId===id)).filter(Boolean).map(route=>route.available && route.url && pin ? {...route,url:route.url+pin} : route);
   const deployed = new Set(production?.status === 'verified' ? production.appIds : []);
-  const productionRoutes = production?.status === 'verified' ? ids.filter(id=>deployed.has(id)).map(appId=>({appId,label:routes.find(r=>r.appId===appId)?.label || appId,url:new URL('/?app='+encodeURIComponent(appId),production.url).href})) : [];
+  const productionRoutes = production?.status === 'verified' ? ids.filter(id=>deployed.has(id)).map(appId=>({appId,label:routes.find(r=>r.appId===appId)?.label || appId,url:new URL('/?debug&app='+encodeURIComponent(appId),production.url).href})) : [];
   return {routes,productionRoutes,reason:routes.length ? '' : 'No registered emulator launch route is associated with this corpus entry.'};
 }
 module.exports={createEmulatorHandler,getCatalog,buildCatalog,getBuildIdentity,readBuildIdentity,privateIndex,rangeFor,launchFor,LOCAL_DESKTOP};

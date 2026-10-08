@@ -85,6 +85,25 @@ const { bootRenderHarness } = require('./render-helper');
   assert.deepStrictEqual(Array.from({ length: 304 }, (_, i) => e.guest_read8(ptr + 1200 + i)), caps);
   assert.strictEqual(e.test_caps(1, 1, ptr) >>> 0, 0x8876086c);
   assert.strictEqual(e.test_caps(0, 1, 0) >>> 0, 0x8876086c);
+  {
+    // With a programmable renderer present (host query 0x30005 answers 1) the
+    // caps advertise what it implements, including the six fixed-function
+    // blend stages ValidateDevice accepts. MaxTextureBlendStages was 0, and
+    // Pirates! (2004) requires >= 2 stages and >= 2 simultaneous textures.
+    const { exports: p } = await bootRenderHarness({ fonts: 'none',
+      extraHostOverrides: { gpu_gl_call: opcode => (opcode === 0x30005 ? 1 : 0) },
+      extraWat: `
+    (func (export "test_caps") (param $adapter i32) (param $type i32) (param $p i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+      (call $handle_IDirect3D9_GetDeviceCaps (i32.const 0) (local.get $adapter)
+        (local.get $type) (local.get $p) (i32.const 0) (i32.const 0))
+      (i32.load offset=0 (global.get $reg_base)))` });
+    assert.strictEqual(p.test_caps(0, 1, ptr), 0);
+    assert.strictEqual(p.guest_read32(ptr + 148), 6, 'MaxTextureBlendStages: six fixed-function stages');
+    assert.strictEqual(p.guest_read32(ptr + 152), 4, 'MaxSimultaneousTextures');
+    assert.strictEqual(p.guest_read32(ptr + 196) >>> 0, 0xfffe0101, 'vs_1_1');
+    assert.strictEqual(p.guest_read32(ptr + 204) >>> 0, 0xffff0101, 'ps_1_1');
+  }
   e.init_dx_com_thunks();
   const pp=ptr+2048,out=pp+128,parent=e.new_parent();
   for(let i=0;i<56;i+=4)e.guest_write32(pp+i,0);

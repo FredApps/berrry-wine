@@ -868,3 +868,119 @@ locale. It is exact only while the app stays in the "C" locale. That holds
 for `Morrowind.exe`: its msvcrt imports include `_stricmp` but no `setlocale`
 (`tools/pe-imports.js --all --dll=msvcrt.dll`). A DLL it loads could still
 change the locale, and that path was not checked.
+
+## 2026-10-05: ordinary browser title reached; input qualification pending
+
+A headful, audio-enabled ordinary run on tested module
+`2638e876e6002d0e34cf7acba3d85ddbabb02069f559695f28fe6bad4620eb95`
+(source implementation `6604fb90`, subsequently integrated on main) reached the
+Bethesda movie and Morrowind title. The registered running instance exposed an
+actual 2,147,483,648-byte memory and owning guest Worker; presentation used WebGL.
+These are observed values, not an inference from the registry's `bigMemory` flag.
+
+The first harness attempt denied the required shared `msvcp60`, `msvcrt` and
+`comctl32` DLL URLs, then trapped at `0x4012e0`. That was an invalid reproduction,
+not evidence for an emulator fix. The corrected attempt loaded all four seeded/
+required DLLs including Bink and reached the title. A reviewed Bethesda movie
+received Escape for 200 ms. Later captures alternated between the rendered title
+and black frames; the run did not establish their cause.
+
+One normal pointer move/click requested `(319,247)` over New, then a separately
+reviewed 200 ms Enter did not leave the title. The pictured game cursor was near
+`(616,471)` within a 640×480 title drawn into a 1024×768 page. This is not enough to
+prove a viewport mapping bug: `lib/browser-input.js` maps CSS to logical canvas,
+`renderer-input.js` applies the exclusive presentation mapping, and
+`handleMouseMove` also accumulates relative DirectInput deltas per input memory.
+A game-owned cursor can therefore differ from the browser click position. The
+next ordinary route needs actual canvas/client/exclusive viewport and lock state
+alongside before/after cursor captures, rather than another guessed click or a
+forced guest cursor/text write. No character-generation or gameplay was reached.
+
+The runtime COM search also made HTTP probes for `quartz.dll`, `devenum.dll`, and
+`l3codecx.ax` under `binaries/dlls`, `binaries/plugins`, and `dlls`. Although the
+strict harness mistakenly returned 403, all three subsequently loaded via the
+existing app VFS fallback at `0x7ece0000`, `0x7ecb0000`, and `0x7ec90000`.
+Thus these probes do not establish missing filters or failed music initialization.
+The normal search order must remain intact: absent shared copies should return
+404, not be replaced with invented shared aliases to app-local copies.
+
+Prepared harness parity now inventories finite native names from the frozen DLL
+registry plus the declared native images/imports: 60 names, 22 present exact
+search paths, and 218 explicitly absent probes. Present bytes are hash-pinned;
+normal negative probes receive recorded 404s without poisoning the run, while
+unlisted paths remain refused. Native COM and LoadLibrary search paths and the
+VFS fallback remain the emulator's original behavior. Runtime closure is not a
+claim that all possible dynamic names have been observed.
+
+Local evidence: `scratch/new-game-morrowind-20261005/attempt2`, its
+`attempt2-classification.json`, and `runtime-dependency-closure.json`. Session
+63255 closed browser/server at 15:34:22.353 UTC with browser exit 0 and no pending
+streams; driver exit 1 retains the harness's negative-probe errors. No FPS, audio
+quality, or gameplay qualification is claimed. The subsequent helper is prepared
+only; it has not been run.
+
+### 2026-10-05 follow-up: relative motion reaches the title, button result unresolved
+
+Attempt6 kept the original1024×768 browser connection and tested module2638.
+After a first ordinary16,16 move seeded the per-memory DirectInput point, a
+second ordinary+16,0 move completed. The title snapshots differ in exactly417
+pixels, bounded by `[320,242,352,263]`; root independently obtained the same
+result. This supports a narrow cursor/hover response, not gameplay or an absolute
+browser-to-game scaling factor. The game-owned pointer/hover pixels overlap New
+and the title logo, so exact target identification remains uncertain.
+
+Read-only getters on the actual owning Worker reported cursor425728,
+display count0, and focusHWND65537. Browser state showed CSS cursor`default`,
+focused CANVAS, matching keyboard owner, visible Morrowind640×480 at0,0 and an
+invisible ActiveMovie window. Exclusive transforms were null. A missing pointer
+in a browser screenshot alone was therefore an overly strict harness gate;
+these observations do not prove missing guest input.
+
+One ordinary button hold258ms at the unchanged browser point32,16 followed the
+relative movement. The title remained after a3second settle. No Name prompt or
+gameplay was reached. A later Enter command arrived after the absolute300second
+session deadline and was not delivered. Browser/server closed16:51:12.833UTC,
+errors empty, Chrome exit0; driver exit2 denotes the deadline.
+
+The frozen source provides two distinct button paths. In
+`lib/renderer-input.js:1532`, down updates the host button mask and queues a
+DirectInput edge before normal WM routing. Up clears that mask and queues its
+edge. `src/09a8-handlers-directx.wat:9447` GetDeviceState samples
+`host_get_mouse_buttons`; `lib/host-window.js:1131` returns the current renderer
+mask. Buffered GetDeviceData consumes the separate edge ring. A short hold can
+only be observed by GetDeviceState if the guest polls during it. Neither the
+saved screenshots nor host input receipt establish that polling happened, or
+that New's exact hit region contained the interpreted pointer. Do not diagnose
+WM coordinate mapping from this alone.
+
+The next useful evidence is a bounded passive observation of actual owning
+GetDeviceState/GetDeviceData mouse polls and ordinary button down/up, preserving
+original receivers/results and recording callback timing and selected device.
+A separately reviewed ordinary longer hold can then test missed polling if
+needed; no guest button injection, cursor setter, or guessed scaling belongs in
+that experiment. No identical seed-only launch is proposed.
+
+Local immutable evidence: `scratch/new-game-morrowind-20261005/attempt6`, including
+`cursor-diff.json`, read-only state snapshots, `pointer-receipts.json`, and
+`cleanup.json`. Earlier attempt3 secondary-connection viewport change and
+attempt5 human-review phase timeout remain harness failures, not game failures.
+
+
+## 2026-10-05 — ordinary New click reaches prison Name prompt
+
+The generic DirectInput live-button repair is integrated as main `520d1cde` (source `94d18605`). It separates physical mouse buttons from queued Win32 message snapshots while preserving message and OLE consumers. Its real-WAT before-control failed the new physical-button assertion; the candidate, full production/shake build, CLI mouse control and renderer message-mask regressions passed.
+
+Ordinary browser attempt9 used module `2e2fd8d1ca62cd87f0bc09312bc4836108df610d00cb7771bb5ae22755eceedc`. The original Puppeteer connection seeded (16,16), then moved to (32,16). A reviewed New-target click held the button for 1500 ms and released it normally. The passive host census recorded the actual canvas recipient at page (32,16), then live mask 1. Four retained physical reads returned 0x8000 while the active WM_MOUSEMOVE snapshot still held button mask 0. All 62 retained completed GetDeviceState outputs inside the resolved-down/requested-up interval contained left-button byte 0x80; attempt8's corresponding outputs were zero. This supports the repaired state-selection path, without confusing browser coordinates with the independently observed game cursor.
+
+The click advanced to the red opening movie and then the prison Name dialog, personally reviewed by the coordinator. An Escape intended for the movie arrived after the prison loaded and opened its pause menu; a separately reviewed second Escape returned to the Name prompt. Ordinary typing of Codex completed, but its screenshot raced the original 300-second deadline. Name submission, free movement, gameplay qualification, audio quality and FPS remain unproven.
+
+Local evidence: `scratch/new-game-morrowind-20261005/attempt9/analysis.json`, `host-button-census.json`, `button-observer.json`, `pointer-receipts.json`, `settled.png`, `return-prison.png` and `prison-wait.png`. The host census closed with 73 records and no observer errors. Worker coverage is main-instance only and its 128-record cap overflowed, so the unrecorded tail is unknown. Session 33855 ended at the original deadline, browser/server closed at 17:57:32.462 UTC, Chrome exited 0 and no processes remained; driver exit 2 and the screenshot TargetClose error are retained. The next ordinary route gets a predeclared 600-second total budget for Name/OK and actual player control, without repeating button diagnosis.
+
+
+## 2026-10-05 — reviewed first-person movement after Name
+
+Ordinary continuation attempt10 used the exact built source `94d18605` and module `2e2fd8d1ca62cd87f0bc09312bc4836108df610d00cb7771bb5ae22755eceedc`, including the generic live DirectInput button repair integrated as main `520d1cde`. No private Worker, API census, instruction trace or guest-state writes were used. The original browser connection clicked New, skipped the opening movie with Space, visibly entered a Name and clicked OK. Requested text Codex rendered as cox; that partial name was accepted normally and the typing limitation remains unresolved.
+
+After the tutorial popup was dismissed with Enter, ordinary W was held from18:22:36.945 to18:22:38.150 UTC (requested1200ms); the camera advanced toward the corridor and the left NPC left view. S from18:22:58.855 to18:23:00.068 reversed movement, restoring the left NPC and wider doorway. A1500ms idle observation retained the camera geometry while NPCs animated. Root personally reviewed all movement frames and input receipts and accepted narrow first-person player control inside the prison ship. This is gameplay evidence beyond the Name form, not proof of complete character generation, quests, audio quality or FPS.
+
+Immutable run: `scratch/runs/20261005-morrowind-prison-movement/result.json`, with four reviewed gameplay images, exact inputs, root review, served-response receipts, frozen source closure and SHA256 artifact manifest. Actual registered memory was2GiB with Worker/WebGL backend; rendered scene640x480 inside1024x768 browser viewport. Session78331 exited0 on ordinary quit before its original600-second deadline. Browser/server closed18:23:55.881 UTC, no cleanup errors, no pending streams, Chrome exited0 and owning processes were absent. Remaining work includes typing fidelity, later game progression and a separately justified gameplay performance counter.

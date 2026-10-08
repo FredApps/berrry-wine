@@ -10,6 +10,7 @@ const { inventory } = require('./corpus-inventory');
 const { getCatalog, getBuildIdentity, launchFor } = require('./emulator-server');
 const { loadReleaseReview, deriveReleaseReadiness } = require('./release-readiness');
 const { createActivityReader, boardEntry, linkCommits } = require('./activity');
+const { buildDosCorpus } = require('./dos-corpus');
 
 const MB = 1024 * 1024;
 const clip = (value, n = 220) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, n) : '';
@@ -18,14 +19,18 @@ const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{
 const inside = (root, file) => file === root || file.startsWith(root + path.sep);
 
 function normalizePerformance(p) {
-  if(!p || !['guest-presents','guest-logical-frame-submissions'].includes(p.metric) || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
-  const logical=p.metric==='guest-logical-frame-submissions';
-  if(logical ? p.counterKind!==p.metric || p.qualification?.accepted!==true || !clip(p.qualification.sceneReview) || !clip(p.qualification.counterReview) || !clip(p.qualification.evidence) : p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
+  if(!p || !['guest-presents','guest-logical-frame-submissions','selected-window-presentations'].includes(p.metric) || !date(p.measuredAt) || !clip(p.renderer) || !clip(p.scene) || !clip(p.host) || !Array.isArray(p.samples) || !p.samples.length || p.samples.length>100)return null;
+  const logical=p.metric==='guest-logical-frame-submissions', windowPresentations=p.metric==='selected-window-presentations';
+  if(windowPresentations){
+    const v=p.visibility, r=v?.client;
+    if(p.physicalFps!==null || !r || ![r.x,r.y,r.w,r.h].every(Number.isFinite) || r.w<=0 || r.h<=0 || !Number.isFinite(v.fraction) || v.fraction<=0 || v.fraction>1)return null;
+  }
+  if(logical || windowPresentations ? p.counterKind!==p.metric || p.qualification?.accepted!==true || !clip(p.qualification.sceneReview) || !clip(p.qualification.counterReview) || !clip(p.qualification.evidence) : p.counterKind!==undefined && p.counterKind!=='guest-flip-events')return null;
   if(p.samples.some(s=>!Number.isInteger(s.frames) || s.frames<0 || number(s.durationMs)===null || s.durationMs<=0))return null;
   const samples=p.samples.map(s=>({frames:s.frames,durationMs:s.durationMs,fps:s.frames*1000/s.durationMs,p95FrameMs:number(s.p95FrameMs)}));
   const fps=samples.reduce((n,s)=>n+s.frames,0)*1000/samples.reduce((n,s)=>n+s.durationMs,0);
   if(!Number.isFinite(fps))return null;
-  return {fps,samples,metric:p.metric,counterKind:p.counterKind,qualification:logical?{accepted:true,sceneReview:clip(p.qualification.sceneReview),counterReview:clip(p.qualification.counterReview),evidence:clip(p.qualification.evidence)}:undefined,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
+  return {fps,samples,metric:p.metric,counterKind:p.counterKind,physicalFps:windowPresentations?null:undefined,visibility:windowPresentations?{client:{...p.visibility.client},fraction:p.visibility.fraction}:undefined,qualification:logical || windowPresentations?{accepted:true,sceneReview:clip(p.qualification.sceneReview),counterReview:clip(p.qualification.counterReview),evidence:clip(p.qualification.evidence)}:undefined,measuredAt:date(p.measuredAt),renderer:clip(p.renderer),scene:clip(p.scene),host:clip(p.host),gpu:clip(p.gpu),wasmSha256:clip(p.wasmSha256),historical:p.historical===true,notes:clip(p.notes,2000)};
 }
 
 async function safeFile(root, relative) {
@@ -52,6 +57,46 @@ async function windowText(file, start, length) {
     const buffer = Buffer.alloc(length);
     const { bytesRead } = await h.read(buffer, 0, length, start);
     return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally { await h.close(); }
+}
+
+// A Claude /goal record: undefined when the record says nothing about the goal,
+// null when it clears it, otherwise {condition, met, at}.
+function goalOf(e, time) {
+  if (e.type === 'attachment' && e.attachment?.type === 'goal_status' && typeof e.attachment.condition === 'string')
+    return { condition: clip(e.attachment.condition, 1000), met: e.attachment.met === true, at: time };
+  if (e.type === 'user' && typeof e.message?.content === 'string') {
+    const out = (/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(e.message.content)?.[1] || '').trim();
+    const set = /^Goal set: ([\s\S]+)/.exec(out);
+    if (set) return { condition: clip(set[1], 1000), met: false, at: time };
+    if (/^Goal (?:cleared|removed)/i.test(out)) return null;
+  }
+  return undefined;
+}
+
+// Screenshot-heavy Claude logs push a whole 1 MiB tail window past the last goal
+// record, so look for one backwards from `end` down to `stop`, matching only the
+// lines that can carry it. Returns undefined when the range holds none.
+async function scanGoal(file, end, stop) {
+  const h = await fs.open(file, 'r');
+  try {
+    let carry = '';
+    while (end > stop) {
+      const start = Math.max(stop, end - MB), buffer = Buffer.alloc(end - start);
+      await h.read(buffer, 0, buffer.length, start);
+      let text = buffer.toString('utf8') + carry;
+      const first = start > 0 ? text.indexOf('\n') : -1;
+      carry = first >= 0 ? text.slice(0, first) : '';
+      if (first >= 0) text = text.slice(first + 1);
+      const lines = text.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"goal_status"') && !lines[i].includes('Goal set: ') && !lines[i].includes('Goal cleared')) continue;
+        try { const e = JSON.parse(lines[i]); const goal = goalOf(e, date(e.timestamp)); if (goal !== undefined) return goal; } catch { /* partial line */ }
+      }
+      if (carry.length > 16 * MB) carry = '';
+      end = start;
+    }
+    return undefined;
   } finally { await h.close(); }
 }
 
@@ -133,6 +178,8 @@ function parseSession(provider, records, file, partial, root) {
   session.parentAgentId = provider === 'claude' && path.basename(path.dirname(file)) === 'subagents'
     ? `claude:${path.basename(path.dirname(path.dirname(file)))}` : null;
   session.summary = null;
+  // Claude Code /goal: the latest condition and whether its Stop hook judged it met.
+  session.goal = null;
   let projectMatch = false;
   let usageAtCompaction = false;
   let hasSessionMeta = false;
@@ -192,6 +239,8 @@ function parseSession(provider, records, file, partial, root) {
       if (e.sessionId && !file.includes(`${path.sep}subagents${path.sep}`)) session.id = `claude:${e.sessionId}`;
       if (e.type === 'ai-title') session.title = clip(e.aiTitle, 160);
       if (e.type === 'system' && e.subtype === 'compact_boundary') { session.compactions++; usageAtCompaction = true; }
+      const goal = goalOf(e, time);
+      if (goal !== undefined) session.goal = goal;
       if (e.type === 'user') {
         const content = e.message?.content;
         const isTool = Array.isArray(content) && content.some(c => c.type === 'tool_result');
@@ -248,6 +297,9 @@ async function walkLogs(root, warnings, maxFiles = 10000) {
 
 function createReader(options = {}) {
   const root = path.resolve(options.root || path.join(__dirname, '..'));
+  // The private emulator may serve a different checkout than the one the dashboard
+  // reads TODOS/runs from, e.g. a clean main worktree beside a shared working tree.
+  const emulatorRoot = path.resolve(options.emulatorRoot || process.env.WINE_EMULATOR_ROOT || root);
   const readActivity = createActivityReader(root);
   const codexRoot = options.codexRoot === false ? null : options.codexRoot || path.join(os.homedir(), '.codex', 'sessions');
   const claudeRoot = options.claudeRoot === false ? null : options.claudeRoot || path.join(os.homedir(), '.claude', 'projects', root.replace(/[^a-zA-Z0-9-]/g, '-'));
@@ -280,7 +332,16 @@ function createReader(options = {}) {
         let cached = sessionCache.get(entry.file);
         if (!cached || cached.key !== key) {
           const { records, partial } = await logWindows(entry.file, stat.size);
-          cached = { key, session: parseSession(entry.provider, records, entry.file, partial, root) };
+          const session = parseSession(entry.provider, records, entry.file, partial, root);
+          // In a windowed log the newest goal record may sit in the unread middle:
+          // scan back over what was appended since the last look (64 MiB on first
+          // sight), else keep the goal already known, else the windows' answer.
+          if (session && entry.provider === 'claude' && partial) {
+            const before = cached?.goalSize ?? Math.max(0, stat.size - 64 * MB);
+            const found = await scanGoal(entry.file, stat.size, Math.max(0, Math.min(before, stat.size) - MB));
+            session.goal = found !== undefined ? found : cached?.session ? cached.session.goal : session.goal;
+          }
+          cached = { key, session, goalSize: stat.size };
           sessionCache.set(entry.file, cached);
         }
         if (cached.session) result.push({ ...cached.session, logFile: entry.file });
@@ -380,9 +441,10 @@ function createReader(options = {}) {
     } catch (e) { warnings.push(`Candidate manifest: ${e.message}`); }
     // Keep registry-only games and unknown apps visible without changing the
     // candidate manifest. Exact app/executable associations come from the same
-    // inventory used by the coverage report, not fuzzy title matching.
+    // inventory used by the coverage report, not fuzzy title matching. The
+    // registry is the emulator checkout's, since that is what a launch runs.
     try {
-      const registryFile = await safeFile(root, 'lib/apps.js');
+      const registryFile = await safeFile(emulatorRoot, 'lib/apps.js');
       if (registryFile) {
         const registry = require(registryFile);
         let assessments = [];
@@ -402,8 +464,24 @@ function createReader(options = {}) {
           c.localDesktopAppIds = entry.appIds.filter(id => (registry.DESKTOP_APPS || []).some(row => row[0] === id));
           c.registryOnly = entry.origin === 'registry-only';
           c.appIds = entry.appIds;
-          c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(root,app.executable)})));
+          c.registeredExecutables = await Promise.all(entry.apps.map(async app => ({appId:app.id,path:app.executable,present:!!await safeFile(emulatorRoot,app.executable)})));
           if (c.registryOnly) c.fixtureStatus = c.registeredExecutables.every(e=>e.present) ? 'present' : c.registeredExecutables.some(e=>e.present) ? 'partial' : 'missing';
+        }
+        // Registry-only entries are named by their app id (aoe1, abedemo), and
+        // most of them are in none of the labelled launcher arrays above. The
+        // emulator's app picker carries a human label for every app it offers,
+        // so use that wherever the corpus still has only the id.
+        const pickerFile = await safeFile(emulatorRoot, 'index.html');
+        if (pickerFile) {
+          const labels = new Map();
+          for (const m of (await readText(pickerFile, 4 * MB)).matchAll(/<option value="([\w.-]+)"[^>]*>([^<]{1,120})<\/option>/g)) {
+            if (!labels.has(m[1])) labels.set(m[1], m[2].trim().replace(/&amp;/g, '&').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"'));
+          }
+          for (const c of candidates) {
+            if (c.name && c.name !== c.id) continue;
+            const label = [c.id, ...(c.appIds || [])].map(id => labels.get(id)).find(Boolean);
+            if (label) c.name = clip(label);
+          }
         }
         sources.push('lib/apps.js');
       }
@@ -472,13 +550,24 @@ function createReader(options = {}) {
     const releaseReadiness = deriveReleaseReadiness({candidates, runs: runList, tasks, review: await loadReleaseReview(root)});
     for (const candidate of candidates) candidate.releaseReadiness = releaseReadiness.entries.find(entry => entry.id === candidate.id);
     let emulatorBuild = null;
-    try { emulatorBuild = await getBuildIdentity(root); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
+    try { emulatorBuild = await getBuildIdentity(emulatorRoot); } catch (error) { warnings.push('Emulator build identity: ' + error.message); }
     try {
-      const launchCatalog = await getCatalog(root);
+      const launchCatalog = await getCatalog(emulatorRoot);
       for (const candidate of candidates) candidate.launch = launchFor(candidate,launchCatalog,releaseReadiness.production,emulatorBuild);
     } catch (error) { warnings.push('Emulator launch catalog: ' + error.message); }
     linkCommits(activityResult.commits || [], tasks, runList);
-    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,
+    // Original DOS titles, kept apart from the Windows EXE corpus. GitHub links
+    // use the repository a real commit URL already names, never a guess.
+    let dosCorpus = null;
+    try {
+      const commitUrl = (activityResult.commits || []).map(c => c.url).find(u => typeof u === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[0-9a-f]+$/.test(u));
+      const githubRepo = commitUrl ? commitUrl.replace(/\/commit\/[0-9a-f]+$/, '') : null;
+      const githubRef = (activityResult.code?.mainRef || 'origin/main').replace(/^origin\//, '');
+      dosCorpus = await buildDosCorpus({ root, candidates, runs: runList, tasks, githubRepo, githubRef });
+      if (dosCorpus.available) sources.push('test/toyvm-dos-corpus/manifest.json', 'ops/dos-corpus.json'); else warnings.push('DOS corpus: ' + dosCorpus.reason);
+      warnings.push(...dosCorpus.warnings);
+    } catch (error) { warnings.push('DOS corpus: ' + error.message); }
+    return { generatedAt: new Date().toISOString(), root, tasks, candidates, runs: runList, agents, activity,activityWarning:activityResult.warning,codeState:activityResult.code || null,projectStatus,releaseReadiness,emulatorBuild,dosCorpus,
       sources, warnings: [...new Set(warnings)], todoText: todo,todoRevision:crypto.createHash('sha256').update(todo).digest('hex'),
       telemetryNote: 'Local logs and process snapshots. Matched PIDs show process presence, not progress or responsiveness. Shared hosts may serve several agents. Last-request input estimates context; session tails may be partial.' };
   }
@@ -492,7 +581,7 @@ function createReader(options = {}) {
     const warnings = [];
     return { agents: await sessions(warnings), warnings };
   }
-  return { root, snapshot, artifact, analyticsSnapshot };
+  return { root, emulatorRoot, snapshot, artifact, analyticsSnapshot };
 }
 
-module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows };
+module.exports = { createReader, parseTasks, parseSession, safeFile, logWindows, scanGoal };

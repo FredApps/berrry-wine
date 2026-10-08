@@ -2301,8 +2301,13 @@
         (call $win16_api_return (i32.const 8))
         (return)))
     (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetFileVersionInfoSizeA (local.get $file) (local.get $handle)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    ;; Win16 queries ANSI in-place and requires only the original resource.
+    ;; The Win32 size APIs also reserve a caller-owned wide conversion trailer.
+    (if (call $name_is_static_dx_dll (local.get $file))
+      (then (call $handle_GetFileVersionInfoSizeA (local.get $file) (local.get $handle)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $file_version_info_size_named (local.get $file) (local.get $handle)
+        (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
     (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
     (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
@@ -2474,6 +2479,157 @@
       (then (call $win16_VerQueryValue) (return (i32.const 1))))
     (i32.const 0))
 
+  ;; ---- LZEXPAND ----
+  ;;
+  ;; The 16-bit LZ library Win 3.x setups decompress their payload with (Sierra's
+  ;; SETUP.EXE for Betrayal in Antara imports it). Every entry is the LZ32 call
+  ;; of the same name with sixteen-bit handles: an LZ handle (0x400 + slot, the
+  ;; same numbers LZ32 hands out) passes through as it is, anything else is a
+  ;; file and goes through the task's file map like _lopen's.
+  (func $win16_module_is_lzexpand (param $id i32) (result i32)
+    (local $slot i32)
+    (if (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+                (i32.ge_u (local.get $id)
+                  (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                           (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dynamic_module_slot
+      (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
+    (i32.and
+      (i32.eq (i32.load8_u (local.get $slot)) (i32.const 8))
+      (i64.eq (i64.load offset=1 (local.get $slot)) (i64.const 0x444E415058455A4C)))) ;; "LZEXPAND"
+
+  (func $win16_lz_is_lz_handle (param $h i32) (result i32)
+    (i32.and (i32.ge_u (local.get $h) (global.get $LZ_MIN_HANDLE))
+             (i32.lt_u (local.get $h)
+               (i32.add (global.get $LZ_MIN_HANDLE) (global.get $LZ_MAX_STATES)))))
+
+  (func $win16_lz_h32 (param $h16 i32) (result i32)
+    (if (result i32) (call $win16_lz_is_lz_handle (local.get $h16))
+      (then (local.get $h16))
+      (else (call $win16_fh32 (local.get $h16)))))
+
+  ;; An LZ32 result as the task sees it: LZ handles and LZERROR_* codes
+  ;; (negative) as sixteen-bit values, a file handle through the map.
+  (func $win16_lz_h16 (param $h32 i32) (result i32)
+    (if (result i32) (i32.or (i32.lt_s (local.get $h32) (i32.const 0))
+                             (call $win16_lz_is_lz_handle (local.get $h32)))
+      (then (i32.and (local.get $h32) (i32.const 0xFFFF)))
+      (else (call $win16_fh16 (local.get $h32)))))
+
+  ;; LZOpenFile(lpFileName, lpReOpenBuf, wStyle) / LZInit(hfSrc).
+  (func $win16_LZOpenFile
+    (local $name i32) (local $ofs i32) (local $style i32)
+    (local.set $style (call $win16_arg16 (i32.const 0)))
+    (local.set $ofs (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $ofs (i32.const 0))))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZOpenFileA (local.get $name) (local.get $ofs) (local.get $style)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $win16_lz_h16 (i32.load offset=0 (global.get $reg_base))))
+    (call $win16_api_return (i32.const 10)))
+
+  (func $win16_LZInit
+    (local $h i32)
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_LZInit (local.get $h) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (call $win16_lz_h16 (i32.load offset=0 (global.get $reg_base))))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; LZRead(hFile, lpBuffer, cbRead) -> bytes read or LZERROR_*.
+  (func $win16_LZRead
+    (local $h i32) (local $buf i32) (local $n i32)
+    (local.set $n (call $win16_arg16 (i32.const 0)))
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZRead (local.get $h) (local.get $buf) (local.get $n)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; LZSeek(hFile, lOffset, nOrigin) -> the new position, a LONG in DX:AX.
+  (func $win16_LZSeek
+    (local $h i32) (local $off i32) (local $origin i32)
+    (local.set $origin (call $win16_arg16 (i32.const 0)))
+    (local.set $off (call $win16_arg32 (i32.const 1)))
+    (local.set $h (call $win16_lz_h32 (call $win16_arg16 (i32.const 3))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_LZSeek (local.get $h) (local.get $off) (local.get $origin)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
+    (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; LZCopy / CopyLZFile(hfSource, hfDest) -> bytes written, a LONG in DX:AX.
+  (func $win16_LZCopy
+    (local $src i32) (local $dst i32)
+    (local.set $dst (call $win16_lz_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $src (call $win16_lz_h32 (call $win16_arg16 (i32.const 1))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_LZCopy (local.get $src) (local.get $dst) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
+    (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_LZClose
+    (local $h16 i32) (local $h i32)
+    (local.set $h16 (call $win16_arg16 (i32.const 0)))
+    (local.set $h (call $win16_lz_h32 (local.get $h16)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_LZClose (local.get $h) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (i32.eqz (call $win16_lz_is_lz_handle (local.get $h16)))
+      (then
+        (call $win16_fh_forget (local.get $h16))
+        (call $win16_h16_forget (local.get $h))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; LZEXPAND ordinals: 1 LZCopy, 2 LZOpenFile, 3 LZInit, 4 LZSeek, 5 LZRead,
+  ;; 6 LZClose, 7 LZStart, 8 CopyLZFile, 9 LZDone, 10 GetExpandedName. LZStart
+  ;; and LZDone bracket a run of CopyLZFile calls in Win 3.x and have nothing
+  ;; to set up here; LZStart answers TRUE. GetExpandedName is not written yet
+  ;; and falls through to the fail-fast tail.
+  (func $win16_lzexpand (param $module i32) (param $ordinal i32) (result i32)
+    (if (i32.eqz (call $win16_module_is_lzexpand (local.get $module)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 1)) (i32.eq (local.get $ordinal) (i32.const 8)))
+      (then (call $win16_LZCopy) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 2))
+      (then (call $win16_LZOpenFile) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 3))
+      (then (call $win16_LZInit) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 4))
+      (then (call $win16_LZSeek) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 5))
+      (then (call $win16_LZRead) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 6))
+      (then (call $win16_LZClose) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 7)) (i32.eq (local.get $ordinal) (i32.const 9)))
+      (then
+        (i32.store offset=0 (global.get $reg_base)
+          (i32.eq (local.get $ordinal) (i32.const 7)))
+        (call $win16_api_return (i32.const 0))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   ;; USER.430 lstrcmp / USER.471 lstrcmpi(lpString1, lpString2) -> <0, 0, >0.
   ;; Case folding is ASCII only, which is what the code pages these apps run
   ;; under amount to for the comparisons they make.
@@ -2559,15 +2715,53 @@
         (call $win16_res_desc_from_handle (call $win16_arg16 (i32.const 0)))))
     (call $win16_api_return (i32.const 4)))
 
+  ;; Return a stable guest pathname for a resident dynamic module. The host
+  ;; recorded the selected VFS file at staging; a WinExec task also has its
+  ;; private saved filename. Neither needs the shared Win32 scratch buffer.
+  (func $win16_res_file_path (param $module i32) (result i32)
+    (local $id i32) (local $path i32)
+    (if (i32.eqz (i32.and (local.get $module) (i32.const 0x10000)))
+      (then (return (i32.const 0))))
+    (local.set $id (i32.and (local.get $module) (i32.const 0xFFFF)))
+    (local.set $path (call $win16_dll_path_guest (local.get $id)))
+    (if (local.get $path) (then (return (local.get $path))))
+    (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
+                 (i32.eq (local.get $id) (global.get $win16_task_module)))
+      (then
+        (local.set $path (i32.sub
+          (i32.add (call $win16_task_start_slot (global.get $win16_task_slot)) (i32.const 0x98))
+          (global.get $GUEST_BASE)))
+        (if (call $gl8 (local.get $path)) (then (return (local.get $path))))))
+    (i32.const 0))
+
+  (func $win16_path_copy (param $src i32) (param $dst i32) (param $size i32) (result i32)
+    (local $i i32) (local $c i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $size)))
+      (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $c))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0))
+    (local.get $i))
+
   ;; Build C:\NAME.DLL for an app-local module into a guest buffer. The name
   ;; is the same Pascal string the loader registered for LoadLibrary.
   (func $win16_res_module_path (param $module i32) (param $path i32) (result i32)
     (local $id i32) (local $slot i32) (local $n i32) (local $i i32)
+    (local $source i32)
     (if (i32.eqz (i32.and (local.get $module) (i32.const 0x10000)))
       (then (return (i32.const 0))))
     (local.set $id (i32.and (local.get $module) (i32.const 0xFFFF)))
     (if (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
       (then (return (i32.const 0))))
+    (local.set $source (call $win16_res_file_path (local.get $module)))
+    (if (local.get $source)
+      (then
+        (drop (call $win16_path_copy (local.get $source) (local.get $path) (i32.const 260)))
+        (return (i32.const 1))))
     ;; A task WinExec started is an EXE, not NAME.DLL, and was started from
     ;; wherever its command line said (Civ2's PEDIA\GET_INFO.EXE).
     (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
@@ -2619,13 +2813,16 @@
     (if (i32.and (i32.ne (local.get $desc) (i32.const 0))
           (i32.ne (call $win16_res_desc_find (local.get $desc)) (i32.const 0)))
       (then
-        (local.set $path (global.get $GUEST_STACK))
-        (if (i32.eqz (call $win16_res_module_path (local.get $module) (local.get $path)))
+        (local.set $path (call $win16_res_file_path (local.get $module)))
+        (if (i32.eqz (local.get $path))
           (then
-            (call $win16_call32_begin (i32.const 3))
-            (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
-              (i32.const 0) (i32.const 0) (i32.const 0))
-            (call $win16_call32_end)))
+            (local.set $path (global.get $GUEST_STACK))
+            (if (i32.eqz (call $win16_res_module_path (local.get $module) (local.get $path)))
+              (then
+                (call $win16_call32_begin (i32.const 3))
+                (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
+                  (i32.const 0) (i32.const 0) (i32.const 0))
+                (call $win16_call32_end)))))
         (call $win16_call32_begin (i32.const 2))
         (call $handle__lopen (local.get $path) (i32.const 0)
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -2700,9 +2897,13 @@
             (if (local.get $sel)
               (then
                 (local.set $buf (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
-                (if (call $win16_res_module_path (local.get $module) (global.get $GUEST_STACK))
+                (local.set $path (call $win16_res_file_path (local.get $module)))
+                (if (i32.eqz (local.get $path))
                   (then
-                    (local.set $path (global.get $GUEST_STACK))
+                    (if (call $win16_res_module_path (local.get $module) (global.get $GUEST_STACK))
+                      (then (local.set $path (global.get $GUEST_STACK))))))
+                (if (local.get $path)
+                  (then
                     (call $win16_call32_begin (i32.const 2))
                     (call $handle__lopen (local.get $path) (i32.const 0)
                       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -2826,6 +3027,7 @@
     (local.get $i))
 
   (func $win16_GetModuleFileName
+    (local $path i32)
     (local $buf i32) (local $size i32) (local $raw_mod i32) (local $mod i32) (local $id i32)
     (local $slot i32) (local $n i32) (local $i i32)
     (local $index i32) (local $rec i32) (local $base i32)
@@ -2882,6 +3084,13 @@
     (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
+        (local.set $path (call $win16_dll_path_guest (local.get $id)))
+        (if (local.get $path)
+          (then
+            (i32.store offset=0 (global.get $reg_base)
+              (call $win16_path_copy (local.get $path) (local.get $buf) (local.get $size)))
+            (call $win16_api_return (i32.const 8))
+            (return)))
         (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
                      (i32.eq (local.get $id) (global.get $win16_task_module)))
           (then
@@ -6350,39 +6559,49 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
-  ;; KERNEL.47 GetModuleHandle(lpModuleName) -> the module's handle.
-  ;;
-  ;; A module this emulator has loaded gets the same 0x00D1-over-id handle
-  ;; LoadLibrary hands out, so GetModuleFileName can tell afterwards which
-  ;; module was meant. Anything else is the task itself, whose handle is its
-  ;; own DGROUP selector — an hInstance and an hModule are the same thing for
-  ;; the task, which is why RegisterClass accepts either.
+  ;; KERNEL.47 queries already-loaded modules. A named miss must be zero:
+  ;; returning the task instance makes callers skip their normal LoadLibrary.
+  ;; Querying must not reserve a dynamic slot for a name that is not loaded.
   (func $win16_GetModuleHandle
-    (local $name i32) (local $id i32)
-    (local.set $name (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    ;; MAKEINTRESOURCE-style: a null selector means there is no name at all.
+    (local $name i32) (local $pstr i32) (local $id i32)
+    (local $i i32) (local $slot i32) (local $resident i32)
+    ;; Preserve the existing null-selector/current-instance compatibility path.
     (if (i32.eqz (call $win16_arg16 (i32.const 1)))
       (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)) (return)))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
-    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
-    ;; A module this emulator answers for has a handle too, and it has to be
-    ;; that module's — not the task's. Handing back DS meant the next
-    ;; GetProcAddress looked its name up in the running program: JigSawed
-    ;; asked "Gdi" for CreateRectRgn and was told the game does not export it.
-    ;; $win16_dll_loaded answers with the module's segment COUNT, not a flag,
-    ;; so it has to be normalised before it meets an i32.and — 1 & 4 is 0, and
-    ;; FIELD100.VBX has exactly four segments. Rattler Race asked for its
-    ;; handle, got the task's DS, and looked FLDERASE up in the game.
-    (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-                         (i32.ne (call $win16_dll_loaded (local.get $id))
-                                 (i32.const 0))))
+    (local.set $pstr (call $g2w (call $win16_name_scratch)))
+    ;; The NE resident-name table starts with the task's actual module name.
+    ;; This also covers a WinExec child, whose retained header is task-local.
+    (local.set $resident (i32.load16_u
+      (i32.add (global.get $win16_ne_off) (i32.const 0x26))))
+    (if (i32.and (i32.ne (local.get $resident) (i32.const 0))
+          (call $win16_pstr_eq_pstr (local.get $pstr)
+            (i32.add (global.get $win16_ne_off) (local.get $resident))))
+      (then
+        (call $win16_local_identity (i32.const 4)
+          (call $win16_index_to_sel (global.get $win16_auto_data)))
+        (return)))
+    (local.set $id (call $win16_system_module_id (local.get $pstr)))
+    (if (local.get $id)
       (then
         (call $win16_local_identity (i32.const 4)
           (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
         (return)))
-    (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)))
+    (block $not_found (loop $scan
+      (br_if $not_found (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
+      (local.set $id (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))
+      (if (i32.and (i32.ne (call $win16_dll_loaded (local.get $id)) (i32.const 0))
+                   (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot)))
+        (then
+          (call $win16_local_identity (i32.const 4)
+            (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $win16_local_identity (i32.const 4) (i32.const 0)))
 
   ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
   ;; NULL when there is none and the caller should start NETDDE.EXE.
@@ -17018,6 +17237,8 @@
     (if (call $win16_msvideo (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))
     (if (call $win16_ver (local.get $module) (local.get $ordinal))
+      (then (call $win16_trace_ret) (return)))
+    (if (call $win16_lzexpand (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))
 
     ;; Anything not implemented reports itself and stops, on the same reasoning
