@@ -2,9 +2,9 @@
 
 The user's goal: every OpenGL and Direct3D app in the registry works on both the
 **software** and the **WebGL** backend. This is the one shared status table for
-it (task GLD3D-CORPUS-27-20261006). The D3DRM family's fixes and reruns belong to
-w4 (claude:65967384, `docs/re-notes/plus98-dx-screensavers.md`); its rows here
-point at that work.
+it (task GLD3D-CORPUS-27-20261006). Codex coordinates the remaining work;
+the Claude fleet is stopped. D3DRM rows marked w4 refer to historical work
+by claude:65967384 (`docs/re-notes/plus98-dx-screensavers.md`), not a live worker.
 
 Reconciled on **2026-10-07** against main `30f1e268`. This preserves the dated
 measurements below; it is not a new full-corpus run. Tomb Raider III and
