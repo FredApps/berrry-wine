@@ -1,7 +1,7 @@
 updated: 2026-10-08T00:46:31.226Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: fresh antara-callback-runtime, tiberian-return-semantics, and crimsonland-exit-runtime. Antara run released browser: installer unchanged and child-thread callback unmeasured because observer armed only on host input. Worker authenticates source/capture gap. Tiberian generic nested-modal defect reproduced; candidate held for command return-value correctness. Crimsonland owns next fault/exit capture after Antara cleanup. Quake II software traversal is qualified for its reference build. Both new-game lanes remain incomplete; browser runs serialize on temporary boxes. Winamp/Arx held, Heroes II laptop-owned.
+Current workers: fresh antara-queue-callback, tiberian-return-semantics, and crimsonland-exit-runtime. Antara run released browser: installer unchanged and child-thread callback unmeasured because observer armed only on host input. Worker authenticates source/capture gap. Tiberian generic nested-modal defect reproduced; candidate held for command return-value correctness. Crimsonland owns next fault/exit capture after Antara cleanup. Quake II software traversal is qualified for its reference build. Both new-game lanes remain incomplete; browser runs serialize on temporary boxes. Winamp/Arx held, Heroes II laptop-owned.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 

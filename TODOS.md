@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-callback-runtime
+  worker: fresh CLI antara-queue-callback
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Correct client coordinates verified but original Install stays at menu. Revised owning Win16 callback observer reviewed and integrated ac8c4c8ff; fresh runtime worker granted next serialized remote capture from 20261008T0045Z-antara-win16-callback-ready. Installation/gameplay unqualified.
+  Next: Actual original Install unchanged; source-authenticated forwarded queue bypasses host-DOWN observer activation, so childcallback remains unmeasured. Outcome integrated f21fe79a6. Fresh antara-queue-callback corrects diagnostic coverage with forwarded-input regression before next remote run. No production defect or installation/gameplay qualification.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
