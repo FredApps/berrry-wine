@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-input-fix (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Fresh input-fix worker replaces exited antara-dialog. Original installer packet uses window origin instead of client origin (3,23); generic captioned-popup coordinate regression and fix next. Handoff6162df55e integrated48e46e60c. Installation/gameplay incomplete; native checks require disk preflight.
+  Next: Generic captioned-popup client-coordinate fix f73e6529d integrated, regressions and full canonical build PASS. Ordinary original installer attempt queued after Tiberian actual browser release; matching module4dc5ac2c. Installation/gameplay still unverified.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1283,11 +1283,20 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Done: Demonstrated generic cause repaired with regression and ordinary original visualization reviewed; FPS/audio separate.
   Evidence: scratch/runs/20261007-winamp-milkdrop-complete-closure; ops/handoffs/winamp-milkdrop-ordinary-20261007.md
 
-- [~] Validate original Quake II OpenGL workload on emulator software backend
+- [x] Validate original Quake II OpenGL workload on emulator software backend
   id: GLD3D-QUAKE2-SOFTWARE-20261007
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (q2-software exited0)
+  Next: Done scoped software forward/reverse/idle gameplay, reviewed original ref_gl and owning renderer software proof; main069662726. Exact reference096889e/fb1be916, not current-main build validation. FPS/audio/network unqualified.
+  Done: Reviewed ordinary gameplay/input evidence, exact backend/source/module/original identity, scoped GL table update on main; FPS/audio separate.
+  Evidence: scratch/runs/20261008T000901Z-quake2-software-ordinary; ops/handoffs/quake2-software-ordinary-20261008.md
+
+- [~] Validate Crimsonland Tutorial control on WebGL
+  id: GLD3D-CRIMSONLAND-WEBGL-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI q2-software
-  Next: Source/JS preparation for ordinary Game/Easy and forward/reverse/idle gameplay; prove emulator software backend with original ref_gl, no guest ref_soft substitution. Browser queued behind Antara and Tiberian input lanes; no native/build grant below2.8GB preflight.
-  Done: Reviewed ordinary gameplay/input evidence, exact backend/source/module/original identity, scoped GL table update on main; FPS/audio separate.
-  Evidence: Existing WebGL route scratch/runs/20261007T213620Z-quake2-ordinary-traversal is reference only; new software evidence pending.
+  worker: fresh CLI crimsonland-webgl
+  Next: Source/JS route and matching runtime preparation; ordinary Tutorial button hover/click then controlled movement. Browser queued behind both new-game lanes, no runtime grant yet.
+  Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
+  Evidence: Historical software route scratch/runs/20261006T0500Z-crimsonland-w4-survival; new WebGL evidence pending.

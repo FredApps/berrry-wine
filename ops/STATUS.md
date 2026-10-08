@@ -1,7 +1,7 @@
 updated: 2026-10-07T23:58:05.293Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: fresh antara-input-fix, tiberian-input, and q2-software. Antara predecessor exited0; measured captioned-popup coordinate mismatch now in generic fix phase. Tiberian page input coordinates verified but guest callback/parent-command delivery remains unresolved. Q2 owns separate temporary browser box bx_624jbk9k for original ref_gl software-backend validation. Both game menus render; neither new-game lane has gameplay yet. Winamp and Arx remain held; no retry of rejected diagnostics. Heroes II belongs to laptop.
+Current workers: antara-input-fix, tiberian-input, and fresh crimsonland-webgl. Antara generic client-coordinate fix f73e6529d passed full build and regressions; ordinary installer test queued after Tiberian callback capture. Quake II software traversal reviewed and integrated069662726; worker exited0, replaced with Crimsonland WebGL route preparation. Both new-game lanes remain incomplete. Winamp/Arx held, Heroes II laptop-owned.
 
 Comanche 3 investigation completed and findings integrated2acadd964. Root independently verified16KiB original/read-buffer/IVT hashes: unsupported paging aliases linear10000000 to physical0. Task blocked on new ready TOYVM-386-PAGING-20261007; source must retain CR3/translate/pagefault consistently. Three diagnostic groups closed and originals unchanged.28hash-verified evidence files preserved scratch/runs/20261007-comanche3-paging-diagnostic.
 
