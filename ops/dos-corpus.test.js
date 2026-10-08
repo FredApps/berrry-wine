@@ -100,7 +100,7 @@ test('view: filter counts, real launch links only, escaped titles', async () => 
   assert.match(html, /Untested on ToyVM/); assert.match(html, /Blocked on ToyVM/);
   assert.match(html, /“Untested” is not a claim that it works/);
   assert.match(html, /Reached: title screen \(probe\)/);
-  assert.match(html, /Blocked by: a 32-bit DOS extender ToyVM has never run\. Details has the sources\./);
+  assert.match(html, /Blocked by: an unqualified 32-bit DOS extender\. Details has the sources\./);
   assert.match(html, /Blocked by: Needs a CD|Blocked by: needs a CD-ROM drive\./);
 });
 test('view: the blocked filter shows only blocked titles', async () => {
@@ -123,4 +123,36 @@ test('the real committed corpus: DOS payload entries, never the DOSBox wrapper; 
   assert.equal(df.entry.program, 'FALL.EXE'); assert.equal(df.toyvm.status, 'blocked');
   for (const r of c.rows.filter((x) => x.engine === 'dos')) assert.doesNotMatch(r.entry.program, /dosbox/i);
   assert.ok(c.rows.some((r) => r.engine === 'toyvm-gallery'));
+});
+
+test('explicit historical null-ID ToyVM flight stays separate from DOSBox and unrelated runs', async () => {
+  const root = repo(), p = path.join(root, 'test/toyvm-dos-corpus/manifest.json');
+  const m = JSON.parse(fs.readFileSync(p));
+  m.titles.push({ id: 'c3', title: 'Comanche', candidateId: null, dosboxAppIds: ['c3_dosbox'], entry: { program: 'C3.EXE' }, payload: { present: true }, toyvm: { status: 'reviewed-gameplay', verdict: 'FPS unknown; audio disabled.', blockers: [], cautions: [], evidence: [{ run: 'scratch/runs/c3-flight', reached: 'controlled-flight', reviewedGameplay: { build: { commit: 'reference-build' }, limits: ['FPS unknown'], taskIds: ['C3'] } }] } });
+  fs.writeFileSync(p, JSON.stringify(m));
+  const curated = path.join(root, 'ops/dos-corpus.json'), c = JSON.parse(fs.readFileSync(curated));
+  c.dosbox.c3 = { label: 'Untested DOSBox', asOf: '2026-10-08', level: 'in-progress', basis: [] }; fs.writeFileSync(curated, JSON.stringify(c));
+  const run = { key: 'scratch/runs/c3-flight', id: 'c3-flight', candidateId: null, outcome: 'passed', verification: 'reviewed', startedAt: '2026-10-09', route: 'gameplay', screenshots: [{url:'/artifact?key=c3',name:'flight.png'}] };
+  const row = (await buildDosCorpus({root, runs:[run, {...run,key:'unrelated'}],tasks:[{id:'C3',candidateIds:[]},{id:'bad',candidateIds:[null]}]})).rows.find(r=>r.id==='c3');
+  assert.equal(row.toyvm.launch.label,'Launch in ToyVM (reviewed route)');
+  assert.equal(row.toyvm.reviewedRun.id,'c3-flight'); assert.equal(row.toyvm.screenshots.length,1);
+  assert.equal(row.latestRun,null); assert.equal(row.gameplayRun,null); assert.deepEqual(row.screenshots,[]);
+  assert.equal(row.dosbox.status.stale,false); assert.equal(row.flags.gameplayReviewed,true); assert.equal(row.performance,null);
+  assert.deepEqual(row.tasks.map(t=>t.id),['C3']);
+  const vm = browserApp({dosCorpus:{available:true,rows:[row]},runs:[],tasks:[],candidates:[],agents:[],activity:[]});
+  assert.match(require('node:vm').runInContext('dosView()',vm),/Reviewed ToyVM flight route/);
+  m.titles.at(-1).payload.present=false;fs.writeFileSync(p,JSON.stringify(m));
+  assert.equal((await buildDosCorpus({root})).rows.find(r=>r.id==='c3').toyvm.launch,null);
+});
+
+test('reader imports registered historical null-ID evidence and serves its images without changing the result', async () => {
+  const root=repo(),p=path.join(root,'test/toyvm-dos-corpus/manifest.json'),m=JSON.parse(fs.readFileSync(p));
+  const key='scratch/runs/historical';m.titles[0].toyvm.evidence=[{run:key,reviewedGameplay:{reviewer:'root'}}];fs.writeFileSync(p,JSON.stringify(m));
+  fs.mkdirSync(path.join(root,key),{recursive:true});const original=JSON.stringify({candidateId:null,startedAt:'2026-10-08T10:00:00Z',outcome:'passed',verification:'reviewed',screenshots:['flight.png']});
+  fs.writeFileSync(path.join(root,key,'result.json'),original);fs.writeFileSync(path.join(root,key,'flight.png'),'image');
+  fs.mkdirSync(path.join(root,'scratch/runs/unrelated'),{recursive:true});fs.writeFileSync(path.join(root,'scratch/runs/unrelated/result.json'),original);
+  const reader=require('./readers').createReader({root,codexRoot:false,claudeRoot:false});
+  const snapshot=await reader.snapshot();assert.equal(snapshot.runs.length,1);assert.equal(snapshot.runs[0].candidateId,null);
+  assert.equal(snapshot.runs[0].key,key);assert(await reader.artifact(key+'/flight.png'));
+  assert.equal(fs.readFileSync(path.join(root,key,'result.json'),'utf8'),original);
 });

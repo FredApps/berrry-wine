@@ -1,13 +1,13 @@
-updated: 2026-10-08T13:11:30.847Z
+updated: 2026-10-08T13:36:03.390Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: one. Comanche catalog integration is active, preserving accepted controlled-flight evidence while adding ordinary dashboard launch. Tiberian diagnostic worker exited after automatic cybersecurity rejection; that operation is held without retry. Prior paint/COM fixes remain on main; no mission control evidence. Temporary Tiberian box stop requested.
+Current workers: none while root integrates completed Comanche catalog work. Normal registered dashboard launch passed on a temporary box; accepted controlled flight remains separately linked. Tiberian diagnostic remains held after automatic rejection, without retry. Next ready new-game lane: Arcanum, with ordinary gameplay/input and both rendering backends still to qualify.
 
-Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Private local registration only; normal corpus launch integration is active. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
+Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Normal registered ToyVM dashboard launch now passes; historical flight evidence is linked separately. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
 
 Quake II ordinary forward/reverse/idle traversal is qualified on WebGL2534731b3 and software069662726 using the recorded reference modulefb1be916. Reviewed runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain backend/source identity and limits. FPS/audio/network remain unqualified. GL27 remains incomplete. Quake II, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue have reviewed control on both backends at their recorded reference builds. Longer gameplay routes, heavy titles/Pirates and held Winamp exception remain; qualification is not a current-main full-corpus validation.
 
-New-game backlog: Comanche controlled flight is complete; normal corpus launch integration is active. Arcanum and Deus Ex fixtures are present but lanes remain queued under the one-worker budget limit. Antara/Arx/Winamp diagnostics remain held; Heroes II is laptop-owned.
+New-game backlog: Comanche controlled flight is complete; normal corpus launch integration is complete. Arcanum and Deus Ex fixtures are present but lanes remain queued under the one-worker budget limit. Antara/Arx/Winamp diagnostics remain held; Heroes II is laptop-owned.
 
 Completed ops task maincdc186b1:731 manifests audited,24 named references localized across10runs without deleting originals, containment checker/regressions and48h disposable-workdir rule added. Zero external declared artifact references remain;82 missing historical local references and absentMythpatch documented separately. Receipt scratch/runs/20261007-run-evidence-localization.
 

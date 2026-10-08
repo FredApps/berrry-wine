@@ -71,12 +71,18 @@ async function buildDosCorpus({ root, candidates = [], runs = [], tasks = [], gi
     // ToyVM: the static verdict and, only for a title with no blocker and a
     // present payload, the gateway route to a live session.
     const tv = t.toyvm || {};
-    const toyvmLaunchable = t.payload?.present === true && tv.status === 'untested' && !(tv.blockers || []).length;
+    let toyvmLaunchable = t.payload?.present === true && ['untested', 'reviewed-gameplay'].includes(tv.status) && !(tv.blockers || []).length;
+    let availabilityReason = '';
+    if (toyvmLaunchable && t.gameDir) {
+      const view = await require('./toyvm-server').titleView(root, t.id);
+      toyvmLaunchable = view?.launchable === true;
+      availabilityReason = view?.reason || '';
+    }
     const evidence = [];
-    for (const e of Array.isArray(tv.evidence) ? tv.evidence : []) { const r = rel(e?.run); if (r) evidence.push({ run: r, at: iso(e.at), reached: clip(e.reached, 40), summary: clip(e.summary, 600), present: await exists(root, r + '/result.json') }); }
-    const toyvm = { status: ['blocked', 'untested'].includes(tv.status) ? tv.status : 'unknown', verdict: clip(tv.verdict, 600), blockers: withFacts(tv.blockers), cautions: withFacts(tv.cautions), evidence,
-      launch: toyvmLaunchable ? { url: '/toyvm/?title=' + encodeURIComponent(t.id), label: 'Try in ToyVM (untested)' } : null,
-      reason: toyvmLaunchable ? '' : !t.payload?.present ? 'Payload not on this machine.' : 'Blocked by the static assessment; no session offered.' };
+    for (const e of Array.isArray(tv.evidence) ? tv.evidence : []) { const r = rel(e?.run); if (r) evidence.push({ run: r, at: iso(e.at), reached: clip(e.reached, 40), summary: clip(e.summary, 600), ...(e.reviewedGameplay ? { reviewedGameplay: e.reviewedGameplay } : {}), present: await exists(root, r + '/result.json') }); }
+    const toyvm = { status: ['blocked', 'untested', 'reviewed-gameplay'].includes(tv.status) ? tv.status : 'unknown', verdict: clip(tv.verdict, 600), blockers: withFacts(tv.blockers), cautions: withFacts(tv.cautions), evidence,
+      launch: toyvmLaunchable ? { url: '/toyvm/?title=' + encodeURIComponent(t.id), label: tv.status === 'reviewed-gameplay' ? 'Launch in ToyVM (reviewed route)' : 'Try in ToyVM (untested)' } : null,
+      reason: toyvmLaunchable ? '' : availabilityReason || (!t.payload?.present ? 'Payload not on this machine.' : 'Blocked by the static assessment; no session offered.') };
 
     // The Win98 + DOSBox.exe route: the emulator catalog's own routes for these
     // app ids (build-pinned by launchFor), never a constructed URL.
@@ -84,7 +90,11 @@ async function buildDosCorpus({ root, candidates = [], runs = [], tasks = [], gi
       url: r.available === true && typeof r.url === 'string' && r.url.startsWith('/emulator/') ? r.url : null, reason: clip(r.reason, 300), missing: (r.missingPaths || []).length }));
     const cs = curated.dosbox?.[t.id] || null;
     const ids = new Set([t.candidateId, ...appIds].filter(Boolean));
-    const matching = runs.filter((r) => ids.has(r.candidateId));
+    const toyvmKeys = new Set(evidence.map(e => e.run));
+    const toyvmRuns = runs.filter(r => toyvmKeys.has(r.key));
+    toyvm.reviewedRun = runView(toyvmRuns.find(r => r.outcome === 'passed' && r.verification === 'reviewed' && evidence.some(e => e.run === r.key && e.reviewedGameplay)));
+    toyvm.screenshots = shotsOf(toyvmRuns.find(r => r.key === toyvm.reviewedRun?.key));
+    const matching = runs.filter((r) => ids.has(r.candidateId) && !toyvmKeys.has(r.key) && !/^toyvm\b/i.test(r.route || ''));
     const latest = matching[0] || null;
     const reviewedPass = matching.find((r) => r.outcome === 'passed' && r.verification === 'reviewed') || null;
     const gameplay = matching.find((r) => r.outcome === 'passed' && r.verification === 'reviewed' && (r.gameplayScreenshots?.length || /^gameplay\b/i.test(r.route || ''))) || null;
@@ -96,16 +106,16 @@ async function buildDosCorpus({ root, candidates = [], runs = [], tasks = [], gi
     }
     const notes = rel(t.notes) && await exists(root, t.notes) ? { path: t.notes, source: NOTE.test(t.notes) ? '/source?path=' + encodeURIComponent(t.notes) : null } : null;
     if (notes) links.add(notes.path);
-    const taskIds = new Set(cand?.taskIds || []);
+    const taskIds = new Set([...(cand?.taskIds || []), ...evidence.flatMap(e => e.reviewedGameplay?.taskIds || [])]);
     const linked = tasks.filter((x) => taskIds.has(x.id) || (typeof t.candidateId === 'string' && t.candidateId.length > 0 && (x.candidateIds || []).includes(t.candidateId))).map((x) => ({ id: x.id, title: clip(x.title, 200), status: x.status }));
     const performance = cand?.performance ? { fps: Number.isFinite(cand.performance.fps) ? cand.performance.fps : null, metric: clip(cand.performance.metric, 60), scene: clip(cand.performance.scene, 160), runKey: cand.performance.runKey } : null;
     rows.push({ id: t.id, title: clip(t.title, 160), engine: 'dos', entry: { program: clip(t.entry?.program, 80), args: clip(t.entry?.args, 200) }, entrySource: clip(t.entrySource, 400),
       programs: (t.programs || []).slice(0, 8).map((p) => ({ name: clip(p.name, 80), mode: clip(p.mode, 60), extender: p.extender ? `${p.extender.id} (${p.extender.binding})` : null })),
-      payload: t.payload?.present ? { present: true, files: t.payload.files, bytes: t.payload.bytes, excluded: t.payload.excluded || {} } : { present: false, reason: clip(t.payload?.reason, 300) },
+      payload: t.payload?.present && !availabilityReason ? { present: true, files: t.payload.files, bytes: t.payload.bytes, excluded: t.payload.excluded || {} } : { present: false, reason: clip(availabilityReason || t.payload?.reason, 300) },
       load: t.load ? { policy: clip(t.load.policy, 40), preloadBytes: t.load.preloadBytes, lazyFiles: t.load.lazyFiles } : null,
       fileList: rel(t.fileList), provenance, toyvm, dosbox, notes, tasks: linked, performance,
       latestRun: runView(latest), reviewedPass: runView(reviewedPass), gameplayRun: runView(gameplay), screenshots: shotsOf(gameplay || reviewedPass || latest),
-      flags: { available: t.payload?.present === true, launchable: toyvmLaunchable || routes.some((r) => r.available), gameplayReviewed: !!gameplay,
+      flags: { available: t.payload?.present === true && !availabilityReason, launchable: toyvmLaunchable || routes.some((r) => r.available), gameplayReviewed: !!gameplay || !!toyvm.reviewedRun,
         performanceMeasured: !!performance, blocked: toyvm.status === 'blocked' && !routes.some((r) => r.available) } });
     if (t.fileList) links.add(t.fileList);
   }

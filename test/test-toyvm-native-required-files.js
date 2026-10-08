@@ -19,7 +19,7 @@ async function main() {
   const previous = { schemaVersion: 1, metadata: 'retained', titles: cfg.titles.map(t => ({ id: t.id, preserve: t.id })) };
   const replacement = { id: 'ultima4', updated: true };
   const merged = mergeSelectedManifest(previous, { titles: [replacement] }, ['ultima4']);
-  assert.equal(merged.titles.length, 5); assert.equal(merged.metadata, 'retained');
+  assert.equal(merged.titles.length, cfg.titles.length); assert.equal(merged.metadata, 'retained');
   for (const t of previous.titles) assert.equal(merged.titles.find(x => x.id === t.id), t.id === 'ultima4' ? replacement : t);
   assert.throws(() => mergeSelectedManifest(previous, { titles: [] }, ['ultima4']), /unknown selected/);
 

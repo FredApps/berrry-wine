@@ -39,7 +39,19 @@ async function readJson(root, relative) {
   if (!file) return null;
   try { return JSON.parse(await fsp.readFile(file, 'utf8')); } catch { return null; }
 }
-const launchable = (t) => t?.payload?.present === true && t?.toyvm?.status === 'untested' && !(t.toyvm.blockers || []).length;
+function validFiles(entry, files) {
+  if (!Array.isArray(files) || !files.length || typeof entry?.program !== 'string') return false;
+  const names = new Set();
+  for (const f of files) {
+    if (typeof f.path !== 'string' || !f.path || /[\\\0]/.test(f.path) || f.path.split('/').some(p => !p || p === '.' || p === '..')
+        || !Number.isSafeInteger(f.size) || f.size < 0 || !/^[a-f0-9]{64}$/.test(f.sha256 || '')) return false;
+    const name = path.posix.basename(f.path).toLowerCase();
+    if (names.has(name)) return false;
+    names.add(name);
+  }
+  return files.some(f => f.path.toLowerCase() === entry.program.toLowerCase());
+}
+const launchable = (t) => t?.payload?.present === true && ['untested', 'reviewed-gameplay'].includes(t?.toyvm?.status) && !(t.toyvm.blockers || []).length;
 
 // The title as the page needs it. Blocked titles come back too -- with their
 // reasons -- so a stale link explains itself instead of failing blank.
@@ -53,6 +65,10 @@ async function titleView(root, id) {
   if (view.launchable) {
     const list = await readJson(root, `test/toyvm-dos-corpus/files/${t.id}.json`);
     if (!list || !Array.isArray(list.files)) { view.launchable = false; view.reason = 'The file list for this title is missing.'; }
+    else if (!validFiles(t.entry, list.files)) { view.launchable = false; view.reason = 'Invalid file list or entry program.'; }
+    else if (!(await Promise.all(list.files.map(async f => { const p = await inside(path.join(root, t.gameDir), f.path); return p && (await fsp.stat(p)).size === f.size; }))).every(Boolean)) {
+      view.launchable = false; view.reason = 'Payload files are missing or changed on this machine.';
+    }
     else view.files = list.files.map((f) => ({ path: f.path, size: f.size, sha256: f.sha256, load: f.load, url: PREFIX + 'files/' + t.id + '/' + f.path.split('/').map(encodeURIComponent).join('/') }));
   } else view.reason = !t.payload?.present ? 'The payload is not on this machine.' : 'The static assessment found blockers; no session is offered.';
   return view;
@@ -113,4 +129,4 @@ function createToyvmHandler(root) {
   };
 }
 
-module.exports = { createToyvmHandler, titleView, launchable, PREFIX };
+module.exports = { createToyvmHandler, titleView, launchable, validFiles, PREFIX };
