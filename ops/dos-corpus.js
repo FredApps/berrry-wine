@@ -97,7 +97,7 @@ async function buildDosCorpus({ root, candidates = [], runs = [], tasks = [], gi
     const notes = rel(t.notes) && await exists(root, t.notes) ? { path: t.notes, source: NOTE.test(t.notes) ? '/source?path=' + encodeURIComponent(t.notes) : null } : null;
     if (notes) links.add(notes.path);
     const taskIds = new Set(cand?.taskIds || []);
-    const linked = tasks.filter((x) => taskIds.has(x.id) || (x.candidateIds || []).includes(t.candidateId)).map((x) => ({ id: x.id, title: clip(x.title, 200), status: x.status }));
+    const linked = tasks.filter((x) => taskIds.has(x.id) || (typeof t.candidateId === 'string' && t.candidateId.length > 0 && (x.candidateIds || []).includes(t.candidateId))).map((x) => ({ id: x.id, title: clip(x.title, 200), status: x.status }));
     const performance = cand?.performance ? { fps: Number.isFinite(cand.performance.fps) ? cand.performance.fps : null, metric: clip(cand.performance.metric, 60), scene: clip(cand.performance.scene, 160), runKey: cand.performance.runKey } : null;
     rows.push({ id: t.id, title: clip(t.title, 160), engine: 'dos', entry: { program: clip(t.entry?.program, 80), args: clip(t.entry?.args, 200) }, entrySource: clip(t.entrySource, 400),
       programs: (t.programs || []).slice(0, 8).map((p) => ({ name: clip(p.name, 80), mode: clip(p.mode, 60), extender: p.extender ? `${p.extender.id} (${p.extender.binding})` : null })),
