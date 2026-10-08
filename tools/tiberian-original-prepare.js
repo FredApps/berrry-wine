@@ -1,12 +1,19 @@
 'use strict';
 const fs=require('fs'),path=require('path'),cp=require('child_process'),crypto=require('crypto'),zlib=require('zlib');
 const wt=path.resolve(__dirname,'..'),dir=process.argv[2],prior='/home/user/wine-assembly/scratch/runs/20261008T002800Z-tiberian-release-preparation',accepted='/home/user/wine-assembly/scratch/runs/20261008-tiberian-return-semantics',prefix=process.argv[3];
-const consumer=process.argv[4]==='--consumer';if(process.argv[4]&&!consumer)throw Error('unknown preparation mode');
+const paint=process.argv[4]==='--paint',consumer=paint||process.argv[4]==='--consumer';if(process.argv[4]&&!consumer)throw Error('unknown preparation mode');
 const reuse=process.argv[5]?.startsWith('--reuse=')?process.argv[5].slice(8):null;if(process.argv[5]&&!reuse)throw Error('unknown reuse argument');
 if(reuse&&!/^\/home\/user\/wine-assembly\/scratch\/runs\/[a-zA-Z0-9-]+$/.test(reuse))throw Error('immutable evidence reuse path required');
 if(!dir||!/^\/home\/user\/tiberian-focused-[a-z0-9-]+$/.test(prefix||''))throw Error('usage: prepare EVIDENCE_DIR /home/user/tiberian-focused-UNIQUE');
 // Include prepared copies, worst-case gzip output and bounded transport scratch.
-const initialFiles=JSON.parse(fs.readFileSync(prior+'/transfer-files.json'));
+const reuseFiles=reuse?JSON.parse(fs.readFileSync(reuse+'/transfer-files.json')):[];
+function immutableFiles(){return JSON.parse(fs.readFileSync(prior+'/transfer-files.json')).map(f=>{
+ if(fs.existsSync(f.local))return f;
+ const rel=f.remote.split('/source/')[1],found=rel&&reuseFiles.find(r=>r.remote.split('/source/')[1]===rel&&r.sha256===f.sha256);
+ if(!found||!fs.existsSync(found.local))throw Error('missing original immutable path '+f.local+'; no hash-identical reuse member '+rel);
+ return {...f,local:found.local};
+});}
+const initialFiles=immutableFiles();
 const sourceBytes=initialFiles.filter(f=>f.remote.includes('/source/')&&!f.remote.includes('/test/binaries/')).reduce((n,f)=>n+fs.statSync(f.local).size,0)+['src','lib'].reduce((n,base)=>n+fs.readdirSync(wt+'/'+base).reduce((sum,name)=>{const s=fs.statSync(wt+'/'+base+'/'+name);return sum+(s.isFile()?s.size:0)},0),0);
 let changedBytes=0;if(reuse)for(const base of ['src','lib'])for(const name of fs.readdirSync(wt+'/'+base)){const p=wt+'/'+base+'/'+name,q=reuse+'/prepared/'+base+'/'+name;if(fs.statSync(p).isFile()&&(!fs.existsSync(q)||!fs.readFileSync(p).equals(fs.readFileSync(q))))changedBytes+=fs.statSync(p).size;}
 const disk=fs.statfsSync(wt),free=disk.bavail*disk.bsize,projectedAllocation=reuse?Math.ceil(sourceBytes*1.05)+changedBytes*2+34*1024*1024:sourceBytes*3+32*1024*1024;
@@ -16,14 +23,22 @@ function untar(file){const b=zlib.gunzipSync(fs.readFileSync(file)),m=new Map();
 fs.mkdirSync(dir,{recursive:true});const closure=untar(accepted+'/source-build-closure.tar.gz'),checked=[];
 for(const[n,b]of closure)if(n.startsWith('src/')||n==='lib/region-map.generated.js'){if(sha(fs.readFileSync(wt+'/'+n))!==sha(b))throw Error('accepted build closure differs '+n);checked.push({path:n,sha256:sha(b)});}
 const moduleBytes=fs.readFileSync(accepted+'/wine-assembly.wasm'),moduleHash=sha(moduleBytes);if(moduleHash!=='bd5c84cae31e5fd8ecc27f4305fce607a203a67ef4fcfd1907e01d1e3bb08fc9'||sha(fs.readFileSync(wt+'/build/wine-assembly.wasm'))!==moduleHash)throw Error('accepted module mismatch');
-const oldFiles=JSON.parse(fs.readFileSync(prior+'/transfer-files.json')),plan=JSON.parse(replace(fs.readFileSync(prior+'/serve-plan.json','utf8'))),pins=JSON.parse(replace(fs.readFileSync(prior+'/browser-pins.json','utf8'))),files=[],stage=dir+'/stage';fs.mkdirSync(stage);const overlay=[];
+const oldFiles=initialFiles,plan=JSON.parse(replace(fs.readFileSync(prior+'/serve-plan.json','utf8'))),pins=JSON.parse(replace(fs.readFileSync(prior+'/browser-pins.json','utf8'))),files=[],stage=dir+'/stage';fs.mkdirSync(stage);const overlay=[];
 function add(rel,b){const local=dir+'/prepared/'+rel;fs.mkdirSync(path.dirname(local),{recursive:true});const old=reuse&&reuse+'/prepared/'+rel;if(old&&fs.existsSync(old)&&fs.readFileSync(old).equals(b)&&!['lib/guest-worker.js','lib/guest-thread-host.js'].includes(rel))fs.linkSync(old,local);else fs.writeFileSync(local,b,{flag:'wx'});const remote=prefix+'/source/'+rel,hash=sha(b);files.push({local,remote,bytes:b.length,sha256:hash});plan.paths[rel]=remote;plan.sourceHashes[rel]=hash;overlay.push({local,remote});}
 for(const f of oldFiles.filter(f=>f.remote.includes('/source/'))){const rel=f.remote.split('/source/')[1];if(rel.startsWith('test/binaries/')){if(sha(fs.readFileSync(f.local))!==f.sha256)throw Error('original media changed '+rel);files.push({...f,remote:replace(f.remote)});continue;}let b=rel==='build/wine-assembly.wasm'?moduleBytes:fs.existsSync(wt+'/'+rel)?fs.readFileSync(wt+'/'+rel):fs.readFileSync(f.local);
  if(rel==='lib/apps.js'){const old=fs.readFileSync(f.local,'utf8'),registration=old.split('\n').filter(l=>l.includes('APPS.tiberian_sun_demo =')||l.includes('LOCAL_CANDIDATE_APPS.push(["tiberian_sun_demo"')).join('\n');if(!registration)throw Error('private registration absent');let text=b.toString();const anchor='  // Local candidate apps';if(text.includes(anchor))text=text.replace(anchor,registration+'\n'+anchor);else{const at=text.lastIndexOf('})();');if(at<0)throw Error('apps anchor');text=text.slice(0,at)+registration+'\n'+text.slice(at);}b=Buffer.from(text);}
  if(rel==='index.html'){let text=b.toString();if(!text.includes('value="tiberian_sun_demo"'))text=text.replace('<select id="app-select"','<select id="app-select"');const old=fs.readFileSync(f.local,'utf8'),line=old.split('\n').find(l=>l.includes('value="tiberian_sun_demo"'));const at=text.indexOf('</select>',text.indexOf('id="app-select"'));if(at<0||!line)throw Error('selector anchor');text=text.slice(0,at)+line+'\n'+text.slice(at);b=Buffer.from(text);}add(rel,b);}
 // Seal all current WAT fragments and host JS files, including newly introduced dependencies.
 for(const base of ['src','lib'])for(const name of fs.readdirSync(wt+'/'+base)){const rel=base+'/'+name;if(fs.statSync(wt+'/'+rel).isFile()&&/\.(js|wat|watx|json)$/.test(name)&&!files.some(f=>f.remote===prefix+'/source/'+rel))add(rel,fs.readFileSync(wt+'/'+rel));}
-const helper=fs.readFileSync(__dirname+(consumer?'/tiberian-pump-receipt.js':'/tiberian-selector-receipt.js'),'utf8');let worker=fs.readFileSync(wt+'/lib/guest-worker.js','utf8'),link=fs.readFileSync(wt+'/lib/guest-thread-host.js','utf8');fs.writeFileSync(dir+'/original-guest-worker.js',worker);fs.writeFileSync(dir+'/original-guest-thread-host.js',link);
+let helper=fs.readFileSync(__dirname+(consumer?'/tiberian-pump-receipt.js':'/tiberian-selector-receipt.js'),'utf8');
+if(paint)helper+='\n'+fs.readFileSync(__dirname+'/paint-ownership-receipt.js','utf8')+`\nconst installTiberianPumpReceiptBase=installTiberianPumpReceipt;
+installTiberianPumpReceipt=function(host,getContext,emit){
+ const paint=installPaintOwnershipReceipt(host,getContext,(c,h,read)=>readPaintDamage(c,h,read,self.RegionMap.REGIONS),r=>emit({kind:'paint-ownership',receipt:r}));
+ let paintArmed=false;
+ const pump=installTiberianPumpReceiptBase(host,getContext,r=>{if(!paintArmed&&r.kind==='pump-result'&&r.msg?.[1]===0xf){paint.arm(r.msg[0]);paintArmed=true;emit({kind:'paint-target',hwnd:r.msg[0],identity:r.identity})}emit(r)});
+ return{arm:()=>pump.arm(),close:()=>{let pumpReceipt,paintReceipt;try{pumpReceipt=pump.close()}finally{paintReceipt=paint.close()}const receipt={...pumpReceipt,paint:paintReceipt};try{emit({kind:'paint-final',receipt:paintReceipt})}catch(e){receipt.paintEmitError=String(e)}return receipt}};
+};\n`;
+let worker=fs.readFileSync(wt+'/lib/guest-worker.js','utf8'),link=fs.readFileSync(wt+'/lib/guest-thread-host.js','utf8');fs.writeFileSync(dir+'/original-guest-worker.js',worker);fs.writeFileSync(dir+'/original-guest-thread-host.js',link);
 function patch(s,a,b){if(s.split(a).length!==2)throw Error('unique anchor '+a);return s.replace(a,b);}
 worker=patch(worker,"'use strict';","'use strict';\n"+helper+'\nlet tiberianInputObserver=null;');worker=patch(worker,"  try {\n    if (msg.t === 'renderLegacyEvent') {",`  try {
     if(msg.t==='tiberianInputArm'){const receipt=tiberianInputObserver.arm(msg.hwnd);send({t:'tiberianInputArmed',seq:msg.seq,slot:workerSlot,receipt});return;}
@@ -36,6 +51,12 @@ for(const[rel,text]of [['lib/guest-worker.js',worker],['lib/guest-thread-host.js
 pins.sourceCommit=cp.execFileSync('git',['rev-parse','HEAD'],{cwd:wt,encoding:'utf8'}).trim();pins.moduleSha256=moduleHash;pins.files=files.map(f=>({path:f.remote,sha256:f.sha256}));pins.provenance='Accepted source closure and module verified; matching current committed hosts; private app/selector registration and bounded read-only selector receipt overlays; immutable original fixtures.';pins.observerPatch={workerSha256:sha(Buffer.from(worker)),linkSha256:sha(Buffer.from(link)),helperSha256:sha(Buffer.from(helper)),originalWorkerSha256:sha(fs.readFileSync(dir+'/original-guest-worker.js')),originalLinkSha256:sha(fs.readFileSync(dir+'/original-guest-thread-host.js'))};
 for(const n of ['assets.js','cleanup.js','controls.js','lifecycle.js','input-receipt.js','control.js','transfer.js','prelaunch.test.js'])fs.writeFileSync(dir+'/'+n,replace(fs.readFileSync(prior+'/'+n,'utf8')));
 let browser=replace(fs.readFileSync(prior+'/browser.js','utf8')).replaceAll('started+180000','started+300000').replaceAll('180s deadline','300s deadline');browser=browser.replace('await pause(300);receipt.workerArm','await pause(1500);receipt.workerArm');if(consumer){browser=require('./tiberian-consumer-overlay').consumerBrowser(browser);fs.writeFileSync(dir+'/launch-preflight.js',fs.readFileSync(__dirname+'/tiberian-launch-preflight.js'));}fs.writeFileSync(dir+'/browser.js',browser);
+if(paint){
+ browser=patch(browser,'receipt.workerArm=workerArm;if(workerArm.length)','receipt.workerArm=workerArm;try{if(workerArm.length)');
+ browser=patch(browser,'receipt.trace=await page.evaluate','}catch(e){receipt.workerCloseError=String(e)}try{receipt.trace=await page.evaluate');
+ browser=patch(browser,"save('input-'+seq+'.json',receipt)}","}catch(e){receipt.pointerCloseError=String(e)}finally{save('input-'+seq+'.json',receipt)}}");
+ fs.writeFileSync(dir+'/browser.js',browser);
+}
 let test=fs.readFileSync(dir+'/prelaunch.test.js','utf8').replace('assert.equal(pins.files.length,355)','assert(pins.files.length>=355)').replaceAll('started+180000','started+300000').replaceAll('180s deadline','300s deadline');fs.writeFileSync(dir+'/prelaunch.test.js',test);
 fs.writeFileSync(dir+'/serve-plan.json',JSON.stringify(plan,null,2));fs.writeFileSync(dir+'/browser-pins.json',JSON.stringify(pins,null,2));
 const harness=['browser.js','browser-pins.json','serve-plan.json','assets.js','cleanup.js','controls.js','lifecycle.js','input-receipt.js',...(consumer?['launch-preflight.js']:[])];fs.writeFileSync(dir+'/harness-pins.json',JSON.stringify(harness.map(path=>({path,sha256:sha(fs.readFileSync(dir+'/'+path))})),null,2));for(const n of [...harness,'harness-pins.json'])overlay.push({local:dir+'/'+n,remote:prefix+'/'+n});

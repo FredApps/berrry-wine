@@ -1,5 +1,37 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8: native paint validation succeeds, full damage returns
+
+Fresh isolated paint investigation off explicit coordinator `0ab392bcd` uses
+unchanged original SUN `f70dcf32…`, accepted reference module `bd5c84ca…`,
+all125 build-source checks/478 runtime pins/29 aliases. No engine repair or
+rebuild. Runs `20261008T0232Z-tiberian-paint` and
+`20261008T0237Z-tiberian-paint-target` each pass checked HTTP preflight before
+Chrome,190 actual served hashes, ordinary quit and independent cleanup.
+
+The first run's paint target10003 differs from the observer's assumed10002;
+zero paint rows are an observer limitation. The changed second hypothesis
+binds to actual post-anchor MSG target10002. It records18 native-dialog
+chains with nested original `ValidateRect(hwnd,NULL)` at return58cae6:
+full299×202 damage becomes empty, native marker exit also sees it empty,
+and the next captured same-target paint again has full damage. Four live
+caller spans match original bytes. Native default chaining and validation
+therefore occur in these cycles; the renewing writer remains unknown.
+Raw DLGPROC BOOL/retired guest return is unmeasured. No blanket prevalidation.
+
+The paint observer has six distinct rows/13,833 read bytes/error0, then reaches
+20,000 hooks; negatives stop there. The read-only reader uses checked regions
+directly: exported update_rect_lt/rb can clear empty-but-flagged damage and
+must not be used for a non-mutating observer. JS ownership/nesting/damage,
+caps, actual generated Worker targeting and exception-safe final receipt
+contracts pass. Both inspected ordinary after-click images remain menu;
+campaign/gameplay/FPS/audio stay unqualified.
+
+Next capture actual-target `host.invalidate` with owning EIP/ESP/stack and
+ShowWindow/SetWindowPos/MoveWindow boundaries to locate the first internal
+writer renewing validated damage. Exact identities, absent stale paths,
+caps and lifecycle: [paint handoff](../../ops/handoffs/tiberian-paint-validation-20261008.md).
+
 ## October 8: post-selector paint repeats inside the earlier show pump
 
 Run `20261008T0152Z-tiberian-menu-consumer-runtime` executes source `e13aa2e4b`
