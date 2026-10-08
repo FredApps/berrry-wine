@@ -1,5 +1,19 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Latest ordinary investigation (2026-10-08): corrected client DOWN `408,144`
+was polled in Worker slot0 for Main Menu `18002`; the one visible Install click
+left the reviewed menu unchanged. The check_input-triggered observer did not
+activate in the modal owner slot1. Frozen GetMessage/PeekMessage source forwards
+other-thread FIFO input into the creating thread's queue, so that trigger does
+not cover forwarded input. Empty child receipts do not establish missing
+delivery. Original post-click main code and child return `004f:313f` authenticate;
+the child remains in original segment2 USER.87 DialogBox (call2:313a), yield6.
+Actual enqueue/dequeue, callback entry/return, installation and gameplay remain
+unmeasured. No production correction follows. Evidence:
+`scratch/runs/20261008T004749Z-antara-callback-runtime`; see
+[runtime handoff](../../ops/handoffs/antara-callback-runtime-20261008.md).
+Remote cleanup/release completed00:49:40; one browser only, no native/build.
+
 Latest scoped investigation (2026-10-07): the original installer on full module
 `fb1be916` retains an empty Main Menu. Two actual main/child Worker reads17.166s
 apart prove the child is alive in the Win16 modal pump (EIP12ff40, yield6,
