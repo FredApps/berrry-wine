@@ -1,5 +1,75 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Native full copy and generic rename repair, 2026-10-08
+
+The fresh continuation on explicit base
+`73e7025e696dda27fbe2c3ed36511b41aa04b9ee` reached 100% file copy and the
+reviewed **Installation Complete** prompt. Ordinary Enter then failed with
+**File not found: setup.exe**. This is a demonstrated DOS file-service gap,
+not a timeout or an established interpreter bottleneck. The earlier corrected
+3% run executed only235.9166seconds; it did not spend900seconds copying.
+
+Passive original-media control captures actual DOS return `0540:4c81`, AH56h,
+source `C:\C3DEMO\INSTALL.TMP`950891bytes, destination
+`C:\C3DEMO\SETUP.EXE`, after the real close. The handler returnedfalse and
+left the temporary record unchanged. Actual caller authentication:
+INSTALL.BIN inner MZ053d/image05ed/originalCS0385 yields original `CD21` at
+IP4c7f, returning4c81. The control stops deliberately after that call by a
+bounded observer exception; no guest binary/register edit or CPU trap is
+claimed. Receipt and original48byte span are in
+`scratch/runs/20261008T0515Z-comanche3-rename-control/`.
+
+The generic AH56 repair renames closed guest-created records on mounted C
+within the same directory, retains exact bytes/identity, and removes the old
+name. It refuses missing files, collisions, readonly/hidden/system records,
+open sources, readonly corpus sources, other drives, wildcards and unsupported
+directory moves. Existing basename lookup remains; there is no directory-tree
+or host-write claim. Original DOS reference:
+https://www.pcjs.org/documents/books/mspl13/msdos/dosref40/ (Function56H).
+
+The real-handler regression fails before and passes13groups afterward;
+synthetic native create/write/close/rename/open-old-fails/open-new/read/exit
+passes all four interpreter variants on the temporary box. Existing temp-file,
+EXEC environment/boundary/resident and MCB contracts, regenerated browser
+bundle reproducibility, test tiers and whitespace checks pass. No interpreter
+optimization or performance benchmark was made.
+
+The repaired original installer now preserves actual SETUP.EXE950891bytes,
+C3.EXE945297bytes and RESOURCE.RES55496696bytes. After reviewed100%/Installation
+Complete and ordinary Enter, the wrapper successfully opens the installed
+SETUP.EXE and reaches **Loading Setup ...**, then the reviewed graphical
+**Testing Your CD-ROM Transfer Rate / Performing test, please wait** screen.
+No input was sent to that wait screen. Final capture is black at the unchanged
+wall cap; Setup completion/gameplay are unverified. All11 actual generated
+records are retained through the supported file export, with named hashes in
+`20261008T0520Z-comanche3-rename-repaired/installed-files.json`. No VM checkpoint
+or game run exists. The captured installation blocker is repaired for root
+review. Root's05:43UTC extra host-shadow case exposes the old corpus basename
+after renaming a guest record that shadows it; root owns a fail-closed guard
+and regression before main integration. Actual INSTALL.TMP has no host
+collision. No additional worker runtime is authorized by that review.
+
+Evidence: shared `scratch/runs/20261008T0505Z-comanche3-install-progress/`
+(original full-copy failure and30second actual copying profile),
+`20261008T0515Z-comanche3-rename-control/` (causal original request), and
+`20261008T0520Z-comanche3-rename-repaired/` (repair/native tests/actual payloads).
+Original media unchanged; CPU WASM remains91747769679ce2e661242d0777c1f0fb5aeffe48cbbe2f71ea9443eaf57a45cf.
+The profile's55.38% self samples in existsSync/readFileUtf8 identify cost in
+the retained atomic input harness; no emulator performance cause is inferred.
+The common1800wall/300guest grant deadline05:36:07.354UTC is never reset.
+
+See [the scoped repair handoff](../../ops/handoffs/comanche3-install-progress-20261008.md)
+for exact source/run identity, limitations, hardlink restoration receipts and
+cleanup. Repaired883.85068wall/48.17718guest seconds/482426113dispatches,
+ranOutOfTime=true/guestexited=false, normal clean child exit0. Eight original
+rename transactions now preserve their actual payloads. Original+control+repair
+guest total95.65664seconds<300. Retrieved116files73780681bytes with hashes;
+independent ownedPIDs/groups absent/80pins/baselinesockets before prefix removal.
+Cleanup90.514seconds exceeded90 by0.514seconds; initial cleanup92.332seconds
+also exceeded90, both recorded. No paging/IVT diagnosis repeated, no FPS/audio
+or public deployment claim. Continue from retained installed files, not another
+installation or speculative snapshots.
+
 This is the original Comanche 3 demo DOS media, distinct from Comanche Gold. Original directory: `test/binaries/win98-games-a-d/Commanche3-demo-SW`. INSTALL.EXE is 2,462 bytes (SHA-256 5a5ff6d376642d83ac9b049be952c64deb8898d09b593a0fb90083fed26e9cbb); INSTALL.BIN is 58,119,069 bytes (2bc752ed8feada4f33c78d73e6f036f935f6903af71513bb9fdeb808e138ccf8). No DOSBox substitution or installer autoanswers were used.
 
 ## Native probe, 2026-10-07
