@@ -67,3 +67,23 @@ command to, or mutate a guest control. Later ordinary scene inputs can omit
 `observe`; no forced menu commands or button creation is permitted. Evidence
 must establish the owning chain before choosing a generic fix and meaningful
 regression, then ordinary campaign/mission/movement needs reviewed screenshots.
+
+Authorized run completed 00:18:16.478–00:21:13.626 UTC. Two reviewed ordinary
+shots remain the main menu. Positive owning slot0/tid1 receipts prove the DOWN
+MSG reaches Peek/Get/Dispatch with unchanged local `(92,10)`, then original
+subclass caller `0x57eec7` chains `0x580c00` and original button caller
+`0x5812ff` chains native `0xffff0002`. Native flags become `0x60d`, with capture
+and focus on `0x10004`. UP input imports return target10004/lParam000a005c.
+The 97 records span134ms; observer close confirms slot0 consumed16380/16384
+read bytes, while slot1 produced0 rows/read1827. UP callback and parent command
+remain incompletely observed because the read budget was consumed by paint
+traffic. Do not infer their absence or pick an input fix from this truncated
+trace. Next filter message before state snapshots and validate the collector
+against a bounded paint burst before a new authorized release probe.
+
+Actual cleanup is ordinary quit, Chrome exit0/errors0/streams0. Independent
+00:22:27 confirms driver34328/Chrome34340 absent, noChrome/listeners baseline,
+all355pins and12diagnostic copies unchanged. Only own prefix removed after
+durable copy; RELEASE00:22:36 to queued Antara. No further remote/native grant
+is assumed. `analysis.json`, `result.json` and complete contained evidence are
+published last; no campaign/gameplay or generic source repair is demonstrated.
