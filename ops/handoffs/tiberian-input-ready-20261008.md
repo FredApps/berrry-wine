@@ -59,3 +59,15 @@ was not performed in the previous run; any future key requires a reviewed
 current scene and enough time. Campaign, mission and player-controlled
 movement still require reviewed ordinary-input evidence. No gameplay claim,
 source repair, new build or remote action is demonstrated by this preparation.
+
+The authorized ordinary run has now completed: 00:03:35.994–00:05:18.675 UTC.
+Three reviewed screenshots remain the original main menu. One New Campaign
+click maps to native `(316,213)`, target `0x10004`, origin `(224,203)`, with both
+down/up lParam `0x000a005c`, local `(92,10)`. Enter held 750 ms was actually
+performed and still did not advance. No coordinate repair is justified yet.
+Owning guest callbacks/native tracking/parent command remain unmeasured.
+Cleanup is complete, Chrome exit0/errors0/streams0; independent actual PIDs
+48726/48738 absent and all355pins/13diagnostics unchanged. Prefix removed only
+after verified durable copy. RELEASE board00:05:58 to queued Quake II; further
+remote/native work requires a new parent grant. Source-only callback receipt
+preparation continues; this is not a gameplay qualification.

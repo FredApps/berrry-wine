@@ -306,3 +306,38 @@ no Chrome and baseline listeners. All 355 pins verify again before removing
 only the owned prefix at 23:49:14 and releasing the browser slot to Winamp.
 
 Continuation and exact input blocker: [fresh input worker handoff](../../ops/handoffs/tiberian-input-blocker-20261007.md). Root requested thread rotation after accepting the rendering repair; no further runtime action occurs in this worker.
+
+## 2026-10-08 ordinary pointer receipt and Enter performed
+
+Fresh worker uses exact accepted source `61ac72804` and module `7c6864f8…`,
+original Worker `6f42f2b0…`, all 355 runtime pins and 29 aliases, with page-only
+DOM/renderer receipts. No guest CPU, memory, export, callback or return is
+modified or sampled. Full contained runtime archive and 13 diagnostic outputs
+are in `scratch/runs/20261007T235800Z-tiberian-input-preparation`.
+
+Three ordinary screenshots were personally reviewed: the restored six-button
+main menu, after New Campaign click, and after Enter. All remain the main menu.
+Page `(305,455)` maps to native `(316,213)` through canvas DOM rectangle
+`(10,224,597,511)` and presentation viewport destination `(0,31,597,448)`.
+The actual press targets HWND `0x10004`, retaining origin `(224,203)` and
+local `(92,10)`, lParam `0x000a005c`. Both queued down and up retain that point
+and target. The synchronous trace confirms the native-child routing branch;
+the after-up queue holds WM_LBUTTONUP. This establishes the page producer
+contract for this click; it does not establish owning callback delivery,
+CallWindowProc chaining, native button tracking or parent WM_COMMAND.
+
+Unlike the prior deadline-rejected Enter, a real 750-ms Enter down/up was
+performed after the reviewed after-click scene, well within the actual
+180-second runtime guard. The next screenshot remains the menu. No campaign,
+mission, player-controlled movement or generic input fix is demonstrated.
+Next capture coherent import-boundary receipts in the owning Worker, including
+GetMessage/PeekMessage output, DispatchMessage, CallWindowProc, native button
+state/capture and parent command delivery. Do not infer those from the page
+queue or independent CPU getter samples.
+
+Actual run: 00:03:35.994–00:05:18.675 UTC, Chrome 151.0.7922.108, ordinary
+Worker backend. Ordinary quit closes browser/server, Chrome exits 0, errors
+and remaining streams are 0. Independent 00:05:50 finds actual driver48726 and
+Chrome48738 absent, no Chrome and baseline listeners. All 355 runtime pins and
+all 13 copied diagnostics rehash unchanged before only the owned remote prefix
+is removed. Remote slot released to queued Quake II at 00:05:58.
