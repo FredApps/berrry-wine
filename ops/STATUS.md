@@ -1,7 +1,7 @@
-updated: 2026-10-08T02:24:57.219Z
+updated: 2026-10-08T02:47:59.812Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: Tiberian paint-validation is the next sole worker after Warcraft III exited0 at02:19:04. Budget mode remains one worker maximum, coordinator checks at least ten minutes apart, no routine board posts. Warcraft III Prologue ordinary unit movement is now coordinator-reviewed: Thrall selection plus two opposing right-click orders against fixed terrain, 675 contained artifact hashes verified. Referencef62/module4dc5; FPS/audio/combat/full campaign remain unverified.
+Current workers: Tiberian renewing-writer is the next sole fresh worker after paint-validation exited0 at02:45:59. Actual paint validation succeeds in18 original native-dialog chains, then full damage returns; the renewing writer remains unknown. Root verified1033 contained artifacts and observer/generated-cleanup tests. Budget mode remains one worker, checks at least ten minutes apart. Warcraft III Prologue selection/two opposing move orders remain reviewed; FPS/audio/combat/full campaign unverified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 

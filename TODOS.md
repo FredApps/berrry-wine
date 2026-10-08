@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-paint-validation (sole worker)
+  worker: fresh CLI tiberian-renewing-writer (sole worker)
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Actual0152 selector1 followed by 236 repeated WM_PAINT cycles in earlier ShowWindow pump, not consumer frame. Root570 contained hashes pass. Next distinguish validation versus reinvalidation with owning paint evidence; queued under one-worker budget mode, no blanket fix or gameplay claim.
+  Next: Actual0237 captures 18 native-dialog paint chains: ValidateRect clears damage, then full damage returns. Root1033 contained hashes and observer/generated cleanup tests pass; findings8c6617fbe. Trace the first owning host.invalidate writer after validation, including ShowWindow/SetWindowPos/MoveWindow; require generic regression before repair. No gameplay or raw DLGPROC return claim.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
