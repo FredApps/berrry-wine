@@ -30,22 +30,56 @@ dialog modal and dialog caption/child routing tests pass. A requested optional
 worker-menu test is absent in this checkout; its failed invocation is retained
 and is not counted as a pass.
 
-Canonical `bash tools/build.sh` stops at the preexisting region-census gate:
+The initial canonical `bash tools/build.sh` stopped at a preexisting gate:
 `test/test-toyvm-paging.js: 0 -> 2 raw region literal(s)`, already in base HEAD.
-No unrelated file was modified. A separately logged run excluding only that
+No unrelated file was modified by this worker. A separately logged run excluding only that
 failing gate passes all remaining mandatory gates and the WATX compile:
 module SHA-256 `4dc5ac2c477c71c64a42530562e4cf51e145bd966232e15330acfc01753d54de`,
-1,721,405 bytes. This is a matching compiled module, not a full-build pass.
-Root has been notified to resolve the baseline gate separately.
+1,721,405 bytes. That partial run alone was not a full-build pass.
+
+Root subsequently supplied `7b9f0c344` (own cherry-pick `f62ab3c9f`), naming
+the independent ToyVM guest page directory without changing fixture bytes.
+The previously failing `node tools/region-census.js --gate` now passes. A full
+canonical rerun resumed at 00:17:29 after root recovery, passing preflight
+at 2,877,009,920 bytes free with actual CLI/build absence. **Full canonical
+build passes**, all mandatory gates, WATX compilation and data-overlap checks;
+module hash is unchanged. Root's ToyVM paging fixture regression also passes
+all four variants. Local native ownership released after both completed,
+2,918,694,912 bytes free. Earlier failed and partial-build logs remain evidence.
 
 Local native slot claimed once at 00:12:11 with 2,834,591,744 bytes free and
 actual CLI/build absence; released 00:14:22 after sequential tests/build.
 Fixture calc.exe is an ignored symlink to the shared original fixture.
-Original-media ordinary installation preparation will reuse the predecessor
+Original-media ordinary installation preparation reuses the predecessor
 503-pin harness/media package but regenerate every source/module pin from
 this committed worktree, retaining the original Worker and private registration.
-No remote transfer/browser has been started; Q2 owns the global browser slot,
-and root queue grant plus independent actual cleanup preflight remain required.
+No remote transfer/browser has been started; Tiberian owns the global browser
+slot. Root granted Antara the next slot at 00:18:31, conditional on actual
+Tiberian release and independent PID/socket/TTL/free-space checks.
+
+Preparation is now complete in the same evidence folder: `READY.json` records
+candidate `f62ab3c9f1223ab47cf623470f6343d508257878`, module hash above,
+503 pins (451 source, 42 original fixtures, 10 harness files), archive
+`8007a9b5a3f1fb05a9ef8b861994ffeb936fdd1542688e2241c591d878420031`,
+42,321,442 bytes. Runtime source and module are rebuilt from this worktree;
+the raw unmodified registry is also archived, while the served registry adds
+the unchanged predecessor private registration. Source icons excluded by
+sparse checkout were restored before final preparation. Real HTTP tests check
+all source/alias HEADs and module/Worker/renderer/registry/original SETUP GET
+hashes, with no pending streams. All 503 archive members were also rehashed
+against the transfer manifest. The existing bounded pointer observer's
+forward-once/restore/no-export tests pass. No remote authorization file exists.
+
+Full canonical build passes and the queued grant is recorded. After Tiberian release,
+write a fresh scoped `remote-authorization.json` only after independently
+checking predecessor PIDs, Chrome/listeners, TTL and free space. Then run
+`node /home/user/wine-assembly/scratch/runs/20261008-antara-client-origin-fix/transfer.js`
+and `node /home/user/wine-assembly/scratch/runs/20261008-antara-client-origin-fix/control.js launch`.
+Controls use remote prefix `/home/user/antara-client-origin-20261008` and
+Puppeteer `/home/user/q2-tools-20261008/node_modules`. Transfer remains bounded
+to 240 seconds; browser deadline is 120 seconds, followed by cleanup reserve.
+Read the sandbox skill before remote work. Inspect each actual scene before
+click/key commands, using the driver's existing scene receipt validation.
 
 Installation and player-controlled gameplay remain unqualified. The prior
 ordinary menu click only measured the host packet; actual Antara guest callback
