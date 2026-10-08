@@ -970,14 +970,14 @@ commit output — do not assume your hunks landed.**
   Done: Identify the route failure and either validate the actual game transfer/readback with reviewed images or record a precise blocking dependency. Link unresolved terrain defects separately; a zero-transfer run is not a rendering pass.
   Evidence: ops/handoffs/mig-pirates-stretch.md; ops/handoffs/mig-pirates-stretch-recipe.md
 
-- [ ] Verify Quake II world traversal beyond a changed frame
+- [x] Verify Quake II world traversal beyond a changed frame
   id: Q2-MOVEMENT-FOLLOWUP
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   created: 2026-10-02T04:00:31.545Z
   created-by: user-request via ops-dashboard
   candidate: quake-2-demo-installer
-  Next: Source preparation behind Antara/Arx runtime queue. October2 world/weapon-change and October6 +map demo1 software60sec runs do not prove physical traversal. Prepare finite forward/reverse/idle ordinary keys with reviewed fixed world landmarks, exact source/module/renderer provenance. No redundant menu capture or performance claim.
+  Next: Complete: original ordinary forward/reverse/idle traversal independently reviewed on WebGL2534731b3 and software069662726. Runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain reference identities; no redundant run.
   Done: Reviewed before/after world captures and position/landmark evidence demonstrate actual traversal, with exact build, route and renderer provenance. Retain texture/resource checks and distinguish movement from animation or camera-only changes.
   Evidence: ops/handoffs/mig-render-q2.md
 
@@ -1163,7 +1163,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   prev-owner: claude:1863d2b5-bc58-4c0b-9c15-00fc951f0256 (fleet stopped)
   created: 2026-10-06T02:09:48.337Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Quake II ordinary traversal qualified on WebGL2534731b3 and software069662726 for their recorded reference build. TR3/Uplink later gameplay retained. Crimsonland WebGL splash exits before gameplay; fresh owning fault/exit capture queued after Antara. Winamp exception work held; fixture identity already established. Aggregate remains active for longer gameplay routes, Pirates/heavy titles and PBO causal diagnosis. No redundant sweep.
+  Next: Q2 both-backend ordinary traversal, Crimsonland WebGL Tutorial and AlienShooter WebGL Mission01 now qualified on documented reference builds. Fresh WarcraftIII Prologue ordinary-browser lane reconciles retained history and original fixtures next. Winamp/Arx held; aggregate remains open for longer routes, heavy titles/Pirates and PBO cause. No redundant sweep.
   Done: Status table for the full GL/D3D set in docs (software + WebGL per app, with run ids), and each fixed app has a reviewed in-game screenshot and commit on main.
   Evidence: memory project_gl_d3d_corpus_goal (27-app set, 2026-09-22); tools/gfx-app-census.js; tools/gl-name-census.js
 
@@ -1303,9 +1303,17 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Validate Alien Shooter Mission 01 control on WebGL
   id: GLD3D-ALIEN-SHOOTER-WEBGL-20261008
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI alien-shooter-webgl finishing evidence
-  Next: Original Mission01 reached on WebGL reference f62/module4dc5; root reviewed movement captures. Actual browser released22:41. Finish immutable evidence, aiming/backend review and explicit findings commit; no FPS/audio/combat-completion claim.
+  worker: completed; actual exit0 2026-10-08T01:26:18Z
+  Next: Complete scoped WebGL Mission01 movement/aiming acceptance; root reviewed images/backend and all109 contained hashes. Findings integrated bf8d2e134; run20261008T0114Z-alien-shooter-webgl. No FPS/audio/combat-completion or current-main runtime claim.
   Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
   Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
+
+- [ ] Warcraft III original Prologue ordinary WebGL gameplay
+  id: GLD3D-WARCRAFT3-PROLOGUE-20261008
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI warcraft3-prologue
+  Next: Reconcile retained September28 controlled Thrall gameplay against main, verify original registered media and matched accepted host/module, then prepare ordinary browser Prologue selection and move orders. Queue after Antara and Tiberian actual release. No local browser/heavy tests.
+  Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
