@@ -1,7 +1,7 @@
-updated: 2026-10-08T01:48:50.432Z
+updated: 2026-10-08T01:54:12.179Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: fresh antara-install-action, tiberian-menu-consumer, and warcraft3-prologue. Antara owns the sole temporary browser slot; Warcraft finalizes its completed diagnostic run. Antara actualhover selection1 authenticated, now targets reserved DOWN Install action. Tiberian actual NewCampaign selector9→1 authenticated but remains menu; next is pump exit/consumer. Both new-game lanes remain incomplete. AlienShooter WebGL movement/aim accepted; no new FPS/audio claims.
+Current workers: antara-install-action finalizes selection0/default-action evidence and restores proven four-step hover with reserved DOWN budget; tiberian-menu-consumer takes next temporary browser slot; fresh warcraft3-campaign-world prepares efficient observed menu route then Prologue/Thrall. Antara actual browser released01:51:18; root owns bx_jk5sz7qx. Both new-game lanes remain incomplete; Warcraft fresh gameplay unqualified.
 
 Comanche 3 paging correction is integrated on main72e306790 with foundation4b0955e79. All47 correctness groups passed; original paged16KiB copy preserves IVT and installer progresses to Loading Install for75s without CPU faults. Installation and gameplay remain unqualified. No paging worker is currently active.
 
@@ -13,4 +13,4 @@ Completed ops task maincdc186b1:731 manifests audited,24 named references locali
 
 Other retained results: Drakan lazy-read repair accepted with browser level Threads on/off (a1710870/ea63ceed). Daggerfall DOSBox dungeon movement reviewed (724637d9/fe7cfb95), not nativeToyVM qualification; direct ToyVM/DOS priority remains open after CALLgate/RETF/cache fixes4f1e083b/fcd391dd/c2cded63.
 
-Constraints: all browsers and heavy benchmarks on separate temporary boxes; active lease and owner are recorded on messageboard (Antara action current on bx_jk5sz7qx; Tiberian consumer queued). One browser globally; disk above2GiB and exact preflight before jobs. Fresh short worker briefs, batched checks, config unchanged. Claude fleet stopped, no pane driving; Heroes II laptop-owned. Shared HEAD/index untouched; explicit-path commits from coordinator worktree. No public deployment. Live8098 reader uses older wine-assembly-web checkout; main changes are not claimed live there.
+Constraints: all browsers and heavy benchmarks on separate temporary boxes; active lease and owner are recorded on messageboard (Tiberian consumer next on bx_jk5sz7qx; then next Antara action and Warcraft world). One browser globally; disk above2GiB and exact preflight before jobs. Fresh short worker briefs, batched checks, config unchanged. Claude fleet stopped, no pane driving; Heroes II laptop-owned. Shared HEAD/index untouched; explicit-path commits from coordinator worktree. No public deployment. Live8098 reader uses older wine-assembly-web checkout; main changes are not claimed live there.

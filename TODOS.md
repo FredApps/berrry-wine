@@ -1314,6 +1314,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-WARCRAFT3-PROLOGUE-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI warcraft3-prologue
-  Next: Actual0134 reached original profileABC/Create/Select and Prologue selection screen on owning OpenGL WebGL; root screenshot reviewed, level/gameplay unqualified. Final evidence/handoff pending; next fresh phase reuses actual hover/longhold route then Prologue/map/Thrall within reviewed budget. Browser released46:42; Antara current, Tiberian next.
+  worker: fresh CLI warcraft3-campaign-world
+  Next: Original0134 profile/Create/Select/Campaign route sealed; root638hashes and campaignimage verified, findings2e756d6fb. Fresh campaign-world worker uses observed hover/5000ms route efficiently then actualPrologue/map/Thrall movement. Queue after Tiberian and nextAntara; gameplay stillunqualified.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
