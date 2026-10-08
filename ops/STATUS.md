@@ -1,7 +1,7 @@
-updated: 2026-10-08T11:19:16.554Z
+updated: 2026-10-08T11:33:33.414Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: sole Tiberian campaign-recovery; Comanche exited0 at11:08:48 after root-reviewed cockpit, forward flight and right bank. Comanche browser cleanup independently verified, runtime handed to Tiberian11:07 on fresh bx_57v6b8fr. Tiberian exact old Worker replay still returns menu paint; campaign error cause unresolved. No parallel browsers or worker refill.
+Current workers: sole fresh tiberian-menu-pump-owner launched11:33:07; prior recovery worker exited0. Exact accepted Worker replay still loops on parent10002 WM_PAINT after New Campaign selector1, never reaching1000c. Active causal investigation: producer/validation/pump ownership for10002, preserving earlier10003 repair. Comanche flight accepted and pushed45da62521; no new Comanche worker.
 
 Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Private local registration only; normal corpus launch integration remains queued. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
 
