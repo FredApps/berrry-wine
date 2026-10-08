@@ -1,5 +1,24 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Actual Install action2026-10-08: reserved DOWN now proves correctclient408,144
+reached originaldefault4:24e8 with authenticatedframe/object008f:655a,
+gate011c, savedpoint28,277 and selection0. SingleordinaryMOVE retained only
+NCHITTEST/SETCURSOR, no childMOVE/USER125; cause remains unmeasured. Child
+28rows/5636bytes/errors0/omitted0; main rawcaps remain explicit limits. Original
+menu unchanged; no installation/gameplay. Actual0144 preserves single-step
+source296c/Worker3fa2. Rootrequested four-step hover restoration c2034dba9
+keeps independentDOWNACK/budget; generatedorder/flood tests and new0154preflight
+pass, source-only/notbrowser-tested. See
+[Install action handoff](../../ops/handoffs/antara-install-action-20261008.md).
+
+Install continuation2026-10-08: precise private collector now selects original
+3:dad6 USER46/59/42/124 return candidates only during reserved DOWN/input
+context. Offline authentication requires originalseg3 caller and savedseg4:248d
+plus critical248b selector targeting the actual owningseg3. Wrong caller API
+flood produces zero owner reads; code/selector negatives pass. New0140 Worker3fa2
+is prepared, not executed; old0122 hover proof and prepared0133 Worker9beb remain
+separate. See [Install action handoff](../../ops/handoffs/antara-install-action-20261008.md).
+
 Actual hover/action observation2026-10-08: live005f/base1a0000 USER125 return
 4:2427 authenticates against originalsegment4. Frame-derived object008f:655a
 has+1c6=011c, savedpoint408,144 and selection+1e6=1; ordinary hover turns
