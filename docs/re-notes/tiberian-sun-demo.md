@@ -1,5 +1,70 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8 focused command: selector 1 authenticated, consumer progress unresolved
+
+Run `20261008T0126Z-tiberian-focused-command` uses source `b4acd9812`
+(explicit base `b095c5def`), accepted module
+`bd5c84cae31e5fd8ecc27f4305fce607a203a67ef4fcfd1907e01d1e3bb08fc9`
+and original SUN
+`f70dcf32a25fe63cde2dd16bcf60feea93a98c94fc371ee97446df247160414b`.
+No rebuild or production repair. Unique validated prefix preparation uses
+normal baseline extraction and a sealed overlay. All 125 build-source entries,
+478 runtime pins and 29 aliases match; generated Worker/Link, guard/forwarding,
+fresh-prefix and actual old-helper/current-helper 500-paint controls pass.
+
+The ordinary reviewed click at page `(306,455)` targets HWND `10004`.
+At 01:29:41.123, owning slot0/tid1 records original subclass caller `57eec7`
+chaining parent `580ac0`, then caller `580bed` chaining native dialog
+`ffff0004`. Original DLGPROC GetWindowLongA return `4dea72`, HWND `10002`,
+extra index8 has coherent callback arguments `[10002,111,1559,10004]`.
+It returns pointer `074ff488`, initially9; the next selector-change receipt
+reads **1** at that pointer. Three caller spans and the 96-byte DLGPROC span
+match immutable original PE bytes exactly. This authenticates command delivery
+and the resulting selector value, unlike the earlier initial9 observation.
+Handler exit alone still does not establish callback return.
+
+Selector1 is observed with reported EIP `56291b`, ESP `074ff41c`, in the original
+message pump's block after DispatchMessage and containing PeekMessage. This
+getter is not an instruction-retirement trace. Original menu
+entry `4de670` initializes9, installs the stack-local pointer with SetWindowLongA
+at `4de6d1`, calls pump `58cdb0` at `4de73e`, then checks selector at `4de9dd`.
+Once non9, it calls dialog teardown `58c960` and returns the selector. Its sole
+matched relative caller `4dbf4b` selects return1 via jump-table index2 at
+`4dcdc0`, reaching `4dbf8a`; the subsequent static path creates resource94
+with DLGPROC `4dce30` at `4dbfc0`. This is static interpretation, not measured
+execution of the consumer or campaign dialog. Heuristic find_fn suggested
+interior `4de6a8`; the full aligned listing starts at the actual `4de670` entry.
+An exploratory listing at `562900` is misaligned before `56291b`; the aligned
+instruction at the measured boundary is independently decoded.
+
+All three personally reviewed ordinary captures remain the six-button main
+menu, including a later capture about65 seconds after the click. Campaign,
+mission and player-controlled gameplay remain unqualified. The observer retains
+8 rows, then reaches its 64KiB read cap after recording selector1; worker1 has
+0 rows/48 reads. No absence after that cap proves missing teardown or consumer
+execution. Next use a bounded owning import observer focused on the `562830`
+pump's Get/Peek/Dispatch results and caller stack after selector1, with reserved
+budget for the first empty queue result, DestroyWindow and new-dialog creation.
+Measure pump return versus continued messages before considering a generic fix.
+
+Actual served full/range producer hashes verify184 bodies with zero drift,
+including module and both Worker loads. Five optional shell assets return
+expected404 without runtime errors. Fresh local matching HTTP passes before
+launch. An extra remote test incorrectly queries every plan path including
+unpinned optional `build-info.js`; it fails404 and the shell launches anyway.
+Corrected matching source/alias preflight passes507HEAD/5GET/range/404/drain at
+01:29:20, ten seconds after launch and before any input. This preflight ordering
+error is retained explicitly; it does not satisfy the requested remote-before-
+launch ordering. Future control must refuse launch after any preflight failure.
+
+Actual runtime 01:29:10–01:31:04.295, original deadline01:34:10 preserved.
+Ordinary quit yields Chromeexit0/errors0/streams0. Independent01:31:12 verifies
+driver34662/Chrome34674 absent, noChrome, exact baseline sockets and all478pins.
+All15 actual files are copied and hash-verified before scoped prefix removal
+01:31:12.442; root adopts box `bx_qms4q3z7` and retained Puppeteer.
+Sole remote slot released to root/queued Warcraft III. Detailed continuation:
+[focused command handoff](../../ops/handoffs/tiberian-focused-command-20261008.md).
+
 ## October 8 accepted dialog module: original campaign still unchanged
 
 Matching source `b1d78b9f0`, accepted retained module `bd5c84ca…`, current
