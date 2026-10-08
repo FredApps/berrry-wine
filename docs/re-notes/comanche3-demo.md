@@ -1,5 +1,36 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Authenticated Haystack selection and loading, 2026-10-08
+
+Current clean source `249b2d3986f9992d7432717acc61614f58653d1b` reaches
+Haystack briefing, map, and “Downloading Mission Parameters…” using public
+browser keyboard input and the original installed files. No cockpit or ordinary
+player-controlled flight was observed. No generic engine repair is justified.
+The held-key lifecycle and BIOS mirror policy remain unchanged.
+
+Evidence: `scratch/runs/20261008T0718Z-comanche3-haystack-selection/`.
+Original executable loader decryption authenticates live CS2b code at virtual
+base `0x10000000`: hardware reader `86cc`, queue consumer `80fe`, and menu
+consumer `68559`/Enter comparison `685a3`. Haystack dispatch has 321/321 exact
+original decoded instruction-byte matches and returns `c2m1` through `2450c`.
+The resource menu also names `Haystack~c2m1`. This supersedes the previous
+unmapped hardware-reader receipt without inventing a selection cause.
+
+Original French manual printed20 documents roster Up/Down+Enter; printed65–67
+documents briefing/map Next. Reviewed screen044 is the mission briefing;
+`canvas-mission-map.png` is the map; final captures remain loading art.
+Resource reads and a guest-created temporary file continue changing during
+loading. This does not authenticate a stall, duplicate-input cause, or bottleneck.
+
+One Chrome151/tailcall386/paced10MIPS/JIT-off/silent private dashboard fixture
+run lasted1773.004 wall seconds/140.186625 guest seconds under one deadline.
+Initial port observer used a reader that can update paging Accessed bits;
+strict preservation before its correction is not established. Later pure JS
+observer reads preserve full RAM/registers; viewport helper corrections are
+recorded. Cleanup completed92.489 seconds, exceeding allowance by2.489.
+See `ops/handoffs/comanche3-haystack-selection-20261008.md` for limitations
+and the next bounded causal investigation. No production deployment claim.
+
 ## Web held keyboard repair and operation menu, 2026-10-08
 
 Generic web lifecycle repair `4a75293a249b0968e50e4a8bb61cf9ed4963624e`

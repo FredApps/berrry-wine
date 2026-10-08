@@ -1239,11 +1239,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-COMANCHE3-DEMO-20261007
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche3-haystack-selection (sole assigned worker)
+  worker: none (Haystack worker exited0; resource-loading continuation queued)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Web key lifecycle fix integrated d87b54eca; original browser route reaches Gallant Venture / Haystack mission menu, ordinary Enter attempts remain there. Root180 hashes and screenshots reviewed; no cockpit/gameplay. Next authenticate the mission-selection consumer and input/file path, then generic repair if demonstrated and ordinary controlled flight. Final keypad candidate can be exercised in this run. Reuse installed originals, no installer/paging or blind timeout replay. Original French manual/reference card now in scratch/comanche-manual-route-20261008; printed20 confirms Duty Roster arrows/Enter but does not explain Haystack.
+  Next: Current final input source reaches Haystack briefing, map and mission loading. Root reviewed map/loading captures and316 contained SHA; no cockpit or flight. Original321 mission-dispatch spans authenticated, no generic selection defect found. Loading file grows532480 to4608000 bytes: identify loader completion and measure observation overhead before choosing bounded next run; no repeated Enter or blind timeout extension. Evidence20261008T0718Z-comanche3-haystack-selection.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
