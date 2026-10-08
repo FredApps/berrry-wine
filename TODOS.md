@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-install-action
+  worker: fresh CLI antara-four-step-action
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual0122 originalhover selection1 authenticated; root84hashes verified. Newthreephase reservedDOWN observer integrated29f48b0e4; fresh actionworker targets4:2488→3:dad6 Install vs default4:24e8. Source/JS now, remote after Warcraft actualcleanup/review. Installation/gameplay unqualified.
+  Next: Actual0144 reserved DOWN authenticated default4:24e8/selection0 after singleMOVE. Earlier four-step hover proves selection1. Root81hashes and finalcombined0154 driver tests pass; fresh worker executes reviewed four-step hover plus independent DOWN ACK on temporary box after Tiberian release58:34. Installation/gameplay remain unqualified.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
