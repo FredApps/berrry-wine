@@ -151,3 +151,49 @@ A later standard build of the moving shared worktree stopped at new duplicate
 Glide `grFinish`/`grFlush` handlers (`final-main-build.log` in the same scratch
 directory). The canonical artifacts were refreshed with the compiler directly;
 this is not an entirely green standard-build result.
+
+## Original Mission 01 on browser WebGL, 8 October 2026
+
+Run `scratch/runs/20261008T0114Z-alien-shooter-webgl` reaches the original
+registered Mission 01 through graphics OK, New Game, Campaign, Continue.
+The real browser clock is used; no CLI tick recipe, guest writes, game patch,
+or blind Enter is involved. Each menu click follows a reviewed highlighted
+target and trusted desktop mouse motion. The native graphics dialog's OK click
+has a separate trusted DOM receipt at client `(342,374)`, with pointer lock off.
+The later DOM receipts also report unlocked motion; relative desktop commands
+remain usable without assuming that absolute Puppeteer coordinates reach a
+locked game cursor.
+
+`mission-settled.png` to `right-released.png` shows the soldier crossing the
+grass under held ArrowRight; `down-released.png` retains a later ordinary
+ArrowDown comparison. `aim-right.png` and `aim-left-final.png` show opposite
+weapon orientations after trusted horizontal mouse motion. The early W capture
+overlaps the intro camera movement and is not the strongest movement evidence.
+The HUD remains at HP 110. This qualifies movement and aiming in Mission 01;
+combat, mission completion, audio and FPS were not measured.
+
+This is an explicitly accepted reference runtime, not a new current-main build:
+source `f62ab3c9f1223ab47cf623470f6343d508257878`, WASM SHA-256
+`4dc5ac2c477c71c64a42530562e4cf51e145bd966232e15330acfc01753d54de`.
+The original EXE SHA matches `aae2547c…`; the unchanged accepted registry selects
+its original manifest. All 963 package pins and 446 Git source pins pass.
+Independent old companion-file hashes were unavailable: current original fixture
+hashes and registered manifest sizes are sealed, rather than claimed to be an
+independent installer re-extraction. Both host and owning render Worker report
+the neutral D3D8/D3D9 WebGL backend. All 156 full and 333 range HTTP reads match
+their pinned bytes. Four strict unlisted requests are retained honestly:
+`api/auth/user`, `test/binaries/tlbs/stdole2.tlb`, its `.part000` path, and
+`icons/apps/alien_shooter.png`. No renderer fault is observed.
+
+Ordinary harness quit at 01:21:53.394Z closes Chrome with exit 0, closes the
+server and drains all streams. Independent checks find both owning PIDs absent,
+no Chrome, exact baseline sockets and unchanged pins. All 65 actual capture
+files were downloaded and hash-checked before removing the scoped remote prefix.
+The root-owned sandbox and Puppeteer tools were retained for its lifecycle owner.
+
+The actual native title is `AlienShooter`, which exposed a spaced-name matcher
+in the scoped harness. The observed run used separately recorded trusted native
+input; the final adapter recognizes both title spellings and refuses GPU windows
+as native setup. Its regression passes, but that small adapter correction was
+made after the run. The archives preserve the exact executed adapter at
+`3282325e6`; do not substitute the final branch hash for the runtime's source.

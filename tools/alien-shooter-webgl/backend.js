@@ -6,4 +6,5 @@ function assertWebGL(s) {
   if(!host.length||!owning.length||host.some(e=>e.backend!=='webgl'||e.closed)||owning.some(e=>e.backend!=='webgl'))throw Error('live host and owning D3D8/D3D9 neutral WebGL endpoints required');
   return {host,owning,backend:'webgl',scope:'D3D8 adapter through neutral D3D9 WebGL backend; performance/audio unknown'};
 }
-module.exports={assertWebGL};
+function isNativeSetup(s){return s.windows.some(w=>w.visible&&!w.gpuLayer&&/alien\s*shooter|graphics|setup|configuration/i.test(w.title));}
+module.exports={assertWebGL,isNativeSetup};
