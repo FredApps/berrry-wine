@@ -2,8 +2,8 @@
 // Private diagnostic overlay only. Decode the existing --trace-win16 stream;
 // never confuse its API-handler exit with a guest callback's RETF.
 const MARKERS = Object.freeze({0xca16a9eb: ['route', 6], 0xca16a9f0: ['call', 15], 0xca16a9ef: ['handler-exit', 6]});
-const INPUT = new Set([0x201, 0x202, 0x203, 0x111, 0x20, 0x21, 0x84]);
-const USER = new Set([18, 19, 22, 23, 28, 29, 50, 53, 76, 87, 107, 108, 111, 114, 122, 124, 218, 219]);
+const INPUT = new Set([0x200, 0x201, 0x202, 0x203, 0x111, 0x20, 0x21, 0x84]);
+const USER = new Set([18, 19, 22, 23, 28, 29, 50, 53, 76, 87, 107, 108, 111, 114, 122, 124, 125, 218, 219]);
 
 function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = () => performance.now(), baselineTrace, maxRows = 128, maxBytes = 32768, durationMs = 8000, maxWords = 65536, maxCpuMs = 100}) {
   if (baselineTrace !== 0) throw Error('pinned trace-disabled baseline required');
@@ -27,10 +27,12 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
     function span(guest, length) {
       if (bytes[phase] + length > half) return {omitted: 'phase byte cap'};
       const wa = checked(()=>e.guest_to_wasm(guest)) >>> 0;
-      if (wa < 256 || wa + length > buffer.byteLength) throw Error('unmapped span');
-      guard();
+      if (wa < 256 || wa + length > checked(()=>buffer.byteLength)) throw Error('unmapped span');
+      const copied = [];
+      const view = checked(()=>new Uint8Array(buffer, wa, length));
+      for (let i = 0; i < length; i++) copied.push(checked(()=>view[i]));
       bytes[phase] += length;
-      return {guest, wasm: wa, bytes: Array.from(new Uint8Array(buffer, wa, length))};
+      return {guest, wasm: wa, bytes: copied};
     }
     const ss = result.get_sreg_ss >>> 3, cs = result.get_sreg_cs >>> 3;
     result.ssBase = checked(()=>e.win16_seg_base(ss)) >>> 0; result.ssLimit = checked(()=>e.win16_seg_limit(ss)) >>> 0;
@@ -47,6 +49,36 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
     // can still name the start of the block that pushed the API arguments.
     const ret = record.kind === 'call' ? record.words[1] : result.get_eip;
     if (ret >= result.csBase + 48 && ret + 48 <= result.csBase + result.csLimit) result.caller = span(ret - 48, 96);
+    // Existing Pascal frame chain at the original CallWindowProc boundary.
+    // Retain candidates for OFFLINE original-relocation authentication. Do
+    // not presume a selector names original segment 4 or that BP+6 is an
+    // application object until the saved caller code authenticates.
+    if (record.kind === 'call' && ((record.words[0] === 0x2007a && [0x200,0x201,0x202].includes(record.words[5])) || record.words[0] === 0x2007d)) {
+      result.savedFrames = [];
+      const seen = new Set(); let cursor = bp;
+      for (let i = 0; i < 3 && !seen.has(cursor); i++) {
+        if (cursor < 32 || cursor + 10 > result.ssLimit) break;
+        seen.add(cursor);
+        const frame = span(result.ssBase + cursor, 10);
+        if (!frame.bytes) break;
+        const u = at => frame.bytes[at] | (frame.bytes[at+1] << 8);
+        const saved = {bp: cursor, frame, previousBp: u(0), returnOffset: u(2), returnSelector: u(4), objectOffsetCandidate: u(6), objectSelectorCandidate: u(8)};
+        result.savedFrames.push(saved);
+        if (saved.returnSelector && (saved.returnSelector & 7) === 7) {
+          saved.codeBase = checked(()=>e.win16_seg_base(saved.returnSelector >>> 3)) >>> 0;
+          saved.codeLimit = checked(()=>e.win16_seg_limit(saved.returnSelector >>> 3)) >>> 0;
+          if (saved.returnOffset >= 208 && saved.returnOffset + 48 <= saved.codeLimit) saved.code = span(saved.codeBase + saved.returnOffset - 208, 256);
+        }
+        // Only the same owning data/stack selector, a bounded offset, and a
+        // non-null candidate. No historic 008f/655a address is baked in.
+        if (saved.objectSelectorCandidate === result.get_sreg_ss && saved.objectOffsetCandidate && saved.objectOffsetCandidate + 0x1e8 <= result.ssLimit) {
+          saved.objectHeaderCandidate = span(result.ssBase + saved.objectOffsetCandidate, 4);
+          saved.objectGatesCandidate = span(result.ssBase + saved.objectOffsetCandidate + 0x1c4, 36);
+        }
+        if (saved.previousBp <= cursor) break;
+        cursor = saved.previousBp;
+      }
+    }
     return result;
   }
   function add(record, heavy = false) {
@@ -68,7 +100,7 @@ function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = (
   }
   function input(packed) {
     const msg = packed & 0xffff;
-    if (live() && (msg === 0x201 || msg === 0x202)) {
+    if (live() && (msg === 0x200 || msg === 0x201 || msg === 0x202)) {
       if (msg === 0x202) phase = 'up';
       add({kind: 'input-poll', packed: packed >>> 0});
     }

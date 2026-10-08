@@ -86,6 +86,25 @@ clock=0;const rawCap=createObserver({...options,maxWords:32,cpuNow:()=>0});rawCa
 assert.equal(rawCap.status().traceWords,32);assert.equal(rawCap.status().active,false);rawCap.activate('raw','up');for(let i=0;i<1000;i++)rawCap.word(123);assert.deepEqual(rawCap.status().raw,{down:32,up:32});assert.throws(()=>rawCap.activate('raw','up'),/rejected/);
 let cpuClock=0;const cpuCap=createObserver({...options,cpuNow:()=>cpuClock++,maxCpuMs:2});cpuCap.activate('cpu');for(let i=0;i<100;i++)cpuCap.word(123);assert.equal(cpuCap.status().traceWords,2);assert.equal(cpuCap.status().active,false);
 const throwHost={...originals,log_i32(){throw failure;}},throwProbe=install(throwHost,options);throwProbe.activate('throws');assert.throws(()=>throwHost.log_i32(1),e=>e===failure);assert.equal(throwProbe.status().active,false);throwProbe.stop();
+// An owning queue MOVE establishes context without a host poll. Capture the
+// bounded saved chain and object fields, preserving memory byte-for-byte.
+clock=0;
+const gateMemory=new ArrayBuffer(65536), gateView=new DataView(gateMemory);
+function put(at, words){words.forEach((v,i)=>gateView.setUint16(at+i*2,v,true));}
+put(0x3120,[0x140,0x122f,0x47,0x200,0x87]);
+put(0x3140,[0x160,0x24e8,0x5f,0x200,0x87]);
+put(0x3160,[0x160,0x1eb1,0x47,0x200,0x87]);
+put(0x33c4,[99,1]);put(0x33e2,[408,144,1]);
+const preserved=Buffer.from(gateMemory).toString('hex');
+const gateEx={...ex,win16_seg_limit:()=>65536,win16_seg_base:i=>i===8?0x2000:i===11?0x4000:0x3000};
+const gates=createObserver({...options,getExports:()=>gateEx,getMemory:()=>gateMemory});gates.activate('hover');
+for(const v of [0xca16a9eb,98306,0x200,0,0x00900198,98306,0])gates.word(v);
+for(const v of [0xca16a9f0,0x2007a,0x2120,0,0,0,0x200,0,0,0,0,0,0,0,0,0])gates.word(v);
+const savedFrames=gates.status().rows.at(-1).owner.savedFrames;
+assert.equal(savedFrames.length,3);assert.equal(savedFrames[1].returnSelector,0x5f);
+assert.equal(savedFrames[1].code.bytes.length,256);
+assert.deepEqual(savedFrames[1].objectGatesCandidate.bytes.slice(30),[152,1,144,0,1,0]);
+assert.equal(Buffer.from(gateMemory).toString('hex'),preserved);gates.stop('test');
 async function coordination(){
  const acks=[];function fake(slot){const l={slot,antaraWin16Ready:true,_seq:0,_pending:new Map()};l.worker={postMessage(m){acks.push(m);const p=l._pending.get(m.seq);l._pending.delete(m.seq);p.resolve({ack:{slot,active:m.t==='antaraActivate',token:m.token,phase:m.phase,deadline:Date.now()+8000}});}};return l;}
  const main=fake(0),owner=fake(1),wine={guestWorker:{link:main},threadManager:{threads:new Map([[1,{link:owner}]])}};

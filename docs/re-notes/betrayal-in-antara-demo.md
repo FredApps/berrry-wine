@@ -1,5 +1,15 @@
 # Betrayal in Antara (demo) -- PARKED
 
+Source continuation 2026-10-08: original segment1:a35a/a364 message records
+and selector relocation chain17 map DOWN to4:243c and MOVE to4:2330. MOVE
+stores point at object+1e2/+1e4 and selection at+1e6; DOWN consumes that
+selection. First-row static bounds x>=380,135<y<150 include actual prior408,144.
+Original hover USER125 InvalidateRect returns4:2427 after writing selection.
+Previous driver moved before activation and observer omitted MOVE; runtime
+gate state/cause remains unmeasured. A tested bounded observer extension and
+ACK-before-ordinary-hover driver are queued after Alien Shooter. See
+[hit-state contract](../../ops/handoffs/antara-hit-state-20261008.md).
+
 Latest actual owning-input observation (2026-10-08): explicit acknowledged
 activation across both existing Workers covers forwarded input. Child slot1/tid2
 records routed NCHITTEST, DOWN and UP, correct client `(408,144)`, no host DOWN
