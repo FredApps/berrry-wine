@@ -341,3 +341,42 @@ and remaining streams are 0. Independent 00:05:50 finds actual driver48726 and
 Chrome48738 absent, no Chrome and baseline listeners. All 355 runtime pins and
 all 13 copied diagnostics rehash unchanged before only the owned remote prefix
 is removed. Remote slot released to queued Quake II at 00:05:58.
+
+## 2026-10-08 owning ordinary release and parent command measured
+
+Self-contained run `20261008T002800Z-tiberian-release-preparation` retains the
+accepted original source61ac72804/module7c6864f8 and original SUN f70dcf32,
+355runtime pins (353unchanged plus two explicit read-only Worker/Link receipt
+overlays), baseline archive78a92aa0 and eleven-file overlayeb735bad. Browser
+ran00:34:48–00:36:05 UTC; two personally reviewed ordinary screenshots show
+the same six-button menu. One ordinary New Campaign click used page305,455,
+from the current reviewed scene. No campaign or movement is qualified.
+
+Release-phase observation starts only after original check_input returns
+WM_LBUTTONUP. Owning slot0/tid1 records26rows over9ms: unchanged UP
+HWND10004/msg202/wParam0/lParam000a005c enters GetMessage and DispatchMessage;
+original subclass caller57eec7 chains580c00 and original button caller5812ff
+chainsnativeffff0002. Native flags60d become0c and capture becomes0. The native
+button posts parent10002/WM_COMMAND111/id1559/lParam10004. Peek/Get/Dispatch
+receives that command, original subclass chains parentoriginal580ac0, and that
+procedure chains native dialogffff0004. Missing UP or BN_CLICKED notification
+is therefore ruled out. Actual stored DLGPROC entry/return remains unmeasured.
+Handler-exit receipts do not claim the guest callback returned. The observer
+later consumes65532/65536 read bytes; worker1 has0rows/0reads before its release
+phase. No source input repair is established by this run.
+
+Static original DLGPROC4dea40 disassembly shows WM_COMMAND1559 selects the
+branch4deae5, writing1 through EAX after GetWindowLongA(hwnd,8), then returning
+FALSE. This is a static contract, not proof that this branch ran. Root identified
+a generic path asymmetry: CallWindowProc's native dialog marker executes
+`dialog_default_proc` synchronously, whereas direct DispatchMessage and
+DefDlgProc tail-dispatch WM_COMMAND to preserve a live nested modal stack.
+Next reproduce this with a subclassed dialog whose stored DLGPROC enters a
+nested modal loop, before deciding on a generic fix or another original-game
+probe. Preserve original game state/results; do not force menu commands.
+
+Actual ordinary quit closes browser/server, Chromeexit0/errors0/streams0.
+Independent00:36:37 verifies driver24552/Chrome24564 absent, noChrome and exact
+baseline sockets, all355runtime pins and12durable diagnostic copies unchanged.
+Only the owned runtime prefix was removed after copies. Remote slot released
+00:36:51; parent owns retained box lifecycle and queued Antara priority.

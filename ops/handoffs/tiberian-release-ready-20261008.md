@@ -50,3 +50,37 @@ with `observe:true,watchHwnd:65540` (driver arm phase release), reviewed result,
 ordinary quit and independently verified cleanup. No blind repetition.
 Preparation is not the final outcome; campaign/mission/player movement remain
 required after measured contract and any justified generic fix/regression.
+
+## Actual release probe and phase rotation
+
+The authorized ordinary run completed00:34:48–00:36:05 UTC on fresh noenv
+bx_c9he3835/Chrome151.0.7922.108/Puppeteer25.7.0. Full hashes and scene/command
+receipts are in the contained run. Both reviewed scenes remain the menu.
+One ordinary click from reviewed menu305,455 produces26owning rows over9ms.
+UP MSG10004/202/0/000a005c reaches original subclass57e790→580c00→nativeffff0002;
+flags60d→c/capture0. Parent10002/WM_COMMAND111/id1559/lParam10004 is queued,
+Peek/Get/Dispatch receives it, parentoriginal580ac0 chainsnativeffff0004.
+This rules out missing UP/BN_CLICKED. Stored DLGPROC4dea40 entry/return and
+GetWindowLong(hwnd,8) selector write remain unmeasured. Observer read cap is
+65532/65536 after the positive chain; worker1 remains0reads/0rows.
+
+Original static DLGPROC4dea40 selects WM_COMMAND1559 at4deae5, writes1 through
+GetWindowLong(hwnd,8)'s result and returnsFALSE. Raw disassembly is retained;
+no original text/state was patched. Root00:37:43 requests phase exit after
+handoff and a fresh implementation worker. Its concrete generic hypothesis is
+CallWindowProc native WNDPROC_DIALOG's synchronous dialog_default_proc versus
+DispatchMessage/DefDlgProc's main-context tail-dispatch for modal-capable
+WM_COMMAND. Reproduce the subclassed-dialog/nested-modal contract in a
+meaningful native regression under a new serialized native grant before any
+production fix/original browser probe. Do not infer actual game cause from
+handler exit or absence of filtered API rows. Full task remains incomplete.
+
+Actual ordinary quit36:05.617 closes browser/server/Chromeexit0/errors0/streams0.
+Independent36:37 driver24552/Chrome24564 absent/noChrome/exactbaseline sockets,
+all355pins and12copied diagnostics verified. Owned prefix removed afterdurable
+copy; RELEASE36:51 to parent/queuedAntara. Box bx_c9he3835 expires01:03:26.516;
+retained private Puppeteer `/home/user/tiberian-tools-20261008/node_modules/puppeteer`.
+Parent owns lifecycle/grants; no further remote/native/browser action in this
+phase. Archive extraction is now actual PASS, not merely mocked preparation.
+Own observer/source commit39f1c4932 and prior partialdocs2c28bc0d0 are available;
+parent integrates/pushes. Worktree remains isolated, clean after finaldocs.
