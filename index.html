@@ -622,11 +622,13 @@
       align-items: center;
     }
     /* A direct ?app= link (the head script sets html.direct-launch): no
-       desktop, no icons, no taskbar, no debug chrome -- a black page with,
-       if the launch takes longer than 500ms, the launch window on it. The
-       desktop is built when the program exits (ensureDesktop). */
-    html.direct-launch, html.direct-launch body,
-    html.direct-launch #screen-wrap { background: #000 !important; }
+       icons, no taskbar, no debug chrome -- the desktop's teal with, if the
+       launch takes longer than 500ms, the launch window on it. The desktop
+       is built when the program exits (ensureDesktop). No background rule
+       here: a windowed program (Minesweeper) sits on the Win98 teal as it
+       would on the desktop, and a fullscreen one gets black from the
+       page-fullscreen / exclusive-fullscreen rules, which an !important
+       black here used to pre-empt for every app. */
     html.direct-launch #shell { margin: 0; border: 0; background: transparent; }
     html.direct-launch #titlebar,
     html.direct-launch #toolbar,
