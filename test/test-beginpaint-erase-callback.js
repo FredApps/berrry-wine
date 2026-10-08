@@ -40,6 +40,11 @@ const extraWat = `
     (i32.and (call $nc_flags_test (local.get $h)) (i32.const 2)))
   (func (export "test_damage_pending") (param $h i32) (result i32)
     (call $update_get_rect (local.get $h) (i32.const 0)))
+  (func (export "test_validate") (param $h i32) (param $r i32)
+    (local $sp i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_ValidateRect (local.get $h) (local.get $r) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp)))
   (func (export "test_full_damage") (param $h i32)
     (call $update_invalidate_rect (local.get $h) (i32.const 0) (i32.const 0) (i32.const 640) (i32.const 480))
     (call $paint_flag_set (local.get $h)))
@@ -178,5 +183,10 @@ const u32 = v => [v, v >>> 8, v >>> 16, v >>> 24].map(b => b & 255);
   }
   e.test_update(outer);assert.equal(e.guest_read32(record+28),1,'clean owner does not reenter the nested callback');
   e.test_damage(outer,0,0);assert.equal(e.test_damage_pending(outer),1,'later invalidation remains owned by next paint');
+  const partialRect=e.guest_alloc(16);[3,4,12,6].forEach((v,i)=>e.guest_write32(partialRect+i*4,v));
+  e.test_validate(outer,partialRect);assert.equal(e.test_damage_pending(outer),1,'partial validation preserves remaining damage');
+  assert.equal(e.test_paint_pending(outer),1,'remaining damage retains paint request');
+  [3,6,12,15].forEach((v,i)=>e.guest_write32(partialRect+i*4,v));e.test_validate(outer,partialRect);
+  assert.equal(e.test_damage_pending(outer),0);assert.equal(e.test_paint_pending(outer),0,'full explicit rectangle clears paint request too');
   console.log('PASS BeginPaint synchronous erase callback, paint DC, result-driven fErase and no-erase cases');
 })().catch(error => { console.error(error); process.exit(1); });
