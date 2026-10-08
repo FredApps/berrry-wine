@@ -3548,6 +3548,37 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
+  ;; SysReAllocStringLen(pbstr, psz, cch) replaces a counted UTF-16 string.
+  ;; Copy before freeing: psz may alias the old BSTR, including an interior
+  ;; slice. Allocation failure must leave both *pbstr and its contents intact.
+  (func $handle_SysReAllocStringLen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old i32) (local $nbytes i32) (local $alloc i32) (local $bstr i32)
+    ;; NULL pbstr is an invalid caller pointer, not a successful no-op.
+    (if (i32.eqz (local.get $arg0)) (then (unreachable)))
+    (local.set $old (call $gl32 (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    ;; heap_alloc's maximum request is 0x7FFFFFF0. Guard before doubling
+    ;; cch or adding the four-byte prefix and two-byte terminator.
+    (if (i32.le_u (local.get $arg2) (i32.const 0x3FFFFFF5))
+      (then
+        (local.set $nbytes (i32.shl (local.get $arg2) (i32.const 1)))
+        (local.set $alloc (call $heap_alloc (i32.add (local.get $nbytes) (i32.const 6))))
+        (if (local.get $alloc)
+          (then
+            (local.set $bstr (i32.add (local.get $alloc) (i32.const 4)))
+            (call $gs32 (local.get $alloc) (local.get $nbytes))
+            (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                         (i32.ne (local.get $nbytes) (i32.const 0)))
+              (then (memory.copy (call $g2w (local.get $bstr))
+                (call $g2w (local.get $arg1)) (local.get $nbytes))))
+            (call $gs16 (i32.add (local.get $bstr) (local.get $nbytes)) (i32.const 0))
+            (if (local.get $old)
+              (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+            (call $gs32 (local.get $arg0) (local.get $bstr))
+            (i32.store offset=0 (global.get $reg_base) (i32.const 1))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
   ;; SysAllocStringByteLen(psz: LPCSTR, len: UINT) creates a BSTR whose payload
   ;; is an exact byte slice. It is deliberately not an ANSI-to-UTF16 conversion:
   ;; callers use the byte form for binary/odd-length automation strings too.
