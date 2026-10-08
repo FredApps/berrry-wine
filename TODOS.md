@@ -1403,3 +1403,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Recover preserved remote evidence from stopped bx_hgju4y2b:/home/user/dungeon-api-20261008; this API key cannot sandbox.resume (403). Owner resume or artifact retrieval needed. Original extraction/build passed but startup trapped; archived source31ccb5972 is not main/gameplay acceptance. See ops/handoffs/dungeon-siege-interrupted-recovery-20261008.md.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
+
+- [x] Restore registered local candidates missing from the launch picker
+  id: OPS-PICKER-MISSING-CANDIDATES-20261008
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Result: Added20 missing LOCAL_CANDIDATE_APPS options to the existing Local Candidates group in index.html. Dynamic picker derives its catalog from this select; existing eligibility filters remain unchanged. No public deployment or gameplay qualification.
+  Validation: Existing test/test-app-selector-options.js failed before on20missing entries and passes after for all173apps across3lists, including duplicate/list-disjointness checks. No browser run required for this static option correction. Receipt scratch/picker-completeness-20261008/receipt.json.
