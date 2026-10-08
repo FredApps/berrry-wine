@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-menu-state
+  worker: fresh CLI antara-install-action
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Original hover/action contract and bounded saved-frame observer integrated b095c5def; root callback/menucontract/generated ACK-MOVE-DOWN ordering tests pass. Worker proceeds on fresh temporary box after AlienShooter actualrelease22:41; authenticate hover selection/action state using ordinary Install. Installation/gameplay remain unqualified.
+  Next: Actual0122 originalhover selection1 authenticated; root84hashes verified. Newthreephase reservedDOWN observer integrated29f48b0e4; fresh actionworker targets4:2488→3:dad6 Install vs default4:24e8. Source/JS now, remote after Warcraft actualcleanup/review. Installation/gameplay unqualified.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-focused-command
+  worker: fresh CLI tiberian-menu-consumer
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Generic dialog repair accepted; original matched runtime still menu. Completed94e388e5d integrated972a86f05; 567 contained evidence hashes verified. Broad observer lost command to paint cap; focused prior attempt NOclick. Fresh worker prepares corrected command-only capture with original source/module, queued after Antara actual browser release; no rebuild. Gameplay remains unqualified.
+  Next: Actual0126 originalcommand1559 changes selector9→1; root543hashes verified, findingsa2ae61094. Fresh worker targets562830 pump/4de9dd consumer/DestroyWindow and resource94, not repeatedclick diagnosis. Checked preflight must prevent launch on anyfailure. Remote after Warcraft thenAntara; no build, gameplayunqualified.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
