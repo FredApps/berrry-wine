@@ -136,3 +136,32 @@ Next review: run the expanded heap-OOM regression, then investigate original
 Scenario input/ownership with complete declared system support and ordinary
 input in a separately authorized bounded run. No further runtime in this worker
 budget. Gameplay, sound, FPS, physical presentation and release are unqualified.
+
+## 2026-10-08 sole-worker native review and menu-route continuation
+
+The expanded actual heap-OOM BSTR regression now **passes**, including valid
+`cch=0x3FFFFFF5` pointer/content preservation, on exact source `1455cc2f4`.
+Sealed receipt: `scratch/runs/20261008T1546Z-age-of-wonders2-demo-native-review/`.
+This completes the previously unexecuted native review; root separately reviewed
+and integrated core/registration. No game rerun was used for the native stage.
+
+A distinct bounded registered default-Worker investigation passed the canonical
+build with both checked-in ToyVM bundles and served the same `e4d59e88…` module.
+It did not reproduce the predecessor's reviewed menu: reviewed images show title
+background without buttons, pre-input startup stack trap `0x074ffd4e`, or worker
+exit. No Scenario input or gameplay was achieved. The predecessor held-click
+outcome remains unknown. Including declared stdole2 and then temporarily omitting
+it for a causal A/B did not establish a prerequisite; it was restored. An initial
+observer SharedArrayBuffer decoding error invalidates that attempt, and capped
+logs limit interpretation. No runtime fix was justified.
+
+VCL `TThreadWindow` HWND `0x10007`, message `0x8fff`, dispatches its synchronized
+method from lParam+0x20/self+0x24. Two read-only observed dispatch requests overlap
+an active slice; arbitration is an unproven source lead. Investigate with a
+controlled source regression and actual Worker CPU/stack capture before another
+ordinary-input gameplay attempt. Browser shadow CPU getters are not reliable.
+Full limitations, source identities, commands, reviewed images and cleanup:
+`ops/handoffs/age-of-wonders2-menu-route-20261008.md` and sealed
+`scratch/runs/20261008T1623Z-age-of-wonders2-demo-menu-route-investigation/`.
+The one browser closed at its immutable 1500-second guard; evidence was retrieved
+and hashed before owned-prefix cleanup. Gameplay remains unqualified.
