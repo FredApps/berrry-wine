@@ -1334,3 +1334,51 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Complete on main d87b54eca. Root180 contained evidence hashes and held/released/mission-menu captures verified; actual Machine/LiveRun tests and bundle reproducibility pass. Browser initial lifecycle closure proves ordinary holds, release, repeat, blur and Stop. Final keypad/code mapping and modifier-wait corrections unit/full-build tested but not original-media browser rerun. No production deployment or Comanche cockpit/gameplay qualification.
   Evidence: tools/toyvm/dos.js pushKey; tools/toyvm/live.js key; ops/toyvm-live/live.js canvas keydown; tools/toyvm/site.js generated canvas handler; native Comanche roster response with held input.
   Done: Meaningful key press/release and focus-loss tests plus reviewed browser held-input game response; scoped source/bundles/site changes pushed to main.
+
+- [ ] Gameplay screenshot and FPS: Arcanum: Of Steamworks & Magick Obscura Demo
+  id: GAMEPLAY-arcanum-demo
+  status: ready
+
+  candidate: arcanum-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered arcanum_demo fixture rechecked2026-10-08: 37 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-arcanum-demo.json
+  notes: Migration missing-file blocker cleared against current registered route: arcanum_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
+
+- [ ] Gameplay screenshot and FPS: Black & White 2 Demo
+  id: GAMEPLAY-black_white_2_demo
+  status: ready
+
+  candidate: black_white_2_demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered black_white_2_demo fixture rechecked2026-10-08: 366 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json
+  notes: Migration missing-file blocker cleared against current registered route: black_white_2_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
+
+- [ ] Gameplay screenshot and FPS: Deus Ex demo
+  id: GAMEPLAY-deus-ex-demo
+  status: ready
+
+  candidate: deus-ex-demo
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none (queued under one-worker budget)
+  prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
+  created: 2026-10-03T08:42:45.967Z
+  accepted: 2026-10-03T08:42:45.967Z
+  accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Registered deus_ex_demo fixture rechecked2026-10-08: 112 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
+  Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json
+  notes: Migration missing-file blocker cleared against current registered route: deus_ex_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
