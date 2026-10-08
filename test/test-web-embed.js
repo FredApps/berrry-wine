@@ -145,6 +145,19 @@ async function checkFrame() {
     assert.deepStrictEqual(pageErrors, [], 'the embed frame raised uncaught errors');
     console.log('PASS  no uncaught errors in a storage-denied third-party frame');
 
+    // The storage fix is not embed-specific: an ordinary direct link in a
+    // storage-denied frame (or a browser that blocks site data) must boot too.
+    const plain = await browser.newPage();
+    const plainErrors = [];
+    plain.on('pageerror', e => plainErrors.push(String(e).slice(0, 300)));
+    await plain.setContent(`<iframe src="http://127.0.0.1:${server.address().port}/index.html?app=sol" ` +
+      'width="640" height="480" style="border:0"></iframe>');
+    const plainFrame = await (await plain.waitForSelector('iframe')).contentFrame();
+    await plainFrame.waitForFunction(() => typeof runningApps !== 'undefined' &&
+      runningApps.some(item => item && item.name === 'sol'), { timeout: 60000 });
+    assert.deepStrictEqual(plainErrors, [], 'a normal app in a storage-denied frame raised errors');
+    console.log('PASS  a normal app boots with storage denied');
+
     // Following the share link itself, as a tap on the tweet does.
     const { generatePages, writePages } = require('../tools/gen-site-pages');
     writePages(generatePages().filter(p => p.name === `play/${APP}.html`));
