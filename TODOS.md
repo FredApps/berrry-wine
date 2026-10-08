@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: User budget mode supersedes simultaneous two-worker target: one worker only. Comanche3 resumes after merged paging repair; Tiberian reproduction queued; Antara/Arx held after automatic diagnostic rejection, no retry. Replace stale completed agent labels; actual gameplay/input/screenshots remain required.
+  Next: One-worker user budget supersedes simultaneous two-worker target. Comanche controlled flight is reviewed; sole comanche-catalog worker is adding ordinary registered dashboard launch. Tiberian/Antara/Arx/Winamp rejected diagnostics are held without retry. Arcanum and Deus Ex are queued with verified local fixtures; choose the next ready unqualified title after current integration, keeping live worker labels accurate.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1309,7 +1309,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: completed; actual exit0 2026-10-08T01:26:18Z
   Next: Complete scoped WebGL Mission01 movement/aiming acceptance; root reviewed images/backend and all109 contained hashes. Findings integrated bf8d2e134; run20261008T0114Z-alien-shooter-webgl. No FPS/audio/combat-completion or current-main runtime claim.
   Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
-  Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
+  Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; reviewed WebGL scratch/runs/20261008T0114Z-alien-shooter-webgl.
 
 - [x] Warcraft III original Prologue ordinary WebGL gameplay
   id: GLD3D-WARCRAFT3-PROLOGUE-20261008
