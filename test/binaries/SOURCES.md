@@ -26,6 +26,15 @@ names.
 
 ## Windows 98 Demo/Shareware Games A-D
 
+October 8, 2026: the original `Age of Wonders2 demo-SW.exe` is pinned at
+101,537,511 bytes, SHA-256
+`1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0`.
+Its unchanged ZIP payload (1,063 files, 197,002,538 bytes) is extracted by
+`tools/extract-age-of-wonders2-demo.js` into `Age of Wonders2 demo-SW/extracted/`.
+This is separate from Age of Wonders I; no installed state or redistribution
+grant is asserted. See `docs/re-notes/age-of-wonders2-demo.md` for hashes,
+registered launch, reviewed main menu, and the unqualified gameplay limit.
+
 **`win98-games-a-d/`** — complete A-through-D collection of Windows game
 demos and shareware, including both already-installed game trees and standalone
 installer executables.

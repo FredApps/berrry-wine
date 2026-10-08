@@ -2302,6 +2302,46 @@
       "origin": "Retail / archived games",
       "distribution": "Local-only fixture",
       "licenseNote": "proprietary archived game; local compatibility fixture"
+    },
+    {
+      "id": "age_of_wonders2_demo",
+      "name": "Age of Wonders II Beta Demo",
+      "status": "Needs repair",
+      "summary": "Original ZIP payload verified and normal Worker registered main menu reviewed. Scenario click redraw did not establish scenario selection or gameplay. Cooperative route stays at splash; SysReAllocStringLen startup failure repaired.",
+      "next": "Expanded valid-length heap-OOM regression passed on the temporary box and core repair is on main. Diagnose original Scenario input/window ownership; missing system support remains an unproven lead. No gameplay qualification yet.",
+      "appIds": [
+        "age_of_wonders2_demo"
+      ],
+      "apps": [
+        {
+          "id": "age_of_wonders2_demo",
+          "desktop": false,
+          "exe": "test/binaries/win98-games-a-d/Age of Wonders2 demo-SW/extracted/AoW2.exe",
+          "executablePresent": true
+        }
+      ],
+      "fixtureStatus": "present",
+      "screenshotStatus": "Reviewed main menu; no gameplay scene",
+      "basedOnLatestRun": "scratch/runs/20261008T1518Z-age-of-wonders2-demo-after",
+      "basedOnLatestStartedAt": "2026-10-08T15:04:18.055Z",
+      "evidence": [
+        "docs/re-notes/age-of-wonders2-demo.md",
+        "ops/handoffs/age-of-wonders2-demo-20261008.md",
+        "scratch/runs/20261008T1518Z-age-of-wonders2-demo-before/result.json",
+        "scratch/runs/20261008T1518Z-age-of-wonders2-demo-after/result.json"
+      ],
+      "taskIds": [
+        "NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008"
+      ],
+      "origin": "Windows 98 A-D original demo package",
+      "distribution": "Local-only fixture",
+      "licenseNote": "Original proprietary demo; no public distribution grant verified",
+      "originalInstaller": {
+        "path": "test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe",
+        "bytes": 101537511,
+        "sha256": "1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0"
+      },
+      "reviewedAt": "2026-10-08T15:18:05.567Z"
     }
   ],
   "unindexedGroups": [
