@@ -1211,7 +1211,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: fresh CLI antara-menu-state
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual child DOWN/UP and10original APIcaller spans authenticated; original dialog declines mousebuttons, so no missing-delivery fix. Final0a1f7f116/run20261008T0059Z-antara-owning-queue-runtime. Fresh antara-menu-state investigates original object hit-test/action gates and preceding mousemove. Installation/gameplay incomplete.
+  Next: Original hover/action contract and bounded saved-frame observer integrated b095c5def; root callback/menucontract/generated ACK-MOVE-DOWN ordering tests pass. Worker proceeds on fresh temporary box after AlienShooter actualrelease22:41; authenticate hover selection/action state using ordinary Install. Installation/gameplay remain unqualified.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-fixed-runtime
+  worker: fresh CLI tiberian-focused-command
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Generic nested-modal and DWL_MSGRESULT repair accepted mainb1d78b9f0 after real A/W negatives/positives, nested sends/interleaved thread/exact stack and full build. Fresh tiberian-fixed-runtime prepares matched accepted modulebd5c84ca then ordinary NewCampaign/mission controls; remote queue Antara then Crimsonland then Tiberian. Actual game cause/gameplay unverified.
+  Next: Generic dialog repair accepted; original matched runtime still menu. Completed94e388e5d integrated972a86f05; 567 contained evidence hashes verified. Broad observer lost command to paint cap; focused prior attempt NOclick. Fresh worker prepares corrected command-only capture with original source/module, queued after Antara actual browser release; no rebuild. Gameplay remains unqualified.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
@@ -1305,7 +1305,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-ALIEN-SHOOTER-WEBGL-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI alien-shooter-webgl
-  Next: Source/media/preflight preparation then ordinary Mission01 movement/aim on temporary WebGL browser after Tiberian actual cleanup. Retained software gameplay already reviewed; no duplicate software run.
+  worker: fresh CLI alien-shooter-webgl finishing evidence
+  Next: Original Mission01 reached on WebGL reference f62/module4dc5; root reviewed movement captures. Actual browser released22:41. Finish immutable evidence, aiming/backend review and explicit findings commit; no FPS/audio/combat-completion claim.
   Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
   Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
