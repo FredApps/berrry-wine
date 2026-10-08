@@ -4,6 +4,38 @@ App id `warcraft3_demo` (`lib/apps.js`), install tree at
 `test/binaries/candidates/warcraft3-demo/`. Provenance is in
 `test/candidate-corpus/manifest.json`.
 
+## Ordinary browser software control, 8 October 2026
+
+Fresh guest OpenGL **software** execution on the accepted reference
+`f62ab3c9` / module `4dc5ac2c` reaches the original Prologue, selects Thrall
+(Level 1 Far Seer, 500/500 health, 285/285 mana), and obeys two opposing
+ordinary right-click move orders. Worker reviewed selection, move, return and
+settled final images against fixed hut, stone circle and rocks. Both live host
+and owning render Worker report `api: gl, backend: software`; pinned software
+context creation returns before WebGL creation. Chrome SwiftShader alone is
+not this proof. Coordinator review/integration is pending; no current-main
+build, FPS, audio, combat or completion claim.
+
+Run `scratch/runs/20261008T0400Z-warcraft3-software-runtime` retains all 542
+pins, twelve original media paths, ordinary trusted input receipts and 28
+screenshots. Original menu coordinates match the reviewed WebGL route:
+Single Player (594,327), ABC, Create (228,391), Select (226,542), Campaign
+(593,365), Prologue (473,373). Separate hover and five-second DOWN/UP are
+used, with actual image review before each action; first clicks can merely
+highlight. Chapter PRESS ANY KEY is visible at 04:07:01.117. Space held for
+2000 ms gives an immediate black transition; next capture already shows the
+gameplay HUD, so no Escape is sent into that HUD. Filenames do not determine
+scene identity. Select Thrall (255,524) with a reviewed second click, then
+right-click (375,430) and (220,480); fixed camera landmarks establish actual
+displacement, retained at 04:14:30.715. Pointer Lock is false before absolute
+input. No guest-state write or engine repair.
+
+Fresh no-env boat `bx_mw27w2n4`, immutable 240/900/90-second transfer/browser/
+cleanup budgets. Ordinary quit at 04:14:42.001 precedes 04:15:55 deadline;
+Chrome exit 0, no pending streams, independent PID/socket/pin checks pass,
+63 files retrieved/hash checked before prefix removal at 04:14:43.577.
+[Exact identity, helper contracts, route deviations and lifecycle handoff](../../ops/handoffs/warcraft3-software-20261008.md).
+
 ## Shape of the program
 
 | Module | Original base | Role |

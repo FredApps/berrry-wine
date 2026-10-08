@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('fs'),path=require('path'),http=require('http'),crypto=require('crypto'),assert=require('assert'),cp=require('child_process');
-const {assertWebGL}=require('./backend'),{validate,pressRelease,clickHoldMs}=require('./controls'),{createAssetHandler,drainStreams}=require('./assets');
+const {assertWebGL,assertBackend}=require('./backend'),{validate,pressRelease,clickHoldMs}=require('./controls'),{createAssetHandler,drainStreams}=require('./assets');
 async function main(){
  const dir=process.argv[2]||__dirname,plan=JSON.parse(fs.readFileSync(dir+'/serve-plan.json')),pins=JSON.parse(fs.readFileSync(dir+'/browser-pins.json'));
  const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -8,6 +8,8 @@ async function main(){
  for(const f of pins.files){const b=fs.readFileSync(dir+'/source/'+f.path);assert.equal(b.length,f.bytes);assert.equal(sha(b),f.sha256);}
  for(const n of ['browser.js','backend.js','controls.js','assets.js','cleanup.js','lifecycle.js','prepare.js'])if(fs.existsSync(dir+'/'+n))cp.execFileSync(process.execPath,['--check',dir+'/'+n]);
  const good={queryBackend:'webgl',worker:true,renderEndpoints:[{api:'gl',backend:'webgl',closed:false}],renderWorkerEndpoints:[{api:'gl',backend:'webgl'}]};assertWebGL(good);
+ const software={...good,queryBackend:'software',renderEndpoints:[{api:'gl',backend:'software',closed:false}],renderWorkerEndpoints:[{api:'gl',backend:'software'}]};assertBackend(software,'software');
+ for(const key of ['renderEndpoints','renderWorkerEndpoints'])for(const endpoints of [[],[{api:'gl',backend:'webgl'}],[{api:'gl',backend:'software'},{api:'gl',backend:'webgl'}]])assert.throws(()=>assertBackend({...software,[key]:endpoints},'software'));
  for(const bad of [{...good,worker:false},{...good,queryBackend:'software'},{...good,renderWorkerEndpoints:[]},{...good,renderEndpoints:[{api:'legacy',backend:'webgl'}]},{...good,renderWorkerEndpoints:[{api:'gl',backend:'software'}]}])assert.throws(()=>assertWebGL(bad));
  const ctx={lastShot:'main-menu',deadline:Date.now()+300000};validate({action:'move',x:303,y:357,sceneReviewed:true,sceneReceipt:'main-menu'},ctx);validate({action:'key',key:'A',ms:2000,sceneReviewed:true,sceneReceipt:'main-menu'},ctx);assert.throws(()=>validate({action:'click',x:303,y:357},ctx));assert.throws(()=>validate({action:'key',key:'A',ms:0,sceneReviewed:true,sceneReceipt:'main-menu'},ctx));
  assert.throws(()=>validate({action:'key',key:'A',ms:1000,sceneReviewed:true,sceneReceipt:'main-menu'},{...ctx,deadline:Date.now()+1000}));
@@ -31,6 +33,6 @@ async function main(){
   for(const rel of plan.optionalAbsent){const r=await fetch(origin+'/'+rel);assert.equal(r.status,404);await r.arrayBuffer();}
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
  assert.equal((await drainStreams(pending,1000)).pending,0);assert.deepEqual(errors,[]);
- const result={at:new Date().toISOString(),pinsVerified:pins.files.length,httpHead:pins.files.length,httpGet:8,range:true,streamDrain:true,ordinaryInputs:'review gate/bounds/hold/release on error PASS',backend:'matching host and owning OpenGL WebGL; five negative controls PASS',nativeBuildRun:false,browserRun:false};fs.writeFileSync(dir+'/preflight.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+ const result={at:new Date().toISOString(),pinsVerified:pins.files.length,httpHead:pins.files.length,httpGet:8,range:true,streamDrain:true,ordinaryInputs:'review gate/bounds/hold/release on error PASS',backend:'explicit software/WebGL matching host and owning OpenGL; fallback/mixed/missing negatives PASS',nativeBuildRun:false,browserRun:false};const receipt=dir+'/preflight.json';if(fs.existsSync(receipt)&&fs.statSync(receipt).nlink>1)throw Error('shared preflight receipt refused');fs.writeFileSync(receipt,JSON.stringify(result,null,2));console.log(JSON.stringify(result));
 }
 main().catch(e=>{console.error(e);process.exitCode=1});
