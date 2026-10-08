@@ -24,6 +24,12 @@ const {consumerBrowser} = require('./tiberian-consumer-overlay');
     await assert.rejects(vm.runInNewContext('(async()=>{let browser;'+expr+'})()', context), /forced mandatory 404/); assert.deepEqual(trace, ['preflight']);
     context.matchingHttpPreflight = async () => { trace.push('pass'); return {passed: true}; };
     await vm.runInNewContext('(async()=>{let browser;'+expr+'})()', context); assert.deepEqual(trace, ['preflight', 'pass', 'acquire', 'Chrome']);
+    const gateStart = generated.indexOf('validate(c,{lastShot,deadline});'), gateEnd = generated.indexOf('let workerArm=[];', gateStart);
+    const gate = generated.slice(gateStart, gateEnd), targetReceipts = [];
+    const targetContext = {validate() {}, lastShot: 'reviewed-menu', deadline: Date.now()+300000, c: {observe: true, nativeX: 317, nativeY: 213}, save: (_n,r) => targetReceipts.push(r), page: {evaluate: async () => ({parent: 0x10002, child: 0x10005})}};
+    await assert.rejects(vm.runInNewContext('(async()=>{'+gate+'})()', targetContext), /parent\/button mismatch/);
+    targetContext.page.evaluate = async () => ({parent: 0x10002, child: 0x10004}); await vm.runInNewContext('(async()=>{'+gate+'})()', targetContext);
+    targetContext.c.nativeX = null; await assert.rejects(vm.runInNewContext('(async()=>{'+gate+'})()', targetContext), /native point required/); assert.equal(targetReceipts.length, 2);
     console.log('PASS real HTTP failure blocks Chrome, mandatory pins/optional absent/range, expired lease and generated sequential browser launch');
   } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); fs.rmSync(dir, {recursive: true}); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
