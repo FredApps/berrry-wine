@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-return-semantics
+  worker: fresh CLI tiberian-fixed-runtime
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Generic nested-modal defect reproduced and candidate a180c8c94 tested, but root holds integration pending caller-visible DWL_MSGRESULT preservation on command/application messages. Fresh tiberian-return-semantics owns local regression/fix/build; actual game cause and gameplay remain unverified.
+  Next: Generic nested-modal and DWL_MSGRESULT repair accepted mainb1d78b9f0 after real A/W negatives/positives, nested sends/interleaved thread/exact stack and full build. Fresh tiberian-fixed-runtime prepares matched accepted modulebd5c84ca then ordinary NewCampaign/mission controls; remote queue Antara then Crimsonland then Tiberian. Actual game cause/gameplay unverified.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
