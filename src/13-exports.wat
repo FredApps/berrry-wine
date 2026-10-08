@@ -1438,6 +1438,8 @@
         (then (global.set $rtl_unwind_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA003A))
         (then (global.set $seh_node_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA003C))
+        (then (global.set $dialog_proc_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0001))
         (then (global.set $createwnd_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0002))

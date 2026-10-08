@@ -363,10 +363,18 @@
     ;; subclassed. Execute the per-window DLGPROC and honor DWL_MSGRESULT.
     (if (i32.eq (local.get $arg0) (global.get $WNDPROC_DIALOG))
       (then
-        (i32.store offset=0 (global.get $reg_base) (call $dialog_default_proc
-          (local.get $arg1) (local.get $arg2)
-          (local.get $arg3) (local.get $arg4)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+        ;; Remove CallWindowProc's extra lpPrevWndFunc argument, retaining
+        ;; the subclass return address and the four dialog arguments. Use the
+        ;; same default handling and modal-capable continuation as DefDlgProc;
+        ;; a bounded recursive send abandons an open nested dialog's stack.
+        (call $gs32
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))
+          (i32.load (call $g2w (i32.load offset=16 (global.get $reg_base)))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (call $handle_DefDlgProcA
+          (local.get $arg1) (local.get $arg2) (local.get $arg3)
+          (local.get $arg4) (i32.const 0) (local.get $name_ptr))
         (return)))
     ;; WAT-native wndprocs (for current controls, 0xFFFF0002) are markers,
     ;; not guest-code addresses. Dispatch them directly instead of jumping.

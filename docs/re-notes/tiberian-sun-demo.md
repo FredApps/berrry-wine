@@ -1,5 +1,29 @@
 # Command & Conquer: Tiberian Sun demo
 
+## Generic subclassed-dialog continuation regression, October 8
+
+On coordinator base `ac8c4c8ff`, executable x86 subclass code calling
+CallWindowProc(native DefDlgProc marker) from WM_COMMAND opens a real
+DialogBoxIndirectParamA. The current synchronous path incorrectly resumes the
+subclass while the nested dialog remains open. The negative control fails the
+explicit suspension assertion. This proves a generic emulator defect, not its
+causal role in SUN.EXE's unchanged New Campaign menu.
+
+The marker path now removes only CallWindowProc's extra previous-proc argument
+and delegates to DefDlgProc. Its existing modal-capable tail dispatch preserves
+the callback stack. The regression verifies real nested WM_INITDIALOG, suspension,
+EndDialog result 99, original subclass/caller resumption and exact ESP, through
+both CallWindowProcA/W. Synchronous WM_INITDIALOG BOOL, WM_ERASEBKGND nonzero
+DWL_MSGRESULT, and no-DLGPROC WM_NULL result/24-byte cleanup are also sealed.
+Relevant custom-dispatch/IDOK/null-proc/end-dialog regressions and the full
+canonical build pass. Evidence and retained modules are in
+`scratch/runs/20261008-tiberian-dialog-continuation` (local Node/WATX only).
+
+Next: coordinator review/integration, then an explicitly granted ordinary game
+run with owning DLGPROC entry/return evidence. Original stored DLGPROC4dea40's
+selector write and actual campaign/gameplay remain unmeasured; no game offsets,
+forced commands, browser probe or new-game qualification were added here.
+
 ## Refill selection and original closure, October 7
 
 Darkstone was excluded after recovering its existing controlled Town captures;

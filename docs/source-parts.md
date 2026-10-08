@@ -69,7 +69,7 @@
 | `09ak-d3d-depth.wat` | D3D9 depth-surface identities, state and lifetime |
 | `09al-d3d-reset.wat` | Transactional D3D9 device reset implementation |
 | `09am-d3d-color.wat` | Independent D3D9 color-surface state and ownership |
-| `09b-dispatch.wat` | Manual dispatch helpers |
+| `09b-dispatch.wat` | Manual dispatch helpers, including the guest-stack DLGPROC return continuation (CACA003C) |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `09c-help.wat` | WAT-native help system |
 | `09c0-window-table.wat` | WND_RECORDS + accessors, per-slot parallel tables, GWL/cbWndExtra, dialog state, class table, `$wat_wndproc_dispatch`, focus |
@@ -87,7 +87,7 @@
 | `09c3-wndprocs4-combobox.wat` | ComboBox and its dropdown popup shell |
 | `09c3-wndprocs5-edit.wat` | Edit wndproc and multiline helpers |
 | `09c3-wndprocs6-animate.wat` | COMCTL32 SysAnimate32 Animate control: RLE8/raw AVI from a resource or file, WM_TIMER or host-clock (`$anim_service`) playback, ACN_START/STOP |
-| `09c3a-dialog-runtime.wat` | Native dialog runtime and find/replace helpers |
+| `09c3a-dialog-runtime.wat` | Native dialog runtime and find/replace helpers; shared synchronous/continuation DLGPROC result epilog |
 | `09c3b-scrollbar.wat` | Shared Win98 scrollbar rendering and interaction helpers |
 | `09c4-defwndproc.wat` | DefWindowProc non-client paint: 3D outset frame, caption gradient and text, sysmenu buttons, as a callable entry point |
 | `09c5-menu.wat` | Menu painting and hit-testing over the heap-resident menu blob, indexed per window by MENU_DATA_TABLE |
@@ -116,4 +116,3 @@
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
 | `13-exports.wat` | WASM exports (run, get_eip, register accessors, etc.) |
-

@@ -373,6 +373,7 @@
   ;; handle WM_COMMAND (TRUE) while leaving DWL_MSGRESULT at zero. Control-side
   ;; default behavior must consult this immediately after synchronous dispatch.
   (global $dialog_last_proc_handled (mut i32) (i32.const 0))
+  (global $dialog_proc_ret_thunk (mut i32) (i32.const 0)) ;; CACA003C
 
   ;; Minimal DefDlgProc semantics around the stored per-window DLGPROC.
   ;; The DLGPROC returns BOOL; when TRUE, the actual message result comes from
@@ -397,7 +398,15 @@
     ;; overwrite the outer message's handled state.
     (global.set $dialog_last_proc_handled (i32.ne (local.get $handled) (i32.const 0)))
     (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
-      (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))
+      (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))))
+    (call $dialog_proc_result (local.get $hwnd) (local.get $msg)
+      (local.get $wParam) (local.get $lParam) (local.get $handled)))
+
+  ;; Shared epilog for synchronous and guest-continuation DLGPROC calls.
+  ;; Handled is invocation-owned, never inferred from a nested call's global.
+  (func $dialog_proc_result
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+    (param $handled i32) (result i32)
     (if (local.get $handled)
       (then
         ;; USER's DefDlgProc epilog returns the DLGPROC's own BOOL — not
@@ -422,7 +431,7 @@
                     (i32.eq (local.get $msg) (i32.const 0x002F))   ;; WM_CHARTOITEM
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
-        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))))
+        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
     ;; BUTTON notifications arrive through the ordinary message pump so a
     ;; dialog procedure can enter another modal loop without stranding a
     ;; recursive WAT interpreter frame. If a true DialogBox DLGPROC leaves

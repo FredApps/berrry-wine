@@ -462,6 +462,11 @@
       (i32.const 0xCACA002E))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Reinitialize the DLGPROC epilog for this PE's thunk arena. Worker
+    ;; instances restore the same address through sync_thunk_state.
+    (global.set $dialog_proc_ret_thunk
+      (call $com_cont_thunk (i32.const 0xCACA003C)))
+
     ;; SetFocus WM_SETFOCUS return continuation (marker 0xCACA002A).
     (global.set $setfocus_ret_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))

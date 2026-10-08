@@ -103,6 +103,7 @@
     (global.set $api_handler_depth (i32.sub (global.get $api_handler_depth) (i32.const 1))))
 
   (func $win32_dispatch_inner (param $thunk_idx i32)
+    (local $esp i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32) (local $ending_dlg i32)
@@ -199,6 +200,25 @@
           (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))))
 
     ;; ── Continuation thunks (CACA markers) ──────────────────────
+
+    ;; DLGPROC returned: ESP points at this invocation's retained DefDlgProc
+    ;; frame (return address + four arguments), including contracted
+    ;; CallWindowProc frames. Callback BOOL is in EAX, not shared state.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA003C))
+      (then
+        (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+        (i32.store offset=0 (global.get $reg_base)
+          (call $dialog_proc_result
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 4))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 8))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 12))))
+            (i32.load (call $g2w (i32.add (local.get $esp) (i32.const 16))))
+            (i32.load offset=0 (global.get $reg_base))))
+        (global.set $eip (i32.load (call $g2w (local.get $esp))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (local.get $esp) (i32.const 20)))
+        (global.set $handler_set_eip (i32.const 1))
+        (return)))
 
     ;; Catch-return thunk — SEH catch handler returned
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0000))
