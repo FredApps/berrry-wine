@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-dialog (scratch/fresh-workers-20261007)
+  worker: fresh CLI antara-input-fix (scratch/fresh-workers-20261007)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Resource-path fix dad1f8c78 restores ordinary Sierra menu. Install click highlights Uninstall; coordinate cause not established, keyboard hwnd0 is intentional. Prepared read-only DOM/input mapping run after Winamp actual release; transfer240s/browser120s/cleanup90s. No installation/gameplay yet.
+  Next: Fresh input-fix worker replaces exited antara-dialog. Original installer packet uses window origin instead of client origin (3,23); generic captioned-popup coordinate regression and fix next. Handoff6162df55e integrated48e46e60c. Installation/gameplay incomplete; native checks require disk preflight.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1270,7 +1270,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI tiberian-input
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Shared GDI composition repair merged3946d5f9c after focused pixel/fragmentation tests, full build and reviewed ordinary visible menu. New Campaign down/up reaches HWND10004 but does not advance; parent WM_COMMAND unproven. Worker prepares causal input investigation; no campaign/gameplay qualification.
+  Next: Ordinary menu rendering repaired. Click and actually performed Enter remain at menu; measured page coordinates correct for this target. Fresh tiberian-input prepares owning Worker callback/parent-command receipt. Ordinary outcome2f6de8cb1 integrated8dcc23ef7; gameplay incomplete.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
