@@ -27,3 +27,69 @@ Final private `dos.js` SHA-256: `31758370d35247d65f2c66826eacfe67bbd0d6b4282bc46
 The separately bounded original installer run started 13:10:19.195Z and closed 13:10:19.867Z. Driver2697860/child2697869 terminated, both streams closed, process group absent, original five media hashes unchanged. It now opens **`C:\INSTALL.BIN`**, passing the earlier self-file failures. The reviewed screen instead says **“Insufficient extended memory to run program”**, followed by the wrapper's missing `setup.exe` error. INSTALL.BIN exits1; INSTALL.EXE exits0. No files were generated. This is progress through native startup, not successful installation or gameplay; the new message does not by itself establish a capacity cause.
 
 Evidence: `scratch/wt-diehard-20261007/scratch/comanche3-preparation/exec-environment/mcb-installer-ready/native-attempt1/validation.json` (SHA-256 `fe0b217eb2a6d6e7022189cad16c5016ade01fa12bd1cf3fc8536e897c83443e`) seals the original screenshot, result, log, identity and cleanup. `mcb-attempt1/receipt.json` and preceding immutable attempt directories retain positive and negative contracts. Runtime source pins SHA-256 `afc9c854c35481273476e9469ad7405b07d6caeff59bb28f2a40015e7bfad79a`. The production repair remains unmerged pending review. Next source investigation is the actual extended-memory query/allocation and error branch; do not inflate memory or bypass the installer based solely on its message.
+
+## Native graphical installation, 2026-10-08
+
+The earlier paging dependency is complete on main (`72e306790`, foundation
+`4b0955e79`); see `ops/handoffs/toyvm-paging-complete-20261007.md`. This phase
+used isolated base `329bb48d7f37f5071b722f7fe8a7eca3a6a72aea`, with no CPU or
+DOS implementation changes. The fresh remotely compiled tailcall module is
+`91747769679ce2e661242d0777c1f0fb5aeffe48cbbe2f71ea9443eaf57a45cf`.
+
+Evidence: `scratch/runs/20261008T0433Z-comanche3-install/`. On fresh no-env boat
+`bx_2bg9dma5`, Node 24.18.1 / V8 13.6.233.17-node.50, AMD Ryzen 9 9950X,
+the unchanged original INSTALL.EXE/INSTALL.BIN reached the graphical destination
+prompt. Reviewed ordinary Enter accepted `C:\C3DEMO`; reviewed `y` accepted
+the subsequent Folder Exists prompt. The final reviewed
+`attempt2/screen-008.png` shows **File Copy, copying MAKEICON.EXE from C:\ to
+C:\C3DEMO\, 3% installed**. This establishes native graphical installer
+interaction and installation progress, not completion or gameplay.
+
+The corrected execution ended normally at 04:48:39.651 UTC, within the original
+04:48:54.095 deadline: 235.9166 execution-wall seconds, 165,404,857 dispatches,
+16.51805 guest seconds, `ranOutOfTime=true`, guest not exited. No unimplemented
+instruction, CPU fault, unhandled condition, bad selector or protected-transfer
+stop was recorded. The installer advanced its source cursor from 414,127 to
+2,621,525 and produced `setup.cd` (2 bytes), `install.lev` (1), and
+`install.tmp` (41,472), plus the empty `00000001`. All four files are exported
+with byte hashes; they do not constitute an installed game. `C3.EXE` and
+`SETUP.EXE` are absent from the exported payload.
+
+Two harness failures are retained honestly. Attempt0 stopped before guest
+execution because screenshot encoding expected `source/node_modules/pngjs`.
+The first actual run reached the destination and Folder Exists screens, then
+stopped when a non-atomic input-file update exposed incomplete JSON. The retry
+corrected command publication with temporary-file rename and a meaningful
+partial-write regression; it retained the original overall deadline, reserving
+15 seconds for final artifacts. No timer or guest-state bypass was used.
+
+The first run's console still said Loading Install after its screen had become
+graphical. A read-only inspector snapshot confirmed native VESA mode 101h,
+640x480x8 and ordinary glyph drawing; actual screenshots, rather than console
+text, identified the prompt. Inspector snapshots and paused/resumed receipts
+are retained. They do not establish a CPU correctness blocker. No paging/IVT
+diagnosis or implementation was repeated.
+
+All original media and 79 transferred source/dependency/media pins were
+unchanged. The CPU closure matches the earlier accepted source; the only
+source-pin difference against final6 was `test/test-toyvm-paging.js`, which
+was not executed here. Both actual runs used the same fresh module hash.
+All driver/child PIDs and process groups were independently absent; browser
+absent, socket list identical to the fresh baseline, streams closed. Retrieved
+artifacts were hash checked before scoped prefix removal at 04:49:32.989,
+53.338 seconds after the final terminal receipt. Root owns the temporary boat
+lifecycle; lease expiry 05:11:20.138 UTC.
+
+Exact absent local fixture directory:
+`/home/user/wt-comanche-gameplay-20261008/test/binaries/win98-games-a-d/Commanche3-demo-SW`.
+Its five media files were instead reused as immutable hardlinks from the
+self-contained paging run's `original/media/`, verified against the original
+receipt. Host lookup misses for archive-contained installer resources are
+retained in `attempt2/execution.json`; these are not proven missing distribution
+files, since the installer rendered its assets and began copying.
+
+Next: execute the original installer with atomic ordinary input and inspect
+every prompt promptly; predeclare a finite installation budget and milestones
+for source-cursor and exported-file growth. Reach installation completion, then
+launch the actual installed C3 executable through the dedicated DOS route.
+Gameplay, player control, sound, save behavior and FPS remain unqualified.
