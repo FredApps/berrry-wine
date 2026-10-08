@@ -1315,5 +1315,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: fresh CLI warcraft3-prologue
-  Next: Reconcile retained September28 controlled Thrall gameplay against main, verify original registered media and matched accepted host/module, then prepare ordinary browser Prologue selection and move orders. Queue after Antara and Tiberian actual release. No local browser/heavy tests.
+  Next: Actual0134 reached original profileABC/Create/Select and Prologue selection screen on owning OpenGL WebGL; root screenshot reviewed, level/gameplay unqualified. Final evidence/handoff pending; next fresh phase reuses actual hover/longhold route then Prologue/map/Thrall within reviewed budget. Browser released46:42; Antara current, Tiberian next.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
