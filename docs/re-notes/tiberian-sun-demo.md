@@ -701,3 +701,62 @@ Independent00:36:37 verifies driver24552/Chrome24564 absent, noChrome and exact
 baseline sockets, all355runtime pins and12durable diagnostic copies unchanged.
 Only the owned runtime prefix was removed after copies. Remote slot released
 00:36:51; parent owns retained box lifecycle and queued Antara priority.
+
+## 2026-10-08: parent paint producer and registered activation ownership
+
+Two generic repairs on explicita8e149a87, isolated branch
+`fix/tiberian-menu-pump-owner-20261008`:3f61a2e39 (exclusive primary paint
+isolation) andf493338ea (registered COM factory requesting-CPU continuation).
+Detailed source/tests/evidence handoff:
+`ops/handoffs/tiberian-menu-pump-owner-20261008.md`.
+
+Parent10002 ordinary ValidateRect at58cadd/return58cae6 consumes full299x202
+damage. Diagnostic51e2b8 proves the next writer is original4887f7 primary
+surface Unlock, through dx_present ->paint_mark_visible_tree ->full child
+invalidation. All16 observed original code spans match. No page renderer
+tree/queue/exposure calls occur in the separate bounded trace. Exclusive
+DirectDraw incorrectly selects legacy shared GDI presentation because a GDI
+window surface and visible children exist; this renews already validated
+parent damage. Preserve the earlier accepted10003/ValidateRect(NULL) fixes.
+Real callback/API regression fails before and passes after; overlay pixels,
+windowed exposure, later damage, erase callbacks and ordering remain covered.
+Fresh canonical candidatea048c45c reaches first Peek0, original1000c campaign
+dialog and ordinary Enter/Titan loading.
+
+Campaign-owned HRESULT is80070057, _com_error object+4, original6357ad
+->699dc0, return6357b2;11 live original caller spans match. Original40ec10
+helper CoCreateInstance return40ec43 fails for CLSID
+55d141b8-db94-11d1-ac98-006008055bb5 before OleRun/QI070f3290. Registered
+factory146737968 is executed at original5f1490 by the page storage shadow
+EIP0/ESP0, while the requesting Worker ppv122679240 is valid. Factory5f1492
+reads ppv atESP+18 after two pushes;5f149b returns80070057 on NULL. Source
+builds that callback stack below the shadow's zero ESP. Resolve-only
+registered activation now returns a borrowed factory to the requesting CPU,
+which owns real guest AddRef/CreateInstance/Release continuations. Owner/
+shadow regression fails before, passes after including yield, exact stack,
+ppv/this, failed HRESULT normalization and temporary reference balance.
+
+Fresh canonical moduleff3281348c7360d5eae35e43ac838a5725c7e2bcbce77ac88e9a05b104111303
+advances through actual OleRun40ec52 with a non-null new object. Redirected
+CoCreateInstance API log exits are early entry observations, not completion
+receipts. Subsequent trap is owning slot0/tid1 atEIP00d88176/ESP00d88168,
+EBP30936648; matching module indices1106/1108/11417 map to decode_block,
+decode_run,run. Bounded code/stack bytes show heap/frame data at the execution
+target. The first bad control-flow transfer is still unowned; no instruction
+patch or guessed API repair. Campaign mission/unit commands remain unverified.
+Startup80040154 and historical consoleEIP0 are not this campaign fault.
+
+Reviewer correction after the browser run: registered AddRef returns ULONG,
+so high-bit counts must be ignored before the reused GCO HRESULT checks.
+A registered-only frame tag normalizes that return; real owner regression
+returning80000001 fails before and passes after with creation/Release balance
+and yields preserved. Full canonical build passes, new moduled8d4096f957ed51cecab589b5a1ec7bf402336f13959ce0710faf2f7d3c68960.
+Build-only1236 package is separate; no browser rerun. Actual original loading/
+trap screenshots and Worker source remainff3281. Root owns fresh no-env
+build boxsq2kkxku expiry12:52:40.771; all owned jobs/prefix already removed
+after source/module hash collection, no Chrome or changed socket.
+
+Runs1138/1140/1145/1154/1200/1212/1216/1222/1227 (full20261008T IDs in
+handoff) retain original-source/module/478pin identity, ordinary input,
+reviewed images and independent retrieval/cleanup. Original fonts/assets
+unchanged. Earlier sealed evidence remains untouched.

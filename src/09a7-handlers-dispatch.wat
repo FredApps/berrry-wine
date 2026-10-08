@@ -2259,8 +2259,7 @@
     (global.set $handler_set_eip (i32.const 1))
     (global.set $steps (i32.const 0)))
 
-  (func $com_activate_begin (param $gco i32) (param $rclsid i32) (param $ppv i32)
-      (param $class_only i32) (param $requested_iid i32)
+  (func $com_activate_frame_begin (param $ppv i32) (result i32)
     (local $f i32)
     (if (i32.eqz (global.get $com_gco_thunk))
       (then
@@ -2276,6 +2275,12 @@
     (call $gs32 (i32.add (local.get $f) (i32.const 12)) (i32.const 0xC0))
     (call $gs32 (i32.add (local.get $f) (i32.const 16)) (i32.const 0x46000000))
     (i32.store offset=16 (global.get $reg_base) (local.get $f))
+    (local.get $f))
+
+  (func $com_activate_begin (param $gco i32) (param $rclsid i32) (param $ppv i32)
+      (param $class_only i32) (param $requested_iid i32)
+    (local $f i32)
+    (local.set $f (call $com_activate_frame_begin (local.get $ppv)))
     (call $io_apc_push (local.get $f))
     ;; Per-call mode tag at F+4: 1 is the normal IID_IClassFactory.Data1;
     ;; 0 means factory-only and that unused IID buffer is NOT passed to GCO.
@@ -2288,6 +2293,19 @@
     (call $io_apc_push (local.get $rclsid))
     (call $io_apc_push (global.get $com_gco_thunk))
     (call $com_jump (local.get $gco)))
+
+  ;; A registered factory is borrowed from the process table, rather than
+  ;; returned with a reference by DllGetClassObject. Retain it on this CPU,
+  ;; then reuse the ordinary CreateInstance/Release continuation and frame.
+  (func $com_activate_registered_begin (param $factory i32) (param $ppv i32)
+    (local $f i32)
+    (local.set $f (call $com_activate_frame_begin (local.get $ppv)))
+    (call $gs32 (local.get $f) (local.get $factory))
+    ;; Distinguish AddRef's unsigned count from DllGetClassObject's HRESULT.
+    (call $gs32 (i32.add (local.get $f) (i32.const 4)) (i32.const -1))
+    (call $io_apc_push (local.get $factory))
+    (call $io_apc_push (global.get $com_gco_thunk))
+    (call $com_jump (call $gl32 (i32.add (call $gl32 (local.get $factory)) (i32.const 4)))))
 
   (func $com_activate_finish (param $hr i32)
     (local $e i32)
@@ -2305,6 +2323,12 @@
     (local.set $f (i32.load offset=16 (global.get $reg_base)))
     (local.set $e (i32.add (local.get $f) (i32.const 20)))
     (local.set $pf (call $gl32 (local.get $f)))
+    (if (i32.eq (call $gl32 (i32.add (local.get $f) (i32.const 4))) (i32.const -1))
+      (then
+        ;; IUnknown::AddRef returns ULONG, including valid high-bit counts.
+        ;; Only the following CreateInstance return is an HRESULT.
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $gs32 (i32.add (local.get $f) (i32.const 4)) (i32.const 1))))
     ;; F+4 mode tag is read before normal CreateInstance may reuse it for HR.
     (if (i32.eqz (call $gl32 (i32.add (local.get $f) (i32.const 4))))
       (then
@@ -3393,6 +3417,10 @@
     (if (i32.eq (local.get $hr) (i32.const 2)) ;; COM_RESOLVED_INPROC
       (then
         (call $com_activate_begin (call $gl32 (local.get $arg4)) (local.get $arg0) (local.get $arg4) (i32.const 0) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $hr) (i32.const 3)) ;; COM_RESOLVED_REGISTERED_FACTORY
+      (then
+        (call $com_activate_registered_begin (call $gl32 (local.get $arg4)) (local.get $arg4))
         (return)))
     ;; Check if we need async DLL load (host returns 0x800401F0 = CO_E_DLLNOTFOUND)
     (if (i32.eq (local.get $hr) (i32.const 0x800401F0))

@@ -6320,14 +6320,18 @@
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
 
-  ;; True when this top-level window is shared between DirectDraw and ordinary
-  ;; GDI: it already owns a WAT window surface and has at least one visible
-  ;; child. Both surfaces would attach to the same hwnd, and the host keeps
-  ;; only the most recent attach, so presenting straight from the DirectDraw
-  ;; surface would drop either the frame or the controls.
+  ;; Windowed DirectDraw and GDI children share a window surface. The exclusive
+  ;; presentation owner instead retains separate primary and GDI child surfaces
+  ;; in the compositor. Copying its primary through GDI and invalidating every
+  ;; child on each present renews damage even after the guest validates it:
+  ;; a child that presents while painting can never drain its message pump.
   (func $dx_window_surface_shared (param $hwnd i32) (result i32)
     (local $slot i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.ne (call $dx_exclusive_get) (i32.const 0))
+          (i32.eq (local.get $hwnd) (call $dx_target_hwnd)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0)))
       (then (return (i32.const 0))))
     (local.set $slot (i32.const 0))

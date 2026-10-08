@@ -1,7 +1,7 @@
-updated: 2026-10-08T11:33:33.414Z
+updated: 2026-10-08T12:51:01.558Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: sole fresh tiberian-menu-pump-owner launched11:33:07; prior recovery worker exited0. Exact accepted Worker replay still loops on parent10002 WM_PAINT after New Campaign selector1, never reaching1000c. Active causal investigation: producer/validation/pump ownership for10002, preserving earlier10003 repair. Comanche flight accepted and pushed45da62521; no new Comanche worker.
+Current workers: none; Tiberian menu-pump worker exited0 at12:48:14. Root reviewed11182 contained hashes, original loading/trap images and real owner/paint regressions. Validated fixes clear parent menu repaint starvation and registered COM activation on shadow CPU; AddRef edge correction tested separately. Remaining Tiberian boundary is first transfer into heap EIP00d88176 during loading; unit control remains unverified. Fresh single continuation queued, no Comanche refill.
 
 Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Private local registration only; normal corpus launch integration remains queued. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
 

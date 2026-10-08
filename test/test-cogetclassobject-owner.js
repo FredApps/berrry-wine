@@ -48,4 +48,22 @@ bytes(create,[0x8b,0x44,0x24,12,0xa3,...u(seen+64),0x8b,0x44,0x24,16,0xc7,0,...u
 // Resolver private flags are preserved; legacy class-only registered lookup remains direct.
 assert.equal(storage.com_create_instance(g2w(clsid,b,memory.buffer),0,0x40000003,g2w(iid,b,memory.buffer),out),2);assert.equal(get(out),gco);
 sharedCom.classes.set('{12345678-0000-0000-0000-000000000000}',{pUnkGA:factory});assert.equal(storage.com_create_instance(g2w(clsid,b,memory.buffer),0,0x80000003,g2w(iid,b,memory.buffer),out),0);assert.equal(get(out),factory);
+// Registered factories must execute on the requesting CPU too. The page
+// shadow has ESP=0; running its callback cannot construct this stdcall frame.
+const addref=arena+0x1a00;
+put(vt+4,addref);
+bytes(addref,[0xff,0x05,...u(seen+80),0xb8,...u(0x80000001),0xc2,4,0]);
+bytes(release,[0xff,0x05,...u(seen+84),0xb8,1,0,0,0,0xc2,4,0]);
+const registeredCreate=[0x89,0xe2,0x89,0x15,...u(seen+88),0x8b,0x44,0x24,4,0xa3,...u(seen+92),0x8b,0x44,0x24,16,0xa3,...u(seen+96),0xc7,0,...u(object),0x31,0xc0,0xc2,16,0];
+bytes(create,registeredCreate);start(coCreate);finish(0,object);
+assert.equal(get(seen+80),1,'activation retains its borrowed registered factory');
+assert.equal(get(seen+84),1,'activation releases exactly its own reference');
+assert.equal(get(seen+88),E-40,'registered CreateInstance owns the real caller stack');
+assert.equal(get(seen+92),factory);assert.equal(get(seen+96),out,'non-null ppv reaches the guest factory');
+bytes(create,[0x6a,1,0xb8,...u(sleep),0xff,0xd0,...registeredCreate]);start(coCreate);owner.run(1000);
+assert.equal(owner.get_sleep_yielded(),1,'registered constructors may yield through ordinary scheduling');
+assert.equal(get(out),0,'a yielded constructor has not completed activation');owner.clear_yield();finish(0,object);
+assert.equal(get(seen+80),2);assert.equal(get(seen+84),2);
+bytes(create,[0x8b,0x44,0x24,16,0xc7,0,...u(object),0xb8,...u(0x80070057),0xc2,16,0]);start(coCreate);finish(0x80070057,0);
+assert.equal(get(seen+80),3);assert.equal(get(seen+84),3,'failed constructor still releases the temporary factory reference');
 console.log('PASS real owner/shadow instances: requested IID, failure/positive/null normalization, exact E/F frames, retry, nesting, registered factory and CoCreateInstance');
