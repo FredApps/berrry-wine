@@ -1,9 +1,9 @@
-updated: 2026-10-08T10:55:27.417Z
+updated: 2026-10-08T11:19:16.554Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: Comanche flight-window owns the sole browser/runtime slot; root reviewed and sent its first cockpit screenshot, flight-control validation remains active. User explicitly requested Tiberian Sun active now: fresh tiberian-campaign-recovery launched10:55:05 for source/evidence/preflight, awaiting Comanche RELEASE for runtime. No parallel browsers; after Comanche exits, Tiberian remains the sole worker.
+Current workers: sole Tiberian campaign-recovery; Comanche exited0 at11:08:48 after root-reviewed cockpit, forward flight and right bank. Comanche browser cleanup independently verified, runtime handed to Tiberian11:07 on fresh bx_57v6b8fr. Tiberian exact old Worker replay still returns menu paint; campaign error cause unresolved. No parallel browsers or worker refill.
 
-Comanche 3 paging and DOS rename fixes are integrated (72e306790,4b0955e79,cdddc109b). Original installation completed and preserved C3.EXE/RESOURCE.RES; Setup completion remains unqualified. Installed original game now reaches Haystack mission loading with final web keyboard repair d87b54eca. No installer or paging replay is needed.
+Comanche 3 original player-controlled flight qualified in20261008T1012Z-comanche3-flight-window on ToyVM source4280b855d: cockpit->forward movement->right bank, reviewed screenshots sent. Private local registration only; normal corpus launch integration remains queued. FPS/audio/combat/mission completion unqualified. Paging, rename and held-key fixes are already main.
 
 Quake II ordinary forward/reverse/idle traversal is qualified on WebGL2534731b3 and software069662726 using the recorded reference modulefb1be916. Reviewed runs20261007T213620Z-quake2-ordinary-traversal and20261008T000901Z-quake2-software-ordinary retain backend/source identity and limits. FPS/audio/network remain unqualified. GL27 remains incomplete. Quake II, Crimsonland Tutorial, Alien Shooter Mission01 and Warcraft III Prologue have reviewed control on both backends at their recorded reference builds. Longer gameplay routes, heavy titles/Pirates and held Winamp exception remain; qualification is not a current-main full-corpus validation.
 

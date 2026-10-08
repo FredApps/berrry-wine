@@ -1,5 +1,48 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Original cockpit and controlled flight, 2026-10-08
+
+On explicit integrated source `4280b855d`, one user-authorized longer browser
+window reaches the original cockpit and ordinary forward flight plus a directed
+right bank. Shared evidence:
+`scratch/runs/20261008T1012Z-comanche3-flight-window/`.
+The actual dashboard page/input wiring uses a private localhost fixture serving
+the eleven preserved installed originals; no production catalog/deploy claim.
+
+Reviewed `retrieved/original/canvas-cockpit-before.png` shows heading243,
+ALT2/SPEED0/TORQUE1 at the start point. Normal reference-card controls6/E/0,
+Up and Right produce `canvas-forward-flight.png` heading244/ALT10/SPEED5 and
+`canvas-turn-right.png` heading250/ALT41/SPEED17 with banked terrain and
+shifted radar-dish/building/windsock landmarks. Final `screen-001-final.png`
+shows heading267/ALT95/SPEED13. This qualifies the scoped original cockpit,
+flight and input goal; no combat/mission completion/save/FPS/audio claim.
+
+Known ready-screen route: Escape skips intro, two Down select Argon, then five
+Enter transitions reach Gallant Venture/Haystack/briefing/map/loading. No
+input during loading; no guest state, code, clock, BIOS or transition forcing.
+Sparse pure-JS observations show original LZW/caching, mission blend under
+`cb31c -> 67907 -> 2dd58`, later `67947`, then `cb33a` assets. At10:49:02
+the original tick wait returns to `cb3e7`;10:49:52 rendering returns to
+`cb45c` inside the mission loop following `cb403`. Prior loading windows
+ended during advancing initialization; no menu/loader repair was needed.
+
+Deadline11:24UTC/max4200wall600guest was declared before launch and never
+reset. Actual10:14:21.590–11:00:35.862,2774.272wall/231.4958232guest seconds,
+deliberate early Stop after acceptance, guest not exited, held0/Chrome0.
+Actual CPU917477 unchanged, current bundle53a1d9, Chrome151/tailcall386/
+paced10MIPS/JIToff/silent;44 source/font pins match reviewed current closure.
+First30second Up helper hit Boat's command cap before keyup; explicit ordinary
+release at10:55:44 clears held state (roughly73second actual hold). Host command
+cap fixed without changing the acceptance deadline; later30second Up/Right
+complete normally. This harness issue is retained, not an emulator repair.
+
+Fresh no-env bx_jan4gb4k, root owns expiry11:45:52.236UTC. Transfer117.791s;
+93files/8,107,703bytes retrieved SHA-verified before prefix removal,13owned
+PIDs absent/noChrome/exact baseline sockets/22pins unchanged. Cleanup4.078s
+after terminal. No runtime source/performance variant or source build here.
+See [the flight handoff](../../ops/handoffs/comanche3-flight-window-20261008.md)
+for exact identity, reviewed captures, limits and root integration scope.
+
 ## Disabled detector candidate, 2026-10-08
 
 Separate optimization `perf/toyvm-disabled-progress-20261008`, explicit base

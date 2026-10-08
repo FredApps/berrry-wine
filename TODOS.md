@@ -1237,13 +1237,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
-  status: active
+  status: review
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI comanche3-flight-window (sole active worker)
+  worker: none (flight worker exited0; root gameplay review passed)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Disabled-detector optimization integrated main4280b855d after root250 hashes, regression and paired early-startup review; no loading/FPS speed claim. Original initialization advances but prior1800wall runs cover only123-140guest seconds. One fixed4200wall/600guest acceptance window now tracks known terrain/palette completion toward actual cockpit and ordinary flight, with prompt reviewed input route and sparse observations; no installer/menu replay or resetting deadlines.
+  Next: Root reviewed original cockpit, forward flight and right bank, plus sealed flight run20261008T1012Z-comanche3-flight-window. Ordinary control changes altitude2->41, speed0->17, heading243->250 with terrain bank/movement. Scoped gameplay qualified on current ToyVM source; no further screenshot rerun. Normal corpus launch remains to integrate: run used private localhost registration, candidateId null, not production catalog. FPS/audio/combat remain separate.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
