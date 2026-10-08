@@ -539,6 +539,7 @@
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 2))  (then (return (call $lookup_api_id "SysAllocString"))))
         (if (i32.eq (local.get $ordinal) (i32.const 4))  (then (return (call $lookup_api_id "SysAllocStringLen"))))
+        (if (i32.eq (local.get $ordinal) (i32.const 5))  (then (return (call $lookup_api_id "SysReAllocStringLen"))))
         (if (i32.eq (local.get $ordinal) (i32.const 6))  (then (return (call $lookup_api_id "SysFreeString"))))
         (if (i32.eq (local.get $ordinal) (i32.const 7))  (then (return (call $lookup_api_id "SysStringLen"))))
         (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id "VariantInit"))))
