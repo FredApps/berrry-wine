@@ -8,12 +8,14 @@ function installTiberianPumpReceipt(host, getContext, emit) {
     ['DestroyWindow', {args: 1, boundary: true}],
     ['CreateDialogIndirectParamA', {args: 5, boundary: true}],
     ['DialogBoxIndirectParamA', {args: 5, boundary: true}],
+    ['GetWindowLongA', {args: 2, anchor: true}],
   ]);
-  for (const n of ['log', 'log_api_exit']) if (typeof host[n] !== 'function') throw Error('missing ' + n);
+  for (const n of ['log', 'log_api_exit', 'check_input']) if (typeof host[n] !== 'function') throw Error('missing ' + n);
   const originals = new Map(), hooks = new Map(), names = new Map(), frames = [], seen = new Set(), counts = new Map();
-  const limits = {regular: {bytes: 45056, rows: 64, ms: 120}, metadata: {bytes: 4096, rows: 0, ms: 20}, scan: {bytes: 8192, rows: 0, ms: 20}, boundary: {bytes: 8192, rows: 32, ms: 40}};
+  const limits = {regular: {bytes: 36864, rows: 56, ms: 100}, metadata: {bytes: 4096, rows: 0, ms: 20}, scan: {bytes: 8192, rows: 0, ms: 20}, boundary: {bytes: 8192, rows: 32, ms: 40}, anchor: {bytes: 8192, rows: 8, ms: 20}};
   const used = Object.fromEntries(Object.keys(limits).map(k => [k, {bytes: 0, rows: 0, ms: 0, capped: false}]));
   let active = false, closed = false, deadline = 0, lane = 'regular', laneStart = 0, error = null, firstEmpty = false, unmatched = 0;
+  let released = false, selector = 0, anchorAttempts = 0, anchored = false;
   const now = () => performance.now();
   function guard() {
     if (!active || Date.now() >= deadline) throw Error('deadline/inactive');
@@ -61,9 +63,24 @@ function installTiberianPumpReceipt(host, getContext, emit) {
     if (frames.length >= 128) { error = 'frame cap'; active = false; frames.length = 0; return; }
     const index = frames.length; frames.push(null);
     const spec = specs.get(name); if (!spec) return;
-    const which = spec.boundary ? 'boundary' : used.regular.capped && name === 'PeekMessageA' ? 'scan' : 'regular';
+    if (spec.anchor && (!released || selector || anchored)) return;
+    if (!spec.anchor && !anchored) {
+      if (!selector || anchorAttempts >= 16 || spec.boundary) return;
+      observe('anchor', () => {
+        const c = context(); anchorAttempts++; const value = words(c, selector, 1)[0];
+        if (value === 1) { anchored = true; row({kind: 'campaign-anchor', selectorPointer: selector, value, slot: c.slot, tid: getter(c, 'get_current_thread_id'), eip: getter(c, 'get_eip'), esp: getter(c, 'get_esp')}); }
+      });
+      if (!anchored) return;
+    }
+    const which = spec.anchor ? 'anchor' : spec.boundary ? 'boundary' : used.regular.capped && name === 'PeekMessageA' ? 'scan' : 'regular';
     observe(which, () => {
       const c = context(), esp = getter(c, 'get_esp'), stack = words(c, esp, spec.args + 1);
+      if (spec.anchor) {
+        if (stack[0] !== 0x4dea72 || stack[1] !== 0x10002 || stack[2] !== 8) return;
+        const callbackArgs = words(c, esp + 0x50, 4);
+        if (callbackArgs.some((n, i) => n !== [0x10002, 0x111, 1559, 0x10004][i])) return;
+        frames[index] = {name, spec, esp, stack, callbackArgs, lane: which}; return;
+      }
       if (spec.callers && !spec.callers.includes(stack[0])) return;
       const frame = {name, spec, esp, stack, lane: which};
       if (name === 'DispatchMessageA') frame.msg = words(c, stack[1], 7);
@@ -77,9 +94,13 @@ function installTiberianPumpReceipt(host, getContext, emit) {
     const f = frames.pop(); if (!f) return;
     observe(f.lane, () => {
       const c = context(), result = getter(c, 'get_eax');
+      if (f.spec.anchor) {
+        if (!result) return; selector = result;
+        row({kind: 'command-anchor-pointer', selectorPointer: selector, initial: words(c, selector, 1)[0], callbackArgs: f.callbackArgs, identity: identity(c, f)}); return;
+      }
       if (f.spec.boundary) { row({kind: 'boundary-handler-exit', name: f.name, result, identity: identity(c, f)}); return; }
       // MSG is meaningful on successful Get/Peek, or at Dispatch entry (captured below).
-      const msg = f.msg || (result && f.lane !== 'scan' ? words(c, f.stack[1], 7) : null);
+      const msg = f.msg || (result && result !== 0xffffffff && f.lane !== 'scan' ? words(c, f.stack[1], 7) : null);
       const key = [f.name, f.stack[0], result, ...(msg ? msg.slice(0, 4) : [])].join(':');
       if (counts.has(key)) counts.set(key, counts.get(key) + 1);
       else if (counts.size < 64) counts.set(key, 1); else counts.set('overflow', (counts.get('overflow') || 0) + 1);
@@ -99,10 +120,13 @@ function installTiberianPumpReceipt(host, getContext, emit) {
     };
     hooks.set(n, hook); host[n] = hook;
   }
+  const inputOriginal = host.check_input; originals.set('check_input', inputOriginal);
+  const inputHook = function(...args) { const result = inputOriginal.apply(this, args); if (active && Date.now() < deadline && (result & 0xffff) === 0x202) released = true; return result; };
+  hooks.set('check_input', inputHook); host.check_input = inputHook;
   return {
     arm() { if (closed || active) throw Error('observer unavailable'); active = true; deadline = Date.now() + 8000; return {armed: true, deadline, maxReadBytes: 65536, maxRows: 96, maxCpuMs: 200, limits}; },
     close() { active = false; closed = true; for (const [n, original] of originals) if (host[n] === hooks.get(n)) host[n] = original; frames.length = 0;
-      return {closed: true, deadline, error, firstEmpty, unmatched, used, counts: Object.fromEntries(counts), coverage: 'counts stop at regular read/CPU cap; reserved boundary records continue within original deadline'}; },
+      return {closed: true, deadline, error, released, selector, anchorAttempts, anchored, firstEmpty, unmatched, used, counts: Object.fromEntries(counts), coverage: 'post-selector1 only; counts stop at regular read/CPU cap; reserved boundary records continue within original deadline'}; },
   };
 }
 if (typeof module !== 'undefined') module.exports = {installTiberianPumpReceipt};
