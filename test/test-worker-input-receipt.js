@@ -1,11 +1,11 @@
 'use strict';
 const assert=require('node:assert/strict'),{installWorkerInputReceipt}=require('../tools/worker-input-receipt');
 const memory={buffer:new ArrayBuffer(8192)},view=new DataView(memory.buffer),host={},seen=[],rows=[];
-let contexts=0,time=100,flags=0,tid=1,translateExpiry=false,expiredBufferReads=0;
-for(const name of ['log','log_api_exit','check_input','check_input_hwnd','check_input_lparam','check_input_wparam'])host[name]=function(...args){assert.equal(this,host);seen.push({name,args});if(args[0]==='throw')throw Error('original import');return name==='check_input'?0x10201:17;};
+let contexts=0,time=100,flags=0,tid=1,translateExpiry=false,expiredBufferReads=0,packet=0x10201;
+for(const name of ['log','log_api_exit','check_input','check_input_hwnd','check_input_lparam','check_input_wparam'])host[name]=function(...args){assert.equal(this,host);seen.push({name,args});if(args[0]==='throw')throw Error('original import');return name==='check_input'?packet:17;};
 const originals={...host},clock=Date.now;Date.now=()=>time;
 const ex={get_current_thread_id:()=>tid,get_eip:()=>0x7500000,get_esp:()=>0x600,get_eax:()=>1,
-  get_capture_hwnd:()=>flags?0x10004:0,get_focus_hwnd:()=>0x10004,
+  get_capture_hwnd:()=>(flags&0x200)?0x10004:0,get_focus_hwnd:()=>0x10004,
   button_get_flags:()=>flags,ctrl_get_id:()=>1559,ctrl_get_wh:()=>(20<<16)|195,
   wnd_get_proc_export:()=>0x57e790,wnd_get_parent:()=>0x10002,get_post_queue_count:()=>0,
   guest_to_wasm:p=>{if(translateExpiry)time+=8000;return p;}};
@@ -52,5 +52,44 @@ try{
  const foreign=installWorkerInputReceipt(host,context,()=>{}),replacement=()=>91;
  host.log=replacement;foreign.close();assert.equal(host.log,replacement);
  const incomplete={log:()=>1};assert.throws(()=>installWorkerInputReceipt(incomplete,context,()=>{}),/missing import/);assert.equal(incomplete.log(),1,'failed install does not leave partial hooks');
+ // Reproduce the real collector limitation: paint traffic before the release
+ // exhausted the first 16KiB observer. Filter before the full state read and
+ // retain the bounded release/command chain after this finite paint burst.
+ Object.assign(host,originals);time=100;flags=0x60d;
+ let buttonReads=0;ex.button_get_flags=()=>{buttonReads++;return flags;};
+ const burstRows=[],burst=installWorkerInputReceipt(host,context,r=>burstRows.push(r));burst.arm(0x10004);
+ const burstStart=seen.length;
+ for(let i=0;i<500;i++){
+  api('CallWindowProcA',[0x5812ff,0xffff0002,0x10004,0xf,0,0]);host.log_api_exit();
+  [0x10004,0xf,0,0,0,316,213].forEach((v,i)=>view.setUint32(0x800+i*4,v,true));
+  api('DispatchMessageA',[0x401234,0x800]);host.log_api_exit();
+ }
+ assert.equal(burstRows.length,0,'paint traffic consumes no receipt rows');
+ assert.equal(buttonReads,0,'paint filtered before native state snapshots');
+ assert.equal(seen.length-burstStart,2000,'every original paint import forwarded once');
+ api('CallWindowProcA',[0x5812ff,0xffff0002,0x10004,0x202,0,0x000a005c]);flags=12;host.log_api_exit();
+ api('PostMessageA',[0x581300,0x10002,0x111,1559,0x10004]);host.log_api_exit();
+ [0x10002,0x111,1559,0x10004,456,316,213].forEach((v,i)=>view.setUint32(0x800+i*4,v,true));
+ api('DispatchMessageA',[0x401234,0x800]);host.log_api_exit();
+ assert.equal(burstRows.length,6);
+ assert.equal(burstRows[0].state.button.flags,0x60d);
+ assert.equal(burstRows[1].state.button.flags,12);
+ assert.equal(burstRows[1].state.capture,0);
+ assert.deepEqual(burstRows[4].message,[0x10002,0x111,1559,0x10004,456,316,213]);
+ const burstReceipt=burst.close();assert(burstReceipt.readBytes>16384&&burstReceipt.readBytes<65536);assert.equal(burstReceipt.stopReason,null);
+ Object.assign(host,originals);time=100;packet=0x10201;
+ const phaseRows=[],release=installWorkerInputReceipt(host,context,r=>phaseRows.push(r));
+ assert.equal(release.arm(0x10004,'release').phase,'release');
+ const beforeReleaseContexts=contexts;
+ api('CallWindowProcA',[0x5812ff,0xffff0002,0x10004,0x201,1,0xa005c]);host.log_api_exit();
+ host.check_input();host.check_input_hwnd(0);
+ assert.equal(contexts,beforeReleaseContexts,'release phase ignores every pre-release API/input getter');
+ assert.equal(phaseRows.length,0);
+ packet=0x202;assert.equal(host.check_input(),0x202);
+ assert.equal(phaseRows[0].kind,'input-import');assert.equal(phaseRows[0].result,0x202);
+ api('CallWindowProcA',[0x5812ff,0xffff0002,0x10004,0x202,0,0xa005c]);host.log_api_exit();
+ assert.equal(phaseRows.length,3);assert(release.close().started);packet=0x10201;
+ console.log('PASS release phase begins at original UP import result; no pre-release CPU/memory reads or altered input forwarding');
+ console.log('PASS bounded 500-paint burst: zero paint state reads, all2000original calls once, release/native flags/parent command MSG retained beyond old16KiB cap');
  console.log('PASS coherent owning import/API receipts: inactive zero reads; original receiver/results/errors once; native flags/MSG snapshots; deadline/row caps; no guest writes; foreign hook preserved');
 }finally{Date.now=clock;}
