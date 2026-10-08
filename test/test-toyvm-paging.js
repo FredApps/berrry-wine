@@ -14,12 +14,15 @@ const u32 = n => [n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24 & 255];
 const mov = (r, n) => [0xb8 + r, ...u32(n)];
 const store = (p, n) => [0xc7, 0x05, ...u32(p), ...u32(n)];
 const observations = [];
+// This fixture owns ToyVM guest physical page 18 for CR3, independently of
+// Wine-Assembly's linear-memory region map (whose GUEST_BASE happens to match).
+const guestPageDirectory = 18 * 4096;
 
 async function dosCom(variant, tier = {}) {
   const com = Buffer.alloc(0x9000);
   const put = (physical, n) => com.writeUInt32LE(n >>> 0, physical - 0x10100);
   const boot = [0xfa, 0x0f, 0x01, 0x16, 0xe0, 1, 0x0f, 0x01, 0x1e, 0xe6, 1,
-    0x66, ...mov(0, 0x12000), 0x0f, 0x22, 0xd8,
+    0x66, ...mov(0, guestPageDirectory), 0x0f, 0x22, 0xd8,
     0x66, ...mov(0, 0x80000011), 0x0f, 0x22, 0xc0,
     0xea, 0, 2, 8, 0];
   com.set(boot, 0);
@@ -34,7 +37,7 @@ async function dosCom(variant, tier = {}) {
   put(0x18020, 0x0000ffff); put(0x18024, 0x00cff200);
   put(0x18028, 0x90000067); put(0x1802c, 0x00008901);
   put(0x19004, 0x90000); put(0x19008, 0x10);
-  put(0x12000, 0x13007); put(0x12100, 0x14007);
+  put(guestPageDirectory, 0x13007); put(guestPageDirectory + 0x100, 0x14007);
   for (let i = 0; i < 1024; i++) put(0x13000 + i * 4, (i * 4096) | 7);
   for (const [i, p] of [0x30000, 0x50000, 0x60000, 0x70000].entries()) put(0x14000 + i * 4, p | 7);
   const main = [0x66, 0xb8, 0x10, 0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0,
