@@ -1400,6 +1400,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none (queued under one-worker budget; Age of Wonders II currently active)
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
-  Next: Inspect original demo installer and install using supported mechanisms on a separate temporary box; then register original executable/assets, reach actual gameplay with ordinary input, review screenshot and source identity. No runtime or installed-tree claim yet. Reconcile any newly discovered historical qualification before executing.
+  Next: Inspect/extract original embedded MSGAME.CAB on temporary box: offset464312,191706128 bytes,37 files including DungeonSiegeDemo.exe. Preserve originals, reconcile installation prerequisites, register complete route then verify ordinary gameplay/screenshot. Static preflight only; no runtime claim. See ops/handoffs/dungeon-siege-preflight-20261008.md.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.

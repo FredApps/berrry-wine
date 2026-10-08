@@ -5,7 +5,7 @@ Arcanum now has reviewed crash-site movement on software and WebGL. The idle Web
 
 Comanche 3 controlled flight and normal ToyVM dashboard launch are complete on main. Reviewed flight images remain linked to their exact reference build. FPS, audio and mission completion are unverified. These changes have not been publicly deployed; the live dashboard checkout is older.
 
-One worker is active: aow2-menu-route (PID363805), investigating Age of Wonders II Scenario selection after a generic BSTR fix enabled the main menu. The startup repair is on main; original-file registration passed review and is being integrated. Dungeon Siege is queued. Both local installers are hash-verified; neither has a new gameplay result yet.
+One worker is active: aow2-menu-route (PID363805), investigating Age of Wonders II Scenario selection after a generic BSTR fix enabled the main menu. The startup repair and original-file registration are pushed to main. Dungeon Siege is queued; its original embedded cabinet and game executable are identified for the next worker. Both local installers are hash-verified; neither has a new gameplay result yet.
 
 Arcanum, Quake II, Crimsonland, Alien Shooter and Warcraft III have reviewed control on both rendering backends at recorded builds. The full GL/D3D goal and all-game FPS coverage remain incomplete.
 
