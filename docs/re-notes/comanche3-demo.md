@@ -1,5 +1,39 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Web held keyboard repair and operation menu, 2026-10-08
+
+Generic web lifecycle repair `4a75293a249b0968e50e4a8bb61cf9ed4963624e`
+separates physical press/release/repeat from existing tap callers, with shared
+browser blur/visibility/stop cleanup. Real API/IRQ/port/BIOS tests and full build
+pass; old immediate-break and physical keypad mapping failures are retained.
+
+Shared `scratch/runs/20261008T0636Z-toyvm-held-key-web/` contains one original
+C3 browser launch on fresh no-env bx_vv2g89ek, actual Chrome151/tailcall386/
+CPU917477, eleven verified installed files, actual dashboard page/wiring with
+an explicitly private catalog/file fixture bootstrap. Ordinary Puppeteer
+keyboard.down/up visibly moves Blood Hawk013 to Venom016/017 while held;
+actual E0/50 then later E0/d0 port reads retained. Release018 and later020
+remain Venom. Repeat adds make only; ordinary focus loss and Stop clear held
+state. All55 images reviewed. No guest register/memory/instruction mutation.
+
+039 shows Argon Duty Roster;040 at06:55:11 shows Gallant Venture's Haystack
+mission menu **before** later Up at06:55:50. Enter attempts there leave the
+menu visible; no mission/cockpit/gameplay/FPS/audio qualification or causal
+native menu-return diagnosis. BIOS mirroring is preserved; retained entries
+and hooked INT9/hardware reads do not prove a BIOS-mirroring cause. Final
+Enter port read receipt CS2b/rawGIP86cc is not yet mapped to the original
+operation-selection consumer.
+
+Browser used the initial held-lifecycle bundle. Final physical event.code/
+keypad mapping and modifier-only BIOS-wait guard were corrected after launch,
+pass actual regressions/full build, and were not original-media browser rerun.
+Both closures and hashes are retained; no production dashboard/deploy claim.
+Actual1076.680wall/69.2270605guest seconds stops before unchanged07:00:40.829
+ceiling. Chrome0/owned PIDs absent/exact baseline sockets/immutable pins,
+98retrieved files12398326bytes SHA checked, prefix removed53.758s after terminal.
+Prior869 Comanche hashes unchanged. Root owns newboat lifecycle expiry07:14:18.
+See [the repair handoff](../../ops/handoffs/toyvm-held-key-web-20261008.md).
+
 ## Installed C3 launch and physical input, 2026-10-08
 
 On explicit `cdddc109b87c02f2a683c08da731e585a56fd614`, a single native

@@ -493,11 +493,12 @@
 
   // Keys go to the guest only while the canvas has focus, so the dialog's own
   // Escape-to-close keeps working everywhere else on the page.
-  canvas.addEventListener('keydown', function (e) {
-    if (!run) return;
-    e.preventDefault();
-    e.stopPropagation();
-    run.key(e);
+  var keyboardBound = false;
+  canvas.addEventListener('focus', function () {
+    if (!keyboardBound && self.ToyVM) {
+      self.ToyVM.require('tools/toyvm/live.js').bindKeyboard(canvas, function () { return run; });
+      keyboardBound = true;
+    }
   });
 
   // Arrived with a fragment: open that tile, now that everything above is

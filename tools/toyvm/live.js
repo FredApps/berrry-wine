@@ -35,6 +35,8 @@ const fb = require('./framebuffer');
 // handful with a menu you steer.
 const SCAN = {
   Escape: 0x01, Enter: 0x1C, Backspace: 0x0E, Tab: 0x0F, ' ': 0x39,
+  Home: 0x47, End: 0x4F, PageUp: 0x49, PageDown: 0x51, Insert: 0x52, Delete: 0x53,
+  Shift: 0x2A, Control: 0x1D, Alt: 0x38,
   ArrowUp: 0x48, ArrowDown: 0x50, ArrowLeft: 0x4B, ArrowRight: 0x4D,
   F1: 0x3B, F2: 0x3C, F3: 0x3D, F4: 0x3E, F5: 0x3F, F6: 0x40,
   F7: 0x41, F8: 0x42, F9: 0x43, F10: 0x44,
@@ -74,6 +76,31 @@ function scancodeFor(key) {
   if (d >= 0) return 0x02 + d;
   const l = LETTERS.indexOf(c);
   return l >= 0 ? 0x10 + l : 0;
+}
+
+// Physical position is stable across Shift and NumLock changes. In particular,
+// keypad navigation uses unprefixed set-1 codes; dedicated navigation uses E0.
+function physicalKeyFor(ev) {
+  const code = ev.code || '';
+  const keypad = { Numpad0: 0x52, Numpad1: 0x4F, Numpad2: 0x50,
+    Numpad3: 0x51, Numpad4: 0x4B, Numpad5: 0x4C, Numpad6: 0x4D,
+    Numpad7: 0x47, Numpad8: 0x48, Numpad9: 0x49, NumpadDecimal: 0x53,
+    NumpadAdd: 0x4E, NumpadSubtract: 0x4A, NumpadMultiply: 0x37,
+    NumpadDivide: 0x35, NumpadEnter: 0x1C };
+  const positions = { ShiftLeft: 0x2A, ShiftRight: 0x36,
+    ControlLeft: 0x1D, ControlRight: 0x1D, AltLeft: 0x38, AltRight: 0x38,
+    Minus: 0x0C, Equal: 0x0D, BracketLeft: 0x1A, BracketRight: 0x1B,
+    Semicolon: 0x27, Quote: 0x28, Backquote: 0x29, Backslash: 0x2B,
+    Comma: 0x33, Period: 0x34, Slash: 0x35, Space: 0x39 };
+  const scan = keypad[code] || positions[code]
+    || (/^Key[A-Z]$/.test(code) ? scancodeFor(code.slice(3)) : 0)
+    || (/^Digit[0-9]$/.test(code) ? scancodeFor(code.slice(5)) : 0)
+    || SCAN[code] || scancodeFor(ev.key);
+  const extended = code === 'NumpadEnter' || code === 'NumpadDivide'
+    || code === 'ControlRight' || code === 'AltRight'
+    || (!code.startsWith('Numpad') && ev.location !== 3
+      && /^(Arrow|Home|End|Page|Insert|Delete)/.test(code || ev.key));
+  return { scan, extended };
 }
 
 // One live program. `start()` mounts it and begins; `stop()` gives the thread
@@ -198,6 +225,7 @@ class LiveRun {
   // Probed, not sniffed. A four-byte module that uses `return_call` is the
   // ground truth; a user-agent string is a guess about a version table.
   async start() {
+    this.inputStopped = false;
     setCpuLevel(this.cpu);
     const machine = new Machine(new Uint8Array(0), {
       pspSeg: this.pspSeg, loadSeg: this.loadSeg,
@@ -480,6 +508,7 @@ class LiveRun {
     this.paint();
     this.frames++;
     if (s.done) {
+      if (this.machine.exited) this.releaseKeys();
       this.running = false;
       this.onStatus({
         state: this.machine.exited ? 'exited' : 'waiting',
@@ -526,13 +555,42 @@ class LiveRun {
   // the hardware itself. Which of those a demo uses is not knowable from here,
   // and a demo that reads the port sees nothing at all through the BIOS.
   key(ev) {
-    if (!this.machine) return;
-    const scan = scancodeFor(ev.key);
+    this.inputKey(ev, false);
+  }
+
+  keyDown(ev) { this.inputKey(ev, true); }
+
+  keyUp(ev) {
+    const id = ev.code || ev.key;
+    const k = this.pressedKeys && this.pressedKeys.get(id);
+    if (!k || !this.machine) return;
+    this.machine.keyUp(k.scan, k.extended);
+    this.pressedKeys.delete(id);
+  }
+
+  releaseKeys() {
+    if (this.machine) this.machine.releaseKeys();
+    if (this.pressedKeys) this.pressedKeys.clear();
+  }
+
+  inputKey(ev, physical) {
+    if (!this.machine || this.machine.exited || this.inputStopped) return;
+    const id = ev.code || ev.key;
+    if (!this.pressedKeys) this.pressedKeys = new Map();
+    const previous = this.pressedKeys.get(id);
+    const position = physical ? physicalKeyFor(ev) : { scan: scancodeFor(ev.key), extended: false };
+    const scan = previous ? previous.scan : position.scan;
+    if (!scan) return;
+    const extended = previous ? previous.extended : position.extended;
     const ascii = ev.key.length === 1 ? ev.key.charCodeAt(0) & 0xFF
       : (ev.key === 'Enter' ? 13 : ev.key === 'Escape' ? 27 : ev.key === 'Tab' ? 9 : 0);
-    this.machine.pushKey(scan, ascii);
+    if (physical) {
+      this.pressedKeys.set(id, { scan, extended });
+      const modifier = /^(Shift|Control|Alt)$/.test(ev.key);
+      this.machine.keyDown(scan, ascii, extended, !!ev.repeat && !modifier, !modifier);
+    } else this.machine.pushKey(scan, ascii);
     // A program that stopped for a key can go again now.
-    if (this.machine.blockedOnKey) {
+    if (this.machine.blockedOnKey && this.machine.keys.length) {
       this.machine.blockedOnKey = false;
       if (!this.running && !this.machine.exited) {
         this.running = true;
@@ -545,6 +603,8 @@ class LiveRun {
   }
 
   stop() {
+    this.inputStopped = true;
+    this.releaseKeys();
     this.running = false;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -606,4 +666,15 @@ class AudioRing {
   }
 }
 
-module.exports = { LiveRun, scancodeFor, STUB_SEG, isa, hasTailCalls, pickVariant };
+// Both browser launchers use this binding; the current run may change on retry.
+function bindKeyboard(canvas, getRun, win = globalThis, doc = win.document) {
+  const listen = (target, type, fn) => { if (target) target.addEventListener(type, fn); return () => { if (target) target.removeEventListener(type, fn); }; };
+  const release = () => { const r = getRun(); if (r) r.releaseKeys(); };
+  const key = (method) => (e) => { const r = getRun(); if (!r) return; e.preventDefault(); e.stopPropagation(); r[method](e); };
+  const removers = [listen(canvas, 'keydown', key('keyDown')), listen(canvas, 'keyup', key('keyUp')),
+    listen(canvas, 'blur', release), listen(win, 'blur', release),
+    listen(doc, 'visibilitychange', () => { if (doc.hidden) release(); })];
+  return () => { release(); removers.forEach((remove) => remove()); };
+}
+
+module.exports = { LiveRun, bindKeyboard, scancodeFor, STUB_SEG, isa, hasTailCalls, pickVariant };
