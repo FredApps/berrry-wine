@@ -71,8 +71,8 @@ screenshot cited was looked at.
 | ut2003_demo | D3D8 | menu | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | each frame ~1 s on software |
 | ut2003_demo_server | D3D8 | **gameplay** (listen server renders DM-Antalus) | **gameplay** (2026-10-06, browser; DM-Antalus, HUD) | — |
 | ut2004_demo | D3D8 | splash at 120 s | menu (2026-10-06, browser, no route); gameplay (2026-09-25) | slow |
-| alien_shooter | D3D8 | loading at 120 s | **menu** (2026-10-06, browser; past the software cap) | CPU-bound load |
-| crimsonland | D3D8 | **menu** after `1fdd9a64` (was blocked: "DirectX8.1 or newer not detected") | **menu** (2026-10-06, browser, D3D9 backend = webgl; launcher Play) | Play Game opens; the Survival click does not start a game yet (`scratch/runs/20261006T031629Z-crimsonland-dx81`) |
+| alien_shooter | D3D8 | **Mission 01 gameplay, movement and firing** (2026-10-06; `scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2`) | **menu** (2026-10-06, browser; past the software cap) | Heap fix `d699e4df`; CLI route uses `--tick-ms-per-batch=20` to finish intro pan. WebGL gameplay remains unverified. |
+| crimsonland | D3D8 | **Tutorial gameplay and movement** (2026-10-06; `scratch/runs/20261006T0500Z-crimsonland-w4-survival`) | **menu** (2026-10-06, browser, D3D9 backend = webgl; launcher Play) | Correctly hovered Tutorial button starts gameplay; Survival itself was not re-tested. WebGL gameplay remains unverified. |
 | pawn | D3D9 | **gameplay** (board) | board (2026-10-06, browser); gameplay (2026-09-23) | — |
 | pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not measured: bigMemory and its 1.3 GB tree cannot be shipped to a boat browser; the local box cannot hold it | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
 | black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
@@ -106,13 +106,11 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
    = 0 in our caps (`ba161dfb`), then a failed `CoCreateInstance` (Miles A3D)
    re-running its thunk (`12408feb`), then the CLI ignoring `bigMemory`
    (`d7f5a429`).
-2. **crimsonland in-menu click**: Play Game opens, but neither Survival nor
-   Quests starts a game. Not an input-delivery bug: dumping its DIMOUSESTATE2
-   at `0x63cbf0` shows button 0 = `0x80` during the second press exactly as
-   during the first. Game-side state (the player selector on that panel) is
-   the next suspect. Note for routes: it polls the mouse once per frame
-   (~110 batches here), so a press must be held across several frames.
-3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum/alien_shooter
+2. **Crimsonland route corrected in retained software evidence**: the later
+   October 6 run enters Tutorial from a visibly hovered button and shows world
+   movement under W input. The earlier general claim that its menu cannot start
+   gameplay is superseded; Survival and WebGL gameplay remain unverified.
+3. **Throughput, not correctness**: ut2003/ut2004/quake2/arcanum
    reach gameplay only past the 120 s cap on the software arm.
 4. **Remaining WebGL coverage**: the October 6 spot checks and later TR3/Uplink
    follow-ups are retained above. Pirates is unmeasured, heavy titles remain
@@ -195,3 +193,13 @@ context/PBO lifecycle observer above remains the next causal diagnostic.
 The exact registered `vis_milk.dll` export at `0x100299c0` returns its header directly. Its initializer at `0x10029a90` contains no blanket Winamp 5 rejection at the historical music check: it queries the host using `SendMessageA(WM_USER, 0, 0)`, accepts a result at least `0x4000`, and otherwise accepts `SendMessageA(WM_USER, 0, 0x68) == 1`. Only the latter failing path shows “This plugin can't run without music” and returns failure. This identifies an older-host playback condition, not proof of successful rendering. Raw exact-PE disassembly is retained at `scratch/sweep-reconciliation-20261007/milkdrop-init-disassembly.txt`.
 
 Current `test/test-winamp-visualizers.js` documents and exercises MilkDrop header enumeration on the existing host; its historical remaining-gap comment names cross-thread IsPlaying delivery, not a Winamp 5 dependency. Main `2dab96f8` later changed Worker-to-main SendMessage delivery and is in the pinned `3b8189f5` runtime ancestry, but its WinBoard regression does not prove the MilkDrop route. Next run the actual registered plugin with ordinary playback/Start and observe the returned playback query and D3D device creation under each relevant thread mode. Keep software/WebGL rendering unqualified until that evidence exists. No host download or new runtime was performed for this source audit.
+
+### Retained software evidence reconciliation, 8 October 2026
+
+Root reviewed Crimsonland `s0.png` and `s-moved.png` from the October 6
+Tutorial run: terrain moves beneath the player and the HUD remains visible.
+Root reviewed Alien Shooter `m17500.png` and `m-fire.png`: the soldier moves
+from the road to the fence and the later image shows firing. The run records
+identify source commits `95e04dd8` and `d699e4df`, respectively; both omit
+WASM hashes. These are retained historical software results, not fresh tests
+of current main. Neither establishes WebGL gameplay, FPS or audio.
