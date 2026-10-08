@@ -1,5 +1,42 @@
 # Comanche 3 DOS demo: native installer evidence
 
+## Authenticated resource and palette progress, 2026-10-08
+
+On explicit `83ef822fb4204145b642c507918739ba7c1626d5`, one fresh private
+dashboard fixture launch reaches Haystack loading using ordinary keyboard
+press/release. No extra Enter is sent during loading. No cockpit, controlled
+flight, or generic repair is established.
+
+Evidence: `scratch/runs/20261008T0806Z-comanche3-resource-loading/`.
+Original decoded resource/refill spans match the saved mapping. Shared LZW
+decoder `27567` completes on EDI ≥ `[8aa8]` or token `101`, frees at `2763d`,
+and returns at `27649`. LZR1 uses a length header; LZP1 uses width × height.
+RESOURCE2xxx's2,234 directory records decode filenames with XOR `aceddead`.
+Live output windows match independent original-algorithm decodes at M.PCX
+650341bytes and C.PCX667693bytes. Temporary output reaches5,242,880bytes.
+
+Final coherent RAM/stack authenticates `cb317` → `67907` → `2dd58` → `2dac0`:
+the original65,536-entry palette blend table. Its loop ordinal advances
+1287 →3566 →12922; later stack returns identify next palette phase `2f72d`.
+Six nearest-color code differences are original RGB immediate writes, verified
+against the original writer and live components. This is causal original work,
+not an established stall or complete trace authentication.
+
+The fresh run has no onEntry hook. Pure JS sparse reads and the coherent final
+44,302,336-byte snapshot preserve RAM and exported getters exactly. Two unpaired
+JS profiles show frequent host handbacks, progress-check/resolver/framebuffer
+cost; they do not qualify an optimization. Late memory serialization costs
+about32wall seconds. No guest RAM/register/instruction forcing is used.
+
+Actual Chrome151/tailcall386/paced10MIPS/JIT-off/silent CPU917477 runs
+1722.999wall/123.5675099guest seconds and stops before its fixed08:39:30Z
+deadline. All24 runtime images are reviewed as startup/menu/briefing/map/loading.
+All86 retrieved root hashes,18 pins,13 absent owned PIDs, no Chrome and baseline
+sockets are verified before prefix removal; cleanup39.263seconds. Prior1541
+indexed hashes remain unchanged. FPS/audio remain unknown. Root owns the boat
+lease and integration. See the resource-loading handoff for the exact identities,
+limitations and next causal initialization/cost measurement.
+
 ## Authenticated Haystack selection and loading, 2026-10-08
 
 Current clean source `249b2d3986f9992d7432717acc61614f58653d1b` reaches

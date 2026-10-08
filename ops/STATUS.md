@@ -1,7 +1,7 @@
 updated: 2026-10-08T08:05:59.676Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Current workers: sole fresh comanche3-resource-loading launched08:04:55; prior Haystack worker exited0 at07:59:16. Current final keyboard source reaches briefing/map/mission loading; root reviewed316 contained hashes and map/loading images. No flight/gameplay or generic selection defect established. Active next step: authenticate resource-loader completion and measure loading overhead, then ordinary cockpit/control. Budget mode one worker, checks10+minutes; FPS/audio unverified.
+Current workers: none; resource-loading worker exited0 at08:57:08. Original terrain decoding and palette initialization progress authenticated,230 evidence hashes verified. No cockpit/flight. Next sole phase: measure and remove disabled stall-detector overhead with correctness coverage and paired remote validation before another gameplay attempt. Budget one worker/checks10+minutes; no full-game/FPS/audio claim.
 
 Comanche 3 paging and DOS rename fixes are integrated (72e306790,4b0955e79,cdddc109b). Original installation completed and preserved C3.EXE/RESOURCE.RES; Setup completion remains unqualified. Installed original game now reaches Haystack mission loading with final web keyboard repair d87b54eca. No installer or paging replay is needed.
 
