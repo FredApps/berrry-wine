@@ -1,9 +1,10 @@
 'use strict';
 const fs=require('fs'),path=require('path'),http=require('http'),crypto=require('crypto'),assert=require('assert'),cp=require('child_process');
-const {assertWebGL}=require('./backend'),{validate,pressRelease}=require('./controls'),{createAssetHandler,drainStreams}=require('./assets');
+const {assertWebGL}=require('./backend'),{validate,pressRelease,clickHoldMs}=require('./controls'),{createAssetHandler,drainStreams}=require('./assets');
 async function main(){
  const dir=process.argv[2]||__dirname,plan=JSON.parse(fs.readFileSync(dir+'/serve-plan.json')),pins=JSON.parse(fs.readFileSync(dir+'/browser-pins.json'));
  const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+ if(fs.existsSync(dir+'/runtime-overlay.json')){const overlay=JSON.parse(fs.readFileSync(dir+'/runtime-overlay.json'));assert.equal(pins.referenceCommit,overlay.referenceCommit);assert.equal(pins.module,overlay.module);for(const [n,digest]of Object.entries(overlay.harness)){assert.equal(path.basename(n),n);assert.equal(sha(fs.readFileSync(dir+'/'+n)),digest,'harness overlay '+n);}}
  for(const f of pins.files){const b=fs.readFileSync(dir+'/source/'+f.path);assert.equal(b.length,f.bytes);assert.equal(sha(b),f.sha256);}
  for(const n of ['browser.js','backend.js','controls.js','assets.js','cleanup.js','lifecycle.js','prepare.js'])if(fs.existsSync(dir+'/'+n))cp.execFileSync(process.execPath,['--check',dir+'/'+n]);
  const good={queryBackend:'webgl',worker:true,renderEndpoints:[{api:'neutral',backend:'webgl',closed:false}],renderWorkerEndpoints:[{api:'neutral',backend:'webgl'}]};assertWebGL(good);
@@ -11,6 +12,13 @@ async function main(){
  const ctx={lastShot:'tutorial-hover',deadline:Date.now()+300000};validate({action:'move',x:303,y:357,sceneReviewed:true,sceneReceipt:'tutorial-hover'},ctx);validate({action:'key',key:'w',ms:2000,sceneReviewed:true,sceneReceipt:'tutorial-hover'},ctx);assert.throws(()=>validate({action:'click',x:303,y:357},ctx));assert.throws(()=>validate({action:'key',key:'w',ms:0,sceneReviewed:true,sceneReceipt:'tutorial-hover'},ctx));
  assert.throws(()=>validate({action:'key',key:'w',ms:1000,sceneReviewed:true,sceneReceipt:'tutorial-hover'},{...ctx,deadline:Date.now()+1000}));
  const events=[];await assert.rejects(()=>pressRelease(()=>events.push('down'),()=>{throw Error('hold failure')},()=>events.push('up')));assert.deepEqual(events,['down','up']);
+ const click={action:'click',x:303,y:357,sceneReviewed:true,sceneReceipt:'tutorial-hover'};
+ assert.equal(clickHoldMs(click),750);assert.equal(clickHoldMs({...click,launcher:true}),100);
+ for(const holdMs of [50,750,5000])validate({...click,holdMs},ctx);
+ for(const holdMs of [0,49,5001,NaN,Infinity,750.5,'750',null])assert.throws(()=>validate({...click,holdMs},ctx));
+ assert.throws(()=>validate({...click,holdMs:5000},{...ctx,deadline:Date.now()+24000}));
+ const releaseEvents=[];await assert.rejects(()=>pressRelease(()=>{releaseEvents.push('down');throw Error('down failure')},()=>releaseEvents.push('hold'),()=>releaseEvents.push('up')));assert.deepEqual(releaseEvents,['down','up']);
+ const error=Error('hold failure');await assert.rejects(()=>pressRelease(()=>{},()=>{throw error},()=>{throw Error('up failure')}),e=>e===error&&e.releaseError==='Error: up failure');
  const responses=[],errors=[],pending=new Set();
  const requestFile=u=>{const rel=decodeURIComponent(new URL(u,'http://local').pathname).slice(1);if(!Object.hasOwn(plan.paths,rel)&&!plan.optionalAbsent.includes(rel))throw Error('unlisted');return{rel,p:path.resolve(dir,plan.paths[rel]||'absent')}};
  const rangeFor=(v,n)=>{if(!v)return{start:0,end:n-1,status:200};const m=/^bytes=(\d+)-(\d+)$/.exec(v);if(!m||+m[1]>+m[2]||+m[2]>=n)throw Error('range');return{start:+m[1],end:+m[2],status:206}};
