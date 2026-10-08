@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-queue-callback
+  worker: fresh CLI antara-menu-state
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual original Install unchanged; source-authenticated forwarded queue bypasses host-DOWN observer activation, so childcallback remains unmeasured. Outcome integrated f21fe79a6. Fresh antara-queue-callback corrects diagnostic coverage with forwarded-input regression before next remote run. No production defect or installation/gameplay qualification.
+  Next: Actual child DOWN/UP and10original APIcaller spans authenticated; original dialog declines mousebuttons, so no missing-delivery fix. Final0a1f7f116/run20261008T0059Z-antara-owning-queue-runtime. Fresh antara-menu-state investigates original object hit-test/action gates and preceding mousemove. Installation/gameplay incomplete.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1296,7 +1296,16 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-CRIMSONLAND-WEBGL-20261008
   status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: finishing handoff; runtime released
+  worker: none (crimsonland-relative-input exited0)
   Next: Done scoped WebGL Tutorial movement and relative aiming; root reviewed3images and100contained hashes. Integrated6f4f74b19. Original referencef62/module4dc5; no engine patch. FPS/audio/combat/long-session qualification remain separate.
   Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
   Evidence: scratch/runs/20261008T0105Z-crimsonland-relative-input; ops/handoffs/crimsonland-relative-input-20261008.md; Telegram879.
+
+- [~] Validate Alien Shooter Mission 01 control on WebGL
+  id: GLD3D-ALIEN-SHOOTER-WEBGL-20261008
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: fresh CLI alien-shooter-webgl
+  Next: Source/media/preflight preparation then ordinary Mission01 movement/aim on temporary WebGL browser after Tiberian actual cleanup. Retained software gameplay already reviewed; no duplicate software run.
+  Done: Reviewed actual Mission01 ordinary player movement and aim on owning WebGL backend, source/module/originalmedia identities, scoped commits and GL table on main.
+  Evidence: historical software scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2; new WebGL run pending.
