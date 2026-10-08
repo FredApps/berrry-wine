@@ -15,6 +15,10 @@
 // shadow. No text is drawn: the unfurl already prints the page title beside
 // the picture, and a bitmap-font caption would only repeat it worse.
 //
+// An app with `embed: true` also gets a 1280x720 one (PLAYER): the poster X
+// shows on a player card before the click, which is 16:9 like the frame
+// that replaces it. X draws its own play button over it.
+//
 // The cards are generated, not committed: tools/gen-site-pages.js calls
 // ogCard() for each app page it writes, and tools/deploy-berrry.js uploads the
 // directory. This CLI exists to run or inspect the step on its own.
@@ -24,6 +28,7 @@ const path = require('path');
 const { PNG } = require('pngjs');
 
 const W = 1200, H = 630, MARGIN = 40, SHADOW = 10;
+const PLAYER = { w: 1280, h: 720 };
 const TEAL = [0, 128, 128];
 const SHADOW_RGB = [0, 72, 72];
 
@@ -67,20 +72,20 @@ function downscale(src, w, h) {
   return out;
 }
 
-function fitted(shot) {
-  const maxW = W - 2 * MARGIN, maxH = H - 2 * MARGIN;
+function fitted(shot, w, h) {
+  const maxW = w - 2 * MARGIN, maxH = h - 2 * MARGIN;
   const k = Math.floor(Math.min(maxW / shot.width, maxH / shot.height));
   if (k >= 1) return k === 1 ? shot : upscale(shot, k);
   const s = Math.min(maxW / shot.width, maxH / shot.height);
   return downscale(shot, Math.max(1, Math.round(shot.width * s)), Math.max(1, Math.round(shot.height * s)));
 }
 
-function ogCard(shotFile, outFile) {
+function ogCard(shotFile, outFile, { w = W, h = H } = {}) {
   const shot = PNG.sync.read(fs.readFileSync(shotFile));
-  const img = fitted(shot);
-  const card = new PNG({ width: W, height: H });
-  fill(card, 0, 0, W, H, TEAL);
-  const x = ((W - img.width) / 2) | 0, y = ((H - img.height) / 2) | 0;
+  const img = fitted(shot, w, h);
+  const card = new PNG({ width: w, height: h });
+  fill(card, 0, 0, w, h, TEAL);
+  const x = ((w - img.width) / 2) | 0, y = ((h - img.height) / 2) | 0;
   fill(card, x + SHADOW, y + SHADOW, img.width, img.height, SHADOW_RGB);
   PNG.bitblt(img, card, 0, 0, img.width, img.height, x, y);
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
@@ -88,7 +93,7 @@ function ogCard(shotFile, outFile) {
   return { from: `${shot.width}x${shot.height}`, placed: `${img.width}x${img.height}` };
 }
 
-module.exports = { ogCard, W, H };
+module.exports = { ogCard, W, H, PLAYER };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
