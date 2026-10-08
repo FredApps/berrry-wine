@@ -1296,7 +1296,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-CRIMSONLAND-WEBGL-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI crimsonland-exit-runtime
-  Next: WebGL splash then ExitProcess0 cause still unknown. Reviewed bounded fault/exit observer integrated758b59686. Fresh runtime worker queued after Antara actual browser release; original530-pin preparation20261008T0044Z-crimsonland-exit-preparation. No Tutorial gameplay qualification.
+  worker: fresh CLI crimsonland-relative-input
+  Next: Actual WebGL main menu then ordinary Enter precedes authenticated normal WinMain0/CRT shutdown; historical exception path ruled out for captured exit. Docs215699853/run20261008T0048Z-crimsonland-owning-exit-runtime. Fresh relative-input worker qualifies real pointer targeting before Play/Tutorial; queued after Antara. No gameplay yet.
   Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
   Evidence: Historical software route scratch/runs/20261006T0500Z-crimsonland-w4-survival; new WebGL evidence pending.
