@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (current step completed; budget-mode queue)
+  worker: fresh CLI antara-install-trap (sole worker)
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Actual0200 four-step hover plus reserved DOWN reaches child unreachable EIP19db02; final child receipt lost, Install mapping unproven. Root78 contained hashes pass. Preserve trap evidence before diagnosis; queued under one-worker budget mode, no rerun or gameplay claim.
+  Next: Actual0200 ordinary four-step hovered Install DOWN traps child EIP19db02; final callback receipt lost. Preserve owning trap evidence/segment mapping, authenticate original caller and fix generic cause with regression toward installation/gameplay. One-worker budget mode; reference module4dc5 and original media retained.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-campaign-com (sole worker)
+  worker: none (reproduction prerequisite queued; worker exited0)
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Generic ValidateRect full-region/child-paint repair reviewed; root real nested-callback regression PASS and1056 contained hashes verified. Actual0256 original New Campaign + Enter reaches Titan loading then _com_error, not gameplay. Next authenticate owning first failing HRESULT/caller/exception and repair its generic cause; do not repeat menu-paint diagnosis or trust page EIP0.
+  Next: Accepted0256 reaches campaign loading/error; three0314/0317/0321 reruns stayed at menu. Root1554 hashes pass; served-file comparison differs only in guest-worker observer, cause unproven. Preserve validated paint repair; reproduce matched0256 route before interpreting campaign HRESULT. No further blind click/COM rerun.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 

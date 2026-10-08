@@ -85,3 +85,7 @@ navigation reaches1000c while fresh exact-module runs do not, or provide an
 already reproducible ordinary campaign-loading route. Retain the campaign COM
 goal as incomplete. Do not interpret startup80040154, shell notices or EIP0
 as the campaign cause; do not merge diagnostic tooling as an engine repair.
+
+## Coordinator review
+
+All1554 contained artifact hashes and the COM observer contract pass. The accepted0256 and failed0321 serve plans differ only in lib/guest-worker.js; this narrows the comparison but does not establish a cause. Coordinator fixed API frame-cap exhaustion disabling the reserved fault lane; the new regression fails before and passes after. This diagnostic-only refinement has not been browser-tested. No new engine repair or campaign qualification follows. Tiberian reproduction remains queued while the single worker advances Antara.
