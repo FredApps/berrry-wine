@@ -90,3 +90,23 @@ ownership of `bx_997uef9b`, expiry 16:47:45.876 UTC; worker did not stop it.
 Both new runs pass artifact containment with zero errors/missing references;
 all 103 gameplay-run artifact hashes verified. Local free disk remained 2.5 GiB.
 No public deployment, shared index/HEAD mutation, merge, push or extra worker.
+
+## Coordinator source review after integration
+
+At main566467459, guest-thread-host.js WorkerLink._ask posts commands and
+bumps the shared mailbox for non-slice requests. guest-worker.js
+waitMessageLocally explicitly checks that mailbox to end a local message wait.
+The slice branch calls ex.run synchronously and contains no await while running
+the guest. A dispatchThreadSend posted while a slice reply is outstanding can
+therefore be queued normally until the Worker returns to its event loop. The
+recorded host-side overlap alone does not demonstrate simultaneous CPU access.
+
+The main-thread message-point gate is also present: ThreadManager checks
+mainAtMessagePoint before dispatch; otherwise it arms incoming_send_pending
+and defers. The check and later dispatch remain separate asynchronous requests,
+so this source review does not prove all interleavings safe. A regression needs
+an observed harmful ordering, rather than simply rejecting overlapping promises.
+Next record actual Worker command entry/exit, yield/EIP/ESP and send-frame depth
+around the implicated transition; correlate those with the terminal stack.
+Preserve bounded logs and validate observers on shared memory first. No new
+runtime test, causal diagnosis or compatibility fix is claimed by this review.
