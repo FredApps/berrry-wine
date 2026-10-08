@@ -2191,3 +2191,39 @@ Campaign/Prologue, chapter Space, cinematic Escape, Thrall/right-click action.
 It checks live host AND owning renderer `api: gl` WebGL endpoints; neutral D3D
 endpoint proof is rejected. FPS/audio are unknown. Budget and serialized
 runtime conditions are in the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md).
+
+
+### Fresh ordinary WebGL navigation reached Campaign, October 8
+
+Run `20261008T0134Z-warcraft3-prologue-runtime` used the unchanged accepted
+`f62ab3c9` / `4dc5ac2c` closure on temporary bx_qms4q3z7. The original demo
+renders and ordinary trusted inputs reach Single Player Profiles, visibly type
+ABC, create/highlight that profile, Select, and reach Campaign with Prologue
+visible. Fourteen reviewed captures and live host AND owning `api: gl` WebGL
+endpoints are retained. Pointer Lock was false in every scene. The former
+October 3 inability to type a profile is not reproduced on this reference.
+
+Actual screenshot targets at this viewport were 594,327 (Single Player),
+228,391 (Create), 226,542 (Select), 593,365 (Campaign). A first 750 ms click
+remained at main-menu hover; a later five-second click reached Profiles.
+Create similarly responded only in a later capture after another reviewed
+click. Select/Campaign used separate reviewed hover before five-second holds.
+This records ordinary input response; the precise first-click cause is unknown.
+The GPU backing canvas's zero DOM rectangle is not valid target geometry.
+
+The original 600-second deadline stopped the run after Campaign, before any
+Prologue bullet/map/chapter/cinematic/Thrall input. **Fresh Prologue gameplay
+is not qualified.** September 28 gameplay is retained historical evidence.
+Next queue a fresh <=600-second ordinary route with these reviewed hover/hold
+steps and the majority of time reserved for actual map loading and controls.
+No engine patch, rebuild or optimization is justified by this route cap.
+
+354 actual served hashes (261 full, 93 range) match the source pins; actual
+full WASM response is `4dc5ac2c`. Original 12 registered paths remain present
+and unmodified. FPS/audio are unknown. Deadline cleanup at 01:45:38.601 closed
+Chrome with exit 0 and streams 0; independent PIDs/socket/pins checked, all
+34 actual attempt files downloaded, prefix removed at 01:46:29.223 within the
+90-second cleanup budget. Shell auth/stdole2 probes were strictly refused and
+retained. See the [handoff](../../ops/handoffs/warcraft3-prologue-20261008.md)
+for exact source/media identity, cleanup receipts and transient local disk-floor
+violation; no original media or evidence was deleted.
