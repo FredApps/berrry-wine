@@ -1208,10 +1208,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: active
   candidate: win98-games-a-d/Betrayl-a-Antara-DEMO-SW (16-bit Sierra SETUP.EXE installs the game; local, no download)
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI antara-win16-input
+  worker: fresh CLI antara-callback-runtime
   created: 2026-10-06T04:51:54.000Z
   accepted-by: claude:80aa9e95-435b-4acb-aeea-8ae3d860613c
-  Next: Correct client packet verified in ordinary original installer, but Install still leaves menu unchanged. Fresh worker traces owning Win16 callback/application handling; source fix and full build accepted. Latest evidence20261008T002459Z-antara-client-origin-install, docs3af62398d. No installation/gameplay yet.
+  Next: Correct client coordinates verified but original Install stays at menu. Revised owning Win16 callback observer reviewed and integrated ac8c4c8ff; fresh runtime worker granted next serialized remote capture from 20261008T0045Z-antara-win16-callback-ready. Installation/gameplay unqualified.
   Done: Working registered launch, ordinary player input visibly changes actual gameplay, reviewed gameplay screenshot with run/source identity, scoped fixes + tests on main. FPS, audio and browser separate.
   Evidence: scratch/new-game-antara-20261006 (work), scratch/runs/<id> (reviewed captures)
 
@@ -1268,9 +1268,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-TIBERIAN-SUN-DEMO-20261006
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI tiberian-input
+  worker: fresh CLI tiberian-dialog-fix
   candidate: test/binaries/win98-games-a-d/CnC-TiberianSun-demo-SW/extracted
-  Next: Ordinary menu rendering repaired. Click and actually performed Enter remain at menu; measured page coordinates correct for this target. Fresh tiberian-input prepares owning Worker callback/parent-command receipt. Ordinary outcome2f6de8cb1 integrated8dcc23ef7; gameplay incomplete.
+  Next: Ordinary UP and parent WM_COMMAND1559 reach native dialog handler; missing release/notification ruled out, final evidence integrated fbd7deb5b. Fresh worker reproduces generic subclassed dialog nested-modal continuation before any fix; sole local focused-test/build slot. Mission gameplay incomplete.
   Evidence: Shared historical task and fresh worker title audit2026-10-07. Darkstone already has controlledTown/camera evidence, so it is not rerun or counted as a new title. Tiberian Sun remains nonpublic and unqualified.
   Done: Registered original launch reaches a mission, ordinary input visibly commands units, reviewed screenshot with exact source/run identity, scoped tested changes pushed main. FPS/audio require separate evidence.
 
@@ -1296,7 +1296,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: GLD3D-CRIMSONLAND-WEBGL-20261008
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI crimsonland-exit
-  Next: WebGL publisher splash verified, then ordinary Enter precedes ExitProcess0/desktop; cause unproven, no gameplay. Fresh source investigation compares original exit path and retained evidence; historical DirectSound Lock fix already present. Handoff e39ebe6fd, run20261008T0026Z-crimsonland-webgl-runtime.
+  worker: fresh CLI crimsonland-exit-runtime
+  Next: WebGL splash then ExitProcess0 cause still unknown. Reviewed bounded fault/exit observer integrated758b59686. Fresh runtime worker queued after Antara actual browser release; original530-pin preparation20261008T0044Z-crimsonland-exit-preparation. No Tutorial gameplay qualification.
   Done: Reviewed ordinary gameplay/input with actual WebGL backend and original source/module/media identity; GL table and scoped changes on main.
   Evidence: Historical software route scratch/runs/20261006T0500Z-crimsonland-w4-survival; new WebGL evidence pending.
