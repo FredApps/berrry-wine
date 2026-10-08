@@ -5,14 +5,18 @@ const MARKERS = Object.freeze({0xca16a9eb: ['route', 6], 0xca16a9f0: ['call', 15
 const INPUT = new Set([0x201, 0x202, 0x203, 0x111, 0x20, 0x21, 0x84]);
 const USER = new Set([18, 19, 22, 23, 28, 29, 50, 53, 76, 87, 107, 108, 111, 114, 122, 124, 218, 219]);
 
-function createObserver({getExports, getMemory, slot, now = Date.now, baselineTrace, maxRows = 128, maxBytes = 32768, durationMs = 8000}) {
+function createObserver({getExports, getMemory, slot, now = Date.now, cpuNow = () => performance.now(), baselineTrace, maxRows = 128, maxBytes = 32768, durationMs = 8000, maxWords = 65536, maxCpuMs = 100}) {
   if (baselineTrace !== 0) throw Error('pinned trace-disabled baseline required');
   if (!Number.isInteger(maxRows) || maxRows < 4 || maxRows > 256 || !Number.isInteger(maxBytes) || maxBytes < 1024 || maxBytes > 32768 || !Number.isInteger(durationMs) || durationMs < 1 || durationMs > 8000) throw Error('observer bounds');
+  if (!Number.isInteger(maxWords) || maxWords < 32 || maxWords > 65536 || !(maxCpuMs > 0 && maxCpuMs <= 100)) throw Error('raw bounds');
   let active = false, ever = false, deadline = 0, pending = null, lastCall = null, phase = 'down', context = false;
   let errors = 0, reason = null, unknown = 0, traceWords = 0;
   let flagRestoreError = null;
+  const partial = [];
+  let token = null, released = false;
+  const raw = {down: 0, up: 0}, cpu = {down: 0, up: 0};
   const rows = [], bytes = {down: 0, up: 0}, counts = {down: 0, up: 0}, omitted = {down: 0, up: 0}, half = Math.floor(maxBytes / 2);
-  function stop(why) { const restore = active; active = false; pending = null; if(restore||reason===null)reason = why; if(restore)try{getExports().set_win16_trace(0);}catch(e){errors++;flagRestoreError=String(e);} }
+  function stop(why) { const restore = active; active = false; if(pending)partial.push({phase,reason:why,...pending});pending = null; if(restore||reason===null)reason = why; if(restore)try{getExports().set_win16_trace(0);}catch(e){errors++;flagRestoreError=String(e);} }
   function live() { if (active && now() >= deadline) stop('deadline'); return active; }
   function guard() {if(!live())throw Error('observer deadline');}
   function checked(fn) {guard();const value=fn();guard();return value;}
@@ -52,12 +56,18 @@ function createObserver({getExports, getMemory, slot, now = Date.now, baselineTr
     if (heavy && bytes[phase] < half) { try { row.owner = snapshot(record); } catch (e) { errors++; row.error = String(e); } }
     rows.push(row); counts[phase]++;
   }
+  function activate(id, nextPhase = 'down') {
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(id)) throw Error('activation token');
+    if (nextPhase === 'down' && ever) throw Error('activation already used');
+    if (nextPhase === 'up' && (!ever || token !== id || released || now() >= deadline || errors || flagRestoreError)) throw Error('release activation rejected');
+    if (nextPhase !== 'down' && nextPhase !== 'up') throw Error('activation phase');
+    if (nextPhase === 'down') {token=id;ever=true;deadline=now()+durationMs;} else released=true;
+    phase=nextPhase; pending=null; context=false; lastCall=null; reason=null; active=true;
+    try {guard();const e=checked(getExports);e.set_win16_trace(1);guard();} catch(e) {errors++;stop('activation error');throw e;}
+    return {token, phase, slot, active:live(), deadline};
+  }
   function input(packed) {
     const msg = packed & 0xffff;
-    if (!ever && msg === 0x201) {
-      ever = true; active = true; deadline = now() + durationMs;
-      getExports().set_win16_trace(1); // Sole setter: existing diagnostic flag.
-    }
     if (live() && (msg === 0x201 || msg === 0x202)) {
       if (msg === 0x202) phase = 'up';
       add({kind: 'input-poll', packed: packed >>> 0});
@@ -65,6 +75,12 @@ function createObserver({getExports, getMemory, slot, now = Date.now, baselineTr
   }
   function word(value) {
     if (!live()) return;
+    if(raw[phase]>=maxWords||cpu[phase]>=maxCpuMs){stop('raw budget');return;}
+    const started=cpuNow();
+    try {decode(value);} finally {cpu[phase]+=Math.max(0,cpuNow()-started);if(active&&(raw[phase]>=maxWords||cpu[phase]>=maxCpuMs))stop('raw budget');}
+  }
+  function decode(value) {
+    raw[phase]++;
     traceWords++; const v = value >>> 0;
     if (!pending) {
       const type = MARKERS[v];
@@ -87,7 +103,7 @@ function createObserver({getExports, getMemory, slot, now = Date.now, baselineTr
       if (lastCall !== null) add(record, true);
     } else if (lastCall !== null) { add({...record, apiKey: lastCall}); lastCall = null; }
   }
-  return {input, word, stop, fail() {errors++; stop('observer error');}, importValue(name, value) { if (live()) add({kind: name, value: value >>> 0}); }, status: () => ({active: live(), ever, reason, deadline, bytes: {...bytes}, omitted: {...omitted}, errors, flagRestoreError, unknown, traceWords, incomplete: pending, rows: rows.slice(), limitation: 'route precedes callback; call frames can establish guest consumption only after original-code authentication; handler-exit is not callback return'})};
+  return {activate,input, word, stop, isActive:live,clock:cpuNow, charge(ms){if(live()){cpu[phase]+=Math.max(0,ms);if(cpu[phase]>=maxCpuMs)stop('raw CPU budget');}},fail() {errors++; stop('observer error');}, importValue(name, value) { if (live()) add({kind: name, value: value >>> 0}); }, status: () => ({active: live(), ever, token, reason, deadline, raw:{...raw},cpuMs:{...cpu},bytes: {...bytes}, omitted: {...omitted}, errors, flagRestoreError, unknown, traceWords, incomplete: pending,partial:partial.slice(), rows: rows.slice(), limitation: 'route precedes callback; call frames can establish guest consumption only after original-code authentication; handler-exit is not callback return'})};
 }
 
 function install(host, options) {
@@ -100,12 +116,14 @@ function install(host, options) {
     const original=originals[name];
     wrappers[name] = host[name] = function (...args) {
       // Preserve the original receiver, result, exception and call count.
-      const result = Reflect.apply(original, this, args);
+      const timed=name==='log_i32'&&observer.isActive(),started=timed?observer.clock():0;
+      let result;try{result = Reflect.apply(original, this, args);}catch(e){observer.fail();throw e;}
+      if(timed)observer.charge(observer.clock()-started);
       try { if (name === 'check_input') observer.input(result); else if (name === 'log_i32') observer.word(args[0]); else observer.importValue(name, result); } catch (_) { try { observer.fail(); } catch (_) {} }
       return result;
     };
   }
-  return {status: observer.status, stop() { observer.stop('explicit stop'); for (const [n, f] of Object.entries(originals)) if(host[n]===wrappers[n])host[n] = f; }};
+  return {activate:observer.activate,status: observer.status, stop() { observer.stop('explicit stop'); for (const [n, f] of Object.entries(originals)) if(host[n]===wrappers[n])host[n] = f; }};
 }
 
 function overlay(workerSource, helperSource) {
@@ -114,14 +132,29 @@ function overlay(workerSource, helperSource) {
   // Both main and auxiliary Workers instantiate through this same boundary.
   // WorkerLink has no 'log' handler. A matching private link overlay below
   // retains the structured receipt and forwards it through the link logger.
-  const injected = `${anchor}\n      if(workerSlot<2){\n      const antaraProbe = self.AntaraWin16Callback.install(built.imports.host, {getExports:()=>instance.exports, getMemory:()=>memory.buffer, slot:workerSlot, baselineTrace:0});\n      rawSend({t:'antaraWin16Receipt',receipt:antaraProbe.status()});\n      const antaraAbsoluteDeadline=Date.now()+120000;\n      const antaraTimer = setInterval(()=>{const row=antaraProbe.status(); if((row.ever&&!row.active)||Date.now()>=antaraAbsoluteDeadline){clearInterval(antaraTimer); antaraProbe.stop(); rawSend({t:'antaraWin16Receipt',receipt:antaraProbe.status()});}},100);\n      }`;
-  return helperSource + '\n' + workerSource.replace(anchor, injected);
+  const injected = `${anchor}\n      if(workerSlot<2){\n      antaraProbe = self.AntaraWin16Callback.install(built.imports.host, {getExports:()=>instance.exports, getMemory:()=>memory.buffer, slot:workerSlot, baselineTrace:0});\n      rawSend({t:'antaraWin16Receipt',receipt:antaraProbe.status(),ready:true});\n      const antaraAbsoluteDeadline=Date.now()+120000;let antaraSentPhase=null;\n      const antaraTimer = setInterval(()=>{const row=antaraProbe.status();if(row.ever&&!row.active&&antaraSentPhase!==row.token+row.raw.up){antaraSentPhase=row.token+row.raw.up;rawSend({t:'antaraWin16Receipt',receipt:row});}if(Date.now()>=antaraAbsoluteDeadline||(row.ever&&Date.now()>=row.deadline)){clearInterval(antaraTimer);antaraProbe.stop();rawSend({t:'antaraWin16Receipt',receipt:antaraProbe.status()});}},100);\n      }`;
+  const messageAnchor='const handleMessage = async (msg) => {';
+  if(workerSource.split(messageAnchor).length!==2)throw Error('Worker message anchor drift');
+  const handler=`let antaraProbe=null;\n${messageAnchor}\n  if(msg.t==='antaraActivate'){let ack;try{if(!antaraProbe)throw Error('unready or late Worker');ack=antaraProbe.activate(msg.token,msg.phase);}catch(e){ack={active:false,error:String(e)};}rawSend({t:'antaraActivationAck',seq:msg.seq,ack});return;}\n  if(msg.t==='antaraStop'){antaraProbe?.stop();rawSend({t:'antaraActivationAck',seq:msg.seq,ack:{active:false,stopped:true}});return;}`;
+  return helperSource + '\n' + workerSource.replace(anchor, injected).replace(messageAnchor,handler);
 }
 function linkOverlay(source) {
   const anchor = '    _onMessage(msg) {\n      switch (msg.t) {';
   if (source.split(anchor).length !== 2) throw Error('WorkerLink anchor drift');
-  return source.replace(anchor, `    _onMessage(msg) {\n      if(msg.t==='antaraWin16Receipt'){this.antaraWin16Receipt=msg.receipt; this.log('[antara-win16-callback] '+JSON.stringify({slot:this.slot,ever:msg.receipt.ever,reason:msg.receipt.reason,rows:msg.receipt.rows.length,bytes:msg.receipt.bytes,errors:msg.receipt.errors})); return;}\n      switch (msg.t) {`);
+  return source.replace(anchor, `    _onMessage(msg) {\n      if(msg.t==='antaraActivationAck'){const p=this._pending.get(msg.seq);if(p){this._pending.delete(msg.seq);p.resolve(msg);}return;}\n      if(msg.t==='antaraWin16Receipt'){this.antaraWin16Ready=!!msg.ready||this.antaraWin16Ready;this.antaraWin16Receipt=msg.receipt;return;}\n      switch (msg.t) {`);
 }
-const api = {createObserver, install, overlay, linkOverlay, MARKERS};
+async function activateExisting(wine, token, phase) {
+  function links(){return [wine?.guestWorker?.link,...Array.from(wine?.threadManager?.threads||[]).map(([,t])=>t.link)].filter(Boolean);}
+  function ask(link,t){return new Promise((resolve,reject)=>{const seq=++link._seq;const timer=setTimeout(()=>{link._pending.delete(seq);reject(Error('activation acknowledgment timeout'));},1500);link._pending.set(seq,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});try{link.worker.postMessage({t,seq,token,phase});}catch(e){clearTimeout(timer);link._pending.delete(seq);reject(e);}});}
+  const current=links();
+  if(current.length!==2||new Set(current.map(l=>l.slot)).size!==2||current.some(l=>!l.antaraWin16Ready||![0,1].includes(l.slot)))throw Error('exact existing Workers not ready');
+  if(phase==='down'){if(wine.__antaraActivation)throw Error('click activation already used');wine.__antaraActivation={token,links:current};}
+  else if(phase!=='up'||wine.__antaraActivation?.token!==token||current.some((l,i)=>l!==wine.__antaraActivation.links[i]))throw Error('late/replaced Worker or activation token');
+  const replies=await Promise.allSettled(current.map(l=>ask(l,'antaraActivate')));
+  const ok=replies.every((r,i)=>r.status==='fulfilled'&&r.value.ack?.active&&r.value.ack.token===token&&r.value.ack.phase===phase&&r.value.ack.slot===current[i].slot&&r.value.ack.deadline>Date.now());
+  if(!ok||links().some((l,i)=>l!==current[i])||links().length!==current.length){await Promise.allSettled(current.map(l=>ask(l,'antaraStop')));throw Error('crossworker activation failed; click refused');}
+  return replies.map(r=>r.value.ack);
+}
+const api = {createObserver, install, overlay, linkOverlay, activateExisting, MARKERS};
 if (typeof module !== 'undefined') module.exports = api;
 if (typeof self !== 'undefined') self.AntaraWin16Callback = api;

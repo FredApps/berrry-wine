@@ -6,7 +6,8 @@ const {tarFiles}=require('./antara-win16-callback-prepare');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 async function preflight(dir){
  const plan=JSON.parse(fs.readFileSync(dir+'/browser-pins9.json')),pins=JSON.parse(fs.readFileSync(dir+'/transfer-files.json')),members=tarFiles(zlib.gunzipSync(fs.readFileSync(dir+'/payload.tar.gz'))),bytes=new Map();
- for(const p of pins){const rel=p.remote.slice('/home/user/antara-win16-callback-20261008/'.length),local=dir+'/'+rel;const b=fs.existsSync(local)?fs.readFileSync(local):members.get('antara-client-origin-20261008/'+rel);if(!b||b.length!==p.bytes||sha(b)!==p.sha256)throw Error('final pin '+rel);bytes.set(p.remote,b);}
+ const prefix=JSON.parse(fs.readFileSync(dir+'/READY.json')).remotePrefix;
+ for(const p of pins){const rel=p.remote.slice((prefix+'/').length),local=dir+'/'+rel;const b=fs.existsSync(local)?fs.readFileSync(local):members.get('antara-client-origin-20261008/'+rel);if(!b||b.length!==p.bytes||sha(b)!==p.sha256)throw Error('final pin '+rel);bytes.set(p.remote,b);}
  const memoryFS={existsSync:p=>bytes.has(p),statSync(p){const b=bytes.get(p);if(!b)throw Error('unmapped pinned path '+p);return{size:b.length,isFile:()=>true};},createReadStream(p,{start,end}){return Readable.from([bytes.get(p).subarray(start,end+1)]);}};
  const m={exports:{}};vm.runInNewContext(fs.readFileSync(dir+'/assets.js','utf8'),{module:m,require:n=>n==='node:fs'?memoryFS:require(n),URL,setTimeout,clearTimeout,console});
  const responses=[],errors=[],pending=new Set(),root=plan.sourceRoot,fixtureRoot=plan.fixtureRoot;

@@ -22,7 +22,7 @@ function prepare(output, baseline) {
   if(fs.existsSync(output))throw Error('fresh output directory required');
   const archivePath = baseline+'/runtime-package.tar.gz', archive = fs.readFileSync(archivePath);
   if(sha(archive)!=='8007a9b5a3f1fb05a9ef8b861994ffeb936fdd1542688e2241c591d878420031')throw Error('accepted archive identity');
-  const members = tarFiles(zlib.gunzipSync(archive)), oldPrefix = '/home/user/antara-client-origin-20261008', prefix = '/home/user/antara-win16-callback-20261008';
+  const members = tarFiles(zlib.gunzipSync(archive)), oldPrefix = '/home/user/antara-client-origin-20261008', prefix = '/home/user/antara-owning-queue-20261008';
   const pins = JSON.parse(fs.readFileSync(baseline+'/runtime-pins.json'));
   function member(rel) {const b = members.get(path.basename(oldPrefix)+'/'+rel); if(!b)throw Error('missing archive member '+rel);return b;}
   for(const p of pins) {const b=member(p.remote.slice(oldPrefix.length+1));if(b.length!==p.bytes||sha(b)!==p.sha256)throw Error('baseline member drift '+p.remote);}
@@ -37,6 +37,13 @@ function prepare(output, baseline) {
   let driver=changes.get('browser9.js').toString();
   const anchor='return{pointer:'; if(driver.split(anchor).length!==2)throw Error('driver state anchor');
   driver=driver.replace(anchor,'return{callbacks:[w?.guestWorker?.link,...Array.from(w?.threadManager?.threads||[]).slice(0,1).map(([h,t])=>t.link)].filter(Boolean).map(l=>({slot:l.slot,receipt:l.antaraWin16Receipt||null})),pointer:');
+  driver=driver.replace("'use strict';", "'use strict';\nconst activateExisting="+probe.activateExisting.toString()+";");
+  const press='try{await page.mouse.move(c.x,c.y);await page.mouse.down();';
+  if(driver.split(press).length!==2)throw Error('ordinary press anchor');
+  driver=driver.replace(press,"try{await page.mouse.move(c.x,c.y);row.activationToken='antara-'+Date.now();row.downAcks=await page.evaluate(activateExisting,await page.evaluateHandle(()=>runningApps.find(a=>a.name==='antara_demo_setup')?.wine),row.activationToken,'down');await page.mouse.down();");
+  const release='try{await page.mouse.up();';
+  if(driver.split(release).length!==2)throw Error('ordinary release anchor');
+  driver=driver.replace(release,"try{if(row.downAcks){try{row.upAcks=await page.evaluate(activateExisting,await page.evaluateHandle(()=>runningApps.find(a=>a.name==='antara_demo_setup')?.wine),row.activationToken,'up');}catch(e){row.upActivationError=String(e);}}await page.mouse.up();");
   changes.set('browser9.js',Buffer.from(driver));
   for(const key of ['sourceRoot','fixtureRoot'])plan[key]=rewrite(plan[key]);
   for(const key of Object.keys(plan.sourceOverrides))plan.sourceOverrides[key]=rewrite(plan.sourceOverrides[key]);
@@ -75,7 +82,7 @@ function prepare(output, baseline) {
     fs.writeFileSync(output+'/'+n,text);cp.execFileSync(process.execPath,['--check',output+'/'+n]);
   }
   fs.copyFileSync(require.resolve('./antara-win16-callback'),output+'/observer-source.js');
-  const ready={at:new Date().toISOString(),status:'SOURCE/JS READY ONLY; REQUEST root remote grant after Tiberian actual release; no remote/native/browser performed',referenceSource:plan.builtSourceCommit,module:plan.sourceHashes['build/wine-assembly.wasm'],baselineArchive:sha(archive),baselinePins:pins.length,finalPins:finalPins.length,originalMedia:plan.criticalFiles.length,overlays:Object.fromEntries(['callback-worker.js','callback-link.js'].map(n=>[n,sha(changes.get(n))])),observer:sha(Buffer.from(helper)),remotePrefix:prefix,traceFlag:'Existing set_win16_trace 0 -> 1 on owning DOWN -> 0 after 8 seconds; independently per Worker',bounds:{workers:2,rowsPerWorker:128,memoryBytesPerWorker:32768,downAndUpReservedSeparately:true,transferMs:240000,browserMs:120000,cleanupReserveMs:90000},sourceCause:'unmeasured; route/API evidence requires original-code authentication; no production correction justified',gameplay:false};
+  const ready={at:new Date().toISOString(),status:'SOURCE/JS READY ONLY; REQUEST root review then exact lease after Crimsonland actual release; no remote/native/browser performed',referenceSource:plan.builtSourceCommit,module:plan.sourceHashes['build/wine-assembly.wasm'],baselineArchive:sha(archive),baselinePins:pins.length,finalPins:finalPins.length,originalMedia:plan.criticalFiles.length,overlays:Object.fromEntries(['callback-worker.js','callback-link.js'].map(n=>[n,sha(changes.get(n))])),observer:sha(Buffer.from(helper)),remotePrefix:prefix,traceFlag:'Existing set_win16_trace explicit acknowledged DOWN/UP across exactly two existing Workers; no mailbox/CPU/guest/control writes',bounds:{workers:2,rowsPerWorker:128,memoryBytesPerWorker:32768,rawWordsPerPhase:65536,rawCpuMsPerPhase:100,deadlineMs:8000,downAndUpReservedSeparately:true,transferMs:240000,browserMs:120000,cleanupReserveMs:90000},sourceCause:'unmeasured; route/API evidence requires original-code authentication; no production correction justified',gameplay:false};
   fs.writeFileSync(output+'/READY.json',JSON.stringify(ready,null,2));return ready;
 }
 if(require.main===module){try{console.log(JSON.stringify(prepare(process.argv[2],process.argv[3]),null,2));}catch(e){console.error(e);process.exitCode=1;}}
