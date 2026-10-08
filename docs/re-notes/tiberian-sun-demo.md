@@ -1,5 +1,51 @@
 # Command & Conquer: Tiberian Sun demo
 
+## October 8: post-selector paint repeats inside the earlier show pump
+
+Run `20261008T0152Z-tiberian-menu-consumer-runtime` executes source `e13aa2e4b`
+with accepted reference modulebd5c84ca and original SUNf70dcf32, without rebuild.
+Checked sequential JS HTTP preflight passes507HEAD/5GET/range before Chrome;
+failed-preflight→no-Chrome tests cover the actual generated launch expression.
+All478 pins/125 build-source entries/29 aliases verify. Current reviewed native
+point317,213 resolves parent10002/button10004 before the ordinary page306,455
+New Campaign click. Exact original command/selector1 is used only as an anchor.
+
+The approximately6-second post-anchor owning slot0/tid1 receipt reports236 each
+of Peek1/Get1/Dispatch-handler-exit0 for HWND10002/WM_PAINT000f/zero parameters.
+Five rows/33048 read bytes/errors0/no caps; no first-empty, DestroyWindow or
+new-dialog entry in that bounded window. Four live32-byte API caller spans match
+original SUN. Handler exits do not establish guest callback return.
+
+Actual frame base074ff434 has words+44..+60
+`4f3f05,10002,58ca9e,0,4de732`. It fails the anticipated58cdb5/4de743 frame.
+Aligned original4f3ee0 calls562830 at4f3f00;58ca80 calls4f3ee0 at58ca99 after
+ShowWindow/SetForegroundWindow; menu4de72d calls58ca80. Thus this is the earlier
+show pump **before**4de73e/4de9dd, rather than measured execution of the selector
+consumer. The original relative-call bytes and owning stack shape are checked;
+intermediate original code is static PE evidence, not another live snapshot.
+Three reviewed captures remain menu; no campaign/mission/gameplay qualifies.
+
+Accepted Get/Peek intentionally retain subclass/application damage, while native
+unsubclassed controls prevalidate. DefWindowProc validates default WM_PAINT.
+`dialog_proc_result` already clears damage when a DLGPROC leaves WM_PAINT
+unhandled. Existing `test-parent-child-paint-order.js` checks retained damage
+for a nonvalidating subclass and validation after native CallWindowProc chaining;
+it was inspected, not executed under this phase's no-native/build constraint.
+Repeated paint is measured, but actual subclass/default validation versus renewed
+invalidation remains unknown. No production repair or starvation claim.
+
+Next observe the owning paint chain/default epilog/BeginPaint/ValidateRect and
+reinvalidation at the actual show frame, with independent reserved budgets.
+Require a generic demonstrated regression before any repair and root grant before
+native/build work. Do not revisit delivery/selector or repeat ordinary clicks.
+Details: [consumer handoff](../../ops/handoffs/tiberian-menu-consumer-20261008.md).
+
+Actual browser01:54:21–ordinary quit01:57:35.113, original deadline01:59:21.455.
+Chrome0/errors0/streams0;190 actual served hashes have zero drift. All17 artifacts
+copied/hashchecked;34672/34701 absent/noChrome/exact baseline/all478 pins verify
+at01:58:06.671. Prefix removed01:58:06.796, sole remote released01:58:34 to root.
+Root owns bx_jk5sz7qx/Puppeteer; worker owns no remaining runtime jobs.
+
 ## October 8 focused command: selector 1 authenticated, consumer progress unresolved
 
 Run `20261008T0126Z-tiberian-focused-command` uses source `b4acd9812`
