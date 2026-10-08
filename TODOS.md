@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Two active lanes: Antara (/root/coverage_audit) source-only bounded DialogBox/module trace preparation; Arx Fatalis (/root/restore_evidence) source-only startup continuation/owning Worker investigation after corrected300sec run remained hidden. Croc2/DieHard ordinary movement qualified; no FPS/audio claim. Runtime leases serialized by root.
+  Next: User budget mode supersedes simultaneous two-worker target: one worker only. Comanche3 resumes after merged paging repair; Tiberian reproduction queued; Antara/Arx held after automatic diagnostic rejection, no retry. Replace stale completed agent labels; actual gameplay/input/screenshots remain required.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1237,13 +1237,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [~] Additional game lane: Comanche 3 demo
   id: NEW-GAME-COMANCHE3-DEMO-20261007
-  status: blocked
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (fresh comanche-startup completed)
+  worker: fresh CLI comanche3-gameplay (sole worker)
   candidate: test/binaries/win98-games-a-d/Commanche3-demo-SW
   requested-by: user Telegram two more games in parallel, 2026-10-07
   depends-on: TOYVM-386-PAGING-20261007
-  Next: Authenticated paging dependency: original REP copies linear10000000 to physical0 because CR3/pagewalking absent, corrupting IVT. Findings2acadd964; root independently matched16KiB original/readbuffer/IVT hashes. No more budget-only runs; resume after generic paging, then original installer/gameplay.
+  Next: Paging dependency already fixed on main72e306790/4b0955e79; original copy/IVT and47 groups passed, installer reached Loading Install. Resume original native ToyVM installation/gameplay with ordinary input and reviewed screenshot; no repeated old paging diagnosis.
   Done: Faithful registered launch, ordinary player-controlled gameplay, reviewed screenshot with source/run identity and scoped tested changes on main; audio/FPS claims require separate evidence.
 
 - [ ] Quake II WebGL ordinary world movement validation
@@ -1318,10 +1318,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Complete scoped WebGL Prologue gameplay validation: root reviewed Thrall selection and two opposing ordinary right-click moves against fixed terrain; 675 contained artifact hashes pass. Run20261008T0156Z-warcraft3-campaign-world-runtime, referencef62/module4dc5. No FPS/audio/combat/campaign-completion claim.
   Done: Reviewed original Prologue ordinary unit selection/move evidence with exact source/backend, scoped fixes tested and pushed; FPS/audio separate.
 
-- [~] Warcraft III original Prologue software-backend gameplay
+- [x] Warcraft III original Prologue software-backend gameplay
   id: GLD3D-WARCRAFT3-SOFTWARE-20261008
-  status: active
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: fresh CLI warcraft3-software (sole worker)
-  Next: Reuse reviewed WebGL Prologue route with verified guest OpenGL software backend on a temporary box; validate ordinary Thrall selection/two move orders. No fallback or FPS/audio claim.
+  worker: none (worker exited0; root review PASS)
+  Next: Complete: root reviewed software Thrall selection/two opposing moves with matching host/owning OpenGL software backend;666 contained hashes and helper negative/review contracts PASS. Integrated0d9515322; run0400 referencef62/module4dc5. FPS/audio/combat/campaigncompletion/current-main runtime remain unverified.
   Done: Reviewed software gameplay/control images and owning backend/module/source evidence, scoped fixes/tests if needed, pushed main.
