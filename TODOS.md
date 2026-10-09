@@ -1388,9 +1388,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (fresh spawn hit thread limit; root prepared command observer)
+  worker: none; browser39185/collector40552 exited0; boat stop completed01:55:52Z
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Use tools/worker-command-trace.js on an initialized guest Worker on a temporary boat to capture actual command-entry/return and CPU/send-frame state before constructing an arbitration regression. Observer pure-JS contract checks pass; no new guest run yet. Host request overlap alone is expected with mailbox wakeups and does not prove concurrent guest execution; source review is in the handoff. Latest unchanged module e4d59e88 gives startup stack trap074ffd4e or title-only waits. No gameplay/menu reproduction; earlier held-click outcome unknown. Core and registry already main; see ops/handoffs/age-of-wonders2-menu-route-20261008.md.
+  Next: Preserve first trapped Worker reply plus preceding command ring, attach CDP with defaultViewport:null, then capture first stack-execution transition. Current main19ad154eb reaches menu; Campaign explicitly demo-disabled; verified Scenario click traps074ffd8c/ESP074ffc08. Actual terminal frame depth0; first transition overwritten by post-trap export requests, so no scheduler cause proven. Evidence scratch/runs/20261009T0150Z-age-of-wonders2-command-trace; handoff records gaps/saturated wait stream and invalid stale-coordinate attempt. No gameplay.
   Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 

@@ -144,3 +144,40 @@ identity/receiver, original exceptions, uninstall and rejection of wrong targets
 No guest execution, browser capture or new gameplay proof in this step. Next:
 attach this observer to the actual initialized Worker on a temporary boat,
 capture startup plus terminal stack, and correlate events before patching.
+
+## Actual command capture, 2026-10-09 01:50 UTC
+
+Run `scratch/runs/20261009T0150Z-age-of-wonders2-command-trace` tests main
+`19ad154eb`, original pinned ZIP, canonical build, and 902 matching source hashes
+on fresh no-env `bx_7x3p2hjt`. Four actual Worker observers attached without
+observer errors. The registered software route reached a visible menu.
+Campaign produced the explicit demo restriction dialog. The auxiliary CDP
+connection changed viewport size; the first attempted dismissal/Scenario input
+used stale coordinates and is invalid. `dismiss-checked.png` confirms successful
+dismissal; the subsequent reviewed Scenario click at (337,420) produced the
+terminal screenshot `scenario-verified-click.png`.
+
+Actual main Worker state: EIP `074ffd8c`, ESP `074ffc08`, zero outstanding JS
+send frames. Console reports previous EIP `074ffd7c`, EBP `074ffc24`, ESI
+`507760f8`, EDI `506850f7`. Captured stack starts `00428e57,0,0,00428e8b` and
+contains `00429030`. Original EXE disassembly identifies 428e57 and 428e8b as
+labels in an optimized row-copy loop with frame-local indirect continuations;
+they are not necessarily call-return addresses. Do not infer a return-chain
+failure from these words alone.
+
+The actual observed dispatchThreadSend entries/returns restore the message-wait
+EIP/ESP with depth zero. No retained event proves a slice executed inside a
+suspended send frame. However, this does **not** exonerate every ordering:
+after the trap, repeated get_yield_reason/set_incoming_send_pending requests
+overwrote the rolling buffer before its next retrieval. The filtered collector
+records two gaps and one saturated wait-event stream. Terminal CPU/stack is
+valid; the first transition into stack execution is missing. Next improve the
+observer to preserve the first trapped Worker reply and its preceding ring,
+then capture that transition before proposing a runtime fix. CDP attachments
+must use defaultViewport:null to avoid changing input coordinates.
+
+Browser driver39185 and Chrome exited0 at01:55:17.362; collector40552 exited0.
+No Chrome remained before stop. Boat stop operation completed01:55:52.451Z.
+Evidence archive SHA `1bbc1ce34ad41635c67245702386591be43e967b631fddcfc7e4c1c7607a9fb9`
+was verified before stop; 55 contained artifacts sealed. No gameplay/FPS/audio
+qualification, no guest writes, and no causal scheduler fix claim.
