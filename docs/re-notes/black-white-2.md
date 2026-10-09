@@ -8421,3 +8421,25 @@ installer was transferring, so it is not an isolated performance benchmark.
 Raw31samples: scratch/runs/20261009T0335Z-black-white2-staging-fix/evidence/browser-candidate/intro-present-rate.json.
 A bounded capture monitor requests a screenshot every10minutes and stops
 after browser189048 terminates or its05:05:50Z deadline; no input automation.
+
+### Ordinary intro completion and relative input (2026-10-09)
+
+The same browser reached the profile dialog by 04:10:55Z, without changing
+guest memory or skipping the intro. Holding Enter for three seconds accepted
+the profile and reached the main menu. Text is visibly garbled. Short key
+pulses and pointer clicks did not reliably activate controls.
+
+The registry omitted `relativeMouse`, despite the game's DirectInput software
+cursor. A live host-only opt-in (`runningApps` entry's `relativeMouse=true`)
+followed by a trusted click obtained pointer lock and reached the burning-village
+land picker. `relative-capture.json` records the prior false setting, confirmed
+pointer lock, and unchanged 1000x800 viewport. The registry now opts in through
+the existing shared relative-input path; its JS regression and syntax check pass.
+This validates live input capture, not a fresh launch with the registry change
+or completed gameplay. Held Enter at the land picker did not advance it.
+
+Evidence remains `scratch/runs/20261009T0335Z-black-white2-staging-fix`:
+`interval-3`, `held-enter`, `relative-capture`, and `land-enter` images and
+receipts under `evidence/browser-candidate/`, with exact host-input scripts.
+The browser remains under its original 05:05:50Z deadline. Next: ordinary
+land selection and gameplay; preserve the garbled-font and input limitations.
