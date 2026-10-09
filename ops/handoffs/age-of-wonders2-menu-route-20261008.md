@@ -181,3 +181,12 @@ No Chrome remained before stop. Boat stop operation completed01:55:52.451Z.
 Evidence archive SHA `1bbc1ce34ad41635c67245702386591be43e967b631fddcfc7e4c1c7607a9fb9`
 was verified before stop; 55 contained artifacts sealed. No gameplay/FPS/audio
 qualification, no guest writes, and no causal scheduler fix claim.
+
+The observer now preserves `firstTrap` at the outgoing trapped reply, before
+the host can flood it with export requests. It retains the preceding bounded
+ring and reads 128 bytes around EIP plus 256 bytes at ESP. The reply object,
+transfer arguments and original return value are forwarded unchanged; later
+traps cannot replace the first capture. `node tools/worker-command-trace.test.js`
+passes a pure-JS regression reproducing 4000 post-trap commands. This update
+still needs validation in an actual browser Worker; it is a diagnostic change,
+not a game compatibility fix.

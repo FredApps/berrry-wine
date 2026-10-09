@@ -13,11 +13,19 @@ function expression(capacity = 2048) {
 function install(capacity) {
   if (self.__wineCommandTrace) throw new Error('command trace already installed');
   if (typeof instance === 'undefined' || !instance || !instance.exports ||
-      typeof threadSendFrames === 'undefined' || typeof self.onmessage !== 'function')
+      typeof threadSendFrames === 'undefined' || typeof self.onmessage !== 'function' ||
+      typeof self.postMessage !== 'function')
     throw new Error('attach to an initialized guest Worker, not the page');
   const previous = self.onmessage;
+  const previousPost = self.postMessage;
   const ring = new Array(capacity);
   let total = 0, command = 0, stopped = false, observerErrors = 0;
+  let firstTrap = null;
+  const events = () => {
+    const out = [];
+    for (let n = Math.max(0, total - capacity); n < total; n++) out.push(ring[n % capacity]);
+    return out;
+  };
   const snapshot = (phase, id, msg) => {
     try {
       const ex = instance.exports;
@@ -42,18 +50,44 @@ function install(capacity) {
     try { return previous.call(this, event); }
     finally { snapshot('sync-return', id, msg); }
   }
+  function observedPost(msg) {
+    // Freeze before the host receives the trap and starts teardown or polling.
+    // Keep this separate from the rolling ring, which must remain useful for
+    // later commands. Forward the original object and transfer list unchanged.
+    if (!firstTrap && msg && msg.trapped) {
+      try {
+        snapshot('trapped-reply', command, msg);
+        const ex = instance.exports;
+        const read = (base, count) => {
+          const bytes = [];
+          if (typeof ex.guest_read8 !== 'function') return null;
+          for (let i = 0; i < count; i++) bytes.push(ex.guest_read8((base + i) >>> 0) & 255);
+          return bytes;
+        };
+        firstTrap = {
+          at: performance.timeOrigin + performance.now(), type: msg.t, seq: msg.seq,
+          trapped: String(msg.trapped), total, events: events(),
+        };
+        const eip = ex.get_eip() >>> 0, esp = ex.get_esp() >>> 0;
+        firstTrap.memory = { eip, esp, codeBase: (eip - 64) >>> 0,
+          code: read((eip - 64) >>> 0, 128), stack: read(esp, 256) };
+      } catch (_) { observerErrors++; }
+    }
+    return previousPost.apply(this, arguments);
+  }
   self.onmessage = observed;
+  self.postMessage = observedPost;
   self.__wineCommandTrace = {
     read() {
-      const events = [];
-      for (let n = Math.max(0, total - capacity); n < total; n++) events.push(ring[n % capacity]);
       return { capacity, total, overwritten: Math.max(0, total - capacity),
-        observerErrors, stopped, events,
+        observerErrors, stopped, events: events(), firstTrap,
         semantics: 'sync-return is the synchronous handler boundary; init is async. Install after init only.' };
     },
     stop() {
       if (self.onmessage !== observed) throw new Error('handler replaced by another observer');
+      if (self.postMessage !== observedPost) throw new Error('postMessage replaced by another observer');
       self.onmessage = previous;
+      self.postMessage = previousPost;
       stopped = true;
       return this.read();
     },
