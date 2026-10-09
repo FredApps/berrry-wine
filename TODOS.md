@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget, root direct because fresh worker thread limit reached. AoWII qualified software army movement and fixes merged; BW2 ordinary land picker live on bx_75agndxm after PE staging fix efcef0022 and relative input opt-in6da448742, browser189048 deadline05:05:50Z. DisciplesII Wise installer transferred/remote SHA verified, queued installer extraction after browser release. No guest-memory intro skip; retain DungeonSiege EULA hold and laptop HeroesII.
+  Next: One-worker budget: actual novel-title lanes are DisciplesII (controller234050 waits for BW2/Chrome terminal, bounded installer probe) and American McGees Alice (original archive transfer50677, static preflight ready). BW2 ordinary land-picker run is existing-title compatibility coverage and is not counted as a second novel game. No parallel runtime; preserve DungeonSiege EULA hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1467,3 +1467,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Next: Diagnose terrain crossing lower UI/black polygons after validated FVF fix; measure actual gameplay FPS and audio separately. Initial army movement is verified, release readiness is not. Use temporary box and serialized browser.
   Evidence: scratch/runs/20261009T0306Z-age-of-wonders2-gameplay/result.json
+
+- [ ] New-game lane: American McGee's Alice demo
+  id: NEW-GAME-ALICE-DEMO-20261009
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: root direct; preflight/file transfer only, runtime queued after DisciplesII
+  candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
+  Next: Verify original82499584byte transfer SHAce873bf2525041a624c1a5a27b513f135b51ffdbeae9f68a6ede3edd8c7078e6 to bx_75agndxm /tmp/alice-original.exe; extract original WinZip files and audit full DLL closure. Five midiIn imports lack API rows, runtime use unknown: do not speculate or stub. Ordinary launch after serialized current work, then reviewed player-controlled gameplay. No missing archive paths established.
+  Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
+  Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
