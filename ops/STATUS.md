@@ -1,10 +1,8 @@
-updated: 2026-10-08T23:51:54.255Z
+updated: 2026-10-09T00:10:10.783Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Dungeon Siege's missing ANSI resource API chain is implemented and passes real-dispatch nested callback tests and the full build on a temporary box. Fresh original-game startup remains ready, not proven fixed. No new gameplay screenshot. Native evidence: scratch/runs/20261008T2343Z-resource-enum-ansi/result.json.
+User priority: implement real256-color display support and verify SimCity2000, including its startup color warning. Coordinator works directly in isolated wt-simcity-256-20261009; baseline uses temporary no-env bx_jhtwtuhf. No worker sessions are live.
 
-No worker is live: CLI usage and fresh-agent thread limits prevent delegation. Root completed this fix directly. Age of Wonders II remains the queued second title, without gameplay qualification.
+Dungeon Siege passed the previous resource-enumeration blocker on main77cca122f and now traps at missing VerLanguageNameA. Browser/Chrome closed cleanly;29 hashed artifacts saved in scratch/runs/20261009T0003Z-dungeon-siege-verlanguage. No game window/gameplay. That next fix and Age of Wonders II are queued behind the user request.
 
-Arcanum movement on both backends and Comanche 3 controlled flight/normal ToyVM launch remain reviewed. FPS/audio coverage and the GL/D3D goal remain incomplete. Nothing was publicly deployed.
-
-Old Dungeon Siege evidence remains in stopped bx_hgju4y2b; this key cannot resume it. Historical recovery does not block independent original-source work. Tiberian, Antara, Arx and Winamp diagnostics remain held; Heroes II is laptop-owned. Browser/heavy work stays on temporary boxes; disk remains above2GiB.
+Arcanum and Comanche3 reviewed gameplay remains available; no new gameplay screenshot. Full GL/D3D and FPS/audio coverage remain unfinished. HeroesII is laptop-owned; rejected diagnostic lanes remain held. No public deployment.

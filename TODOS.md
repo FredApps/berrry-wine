@@ -1398,9 +1398,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (CLI usage limit; exited1 at2026-10-08T16:56:46.291Z)
+  worker: none; fresh browser58940 exited0 at2026-10-09T00:02:50.542Z
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
-  Next: Fresh ordinary startup validation from original installer using the tested ANSI resource enumeration fix; no live worker. Archive31ccb5972 remains unaccepted launch WIP. Historical evidence recovery is separate: stopped bx_hgju4y2b:/home/user/dungeon-api-20261008 still requires owner resume/retrieval and must not be bypassed. No gameplay qualification.
+  Next: Queued behind user-priority SimCity256-color work: implement real VerLanguageNameA, next original import at617fcc/IAT6f521c after resource enumeration fix. Fresh startup evidence sealed scratch/runs/20261009T0003Z-dungeon-siege-verlanguage; no window/gameplay. Old snapshot recovery remains separate.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
@@ -1411,11 +1411,19 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Result: Added20 missing LOCAL_CANDIDATE_APPS options to the existing Local Candidates group in index.html. Dynamic picker derives its catalog from this select; existing eligibility filters remain unchanged. No public deployment or gameplay qualification.
   Validation: Existing test/test-app-selector-options.js failed before on20missing entries and passes after for all173apps across3lists, including duplicate/list-disjointness checks. No browser run required for this static option correction. Receipt scratch/picker-completeness-20261008/receipt.json.
 
-- [ ] Implement missing ANSI resource enumeration callback chain
+- [x] Implement missing ANSI resource enumeration callback chain
   id: WIN32-ENUM-RESOURCE-ANSI-20261008
-  status: review
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none (coordinator implemented and validated directly)
-  Next: Generic implementation and native regression/build pass; integrate source and retest original Dungeon Siege startup on a fresh temporary box. No gameplay claim.
+  Result: Implemented, validated and pushed main77cca122f; fresh original Dungeon Siege progressed beyond old resource trap to next missing API VerLanguageNameA. No gameplay claim.
   Evidence: ops/handoffs/resource-enumeration-ansi-20261008.md; scratch/runs/20261008T2343Z-resource-enum-ansi/result.json. Unchanged-main control fails nested callback assertion; candidate passes full hash/thunk chain, actual LANGIDs, CP1252, nested/early-stop/error/DLL contracts and ESP restoration; canonical build and thread-resource-sync pass.
   Done: Generic contract and nesting tests pass, original runtime limitation is accurately updated, reviewed changes pushed main; no silent-success stub.
+
+- [~] Real 256-color display mode and SimCity verification
+  id: SIMCITY-256-COLOR-20261009
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: coordinator direct, isolated wt-simcity-256-20261009
+  Next: Reproduce ordinary SimCity2000 startup color warning; implement actual indexed GDI display/palette behavior with consistent mode APIs; verify modal absence and real game rendering/palette updates on temporary box. No fake GetDeviceCaps-only shortcut.
+  Done: Contract regressions, browser before/after and ordinary gameplay evidence reviewed; explicit-path commit pushed main.
