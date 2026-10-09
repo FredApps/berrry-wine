@@ -203,15 +203,25 @@ const {bootRenderHarness}=require('./render-helper');
   e.guest_write32(elements+8,255);e.guest_write32(elements+12,17); // END
   assert.strictEqual(e.CreateVertexDeclaration(d,elements,out),0);const decl=read(out);
   assert.strictEqual(e.SetFVF(d,0x4002),0);
+  // Native D3D9 preserves both FVF and declaration selection on SetFVF(0).
+  // Wine conformance: dlls/d3d9/tests/device.c, test_fvf_decl_conversion.
+  assert.strictEqual(e.SetFVF(d,0),0);
+  assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0x4002,'zero FVF preserves live FVF');
   assert.strictEqual(e.BeginStateBlock(d),0);
   assert.strictEqual(e.SetVertexDeclaration(d,decl),0);
   assert.strictEqual(e.SetVertexDeclaration(d,0),0);assert.strictEqual(e.SetVertexDeclaration(d,decl),0);
+  assert.strictEqual(e.SetFVF(d,0),0,'zero FVF does not replace a recorded declaration');
   assert.strictEqual(read(decl+20),1,'recorded declaration keeps only one reference');
   assert.strictEqual(e.GetVertexDeclaration(d,out),0);assert.strictEqual(read(out),0);
   assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0x4002,'recording does not clear live FVF');
   assert.strictEqual(e.EndStateBlock(d,out),0);const db=read(out);
   assert.strictEqual(e.releaseTexture(decl),0); // common resource Release helper
   assert.strictEqual(e.Apply(db),0);assert.strictEqual(read(decl+20),2);
+  assert.strictEqual(e.SetFVF(d,0),0);
+  assert.strictEqual(e.get_esp()>>>0,0x074ff00c,'zero FVF retains stdcall cleanup');
+  assert.strictEqual(read(decl+20),2,'zero FVF preserves declaration lifetime');
+  assert.strictEqual(e.GetVertexDeclaration(d,out),0);assert.strictEqual(read(out),decl,'zero FVF preserves live declaration');
+  e.releaseTexture(decl); // balance GetVertexDeclaration AddRef
   assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0);
   assert.strictEqual(e.SetFVF(d,0x4002),0);assert.strictEqual(e.Capture(db),0);
   assert.strictEqual(e.SetFVF(d,0x102),0);assert.strictEqual(e.Apply(db),0);
@@ -258,6 +268,7 @@ const {bootRenderHarness}=require('./render-helper');
   assert.strictEqual(e.SetFVF(d,0x102),0);
   assert.strictEqual(e.BeginStateBlock(d),0);
   assert.strictEqual(e.SetFVF(d,0x4002),0,'SetFVF records while a block is open');
+  assert.strictEqual(e.SetFVF(d,0),0,'zero FVF does not replace a recorded FVF');
   assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0x102,'recording SetFVF leaves live FVF');
   assert.strictEqual(e.EndStateBlock(d,out),0);const fb=read(out);
   assert.strictEqual(e.Apply(fb),0);

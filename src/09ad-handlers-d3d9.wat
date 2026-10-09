@@ -1987,6 +1987,12 @@
     (local $state i32) (local $block i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086C))
     (local.set $state (call $d3d9_program_state (local.get $arg0)))
+    ;; FVF zero is a successful no-op, including during state recording.
+    ;; Preserve the current declaration, FVF and their lifetime ownership.
+    (if (i32.and (i32.ne (local.get $state) (i32.const 0)) (i32.eqz (local.get $arg1))) (then
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+      (return)))
     ;; Recording: the block's declaration slot takes "no declaration, this
     ;; FVF", which Apply restores as SetFVF does (MilkDrop's D3D8
     ;; SetVertexShader inside BeginStateBlock).
