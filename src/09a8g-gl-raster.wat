@@ -554,6 +554,24 @@
   ;; taps separately from CLAMP_TO_EDGE.
   (func $gl_sw_tex_param (param $pname i32) (param $value i32)
     (local $slot i32) (local $flags i32) (local $bit i32) (local $border_bit i32)
+    ;; The host reports INVALID_ENUM. The software mirror must leave the old
+    ;; state unchanged on the same invalid calls instead of selecting NEAREST.
+    (if (i32.eq (local.get $pname) (i32.const 0x2800)) (then
+      (if (i32.and (i32.ne (local.get $value) (i32.const 0x2600))
+                   (i32.ne (local.get $value) (i32.const 0x2601))) (then (return)))))
+    (if (i32.eq (local.get $pname) (i32.const 0x2801)) (then
+      (if (i32.and
+        (i32.and (i32.ne (local.get $value) (i32.const 0x2600))
+                 (i32.ne (local.get $value) (i32.const 0x2601)))
+        (i32.or (i32.lt_u (local.get $value) (i32.const 0x2700))
+                (i32.gt_u (local.get $value) (i32.const 0x2703)))) (then (return)))))
+    (if (i32.or (i32.eq (local.get $pname) (i32.const 0x2802))
+               (i32.eq (local.get $pname) (i32.const 0x2803))) (then
+      (if (i32.and
+        (i32.and (i32.ne (local.get $value) (i32.const 0x2900))
+                 (i32.ne (local.get $value) (i32.const 0x2901)))
+        (i32.and (i32.ne (local.get $value) (i32.const 0x812F))
+                 (i32.ne (local.get $value) (i32.const 0x8370)))) (then (return)))))
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))

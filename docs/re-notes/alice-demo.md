@@ -155,3 +155,31 @@ Module47ab13a8479754405556464cd97d606e17a08b57f25b1b5d8ecb89415a3ba095.
 Guest glTexParameterfv is still fail-fast. Next connect validated pointer-copy
 submission, matching JS state/query handling and correct WebGL filtering, then
 enable the API and rerun original Alice. Do not treat the helper as API support.
+
+## Frontend state and validation (2026-10-09 08:08Z)
+
+JS keeps per-object border floats and original wrap enums separately from the
+hardware CLAMP_TO_EDGE alias. Internal query helpers return detached values;
+delete/reuse resets state, units retain independent objects, and pending draws
+flush before changes. Scalar setters reject invalid target/filter/wrap values;
+the WAT mirror likewise preserves old sampling flags for invalid enum values.
+Tests cover unchanged pixels after invalid MAG/MIN/wrap, object isolation,
+clamping, detached queries and pending-draw ordering. Canonical build/five suites
+pass, controller77481 terminal0 at08:07:44Z, run
+`20261009T0808Z-alice-border-frontend`, module
+970c8abc76a0c66167152f9ec432417d9f643208cc2f77c960852c00274aab04.
+
+WebGL shader work remains. Backend defaults to WebGL1; do not silently implement
+only WebGL2. Existing D3D9 mip-atlas lowering supports explicit border taps but
+is not directly reusable without atlas uploads and GL-specific clamp semantics.
+Another candidate is explicit-LOD center-tap sampling with EXT_shader_texture_lod
+and derivatives (core equivalents in WebGL2), manually combining missing taps.
+Check extension availability and real pixel behavior before selecting that route.
+Do not approximate border weights using only base-level dimensions under mipmaps.
+
+[OpenGL2.1 specification](https://registry.khronos.org/OpenGL/specs/gl/glspec21.pdf),
+sections3.8.8-3.8.10, defines per-level filtering and the min/mag switch: threshold
+0.5 for LINEAR magnification with either NEAREST_MIPMAP filter, otherwise0.
+Incomplete mipmapped textures disable texture application for the unit. Native
+software mip policy is currently approximate; do not claim complete GL conformance.
+Guest vector dispatch, pointer replay and real shader support are still pending.

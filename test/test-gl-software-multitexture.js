@@ -208,6 +208,12 @@ async function main() {
   glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
   unit1Coords = [0, 0.5];
   expect(0x7F7FFF7F, 0x7F7FFF7F, 'per-texture green border blends with white RGBA');
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2703); // invalid MAG
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 123); // invalid MIN
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 123); // invalid wrap
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  expect(0x7F7FFF7F, 0x7F7FFF7F, 'invalid sampler values preserve software draw state');
   // Delete/reuse must restore the default color, even when storage was allocated.
   const deleted = e.guest_alloc(4) >>> 0;
   new Uint32Array(memory.buffer, toWasm(deleted), 1)[0] = 5;

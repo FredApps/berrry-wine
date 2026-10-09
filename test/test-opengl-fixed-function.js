@@ -248,4 +248,43 @@ assert.deepStrictEqual(contextCounts, [1, 0, 0],
 assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
   'renderer replacement detaches the old GPU presentation layer');
 
+{
+  const b = new FakeBackend(), f = new FixedFunctionGL(b);
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0, 0, 0]);
+  f.bindTexture(12);
+  assert(f.texBorderColor([-1, 0.25, 2, 0.5]));
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0.25, 1, 0.5]);
+  const detached = f.getTexParameter(GL.TEXTURE_BORDER_COLOR);
+  detached[1] = 1;
+  assert.strictEqual(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)[1], 0.25,
+    'query result cannot mutate texture state');
+  f.setActiveTexture(0x84C1);
+  f.bindTexture(13);
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0, 0, 0]);
+  f.texBorderColor([1, 0, 0, 1]);
+  f.setActiveTexture(0x84C0);
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0.25, 1, 0.5]);
+  assert(f.texParameter(GL.TEXTURE_WRAP_S, GL.CLAMP));
+  assert.deepStrictEqual(f.getTexParameter(GL.TEXTURE_WRAP_S), [GL.CLAMP],
+    'query preserves desktop enum rather than hardware CLAMP_TO_EDGE alias');
+  const count = b.parameters.length;
+  assert.strictEqual(f.texParameter(GL.TEXTURE_MAG_FILTER, 0x2703), false);
+  assert.strictEqual(f.lastError, GL.INVALID_ENUM);
+  assert.strictEqual(b.parameters.length, count, 'invalid filter cannot touch hardware');
+  assert.deepStrictEqual(f.getTexParameter(GL.TEXTURE_MAG_FILTER), [GL.LINEAR]);
+  f.lastError = 0;
+  assert.strictEqual(f.texBorderColor([0, 0, 0, 0], 0xDE0), false);
+  assert.strictEqual(f.lastError, GL.INVALID_ENUM);
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0.25, 1, 0.5]);
+  f.lastError = 0;
+  f.deleteTextures([12]);
+  f.bindTexture(12);
+  assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0, 0, 0],
+    'deleted texture name starts with a fresh default border');
+  f.enqueuePacked(GL.TRIANGLES, triangle);
+  const before = b.draws.length;
+  f.texBorderColor([0, 1, 0, 1]);
+  assert.strictEqual(b.draws.length, before + 1, 'pending geometry is flushed before changing border');
+}
+
 console.log('PASS OpenGL packed fixed-function rendering (state, matrix, texture)');
