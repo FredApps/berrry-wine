@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: DisciplesII native player-controlled gameplay and reviewed movement screenshot achieved; dashboard candidate/browser launch registration still required. Alice queued real GL border-color implementation. Both remain nonpublic novel lanes; no new worker because fresh spawn still thread-limit. All game probes terminal, bx_kbtxb6tb available until08:17:09Z; serialize runtime tests. Preserve DungeonSiege hold and laptop HeroesII.
+  Next: One-worker budget: DisciplesII native gameplay verified; local browser registration reaches Day1/story, repeated-click diagnosis and browser movement next. Alice real GL border-color implementation queued. All runtime probes terminal; temporary bx_kbtxb6tb expires08:17:09Z. Preserve DungeonSiege hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; native gameplay verified, dashboard/browser registration next, all runtime probes terminal
+  worker: root direct; browser run terminal07:09:24Z, input diagnosis next
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Native original demo gameplay verified: ordinary quest setup, leader selection, path plot and move; movement20/20->16/20 and camera follow reviewed in run20261009T0643Z-disciples2-gameplay (80 original artifacts plus scripts/pins). Photos963/964 sent. Fix96d3ed8d3 pushed. Next register DisciplesII candidate and normal browser launch, validate that route, then measure gameplayFPS/audio. Exact gaps: no disciples2-demo entry in test/candidate-corpus/manifest.json, no DisciplesII lib/apps.js entry, no test/binaries/candidates/disciples2-demo root; original128 installed files remain test/binaries/win98-games-a-d/Disciples II Demo/installed. CLI mouse down/up must span batches; do not call instantaneous click a game failure.
+  Next: Local candidate disciples2-demo and registered app disciples2_demo prepared with original128-file tree/127-support manifest. Normal browser route reaches Day1 and story using trusted input; several controls require repeated clicks. Browser controller38274/Chrome38289 terminal07:09:24Z at immutable900s guard before movement. Diagnose input release, verify browser leader movement, then gameplayFPS/audio. Native movement20/20->16/20 remains verified separately. Evidence run20261009T0709Z-disciples2-browser; registry checks/dry-run pass, broad registry test has unchanged-control Jazz2 TypeError. No public desktop promotion.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 

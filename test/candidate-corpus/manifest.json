@@ -2350,6 +2350,40 @@
         "exe": "extracted/popTBDemo.exe"
       },
       "notes": "NEW-GAME-POPULOUS-TB-DEMO-20261006. Registered as populous_tb_demo (software renderer). The WinZip SFX holds the InstallShield setup beside the uncompressed game tree; the game only needs the two registry values setup writes (startupRegistry). md5 5328fd544622c74cc649114dd9e1fe2c, 19193856 bytes."
+    },
+    {
+      "id": "disciples2-demo",
+      "name": "Disciples II: Dark Prophecy Demo",
+      "kind": "game",
+      "version": "Original English playable demo; executable SHA256 adba242a0a3563651baffa6ec7d9a6c0978b7ae844a1cccedb2a1f4e8eb7b1f8",
+      "executables": [
+        "installed/discipl2.exe"
+      ],
+      "sourcePage": "https://archive.org/details/win-98-games-a-d.-7z",
+      "license": "Proprietary publisher demo; local compatibility fixture, redistribution rights not verified",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Run original Discipless2_demo-D3D.exe Wise installer; retain unchanged 128-file installed tree under installed/. Installer SHA256 e37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0. See docs/re-notes/disciples2-demo.md.",
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/discipl2.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 100000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "installed/shw32.dll",
+          "installed/c4dll-r.dll",
+          "installed/msvcrt.dll",
+          "installed/mss32.dll",
+          "installed/binkw32.dll"
+        ]
+      },
+      "notes": "Native ordinary New Quest -> The Search for Timmoria -> Undead Hordes gameplay verified on 2026-10-09: leader movement20/20 to16/20 with reviewed screenshots. Registered browser launch reaches Day1 and story; browser movement, FPS and audio pending. Some controls require repeat clicks. New Saga is disabled by the original demo; use New Quest. Local only; not on public desktop. Run20261009T0643Z-disciples2-gameplay."
     }
   ]
 }

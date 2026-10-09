@@ -260,3 +260,31 @@ demo, not DisciplesII. Do not attach this evidence to that different game.
 Next add the correct local candidate and normal browser launch using the original
 128-file installed tree, then validate browser route and measure gameplayFPS/audio.
 The provisional run ID stays explicit until that integration is done.
+
+## Registered browser route (2026-10-09 07:09Z)
+
+Added local-only candidate disciples2-demo and app disciples2_demo, using the
+unchanged original 128-file installation (hardlinks locally, no duplicated game
+payload). Generated manifest has 127 support files; executable is separate.
+Normal index.html?app=disciples2_demo&debug on temporary bx_kbtxb6tb launches
+with lazy policy: 8 eager files (1,462,993 bytes),119 on demand (169,278,639 bytes).
+The main guest and additional guest threads run in Workers. Default UI WebGL
+setting is not evidence that this DirectDraw game exercises the D3D9 backend.
+
+Browser controller38274 / Chrome38289 ran06:54:23.903Z to07:09:24.061Z;
+immutable900s guard closed Chrome with code0. Module SHA256
+f1fb7fbe157c1ed6a85b926a31678fb7e0b11299fdfa9c363c2ce41a35a6b418.
+Ordinary trusted200ms mouse clicks reached Single Player, New Quest, Timmoria,
+Undead Hordes, default Warrior Lord, intro, Day1, default leader name and story.
+Several first clicks left controls pressed; a repeated click advanced them.
+Cause is not yet established. Browser movement was not reached before the guard;
+do not substitute the earlier native movement proof for browser gameplay.
+FPS and audio remain unqualified. No guest-memory writes or config bypasses.
+Run20261009T0709Z-disciples2-browser retains screenshots and command sequence.
+
+Local-only selector, public-desktop exclusion, candidate/registry executable
+match, support manifest and five DLL paths pass checks; CLI corpus dry-run is
+ready. Broad test-debug-game-apps.js still fails the existing Jazz2 file.endsWith
+TypeError, reproduced with unchanged HEAD apps. It is not an all-green suite.
+Next diagnose ordinary browser release/input behavior, finish leader movement,
+then capture gameplay presentation/FPS and audio evidence separately.
