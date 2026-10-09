@@ -919,3 +919,7 @@
 
   (region.declare $GETMESSAGE_HOOKS (size 0x00000100) (align 0x00000010)
     (owner "09a-handlers4-late.wat:$getmessage_hook_state"))
+
+  ;; Desktop depth and the lazy physical palette pointer, shared by all threads.
+  (region.declare $GDI_DISPLAY_STATE (size 0x00000010) (align 0x00000010)
+    (owner "10e-gdi-metafile.wat:$GDI_DISPLAY_STATE"))

@@ -1,10 +1,8 @@
-updated: 2026-10-08T23:51:54.255Z
+updated: 2026-10-09T00:56:43.767Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-Dungeon Siege's missing ANSI resource API chain is implemented and passes real-dispatch nested callback tests and the full build on a temporary box. Fresh original-game startup remains ready, not proven fixed. No new gameplay screenshot. Native evidence: scratch/runs/20261008T2343Z-resource-enum-ansi/result.json.
+SimCity2000 real 256-color fix implemented and verified: startup warning absent, ordinary demo-city load and recentering, advancing simulation and water palette animation. Build and indexed/palette/window regressions pass. Before/after evidence: scratch/runs/20261009T0010Z-simcity-truecolor-before and scratch/runs/20261009T0048Z-simcity-indexed-desktop. Temporary browser exited cleanly and bx_jhtwtuhf is stopped. No FPS/audio qualification.
 
-No worker is live: CLI usage and fresh-agent thread limits prevent delegation. Root completed this fix directly. Age of Wonders II remains the queued second title, without gameplay qualification.
+One-worker budget remains; no worker session is live. Dungeon Siege passed resource enumeration on main77cca122f; next is real VerLanguageNameA implementation (original startup trap617fcc). Evidence: scratch/runs/20261009T0003Z-dungeon-siege-verlanguage. No game window/gameplay yet. Age of Wonders II is the second queued title. Historical snapshot recovery requires owner access separately.
 
-Arcanum movement on both backends and Comanche 3 controlled flight/normal ToyVM launch remain reviewed. FPS/audio coverage and the GL/D3D goal remain incomplete. Nothing was publicly deployed.
-
-Old Dungeon Siege evidence remains in stopped bx_hgju4y2b; this key cannot resume it. Historical recovery does not block independent original-source work. Tiberian, Antara, Arx and Winamp diagnostics remain held; Heroes II is laptop-owned. Browser/heavy work stays on temporary boxes; disk remains above2GiB.
+Arcanum and Comanche3 reviewed gameplay remains available. Full GL/D3D and FPS/audio coverage remain unfinished. HeroesII is laptop-owned; rejected diagnostic lanes remain held. No public deployment.

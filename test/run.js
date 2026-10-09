@@ -4741,6 +4741,7 @@ async function main() {
     });
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
+  if (instance.exports.set_desktop_color_depth) instance.exports.set_desktop_color_depth(APP_ENTRY?.desktopColorDepth === 8 ? 8 : 32);
   if (NO_MMX && instance.exports.set_cpu_mmx) instance.exports.set_cpu_mmx(0);
   // timeSetEvent callbacks on a winmm timer guest thread (the Windows model)
   // instead of the main thread's message pump. Shared memory, so set once.

@@ -120,15 +120,19 @@
   ;; the WAT bitmap arena, then let JS create the derived Canvas presentation.
   (func $handle_CreateCompatibleBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $w i32) (local $h i32) (local $size64 i64) (local $bits_ga i32) (local $handle i32) (local $bits_wa i32)
+    (local $bpp i32) (local $stride i32) (local $palette i32)
     (local.set $w (local.get $arg1))
     (local.set $h (local.get $arg2))
     ;; Preserve the emulator's established zero/negative dimension behavior.
     (if (i32.le_s (local.get $w) (i32.const 0)) (then (local.set $w (i32.const 1))))
     (if (i32.le_s (local.get $h) (i32.const 0)) (then (local.set $h (i32.const 1))))
-    (local.set $size64
-      (i64.mul
-        (i64.mul (i64.extend_i32_u (local.get $w)) (i64.extend_i32_u (local.get $h)))
-        (i64.const 4)))
+    (local.set $bpp (call $gdi_window_bpp))
+    (local.set $stride (i32.and (i32.add (i32.mul (local.get $w)
+      (i32.shr_u (local.get $bpp) (i32.const 3))) (i32.const 3)) (i32.const -4)))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (local.set $palette (call $gdi_system_palette))))
+    (local.set $size64 (i64.mul (i64.extend_i32_u (local.get $stride))
+      (i64.extend_i32_u (local.get $h))))
     (if (i64.gt_u (local.get $size64) (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -141,9 +145,9 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
     (local.set $bits_wa (call $g2w (local.get $bits_ga))) (local.set $handle (call $gdi_bitmap_alloc
-      (local.get $w) (local.get $h) (i32.const 32) (i32.const 6)
-      (local.get $bits_wa) (i32.mul (local.get $w) (i32.const 4))
-      (i32.const 0) (i32.const 0)))
+      (local.get $w) (local.get $h) (local.get $bpp) (i32.const 6)
+      (local.get $bits_wa) (local.get $stride)
+      (local.get $palette) (select (i32.const 256) (i32.const 0) (i32.eq (local.get $bpp) (i32.const 8)))))
     (if (i32.eqz (local.get $handle))
       (then (call $dib_free_wasm (local.get $bits_wa))))
     (i32.store offset=0 (global.get $reg_base) (local.get $handle))
@@ -2179,15 +2183,15 @@
     (if (i32.eq (local.get $arg1) (i32.const 90))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 96))))   ;; LOGPIXELSY
     (if (i32.eq (local.get $arg1) (i32.const 12))
-    (then (i32.store offset=0 (global.get $reg_base) (i32.const 32))))  ;; BITSPIXEL
+    (then (i32.store offset=0 (global.get $reg_base) (call $gdi_display_bpp))))  ;; BITSPIXEL
     (if (i32.eq (local.get $arg1) (i32.const 14))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 1))))   ;; PLANES
     (if (i32.eq (local.get $arg1) (i32.const 24))
-    (then (i32.store offset=0 (global.get $reg_base) (i32.const -1))))  ;; NUMCOLORS — -1 = >256 colors
+    (then (i32.store offset=0 (global.get $reg_base) (select (i32.const 20) (i32.const -1) (i32.eq (call $gdi_display_bpp) (i32.const 8))))))  ;; NUMCOLORS — -1 = >256 colors
     (if (i32.eq (local.get $arg1) (i32.const 36))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 1))))   ;; CLIPCAPS: CP_RECTANGLE
     (if (i32.eq (local.get $arg1) (i32.const 38))
-    (then (i32.store offset=0 (global.get $reg_base) (i32.const 15033)))) ;; RASTERCAPS: common raster ops
+    (then (i32.store offset=0 (global.get $reg_base) (i32.or (i32.const 15033) (select (i32.const 256) (i32.const 0) (i32.eq (call $gdi_display_bpp) (i32.const 8))))))) ;; RASTERCAPS: common raster ops
     (if (i32.eq (local.get $arg1) (i32.const 40))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 36))))  ;; ASPECTX
     (if (i32.eq (local.get $arg1) (i32.const 42))
@@ -2195,7 +2199,7 @@
     (if (i32.eq (local.get $arg1) (i32.const 44))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 51))))  ;; ASPECTXY
     (if (i32.eq (local.get $arg1) (i32.const 104))
-    (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))))   ;; SIZEPALETTE: no palette device
+    (then (i32.store offset=0 (global.get $reg_base) (select (i32.const 256) (i32.const 0) (i32.eq (call $gdi_display_bpp) (i32.const 8))))))   ;; SIZEPALETTE
     (if (i32.eq (local.get $arg1) (i32.const 108))
     (then (i32.store offset=0 (global.get $reg_base) (i32.const 24))))  ;; COLORRES — 24-bit color
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))) (return)
@@ -2406,8 +2410,7 @@
   ;; 360: RealizePalette(hdc) — 1 arg stdcall
   ;; In true-color mode this is mostly a no-op; return number of entries mapped
   (func $handle_RealizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $gdi_palette_count
-      (call $gdi_dc_selected_palette (local.get $arg0))))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_realize_palette (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; 1 arg stdcall
   )
 

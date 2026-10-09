@@ -2889,6 +2889,10 @@ class WineAssembly {
     if (this.instance.exports.set_mm_timer_thread_mode) {
       this.instance.exports.set_mm_timer_thread_mode(this.mmTimerThread ? 1 : 0);
     }
+    // Shared with guest Workers; set once before any guest window is created.
+    if (this.instance.exports.set_desktop_color_depth) {
+      this.instance.exports.set_desktop_color_depth(this.desktopColorDepth === 8 ? 8 : 32);
+    }
     this._wasmModule = wasmModule;
     // Kept so an experimental guest worker can be handed the SAME host import
     // table this instance uses — the point of the broker is that there is one

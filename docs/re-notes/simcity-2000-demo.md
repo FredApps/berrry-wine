@@ -26,19 +26,45 @@ over a live, simulating map.
 | `0x0049b7ab` | matching settings write |
 | `0x004a4977` | MFC MRU scan: walk an HMENU for a command id in `0xE130..0xE13F` |
 
-## "You're not running in 256 colors" is correct, and one-shot
+## 256-color warning: original cause and indexed-desktop fix (2026-10-09)
 
 `0x00478c77` reads `GetDeviceCaps(hdc, 12)` BITSPIXEL into EDI, `(hdc, 14)`
 PLANES into EBX and `(hdc, 38)` RASTERCAPS masked with `RC_PALETTE` (0x100).
-We report 32 / 1 / 15033 — a true-colour display, which is what the emulator
-actually presents — so the `cmp edi, 8` at `0x478cde` fails and the warning
+The original desktop reported 32 / 1 / 15033, matching its true-color backing,
+so the `cmp edi, 8` at `0x478cde` failed and the warning
 path runs. It is not a failure path: the code at `0x478cff` reads
 `HKCU\Software\Maxis\SimCity 2000 Win95 Demo\Windows\Last Color Depth`, warns
 only when the stored depth differs from the current one, and writes the
 current depth back. So the box appears once per fresh registry and never
 again, exactly as it would on real hardware after a resolution change.
-Nothing about the game is degraded by it; the animations it mentions are
-palette animations a 32bpp display has no equivalent for.
+The warning describes a real limitation: palette animation cannot recolor
+already-converted 32-bit pixels.
+
+The app registry now requests `desktopColorDepth: 8`. Both browser and CLI
+configure process-shared display state before guest execution. Window surfaces
+and compatible bitmaps retain 8-bit pixels, while the host converts through a
+stable RGBQUAD system palette for presentation. `GetDeviceCaps`, current-mode
+enumeration A/W and `GetSystemPaletteEntries` expose that same state.
+`RealizePalette` assigns physical slots; `AnimatePalette` changes only the
+requested reserved entries and uploads existing window pixels without rewriting
+them. Deleting a logical palette releases its physical-slot ownership.
+
+Two additional rendering gaps mattered: native shape drawing previously rejected
+8-bit surfaces (black/missing controls), and ordinary `BitBlt` converted indexed
+pixels through RGB even when the palettes matched. That collapses separately
+animated entries of the same initial color. Matching indexed copies now retain
+indices; transient `DIB_PAL_COLORS` transfers carry their logical-to-physical
+mapping instead of quantizing those colors again.
+
+`test/test-wat-gdi-indexed-desktop.js` checks real backing depth/stride, A/W mode
+queries, retained-pixel animation, offscreen bitmap copies, independently animated
+duplicate colors, animation-range isolation, nearest unrealized colors,
+`PC_EXPLICIT`, control backgrounds, and restoration to truecolor. Existing palette
+and window-surface tests cover the default mode as well.
+
+This adds an initial indexed desktop; it is not a complete implementation of
+foreground/background palette arbitration or depth-only `ChangeDisplaySettings`.
+DirectDraw exclusive overlays retain their existing truecolor composition.
 
 ## "Load Demo City" used to hang: detached HMENU (fixed)
 
@@ -404,3 +430,9 @@ recorded at the default 32px zoom instead of the whole-map view.
 * **Roads and power lines that reach water raise "Select Bridge"**, a modal
   that eats every later click. Cancel it (its Cancel button is top left)
   and stop the drag one tile short of the shore.
+
+## Indexed desktop verification (2026-10-09)
+
+Before run: scratch/runs/20261009T0010Z-simcity-truecolor-before. Final run: scratch/runs/20261009T0048Z-simcity-indexed-desktop. Original fixture, fresh Chrome151 on isolated bx_jhtwtuhf, ordinary Load Demo City and centering click; no guest memory writes. Warning absent, simulation advances and viewport responds. Over34.55seconds,31 physical palette entries changed and4116/20000 water-crop pixels changed. All seven live windows use8-bit backing. Reviewed launcher, city and budget-dialog screenshots are in the run.
+
+Canonical build and indexed-desktop, palette and window-surface regressions pass. Tested module SHA256: 7c0734dbc1670ea141e8e90f0fc5422be061848cd434c84f03d281b609a26b9e. Source pins and original fixture are preserved with the captures. Browser exited cleanly and boat stopped. FPS/audio were not measured; foreground/background palette arbitration and depth-only ChangeDisplaySettings remain outside this change.

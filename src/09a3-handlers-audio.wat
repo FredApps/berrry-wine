@@ -1789,6 +1789,9 @@
             (if (i32.eq (local.get $pal) (i32.const 254)) (then (local.set $rgb (i32.const 0xFFFF00)) (br $g)))
             (if (i32.eq (local.get $pal) (i32.const 255)) (then (local.set $rgb (i32.const 0xFFFFFF)) (br $g)))
           )))
+      (if (i32.and (i32.eq (call $gdi_display_bpp) (i32.const 8)) (i32.lt_u (local.get $pal) (i32.const 256)))
+        (then (local.set $rgb (call $gdi_swap_rb (i32.load (i32.add (call $gdi_system_palette)
+          (i32.shl (local.get $pal) (i32.const 2))))))))
       (call $gs32 (i32.add (local.get $arg3) (i32.mul (local.get $i) (i32.const 4))) (local.get $rgb))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
@@ -1978,7 +1981,7 @@
         (local.set $screen (call $host_get_screen_size))
         (local.set $w (i32.and (local.get $screen) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $screen) (i32.const 16)))
-        (local.set $bpp (i32.const 32)))
+        (local.set $bpp (call $gdi_display_bpp)))
       (else
         ;; Any other negative index (ENUM_REGISTRY_SETTINGS, -2) is unsigned-large
         ;; here and ends the enumeration, as it did before.
@@ -2048,7 +2051,7 @@
         (local.set $screen (call $host_get_screen_size))
         (local.set $w (i32.and (local.get $screen) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $screen) (i32.const 16)))
-        (local.set $bpp (i32.const 32)))
+        (local.set $bpp (call $gdi_display_bpp)))
       (else
         (if (i32.ge_u (local.get $arg1) (call $enum_mode_dense_count))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
