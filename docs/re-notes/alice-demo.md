@@ -340,3 +340,25 @@ tail guard fails. This identifies the check, not the overwriter. No evidence
 yet linking the separately known VirtualFree decommit bug. Native disassembly
 retained with the diagnostic work. Next built-in --trace-at=00444ef0 with
 --trace-at-mem=esi:64,esp:64 on a plain CLI run, repeating the ordinary inputs.
+
+## Heap writer captured (09:04Z)
+
+Plain CLI replay with ordinary inputs reproduces the guard at batch3079,
+00444ef0. ESI(header)=084909e0, EAX(size)=00f3f2b8. Header dwords are
+00f3f2b8,00f3f2b8,084909e0,000facc2; computed tail is zero.
+Run20261009T0900Z-alice-heap-guard-trace,44769 terminal09:00:47Z.
+
+Watch replay arms header084909e0 at batch1650. At1672 it becomes00000030.
+At3022 CRT free-list insertion004ed3d6 writes00f3f2b8 via [EDX+4],
+EDX=084909dc; predecessor004ed3cd, observed next EIP004ed3f3.
+EBP074fc888, ESP074fc868; frame-pointer caller004e8359. More free-list
+changes follow during cleanup. Original Z_Free guard message is reproduced
+in this same watch run, although combined trace-at does not emit its register
+dump. Run20261009T0904Z-alice-heap-header-watch retains log/disassembly;46707
+terminal0 at09:04:42Z. This is CRT freeing/coalescing behavior, not a proven
+VirtualFree decommit overwrite. Next recover the free argument/caller and
+allocation lifetime to distinguish premature free from an overlapping block.
+
+Original fgamex86.dll preferred10000000, loaded02940000; cgamex86.dll
+preferred30000000, loaded03077000. The original files are in demo/ beside
+pak0.pk3 in the retained installed tree on the temporary boat.
