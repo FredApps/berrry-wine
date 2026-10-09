@@ -228,3 +228,28 @@ Final framebuffer-capture run `20261009T0819Z-alice-webgl-border` also passes16
 cases with the identical renderer SHA. Controller21418/Chrome21433 terminal0
 at08:18:28Z. Reviewed pixels.png now shows the two green-tinted synthetic test
 canvases; no game screenshot/playability credit. The test is in the e2e tier.
+
+## Vector API and copied replay (2026-10-09 08:27Z)
+
+Appended GL command112 glTexParameterfv and113 glGetTexParameterfv; existing
+API table IDs4442/4299 stay in place. Vector arguments are copied at submission
+(16 bytes for border,4 for scalar properties), after target/pname validation.
+The software observer gathers sparse guest pages separately and stores the color;
+allocation failure is carried in the record as GL_OUT_OF_MEMORY so host state
+does not falsely update. Float queries are barriers and do not write on invalid
+enums. glGetError now consumes frontend errors before querying the backend.
+Priority remains a per-object float residency hint; objects remain backed for
+their lifetime. Integer-vector setter/query aliases remain fail-fast.
+
+Build/seven suites passed, controller25378 terminal0 at08:26:46Z. Extra sparse
+regression passed08:27:23Z: a16-byte vector straddles nonadjacent backing pages,
+native state sees all four values, and replay retains them after guest mutation.
+Run `20261009T0827Z-alice-border-api` retains source/generated files/test logs;
+module b9c7ab4b7c5acfd2cb72f7ec953889fc32cf162aa02e3f5ca1545e515e2a16d9.
+
+Original Alice rerun27159/27166 stopped before guest execution because the new
+fork omitted `/home/user/bw2-normal-route-20261009/test/binaries/tlbs/stdole2.tlb`.
+Restored the15088-byte support file, SHA
+db456130e4b131aff27a6a3179464a28c9452f06eb6f2081d2aea38128d31895.
+Fresh original-media run27878 is underway with300s guard and no input; do not
+interpret the missing-file attempt as a guest regression or gameplay evidence.

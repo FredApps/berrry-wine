@@ -286,6 +286,7 @@ const gpuApis = new Map([
   ['glClearDepth', 2],
   // glColor3ub(r, g, b): Anachronox's ref_gl HUD and font colours.
   ['glColor3ub', 3],
+  ['glTexParameterfv', 3], ['glGetTexParameterfv', 3],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

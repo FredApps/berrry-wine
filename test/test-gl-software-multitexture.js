@@ -201,6 +201,13 @@ async function main() {
     e.border_ptr_test(e.tex_slot_test(5)), 4)), [0, 0.25, 1, 0.5],
   'border queries retain clamped floats without 8-bit quantization');
   setBorder(5, [0, 1, 0, 0]);
+  // The production vector observer must gather the caller's RGBA as well.
+  new Float32Array(memory.buffer,borderValues,4).set([0,1,0,0]);
+  glCall(CALL_INDEX.glActiveTextureARB,TEXTURE1);
+  glCall(CALL_INDEX.glTexParameterfv,GL_TEXTURE_2D,0x1004,
+    borderValues-guestBase+imageBase);
+  new Float32Array(memory.buffer,borderValues,4).fill(1);
+  glCall(CALL_INDEX.glActiveTextureARB,TEXTURE0);
   setBorder(3, [1, 0, 0, 1]); // independent unit 0 object must not leak into unit 1
   glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
   glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x2900);

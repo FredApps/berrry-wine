@@ -41,6 +41,10 @@ function submissionResult(bytes, memory, guestToWasm = pointer => pointer) {
     const output = view.getUint32(lastAt + Stream.HEADER_BYTES + 8, true);
     new DataView(memory.buffer).setUint32(guestToWasm(output) >>> 0, 0xAABBCCDD, true);
   }
+  if (opcode === 113 && memory) {
+    const output=view.getUint32(lastAt+Stream.HEADER_BYTES+12,true);
+    new DataView(memory.buffer).setFloat32(guestToWasm(output)>>>0,0.25,true);
+  }
   if (opcode === 12) return 0x504;
   if (opcode === 48) return 0xC001;
   if (opcode === 49) {
@@ -229,6 +233,20 @@ async function main() {
   const primitiveNames = ['points', 'lines', 'line-loop', 'line-strip', 'triangles',
     'triangle-strip', 'triangle-fan', 'quads', 'quad-strip', 'polygon'];
   const primitiveCounts = [3, 4, 4, 4, 6, 5, 5, 8, 6, 5];
+  parity('generic: texture vector copies survive mutation and query is a barrier', (gl,mem)=>{
+    const view=new DataView(mem.buffer),wa=translateGuest(DATA),out=translateGuest(DATA+64);
+    [0.25,0.5,0.75,1].forEach((v,i)=>view.setFloat32(wa+i*4,v,true));
+    gl.call(112,[0x0DE1,0x1004,DATA]);
+    new Uint8Array(mem.buffer,wa,16).fill(0);
+    view.setFloat32(wa,0x2900,true);
+    gl.call(112,[0x0DE1,0x2802,DATA]);
+    view.setFloat32(wa,0,true);
+    gl.call(112,[0x0DE0,0x1004,0xFFFFFFF0]);
+    gl.call(112,[0x0DE1,0xDEADBEEF,0xFFFFFFF0]);
+    view.setFloat32(out,-1,true);
+    gl.call(113,[0x0DE1,0x1004,DATA+64]);
+    assert.strictEqual(view.getFloat32(out,true),0.25,'query result visible before guest continues');
+  });
   for (const shade of [0x1D01, 0x1D00]) {
     for (let mode = 0; mode <= 9; mode++) {
       parity(`primitive: ${primitiveNames[mode]} ${shade === 0x1D00 ? 'flat' : 'smooth'}`, gl => {

@@ -28,7 +28,9 @@ const GL_VERTEX_ARRAY = 0x8074;
 
 const binary = compileSrcWasm((file, source) => file !== '09a8e-gl-state.wat' ? source
   : `${source}\n(func (export "test_sp_map") (param i32) (result i32)
-      (call $virtual_map_commit (local.get 0) (i32.const 4096)))\n`);
+      (call $virtual_map_commit (local.get 0) (i32.const 4096)))
+    (func (export "test_border_ptr") (param i32) (result i32)
+      (call $gl_sw_border_ptr (call $gl_sw_tex_slot (local.get 0))))\n`);
 const module_ = new WebAssembly.Module(binary);
 const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const imports = { host: { memory } };
@@ -36,11 +38,17 @@ for (const imp of WebAssembly.Module.imports(module_)) {
   if (imp.kind === 'function') (imports[imp.module] ||= {})[imp.name] = () => 0;
 }
 let draws = [];
+let copiedBorder = null;
 imports.host.gpu_gl_call = (_opcode, streamWa, byteLength) => {
   Stream.replay(Stream.memoryBatch(memory, streamWa >>> 0, byteLength >>> 0), (opcode, _aux, capture) => {
     if (opcode === Stream.PACKED_DRAW_OPCODE) {
       draws.push(Array.from(new Float32Array(memory.buffer.slice(
         capture.pointerOffset, capture.pointerOffset + capture.pointerLength))));
+    }
+    if (opcode === CALL_INDEX.glTexParameterfv) {
+      assert.strictEqual(capture.pointerBorrowed,false,'border vector is copied, never borrowed');
+      copiedBorder=Array.from(new Float32Array(memory.buffer.slice(
+        capture.pointerOffset,capture.pointerOffset+capture.pointerLength)));
     }
     return 0;
   });
@@ -94,3 +102,15 @@ assert.deepStrictEqual(draw(page + 0x100, page + 0x200), want, 'arrays inside on
 assert.deepStrictEqual(draw(page + 4096 - 16, page + 8192 - 8), want,
   'index and vertex arrays straddling a sparse page boundary');
 console.log('PASS glDrawElements reads indices and vertices across a sparse page boundary');
+
+e.gl_sw_set_enabled(1);
+call(CALL_INDEX.glBindTexture,[0xDE1,7]);
+const borderAt=page+4096-8,border=[0.125,0.25,0.5,1];
+border.forEach((v,i)=>putF(borderAt+i*4,v));
+call(CALL_INDEX.glTexParameterfv,[0xDE1,0x1004,borderAt]);
+assert.deepStrictEqual(Array.from(new Float32Array(memory.buffer,e.test_border_ptr(7),4)),border,
+  'software observer gathers a border vector across nonadjacent backing pages');
+border.forEach((_,i)=>putF(borderAt+i*4,0));
+e.gl_wat_stream_flush();
+assert.deepStrictEqual(copiedBorder,border,'replay retains copied sparse vector after guest mutation');
+console.log('PASS texture border vector copied across sparse pages into software state and replay');

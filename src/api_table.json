@@ -36253,8 +36253,7 @@
     "name": "glGetTexParameterfv",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3347005802,
-    "handler": "gl_unimplemented"
+    "hash": 3347005802
   },
   {
     "id": 4300,
@@ -37396,8 +37395,7 @@
     "name": "glTexParameterfv",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3449537550,
-    "handler": "gl_unimplemented"
+    "hash": 3449537550
   },
   {
     "id": 4443,

@@ -367,6 +367,7 @@
   ;; Keep the queried floating-point color, not its raster quantization.
   ;; Allocate only when an application sets a border. Defaults need no heap.
   (global $gl_sw_border_colors (mut i32) (i32.const 0))
+  (global $gl_sw_border_set_failed (mut i32) (i32.const 0))
   (func $gl_sw_border_ptr (param $slot i32) (result i32)
     (if (i32.or (i32.eqz (local.get $slot)) (i32.eqz (global.get $gl_sw_border_colors)))
       (then (return (i32.const 0))))
@@ -1240,6 +1241,7 @@
   ;; i of a call lives at $stack + 4 + 4*i; GLfloat arguments are f32 there.
   (func $gl_sw_observe (param $op i32) (param $stack i32)
     (local $s i32) (local $rt i32) (local $bit i32) (local $mask i32) (local $zv i32)
+    (global.set $gl_sw_border_set_failed (i32.const 0))
     (if (i32.eqz (global.get $gl_sw_enabled)) (then (return)))
     (local.set $s (global.get $gl_sw_st))
     ;; A render Worker may still be drawing from the surfaces and texture
@@ -1430,13 +1432,30 @@
         (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
           (then (i32.store offset=40 (local.get $s) (i32.load offset=8 (local.get $stack)))))
         (return)))
+    ;; 112 glTexParameterfv: read the guest span bytewise so a vector crossing
+    ;; sparse pages is not mistaken for one contiguous Wasm allocation.
+    (if (i32.eq (local.get $op) (i32.const 112)) (then
+      (local.set $bit (call $gl_tex_parameter_bytes (local.get $stack)))
+      (if (i32.eqz (local.get $bit)) (then (return)))
+      (call $gl_copy_from_guest (global.get $gl_sw_scratch)
+        (i32.load offset=12 (local.get $stack)) (local.get $bit))
+      (if (i32.eq (local.get $bit) (i32.const 16))
+        (then (global.set $gl_sw_border_set_failed (i32.eqz
+          (call $gl_sw_border_set
+            (call $gl_sw_tex_slot (i32.load offset=40 (local.get $s)))
+            (global.get $gl_sw_scratch)))))
+        (else (call $gl_sw_tex_param (i32.load offset=8 (local.get $stack))
+          (i32.trunc_sat_f32_s (f32.floor (f32.add
+            (f32.load (global.get $gl_sw_scratch)) (f32.const 0.5)))))))
+      (return)))
     ;; 46 glTexParameterf / 96 glTexParameteri
     (if (i32.or (i32.eq (local.get $op) (i32.const 46)) (i32.eq (local.get $op) (i32.const 96)))
       (then
         (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
           (then (call $gl_sw_tex_param (i32.load offset=8 (local.get $stack))
             (select
-              (i32.trunc_sat_f32_s (f32.load offset=12 (local.get $stack)))
+              (i32.trunc_sat_f32_s (f32.floor (f32.add
+                (f32.load offset=12 (local.get $stack)) (f32.const 0.5))))
               (i32.load offset=12 (local.get $stack))
               (i32.eq (local.get $op) (i32.const 46))))))
         (return)))

@@ -250,6 +250,7 @@ assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
 
 {
   const b = new FakeBackend(), f = new FixedFunctionGL(b);
+  b.getError=()=>0;
   assert.deepStrictEqual(Array.from(f.getTexParameter(GL.TEXTURE_BORDER_COLOR)), [0, 0, 0, 0]);
   f.bindTexture(12);
   assert(f.texBorderColor([-1, 0.25, 2, 0.5]));
@@ -285,6 +286,31 @@ assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
   const before = b.draws.length;
   f.texBorderColor([0, 1, 0, 1]);
   assert.strictEqual(b.draws.length, before + 1, 'pending geometry is flushed before changing border');
+  const memory=new ArrayBuffer(1024),dv=new DataView(memory);
+  const host=new OpenGLHostBridge({getMemory:()=>memory,exports:{guest_to_wasm:p=>p}});
+  host.current=1;host.contexts.set(1,{frontend:f});
+  const call=(name,...args)=>{
+    args.forEach((v,i)=>dv.setUint32(4+i*4,v>>>0,true));
+    return host.call(CALL_INDEX[name],0,0);
+  };
+  [0.125,0.25,0.5,1].forEach((v,i)=>dv.setFloat32(256+i*4,v,true));
+  call('glTexParameterfv',GL.TEXTURE_2D,GL.TEXTURE_BORDER_COLOR,256);
+  call('glGetTexParameterfv',GL.TEXTURE_2D,GL.TEXTURE_BORDER_COLOR,320);
+  assert.deepStrictEqual(Array.from(new Float32Array(memory,320,4)),[0.125,0.25,0.5,1]);
+  dv.setFloat32(256,0.375,true);
+  call('glTexParameterfv',GL.TEXTURE_2D,GL.TEXTURE_PRIORITY,256);
+  call('glGetTexParameterfv',GL.TEXTURE_2D,GL.TEXTURE_PRIORITY,320);
+  assert.strictEqual(dv.getFloat32(320,true),0.375);
+  call('glTexParameterfv',0xDE0,GL.TEXTURE_BORDER_COLOR,0xFFFFFFF0);
+  assert.strictEqual(call('glGetError'),GL.INVALID_ENUM);
+  assert.strictEqual(call('glGetError'),0,'frontend error is cleared when consumed');
+  dv.setUint32(320,0xDEADBEEF,true);
+  call('glGetTexParameterfv',GL.TEXTURE_2D,0xDEADBEEF,320);
+  assert.strictEqual(dv.getUint32(320,true),0xDEADBEEF,'invalid query must not write output');
+  assert.strictEqual(call('glGetError'),GL.INVALID_ENUM);
+  dv.setUint32(4,GL.TEXTURE_2D,true);dv.setUint32(8,GL.TEXTURE_BORDER_COLOR,true);dv.setUint32(12,256,true);
+  host.call(CALL_INDEX.glTexParameterfv,0,0x505);
+  assert.strictEqual(call('glGetError'),0x505,'native allocation failure reaches guest error query');
 }
 
 console.log('PASS OpenGL packed fixed-function rendering (state, matrix, texture)');
