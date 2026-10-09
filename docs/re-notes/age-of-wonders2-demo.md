@@ -224,3 +224,28 @@ No runtime validation yet. Tracing changes dispatch/timing, and block entries
 are not every instruction: missed sites and timing sensitivity must be reported.
 This can distinguish registered-invalid versus later-invalid pointers or close
 before use; it does not by itself identify every possible last writer.
+
+### Actual lifetime trace: valid registration, later bulk overwrite
+
+Run `20261009T0248Z-age-of-wonders2-stream-lifetime` reproduced ordinary
+Scenario/Single/Start with the private observer. Twelve selected-site records
+show stream016C350C allocated on thread1 with callback0, then registered with
+0046CB08. It is closed with that valid callback, allocated again at the same
+address, and registered with0046CB08 again. Thread2 subsequently reaches
+callback-status/before-callback with C53D4000 in the callback field. No close
+site was observed between the second registration and this invocation.
+
+The full0x114-byte capture is decisive: corruption extends well beyond E0.
+At invocation, repeated32-byte groups contain float-looking coordinate values
+and repeated grayscale-looking words00727272/00737373/00777777. This suggests
+vertex-buffer data, not a malformed registration argument, but the responsible
+writer and allocation/backing relationship are not established. Some stream
+fields are still present, possibly rewritten by service code after corruption.
+Next capture writes/buffer ownership covering016C350C through016C361F; do not
+assume graphics causality or patch the callback value. Check logical guest
+allocation overlap and guest-to-WASM backing alias as separate hypotheses.
+
+All46 artifacts were hashed and reread. Prepare37222 exited0, browser38193
+exited0 at02:50:28.300Z; capture used original files and unchanged runtime plus
+the documented diagnostic overlay. Tracing can change timing and observes
+block entries only. No gameplay/FPS/audio qualification.
