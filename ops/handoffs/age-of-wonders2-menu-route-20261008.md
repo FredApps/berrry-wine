@@ -190,3 +190,46 @@ traps cannot replace the first capture. `node tools/worker-command-trace.test.js
 passes a pure-JS regression reproducing 4000 post-trap commands. This update
 still needs validation in an actual browser Worker; it is a diagnostic change,
 not a game compatibility fix.
+
+## Proven send/slice defect fixed on main28a104092
+
+Run `scratch/runs/20261009T0203Z-age-of-wonders2-send-ownership` contains 117
+hashed artifacts from fresh no-env bx_barh45ur. Source base79b28bc65 and all903
+pins matched before the baseline. First launch remained title-only; a normal
+reload reached menu. Reviewed ordinary Scenario then Single input failed.
+
+The first-trap recorder preserved the actual harmful ordering, unlike the
+earlier host-Promise overlap. Five ordinary slice entries have send-frame depth1.
+After callback vblank servicing, main slice seq22578 consumed the nested return
+sentinel and returned EIP0 while depth remained1. The dispatcher then resumed
+and restored the main message-wait frame. Meanwhile the browser interpreted
+the slice result as process exit, tore down the instance, and a later callback
+file-open import failed reading null memory. This is a proven defect in that
+run; it does not assign every earlier stack-execution trap to the same cause.
+
+The fix reserves a target link across asynchronous send servicing, defers main
+and child scheduler turns while reserved, and rejects late ordinary slices at
+the actual Worker boundary while a send frame exists. That explicit skipped
+turn cannot be interpreted as a guest yield or process exit. Existing nested
+send dispatch remains available; this is not a global mutex over all sends.
+
+Expanded `test/test-cross-thread-send.js` uses a real Worker and WAT callback,
+satisfies its wait, and attempts a normal slice before the dispatcher resumes.
+Control fails all three new ownership checks; candidate passes all12 checks,
+including callback result/context restoration and nested A->B->A routing.
+Canonical build, cross-thread-send timing and Worker scheduler suites pass.
+Five candidate source hashes matched before the fresh candidate browser.
+
+Candidate ordinary Scenario->Single reaches the Inioch's Legacy setup with
+Julia selected as Human (`candidate-single.png`, sent Telegram953). Start still
+causes explicit ExitProcess with code `0xC000DE05`, followed by secondary
+file-open/null-instance failure. The preserved candidate trace does not show
+ordinary slices entering the suspended callback. Next capture the **first
+ExitProcess call site, arguments and caller stack before teardown**. No literal
+0xC000DE05 was found in the top-level original EXE/BPL/DLL files; this limited
+search does not establish whether the value is computed or corrupted.
+
+Baseline browser44170 exited0 at02:09:49.652, candidate50922 exited0 at02:18:19.377,
+and native49899 exited0. No Chrome remained before boat stop completed02:19:18.986.
+Archive SHA605c74cd45616bfaf84a87703bfd6cc68448ee5ebcc0a2a02044e76e42bd38a9
+verified before stop. No player-controlled world, gameplay FPS or audio proof.

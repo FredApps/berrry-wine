@@ -1388,9 +1388,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none; browser39185/collector40552 exited0; boat stop completed01:55:52Z
+  worker: none; browser50922 exited0, bx_barh45ur stopped02:19:18.986Z
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Preserve first trapped Worker reply plus preceding command ring, attach CDP with defaultViewport:null, then capture first stack-execution transition. Current main19ad154eb reaches menu; Campaign explicitly demo-disabled; verified Scenario click traps074ffd8c/ESP074ffc08. Actual terminal frame depth0; first transition overwritten by post-trap export requests, so no scheduler cause proven. Evidence scratch/runs/20261009T0150Z-age-of-wonders2-command-trace; handoff records gaps/saturated wait stream and invalid stale-coordinate attempt. No gameplay.
+  Next: Capture first ExitProcess(0xC000DE05) call site/arguments/caller stack before teardown on Start. Main28a104092 fixes proven ordinary-slice consumption of a suspended send callback; real control regression fails and candidate build/send/timing/scheduler passes. Candidate ordinary Scenario->Single now reaches Iniochs Legacy setup (Telegram953), but Start exits. Evidence scratch/runs/20261009T0203Z-age-of-wonders2-send-ownership,117 hashes. No player-controlled world or FPS/audio qualification.
   Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
@@ -1443,3 +1443,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: coordinator direct; one-worker budget
   Result: Original Dungeon Siege now renders its EULA without the lazy-file trap. Native A/W thread/stack/retry, canonical build,45 VFS and50 lazy tests pass. Evidence scratch/runs/20261009T0122Z-lazy-rtf-open; browser proof scratch/runs/20261009T0125Z-dungeon-siege-eula (36 hashes), HTTP206 EULA bytes0-6531. Pushed main b493bc3b9. Accept untouched pending user decision.
   Scope: Thread-owned IO_WAIT for CreateFileA/W RTF expansion, preserving ordinary lazy opens and delayed loading UX. No blanket eager manifest or formatting bypass.
+
+- [x] Keep ordinary Worker slices out of suspended send callbacks
+  id: WORKER-SEND-SLICE-OWNERSHIP-20261009
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Evidence: main28a104092; run20261009T0203Z-age-of-wonders2-send-ownership. Actual boundary trace shows nested EIP0 sentinel consumed by normal slice; real Worker control regression fails, candidate12checks/timing/scheduler/build pass. Original AoWII advances to scenario setup; later Start exit remains separate work.
