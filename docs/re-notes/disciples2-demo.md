@@ -217,3 +217,46 @@ New Saga306953/306963 terminal06:15:02Z shows the original demo restriction
 reviewed and recovered after transient502 during boat snapshot, no rerun.
 Next dismiss this normal dialog and choose New Quest (menu500,124).
 No gameplay, FPS or audio qualification. All probes terminal; boat expiry06:16:08Z.
+
+## Fork preflight (2026-10-09 06:22Z)
+
+Old boat stopped at TTL; fork bx_kbtxb6tb expires08:17:09Z. Snapshot retains
+original installed game and source but excludes build, /tmp and runtime packages.
+Canonical rebuild reproduces f1fb7fbe157c1ed6a85b926a31678fb7e0b11299fdfa9c363c2ce41a35a6b418.
+First terminal probe19348 fails missing test/binaries/tlbs/stdole2.tlb; restored
+15088B SHA db456130e4b131aff27a6a3179464a28c9452f06eb6f2081d2aea38128d31895.
+Second20315 runs guest but capture fails because pngjs is absent; restored
+original pngjs7.0.0 package. Runs20261009T0619Z-disciples2-fork-fixture-missing
+and20261009T0621Z-disciples2-fork-pngjs-missing preserve both harness failures.
+No emulator regression inferred. Session21271 started06:22:41Z with600s guard,
+keeps frozen guest alive between reviewed ordinary input commands to avoid
+repeating initialization for each click. Source scratch/disciples2-quest-20261009/session-v3.js.
+
+## Verified native gameplay (2026-10-09 06:43Z)
+
+Full800x600 host canvas exposes all quest controls. Ordinary route: Single Player,
+New Quest, The Search for Timmoria, Undead Hordes, default Warrior Lord and
+Average difficulty, quest intro, Day1 income, default leader name Huun'reh,
+story dialogs. Instantaneous CLI click leaves Day1 button pressed; WM_CHAR13
+does not dismiss it. Separated mousedown/50batches/mouseup/200batches does.
+An earlier keypress:ENTER string was invalid for this numeric-code CLI parser,
+so it is not evidence that physical Enter fails. No guest writes/skips used.
+
+Session27838/child27848 on bx_kbtxb6tb, terminal06:44:05Z. Select leader at320,300,
+plot path at384,352, click same destination again using separate mouse edges.
+Reviewed step15 shows20/20 movement; step19 shows16/20, leader out of capital
+and camera following. Native player-controlled gameplay is proven; browser,
+FPS and audio remain untested. Photos963/964 sent.
+
+Run20261009T0643Z-disciples2-gameplay retains80 original artifacts (25.57MB),
+plus source pins and capture/input scripts. Chunked copy verifies every hash.
+Prior Day1 run20261009T0635Z-disciples2-day1 retains37 artifacts (12.62MB).
+Host channel had intermittent502; no live game was restarted based on that
+alone. A proc-fd control attempt failed ENXIO; it delivered no input.
+
+Registration gap discovered: disciples2-demo is absent from
+test/candidate-corpus/manifest.json, and lib/apps.js has only the first Disciples
+demo, not DisciplesII. Do not attach this evidence to that different game.
+Next add the correct local candidate and normal browser launch using the original
+128-file installed tree, then validate browser route and measure gameplayFPS/audio.
+The provisional run ID stays explicit until that integration is done.

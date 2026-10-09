@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: DisciplesII root memory-corruption diagnosis; Alice queued real GL border-color implementation. Both original startup routes tested, neither gameplay-qualified. BW2 flyover is existing-title coverage. Runtime tests serialized on temporary boats; preserve DungeonSiege hold and laptop HeroesII.
+  Next: One-worker budget: DisciplesII native player-controlled gameplay and reviewed movement screenshot achieved; dashboard candidate/browser launch registration still required. Alice queued real GL border-color implementation. Both remain nonpublic novel lanes; no new worker because fresh spawn still thread-limit. All game probes terminal, bx_kbtxb6tb available until08:17:09Z; serialize runtime tests. Preserve DungeonSiege hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; heap fix on main, main-menu input verified, New Quest next
+  worker: root direct; native gameplay verified, dashboard/browser registration next, all runtime probes terminal
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Prefix-overlap fix96d3ed8d3 on main clears SmartHeap error; original demo reaches reviewed main menu and ordinary Single Player submenu. New Saga displays original demo restriction (unavailable in this version), not emulator crash. Next dismiss that dialog and use New Quest on a fresh temporary runtime. Runs20261009T0611Z-disciples2-initialization,20261009T0613Z-disciples2-single-player,20261009T0615Z-disciples2-new-saga retained; photo962 sent. All game probes terminal; no gameplay/FPS/audio qualification.
+  Next: Native original demo gameplay verified: ordinary quest setup, leader selection, path plot and move; movement20/20->16/20 and camera follow reviewed in run20261009T0643Z-disciples2-gameplay (80 original artifacts plus scripts/pins). Photos963/964 sent. Fix96d3ed8d3 pushed. Next register DisciplesII candidate and normal browser launch, validate that route, then measure gameplayFPS/audio. Exact gaps: no disciples2-demo entry in test/candidate-corpus/manifest.json, no DisciplesII lib/apps.js entry, no test/binaries/candidates/disciples2-demo root; original128 installed files remain test/binaries/win98-games-a-d/Disciples II Demo/installed. CLI mouse down/up must span batches; do not call instantaneous click a game failure.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
@@ -1483,5 +1483,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: VIRTUAL-DECOMMIT-NEIGHBOR-20261009
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: test-virtual-decommit-zero fails neighboring allocation page0 untouched with unchanged HEAD helpers and prefix candidate. Diagnose reservation boundary for size0 decommit; do not attribute this baseline failure to prefix patch. Native tests only on temporary boat, serialize with game lanes.
+  Next: test-virtual-decommit-zero fails neighboring allocation page0 untouched with unchanged HEAD helpers and prefix candidate. Static cause: virtual_map_decommit_zero chooses each scanned record end when size0, so all higher allocations are zeroed. Bound once to the owning reservation before scanning; handle invalid/interior bases and split mappings with tests. Do not attribute this baseline failure to prefix patch. Native tests only on temporary boat, serialize with game lanes.
   Evidence: scratch/runs/20261009T0608Z-virtual-prefix-initial/result.json
