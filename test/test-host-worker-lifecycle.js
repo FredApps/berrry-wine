@@ -404,6 +404,18 @@ async function bounded(promise, label) {
       await bounded(wine._guestRuntimeReleaseWait, 'retirement deadline');
       assert.match(wine._guestRuntimeRetirementError.message, /timed out/);
       assert(wine.memory, 'timeout must not free potentially live memory');
+
+      class FailedWithStuckEndpoint {
+        async start() { throw new Error('boot failed'); }
+        stop() { return new Promise(() => {}); }
+      }
+      sandbox.GuestThreadHost = FailedWithStuckEndpoint;
+      const failed = wineHost();
+      failed._guestRuntimeRetirementTimeoutMs = 10;
+      await assert.rejects(bounded(failed._maybeStartGuestWorker({}), 'failed boot deadline'),
+        /Guest worker retirement timed out/);
+      assert(failed._guestWorkerStarting, 'failed boot retains its unretired owner');
+      assert(failed.memory, 'failed boot cleanup timeout cannot free live memory');
     } finally {
       sandbox.setTimeout = oldSetTimeout;
       sandbox.clearTimeout = oldClearTimeout;
