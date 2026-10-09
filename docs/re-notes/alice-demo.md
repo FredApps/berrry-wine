@@ -53,3 +53,41 @@ as described by the original readme. Do not start a parallel guest or browser.
 Initial-console probe ended normally. Continuing original initialization (same bb9d6e96 module, cooperative CLI, all14 support mounts) creates American McGee's Alice window, then fails at batch123 in glTexParameterfv. Arguments are target0xDE1, pname0x1004 (texture border color), pointer074ff41c to four float1 values; return00484cf3. Source api_table row4442 still maps gl_unimplemented. This is the next concrete runtime blocker, not the five statically missing MIDI-input imports. Do not replace it with a success stub: support actual texture state and sampling/queries across the relevant backends, with a control-failing regression and original launch validation.
 
 Self-contained control: scratch/runs/20261009T0509Z-alice-gl-texparameter-crash (7artifacts; last image precedes the crash). Probe270020 and guest270030 exited1 at05:09:03.423Z. The preceding API transport409 was a transient boat update; original run started only after authoritative boat state recovered.
+
+## Border-sampling control (2026-10-09 07:35Z)
+
+Synthetic regression on unchanged main runtime f1fb7fbe157c1ed6a85b926a31678fb7e0b11299fdfa9c363c2ce41a35a6b418:
+run20261009T0735Z-alice-border-control. Remote controller62994 terminal1 at
+07:35:15.041Z. Existing software-raster harness draws a two-texel RGB blue/yellow
+image with constant coordinates to eliminate LOD/interpolation ambiguity.
+CLAMP_TO_EDGE at s0/t0.5 and GL_CLAMP at interior s0.25/t0.5 both pass full-blue
+controls. GL_CLAMP at s0/t0.5 fails: RGB0000ff instead of half-blue00007f/000080.
+The following quarter-blue corner assertion is retained but was not reached.
+This proves an actual sampling gap independently of the missing vector API.
+
+Specification reference: [OpenGL 2.1 texture sampling](https://registry.khronos.org/OpenGL/specs/gl/glspec21.pdf).
+GL_CLAMP clamps coordinates before filtering; it does not replace outside
+filter taps with edge texels. Border values supply those taps. Thus a bilinear
+sample on one edge includes half border; a corner includes three border taps.
+
+Concrete source boundaries:
+- lib/gl-compat.js texParameter maps CLAMP to CLAMP_TO_EDGE; fragment shader
+  uses hardware texture2D for both units. Proper border behavior needs filter/LOD
+  handling, not only a saved color or a uniform mixed at arbitrary distance.
+- src/09a8g-gl-raster.wat has8-byte slots (surface/flags),4096 names; flags collapse
+  CLAMP and CLAMP_TO_EDGE. gl_sw_r_address emits D3D address1/3 only.
+- src/09ab-handlers-d3dim-core.wat d3dim_texture_sample_prepared supports
+  wrap/mirror/clamp; its signature has no border color. Do not read outside the
+  texture backing when adding missing filter taps, or use unsnapshotted shared state.
+- GL Worker snapshots currently have resolved texture flags at1024/1028 and
+  fixed1032-byte state /1040-byte descriptor. Any added border state must be
+  preserved for queued draws and both texture units; metadata offsets are an ABI.
+- GL CALL_INDEX and command ARG_WORDS additions must append; vector pointer
+  payload must be copied at submission. API row4442 already exists, so replace
+  its handler only when real behavior exists; do not renumber API IDs.
+
+Next implementation: per-texture clamped RGBA state and real filter-tap border
+handling, query/setter validation, immutable queued-state coverage, native/WebGL
+pixel tests, then unmodified original Alice startup. Existing scratch control.js
+is a full retained runnable regression; copy into remote test/ alongside render-helper.
+Fresh worker spawn still fails thread limit; root direct, one runtime budget.
