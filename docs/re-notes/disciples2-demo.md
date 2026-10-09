@@ -97,3 +97,22 @@ The bytes begin E9 D3 BA 3F F9: an API-entry JMP hook. No success bypass: need
 real guarded current-process writing and correct execution of a patched thunk.
 Evidence: run20261009T0539Z-disciples2-toolhelp-candidate (5 artifacts, no image).
 Prior control has no WriteProcessMemory trap; this is newly reached initialization.
+
+### Next patching constraint
+
+The target07504F58 is in the emulated thunk zone.
+`08-pe-loader.wat` stores two metadata words (nameRVA, APIid) in each8-byte
+thunk, and `09b-dispatch.wat` reads them directly. Merely implementing
+WriteProcessMemory as a byte copy would replace metadata with E9 displacement
+and dispatch garbage. A patched entry must execute guest code; restored original
+bytes must resume the real API. Decode-time and cached/direct thunk dispatch
+paths both need coverage, including CALL/JMP and Worker-shared state.
+
+Original SHW32 helpers explain the patch lifecycle: A93B7C0 reads5 original
+bytes using ReadProcessMemory into record+16; A93B780 constructs/writes the
+5-byte E9; A93B800 writes the saved5 bytes back. A93BA30 (runtime900A30)
+is the replacement allocator. Disassembly retained in
+`scratch/toolhelp-20261009/smartheap-hook-disasm.txt`. This is a real
+install/restore hook, not an instruction to suppress SmartHeap initialization.
+A guarded process-copy helper can share range/handle validation with existing
+ReadProcessMemory. Preserve output-count and code-cache invalidation behavior.
