@@ -249,3 +249,32 @@ All46 artifacts were hashed and reread. Prepare37222 exited0, browser38193
 exited0 at02:50:28.300Z; capture used original files and unchanged runtime plus
 the documented diagnostic overlay. Tracing can change timing and observes
 block entries only. No gameplay/FPS/audio qualification.
+
+### Writer identified: undersized D3DFVF_LVERTEX backing
+
+Run `20261009T0257Z-age-of-wonders2-stream-writer` adds a private bounded
+watch log at block boundaries. Main-thread change from0046CB08 toC53D4000
+occurs after original guest block4432A2, before4432FD. Other threads report
+the same value while waiting: those are observers, not the writer.
+
+Original4432C4 writes `[edx+8]`; captured EDX016C35E4 addresses the watched
+callback016C35EC exactly. Stack locals pin destination base016C2384, returned
+Lock size1180(4480), source countA0(160), destination stride32, source stride24.
+The copy writes5120 bytes into a4480-byte buffer and reaches the neighboring
+stream at016C350C. This is guest-address overlap, not merely similar bytes.
+
+Caller442CAC obtains this buffer via vertex-buffer Lock. Its creation branch
+442C34 requests FVF1E2, the legacy D3DFVF_LVERTEX format, which includes
+D3DFVF_RESERVED1(0x20). Our `d3dim_fvf_stride` omits that reserved DWORD,
+calculating28 instead of32; allocation and Lock size follow that calculation.
+The primary contract is [Wine's d3dtypes.h](https://github.com/wine-mirror/wine/blob/master/include/d3dtypes.h),
+whose LVERTEX definition includes XYZ, RESERVED1, DIFFUSE, SPECULAR and TEX1.
+
+Next fix allocation stride **and** packing/unpacking offsets for the reserved
+DWORD. Add a control-failing actual VB Create/Lock regression with160 vertices
+and neighboring-allocation integrity, plus color/UV conversion checks. Then
+rerun ordinary Start without diagnostic WAT/Worker changes. No fix tested yet.
+Fifty hashes verified; original AoW2.exe and writer/caller disassembly sealed.
+Prepare37471 exited0; browser38085 exited0 at02:59:15.875Z. Boat bx_2sdgzsm6
+is retained for the next isolated native/build phase, expiry03:54:26.401Z;
+do not start another browser concurrently or confuse retained box with live test.
