@@ -253,3 +253,21 @@ Restored the15088-byte support file, SHA
 db456130e4b131aff27a6a3179464a28c9452f06eb6f2081d2aea38128d31895.
 Fresh original-media run27878 is underway with300s guard and no input; do not
 interpret the missing-file attempt as a guest regression or gameplay evidence.
+
+## Next original-demo failure (2026-10-09 08:30Z)
+
+Original Alice now passes glTexParameterfv (trace return00484cf3), creates its
+640x480 game window, and reaches batch1094 before failing at
+wglSwapIntervalEXT(0), return00487191. Run
+`20261009T0830Z-alice-swap-interval-crash` retains17 artifacts with hashes;
+27878/27885 terminal1 at08:30:28Z. Checkpoint9 is gray, not a menu or gameplay.
+Missing-typelib attempt is retained separately in0828 run. No input was issued.
+
+The WGL resolver currently looks up any api_table entry, including aliases to
+gl_unimplemented, and advertises a thunk for wglSwapIntervalEXT despite having
+no implementation. Its comment claims it exposes only implemented APIs, which
+the code does not enforce. Next investigate correct generic procedure availability
+(supported extensions must remain resolvable, unsupported/non-GL names must not
+be advertised), or implement actual swap pacing. Do not add a successful no-op
+setter or change guest configuration. Direct unsupported API calls must remain
+fail-fast. Texture implementation3270207c7 is already pushed to main.

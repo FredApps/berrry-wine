@@ -9,6 +9,6 @@ One-worker budget; root direct, no worker sessions. Disk remains above2GB. Dunge
 
 DisciplesII: native and normal registered browser movement20/20->16/20 verified, reviewed browser run20261009T0728Z-disciples2-browser-gameplay/photo967. Browser50788/50800 clean stop07:28:27Z. Menu repeat-click persists with1000ms holds despite both mouse edges reaching renderer/input log. Presentation sample80.78 events/s,54.77 uploads/s is not logicalFPS; audio unverified. Registration fd5aa4a35 on main, no public promotion.
 
-Alice: explicit-color software border sampler foundation passes canonical build/three suites, run20261009T0741Z-alice-border-sampler. Production GL state/draw/Worker/WebGL/API integration remains; original glTexParameterfv startup blocker not fixed. Both border pixel control and foundation test receipts retained. All runtimes terminal; implementation continues.
+Alice:3270207c7 real vector border API fixed original startup blocker after native and WebGL1/2 pixel validation. New failure: wglSwapIntervalEXT(0) at batch1094, return00487191; run20261009T0830Z-alice-swap-interval-crash,27878/27885 terminal08:30:28Z. Game window is gray, no gameplay. Next truthful generic WGL procedure availability or real swap pacing; no success stub/config changes.
 
-Novel lanes: Alice real GL border-color implementation next; DisciplesII menu input/logicalFPS/audio follow-up remains after native/browser movement proof. One-worker budget, root direct. All runtime probes terminal.
+Novel lanes: Alice WGL availability/crash investigation active; DisciplesII menu input/logicalFPS/audio follow-up remains after native/browser movement proof. One-worker budget, root direct. All runtimes terminal; temporary bx_bufemdmn expires09:14:52Z.

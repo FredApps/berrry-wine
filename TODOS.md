@@ -1472,9 +1472,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; vector API validated; original-media run27878 launched on bx_bufemdmn
+  worker: root direct; original vector blocker fixed, WGL procedure availability investigation next; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Float vector setter/query and copied replay pass canonical build/seven suites plus sparse-page mutation regression, run20261009T0827Z-alice-border-api, moduleb9c7ab4b. Original rerun27159 exited before guest startup: fork lacked test/binaries/tlbs/stdole2.tlb; restored exact15088-byte original. Collect fresh run27878 /home/user/alice-after-border-api-v2-20261009 (300s guard, no input), then ordinary gameplay if startup succeeds or diagnose next actual crash. No gameplay claim. WebGL1/2 border pixels already verified; native desktopGL/performance remain unqualified.
+  Next:3270207c7 vector API passes original Alice; new game window opens, then batch1094 traps at wglSwapIntervalEXT(0), return00487191. Run20261009T0830Z-alice-swap-interval-crash retains17artifacts;27878/27885 terminal08:30:28Z. Gray checkpoint is not gameplay. WGL resolver currently advertises any known API including gl_unimplemented aliases; investigate generic truthful availability or real swap pacing, no success stub/config bypass. Missing typelib from initial0828 attempt restored. Disciples follow-up remains second lane; bx_bufemdmn expires09:14:52Z.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 
