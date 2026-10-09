@@ -1,9 +1,9 @@
-updated: 2026-10-09T04:29:55.031Z
+updated: 2026-10-09T04:40:00.754Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
 AoWII crash fix ff0c1f07b is on main; army movement20->13 verified, screenshot Telegram956. Canonical build/five native suites pass. Rendering overlap, FPS/audio remain open in AOW2-RENDERING-COVERAGE; no release claim. Evidence run20261009T0306Z-age-of-wonders2-gameplay.
 
-Black and White2: Worker PE staging fix efcef0022 reaches normal intro and profile without guest-memory skips. By04:14Z ordinary held Enter/click reaches land picker. Relative mouse registry opt-in6da448742 is on main; live host-only setting verified pointer lock, fresh registry launch not yet tested. Garbled text and land input remain; no gameplay qualification. Same browser189048/bx_75agndxm deadline05:05:50Z; next ordinary land selection, then DisciplesII installer.
+Black and White2: Normal intro/profile/NewGame reaches island flyover by04:30:55Z without guest-state skips (staging fix efcef0022, live host relativeMouse opt-in6da448742). Player control pending cinematic end, same browser189048/bx_75agndxm deadline05:05:50Z. Eight FVF0 rejected draws observed in30s; four exact descriptors have shader pointer but declaration/FVF zero, main declaration-reject counters0, binding cause unknown. Keep valid rejection; investigate producer after route validation. Garbled fonts/stale right edge remain. Disciples controller234050 owns next runtime; Alice files/probe ready.
 
 One-worker budget; root direct, no worker sessions. Disk remains above2GB. DungeonSiege EULA awaits user decision; HeroesII stays laptop-owned.
 

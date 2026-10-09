@@ -8455,3 +8455,30 @@ no input polls; this is a possible explanation, not a proven classification of
 the current run. Interval-4 at 04:20:55Z still shows the land preview.
 Evidence: `land-progress-sample`, `land-aim-step`, `land-motion-delivery`, and
 `interval-4` under the same run's `evidence/browser-candidate/` directory.
+
+### Normal-route island flyover and remaining rejected draws (2026-10-09)
+
+Interval-5 at 04:30:55Z shows the 3D island flyover. No additional land click
+or intro/cinematic memory write was needed: New Game had already started the
+land build. The right edge retains old menu pixels. Player control is not yet
+verified, and the original browser deadline remains 05:05:50Z.
+
+Seven read-only samples at 04:34:37–04:35:07Z show 890 additional render queue
+completions and two presentation events. The queue has no active error, but
+the bridge retains `D3D9 FVF 0 is not implemented`. A separate bounded
+30-second callback observer confirms eight *new* such errors, so this is not
+just a stale error string. Callback arguments, return value and receiver were
+forwarded, and the hook was restored after observation.
+
+A further bounded capture records four failed draw descriptors: opcode
+`0x30001`, triangle-list counts 630/126, index format101, vertex-shader pointer
+nonzero, but pixel shader/declaration/FVF all zero. Main owning-Worker
+declaration rejection count/mask and both rejection slots are zero. The old
+multi-stream/element-type fixes are present; these samples do not identify the
+producer of the absent binding or prove the visual impact of the rejected
+draws. Do not silently accept the invalid draw or reapply the historical fix.
+
+Evidence in the same run: `flyover-render-progress`, `flyover-render-errors`,
+`flyover-fvf-state` JSON/images and their exact scripts. Next is ordinary
+control verification after the cinematic. The rendering follow-up needs the
+binding producer, not another screenshot or an assumed declaration format.

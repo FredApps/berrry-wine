@@ -1355,7 +1355,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
   status: active
-  Next: Worker PE staging fix efcef0022 reaches normal intro and profile without guest-memory skips. By04:14Z ordinary held Enter/click reaches land picker. Relative mouse registry opt-in6da448742 is on main; live host-only setting verified pointer lock, fresh registry launch not yet tested. Garbled text and land input remain; no gameplay qualification. Same browser189048/bx_75agndxm deadline05:05:50Z; next ordinary land selection, then DisciplesII installer.
+  Next: Normal intro/profile/NewGame reaches island flyover by04:30:55Z without guest-state skips (staging fix efcef0022, live host relativeMouse opt-in6da448742). Player control pending cinematic end, same browser189048/bx_75agndxm deadline05:05:50Z. Eight FVF0 rejected draws observed in30s; four exact descriptors have shader pointer but declaration/FVF zero, main declaration-reject counters0, binding cause unknown. Keep valid rejection; investigate producer after route validation. Garbled fonts/stale right edge remain. Disciples controller234050 owns next runtime; Alice files/probe ready.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
