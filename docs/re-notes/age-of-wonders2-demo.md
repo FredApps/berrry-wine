@@ -278,3 +278,26 @@ Fifty hashes verified; original AoW2.exe and writer/caller disassembly sealed.
 Prepare37471 exited0; browser38085 exited0 at02:59:15.875Z. Boat bx_2sdgzsm6
 is retained for the next isolated native/build phase, expiry03:54:26.401Z;
 do not start another browser concurrently or confuse retained box with live test.
+
+### RESERVED1 fix: ordinary army movement verified
+
+The generic FVF fix adds the reserved DWORD to storage size and skips/writes
+it at the corresponding packing/unpacking offsets. The real VB Create/Lock
+test fails on control (4480 versus5120 bytes) and passes with the fix for both
+VB and VB7, including160-vertex uploads, neighboring-allocation integrity,
+two-vertex color/UV packing, and unpack bounds. Canonical build, VB allocation
+failure, ProcessVertices, v3 VB drawing and D3D7 lighting suites pass. The
+ProcessVertices test now resolves dispatch IDs from api_table.json rather
+than overflowing the production string pool with test-only names.
+
+Run `20261009T0306Z-age-of-wonders2-gameplay` uses no diagnostic WAT/Worker.
+Ordinary Scenario -> Single -> Start reaches the world. Dismiss Julia's panel,
+select the party at the tower, click adjacent terrain to plot a path, then
+click again: the army moves and movement points fall20/20 ->13/20. Reviewed
+`city-click.png` and `army-moved.png` record the before/after. This qualifies
+initial player-controlled gameplay, not release readiness: terrain overlaps
+the lower UI and black polygons remain; FPS/audio are not measured/qualified.
+
+All67 artifact hashes reread; module
+bb9d6e9621a06efb5498e2903fc0a3185967ac76cd33fc76b96c11d714c0a387.
+Browser41887 exited0 at03:10:42.630Z; boat bx_2sdgzsm6 stopped03:11:23.355Z.

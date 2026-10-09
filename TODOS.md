@@ -1384,13 +1384,13 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-deus-ex-demo.json
   notes: Migration missing-file blocker cleared against current registered route: deus_ex_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
 
-- [ ] New-game lane: Age of Wonders II demo
+- [x] New-game lane: Age of Wonders II demo
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
-  status: ready
+  status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; browser38085 exited0; bx_2sdgzsm6 retained idle until03:54:26Z
+  worker: none; browser41887 exited0; bx_2sdgzsm6 stopped03:11:23.355Z
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Fix legacy FVF RESERVED1 stride and packing/unpacking; add actual VB Create/Lock160-vertex neighboring-allocation regression (control must fail), then normal browser. Writer4432c4 proven from trace: buffer016C2384 size4480,160*32-byte copies overwrite Miles callback016C35EC. Original create requestsFVF1E2; emulator ignores0x20 reservedDWORD. Evidence run20261009T0257Z-age-of-wonders2-stream-writer,50 hashes. No candidate fix tested.
+  Next: Initial ordinary gameplay verified: select party and click destination twice, army moves and movement20->13. Generic FVF RESERVED1 fix plus control-failing/candidate-passing native tests integrated with this task update. Evidence run20261009T0306Z-age-of-wonders2-gameplay,67 hashes. Rendering overlap/FPS/audio tracked separately; no release claim.
   Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
@@ -1449,3 +1449,21 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Evidence: main28a104092; run20261009T0203Z-age-of-wonders2-send-ownership. Actual boundary trace shows nested EIP0 sentinel consumed by normal slice; real Worker control regression fails, candidate12checks/timing/scheduler/build pass. Original AoWII advances to scenario setup; later Start exit remains separate work.
+
+
+- [ ] New-game lane: Disciples II demo
+  id: NEW-GAME-DISCIPLES2-DEMO-20261009
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: none; queued behind Black and White2 under one-worker budget
+  candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
+  Next: Inspect and extract original installer on temporary box, register complete files/manifest, reach ordinary player-controlled gameplay and review screenshot. Original143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 present; no existing registration or qualification found. Installed payload/manifest not yet created, completeness unknown.
+  Evidence: scratch/disciples2-preflight-20261009/preflight.json
+  Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
+
+- [ ] AoWII rendering overlap and gameplay measurement
+  id: AOW2-RENDERING-COVERAGE-20261009
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: Diagnose terrain crossing lower UI/black polygons after validated FVF fix; measure actual gameplay FPS and audio separately. Initial army movement is verified, release readiness is not. Use temporary box and serialized browser.
+  Evidence: scratch/runs/20261009T0306Z-age-of-wonders2-gameplay/result.json

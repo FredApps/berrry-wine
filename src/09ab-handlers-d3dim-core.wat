@@ -1479,6 +1479,10 @@
           (then (local.set $stride (i32.const 12)))))) ;; XYZ
     (if (i32.and (local.get $fvf) (i32.const 0x0010))
       (then (local.set $stride (i32.add (local.get $stride) (i32.const 12)))))
+    ;; D3DFVF_LVERTEX (0x1e2) includes dwReserved after XYZ. It is
+    ;; storage, not an ignorable flag: Lock callers write 32-byte vertices.
+    (if (i32.and (local.get $fvf) (i32.const 0x0020))
+      (then (local.set $stride (i32.add (local.get $stride) (i32.const 4)))))
     (if (i32.and (local.get $fvf) (i32.const 0x0040))
       (then (local.set $stride (i32.add (local.get $stride) (i32.const 4)))))
     (if (i32.and (local.get $fvf) (i32.const 0x0080))
@@ -1556,6 +1560,8 @@
         (then
           (call $memcpy (local.get $dst) (local.get $src) (i32.const 16))
           (local.set $offset (i32.const 16))
+          (if (i32.and (local.get $fvf) (i32.const 0x0020))
+            (then (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
           (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0xFFFFFFFF))
           (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
             (i32.store (i32.add (local.get $dst) (i32.const 16))
@@ -1587,6 +1593,8 @@
               (i32.store (i32.add (local.get $dst) (i32.const 20)) (i32.const 0))
               (if (i32.and (local.get $fvf) (i32.const 0x0010))
                 (then (local.set $offset (i32.add (local.get $offset) (i32.const 12)))))
+              (if (i32.and (local.get $fvf) (i32.const 0x0020))
+                (then (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
               (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
                 (i32.store (i32.add (local.get $dst) (i32.const 16))
                   (i32.load (i32.add (local.get $src) (local.get $offset))))
@@ -1612,6 +1620,8 @@
                   (local.set $offset (i32.add (local.get $offset) (i32.const 12))))
                 (else
                   (f32.store (i32.add (local.get $dst) (i32.const 20)) (f32.const 1.0))))
+              (if (i32.and (local.get $fvf) (i32.const 0x0020))
+                (then (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
               (if (local.get $tex_count) (then
                 (local.set $offset (i32.add (local.get $offset) (i32.shl (local.get $tex_index) (i32.const 3))))
                 (i32.store (i32.add (local.get $dst) (i32.const 24))
@@ -1726,6 +1736,9 @@
       ;; leave whatever the last batch wrote at that offset.
       (call $zero_memory (i32.add (local.get $dst_wa) (local.get $offset)) (i32.const 12))
       (local.set $offset (i32.add (local.get $offset) (i32.const 12)))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0020)) (then
+      (i32.store (i32.add (local.get $dst_wa) (local.get $offset)) (i32.const 0))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
     (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
       (i32.store (i32.add (local.get $dst_wa) (local.get $offset))
         (i32.load (i32.add (local.get $src_wa) (i32.const 16))))
@@ -2383,6 +2396,8 @@
       (local.set $qy (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 16)))))
       (local.set $qz (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 20)))))
       (local.set $off (i32.const 24))
+      (if (i32.and (local.get $fvf) (i32.const 0x0020))
+        (then (local.set $off (i32.add (local.get $off) (i32.const 4)))))
       (if (local.get $has_diff) (then
         (local.set $vdiff (call $gl32 (i32.add (local.get $v) (local.get $off))))
         (local.set $off (i32.add (local.get $off) (i32.const 4)))))

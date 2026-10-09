@@ -16,6 +16,11 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+const apis = require('../src/api_table.json');
+// Resolve test dispatch IDs without adding long test-only names to the
+// production WAT string pool; the production dispatch itself stays exercised.
+const processId = version => apis.find(a => a.name ===
+  `IDirect3DVertexBuffer${version}_ProcessVertices`).id;
 
 const FVF_XYZ = 0x002;
 const FVF_XYZRHW = 0x004;
@@ -83,8 +88,8 @@ const extraWat = String.raw`
     (call $gs32 (i32.const 0x0030001C) (local.get $device))
     (call $gs32 (i32.const 0x00300020) (local.get $flags))
     (call $dispatch_api_table
-      (select (call $lookup_api_id "IDirect3DVertexBuffer7_ProcessVertices")
-              (call $lookup_api_id "IDirect3DVertexBuffer_ProcessVertices") (local.get $version))
+      (select (i32.const ${processId('7')})
+              (i32.const ${processId('')}) (local.get $version))
       (local.get $dst) (local.get $op) (local.get $destIndex)
       (local.get $count) (local.get $src) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
