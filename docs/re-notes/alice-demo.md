@@ -183,3 +183,48 @@ sections3.8.8-3.8.10, defines per-level filtering and the min/mag switch: thresh
 Incomplete mipmapped textures disable texture application for the unit. Native
 software mip policy is currently approximate; do not claim complete GL conformance.
 Guest vector dispatch, pointer replay and real shader support are still pending.
+
+## WebGL border pixels (2026-10-09 08:14Z)
+
+The frontend now selects a border shader for GL_CLAMP draws. Explicit-LOD
+texel-center taps reconstruct nearest/linear filtering at each selected mip,
+returning the object's border for missing taps, then combine levels for trilinear
+filtering. Both units carry independent size/filter/wrap/color uniforms. Ordinary
+draws keep the original shader; returning to it replays its uniforms. The WAT
+software frontend bypasses GPU shader selection entirely.
+
+WebGL1 requires OES_standard_derivatives and EXT_shader_texture_lod; WebGL2 uses
+their core equivalents through the existing shader conversion. Missing extensions
+fail explicitly; headless desktop-GL extension compatibility is not verified.
+Image metadata tracks mip completeness; incomplete mipmapped textures disable the
+unit in the border path, and generated mip chains populate the same metadata.
+
+`test/test-gl-border-web.js` passed16 real Chrome/SwiftShader pixel assertions,
+eight each for WebGL1/2: edge, corner, nearest, switching to normal shader,
+incomplete mip chain, mip1, trilinear and independent unit1 green border.
+Controller81241 terminal0 at08:13:59Z. Final run
+`20261009T0813Z-alice-webgl-border` retains source/test/identity/readPixels results;
+gl-compat SHA a450290cf8b7eb85a01396948c279c239d3e16df17d2607600b812736efef9bf.
+Its pixels.png is blank after backend destruction and is not visual evidence;
+the assertions read actual GL pixels before teardown. No game screenshot claimed.
+Prior14-case run0811 retained but its intermediate JS source was not retained.
+Fixed-function JS regression, test-tier and browser cache checks also pass.
+
+Still required: guest vector API/query dispatch, command payload copying and
+original Alice validation. No performance qualification or universal GL format
+conformance claim. Temporary runtime moved to bx_bufemdmn (expires09:14:52Z);
+old bx_kbtxb6tb stopped after all browser/native probes were terminal.
+
+Final tracked browser test reran on bx_bufemdmn after restoring npm dependencies
+(fork omitted node_modules). Run `20261009T0818Z-alice-webgl-border` records
+controller20725/Chrome20740 terminal0 at08:17:21Z and all16 cases passing with
+the same verified gl-compat SHA. Copying the context canvas still produced a
+blank screenshot: the backend renders to an offscreen framebuffer. Pixel checks
+read that bound framebuffer correctly. The capture now reads the full framebuffer
+before teardown instead of the default canvas; final capture verification follows.
+Earlier new-box attempt failed before launch because Puppeteer was absent.
+
+Final framebuffer-capture run `20261009T0819Z-alice-webgl-border` also passes16
+cases with the identical renderer SHA. Controller21418/Chrome21433 terminal0
+at08:18:28Z. Reviewed pixels.png now shows the two green-tinted synthetic test
+canvases; no game screenshot/playability credit. The test is in the e2e tier.

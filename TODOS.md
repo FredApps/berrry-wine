@@ -1472,9 +1472,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; frontend/native sampler validation passed; no runtime live
+  worker: root direct; WebGL1/2 border pixels validated; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Frontend float border/original wrap queries, object isolation and invalid-enum preservation match native pixel checks; build/five suites pass, run20261009T0808Z-alice-border-frontend, module970c8abc;77481 terminal08:07:44Z. Next real WebGL1/2 mip-aware border sampling (backend defaultsWebGL1), vector API validated pointer-copy and query dispatch, then original Alice gameplay. Internal native colors/snapshots already validated; guest vector API remains fail-fast. Boat bx_kbtxb6tb expires08:17:09Z.
+  Next: Real WebGL1/2 shader passes16 edge/corner/nearest/mip/trilinear/incomplete/unit1 cases; final run20261009T0819Z-alice-webgl-border, JS SHAa450290c,21418/21433 terminal08:18:28Z. Internal native state/snapshots already pass. Next guest vector API/query dispatch and copied pointer replay, then original Alice launch/gameplay. No game screenshot claim; WebGL1 requires derivatives/LOD extensions, native desktopGL/performance unqualified. Fork bx_bufemdmn ready until09:14:52Z; npm deps restored, old boat stopped.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 
