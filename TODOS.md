@@ -1355,7 +1355,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
   status: active
-  Next: Owning startup trace confirms2GB, loaded entryAD9CA3, first slice6blocks then EIP0; stack returnAD9CC9 corresponds call[C122AC]/GetVersionExA. Capture IAT word across load_pe/loadDlls/first slice before blaming NULL import; no fault/host-exit record. Evidence run20261009T0329Z-black-white2-startup-trace (68hashed artifacts), original launch failure separate. Supplemental DLL URL alias corrected. Browser closed; bx_75agndxm retained until06:16:08Z, DisciplesII queued.
+  Next: Generic Worker oversized-PE staging fixed: baseline clamps20.7MB BW2 EXE to8MiB and leaves GetVersionExA IAT zero; candidate shares cooperative tail mapping. Control regression fails, candidate process-boot/large-dll/build pass. Browser189048 now creates LIONHEAD window and continues, no gameplay yet. Active on bx_75agndxm until05:05:50Z browser deadline; inspect normal menu/intro, no memory skips. Evidence run20261009T0335Z-black-white2-staging-fix; DisciplesII queued.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5

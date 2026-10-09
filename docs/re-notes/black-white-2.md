@@ -8388,3 +8388,21 @@ Sealed runs:20261009T0326Z-black-white2-launch (25 artifacts) and
 read only; runtime wasm SHA bb9d6e9621a06efb5498e2903fc0a3185967ac76cd33fc76b96c11d714c0a387.
 All four Chrome runs closed normally; temporary bx_75agndxm retained,
 expiry06:16:08Z. No native or browser processes on the persistent host.
+
+### 2026-10-09 Worker oversized-PE staging fix
+
+IAT capture proves C122AC and neighboring entries zero immediately after
+load_pe, unchanged by DLL loading. Worker host loadPe stages only8MiB of
+the20,656,128byte EXE. Cooperative stageAndLoadPe already maps section tails
+before WAT import loading. Factored stagePe for reuse by the Worker host,
+with placement getters read from owning Worker exports. No guest patch.
+
+Extended existing process-boot regression exercises the actual async Worker
+loadPe method, asserting tail bytes before load_pe; baseline fails zero vs
+expected bytes. Candidate passes that plus PE SFX overlay and oversized NE
+policies, existing process-boot yield suite, large-DLL suite and canonical build.
+Candidate uninstrumented browser creates LIONHEAD window; original stopped
+within6blocks without a window. Screen is still black at first capture and
+this does not qualify gameplay. Browser189048 remains live on bx_75agndxm
+with immutable05:05:50Z deadline. Evidence snapshot:
+20261009T0335Z-black-white2-staging-fix (91hashed artifacts, outcome running).

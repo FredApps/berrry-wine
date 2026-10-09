@@ -14,6 +14,23 @@ const path = require('path');
 const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
   handleLoadLibraryYield, serviceLoadLibraryYieldSync, handleComDllYield } = require('../lib/process-boot');
 const { hasPageScript, indexSource } = require('./browser-runtime-scripts');
+const { GuestThreadHost } = require('../lib/guest-thread-host');
+
+async function workerLoad(exports, buffer, bytes) {
+  const calls = [];
+  const entry = await GuestThreadHost.prototype.loadPe.call({
+    memory: { buffer },
+    async callExport(name, ...args) {
+      calls.push(name);
+      if (name === 'init_dx_com_thunks') return;
+      assert.strictEqual(typeof exports[name], 'function', `owning export ${name}`);
+      return exports[name](...args);
+    },
+  }, bytes);
+  assert(calls.indexOf('get_guest_base') < calls.indexOf('load_pe'),
+    'placement must come from the Worker before it loads the staged image');
+  return entry;
+}
 
 function syntheticLargePe() {
   const bytes = Buffer.alloc(0x300);
@@ -116,12 +133,15 @@ function fakeGuest(name, { nameGetter }) {
   assert.deepStrictEqual([...peMem.subarray(0x100, 0x140)], [...peBytes.subarray(0, 0x40)],
     'the bounded staging prefix is still copied normally');
   console.log('PASS  oversized PE section tails are prehydrated before WAT loading');
+  peMem.fill(0);
+  assert.strictEqual(await workerLoad(peExports, peMemory, peBytes), 0x401000);
+  console.log('PASS  Worker boot prehydrates oversized PE section tails');
 
   const overlayBytes = syntheticOverlayPe();
   const overlayMemory = new ArrayBuffer(0x7000);
   const overlayMem = new Uint8Array(overlayMemory);
   const overlayLog = [];
-  const stagedOverlay = stageAndLoadPe({
+  const overlayExports = {
     get_staging: () => 0x3000,
     get_staging_size: () => 0x240,
     get_guest_base: () => 0x100,
@@ -141,13 +161,19 @@ function fakeGuest(name, { nameGetter }) {
         'ordinary launcher section tails must still be prehydrated');
       return 0x401000;
     },
-  }, overlayMemory, overlayBytes, message => overlayLog.push(message));
+  };
+  const stagedOverlay = stageAndLoadPe(overlayExports,
+    overlayMemory, overlayBytes, message => overlayLog.push(message));
   assert.strictEqual(stagedOverlay.entry, 0x401000);
   assert.strictEqual(overlayMem[0x2100], 0,
     'the final discardable overlay remains available only through the VFS');
   assert(overlayLog.some(message => message.includes('discardable SFX overlay bytes in the VFS')),
     'the overlay-only launch path should identify itself');
   console.log('PASS  oversized discardable PE self-extractor overlay stays in the VFS');
+  overlayMem.fill(0);
+  assert.strictEqual(await workerLoad(overlayExports, overlayMemory, overlayBytes), 0x401000);
+  assert.strictEqual(overlayMem[0x2100], 0);
+  console.log('PASS  Worker boot preserves the discardable SFX overlay policy');
 
   const neBytes = Buffer.alloc(0x300, 0xa5);
   neBytes.writeUInt16LE(0x5a4d, 0);
@@ -156,20 +182,25 @@ function fakeGuest(name, { nameGetter }) {
   const neMemory = new ArrayBuffer(0x1000);
   const neMem = new Uint8Array(neMemory);
   const neLog = [];
-  const stagedNe = stageAndLoadPe({
+  const neExports = {
     get_staging: () => 0x100,
     get_staging_size: () => 0x240,
+    get_guest_base: () => 0x2000,
     load_pe: size => {
       assert.strictEqual(size, 0x240);
       assert.deepStrictEqual([...neMem.subarray(0x100, 0x340)], [...neBytes.subarray(0, 0x240)]);
       assert.strictEqual(neMem[0x340], 0, 'the appended self-extractor archive must not overflow staging');
       return 0x87000123;
     },
-  }, neMemory, neBytes, message => neLog.push(message));
+  };
+  const stagedNe = stageAndLoadPe(neExports, neMemory, neBytes, message => neLog.push(message));
   assert.strictEqual(stagedNe.entry, 0x87000123);
   assert(neLog.some(message => message.includes('appended self-extractor data stays in the VFS')),
     'an oversized NE should take the Win16 overlay path instead of the PE parser');
   console.log('PASS  oversized NE self-extractor stages safely without PE parsing');
+  neMem.fill(0);
+  assert.strictEqual(await workerLoad(neExports, neMemory, neBytes), 0x87000123);
+  console.log('PASS  Worker boot preserves bounded NE staging');
 
   const dllVfs = { files: new Map() };
   const stockShell = Uint8Array.of(0x4d, 0x5a, 0x90, 0);
