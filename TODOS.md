@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. AoWII is next for actual Worker command-entry/exit ordering at its startup stack fault; Black and White2 refills the second queued lane for memory/transfer preflight and ordinary current-main launch on a separate boat. Both are nonpublic and lack qualified player-controlled gameplay. DungeonSiege is held at its working EULA screen pending user acceptance decision; generic file-open fix is main b493bc3b9. No live subagent/browser. Arcanum/Comanche/Croc2/TDR gameplay remains accepted; do not repeat it. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held.
+  Next: One-worker budget, root direct because fresh worker thread limit reached. AoWII qualified software army movement and fixes merged; BW2 normal intro live on bx_75agndxm after generic Worker PE staging fix efcef0022, browser189048 deadline05:05:50Z. DisciplesII Wise installer transferred/remote SHA verified, queued installer extraction after browser release. No guest-memory intro skip; retain DungeonSiege EULA hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1108,7 +1108,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created-by: user via Telegram
   accepted: 2026-10-03T08:30:54.631Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Reclaimed coordinator coverage at user relaunch. Reconcile Oct6 merged gameplay/measurement evidence before new runs; preserve44 archived FPS obligations, true counters and exactmissingpaths. Arena/TR3/DOS dashboard already landed; no duplicate screenshots or public deployment. Source/runtime claims serialized.
+  Next: Nine October9 owned records repaired to dashboard schema with original metadata retained; actual reader accepts9/9, zero matching warnings. SimCity reviewed city/budget images now exposed (2 gameplay images); failed startup, EULA hold and native-only tests remain unqualified. Continue existing FPS/audio and two-backend obligations; evidence ops/handoffs/run-metadata-schema-repair-20261009.json.
   Done: Each game has a reviewed actual-gameplay screenshot and valid scene-qualified FPS evidence, or an explicit per-game blocker with exact missing paths; menus, intros and raw Flip event rates are not gameplay FPS.
   Evidence: ops/handoffs/migration-core-ready-20261003.md
 
@@ -1457,7 +1457,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none; queued behind Black and White2 under one-worker budget
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Original is Wise installer (WiseMain/Wise0132.dll/Disciples II Demo Installation strings); 7-Zip archive listing unsupported. Direct transfer to bx_75agndxm /tmp/disciples2-original.exe runs in local session4748 with900s deadline03:54:11Z, no guest execution. Verify SHA receipt then inspect/install on temporary box after sole BW2 browser releases. Installed payload/manifest not yet created; no launch claim.
+  Next: Wise original transferred to bx_75agndxm /tmp/disciples2-original.exe,143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 verified03:46:00Z. 7-Zip listing unsupported. Inspect/install on temporary box after sole BW2 browser releases; installed payload/manifest not yet created. Receipt scratch/disciples2-preflight-20261009/transfer.json.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
