@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: Alice presentation return investigation active after real border API/WGL fixes. DisciplesII native/browser movement verified; menu input, logicalFPS/audio follow-up remains. All runtimes terminal; preserve DungeonSiege hold and laptop HeroesII.
+  Next: One-worker budget: Alice ordinary New Game/gameplay validation active after verified menu; current remote38759 deadline08:53:27Z. DisciplesII movement verified, input/logicalFPS/audio follow-up second. Preserve holds.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1474,7 +1474,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: root direct; original vector blocker fixed, WGL procedure availability investigation next; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: WGL availability fix validated: unsupported extension returns NULL, real GL and native WGL handlers preserved; build and three suites pass. Original final-module Alice reaches wglSwapBuffers(HDC00310011), return004871c1, then console error GLimp_EndFrame() - SwapBuffers() failed! Run20261009T0842Z-alice-swapbuffers-final reviewed;34958/34965 terminal08:42:06Z. Next trace presentation return/context ownership; no gameplay or success stub. DisciplesII follow-up remains second lane, one-worker budget. All runtimes terminal; bx_bufemdmn expires09:14:52Z.
+  Next: b636d43c7 WGL fix validated. Correction: prior SwapBuffers failure was CLI without a GL provider, not an emulator defect. Same final module65f1f98d with --gl-renderer=software renders intro and animated New Game menu. Reviewed live run20261009T0849Z-alice-menu-live, Telegram photo969. Controller38759 on bx_bufemdmn confirmed live, progress batch2000 at08:49:52Z, immutable deadline08:53:27Z. Next collect terminal menu run, then prepared alice-play-session.js for ordinary New Game/gameplay input. Do not run beside current controller. No gameplay/browser/FPS/audio claim. DisciplesII follow-up second, one-worker budget.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 

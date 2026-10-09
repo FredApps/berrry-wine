@@ -301,3 +301,20 @@ tests and canonical build pass, run20261009T0842Z-alice-wgl-final,34093 terminal
 Original final-module replay confirms same SwapBuffers error: actually the
 wglSwapBuffers spelling, HDC00310011, return004871c1, API621598.
 Run20261009T0842Z-alice-swapbuffers-final reviewed;34958/34965 terminal08:42:06Z.
+
+## Correction: CLI graphics provider, not SwapBuffers defect (08:48Z)
+
+The previous original-game controllers omitted both a headless WebGL provider
+and --gl-renderer=software. They attempted wglCreateContext but never made a
+context current. Existing --trace-gl plus --trace-host proves gpuPresent is
+received without a context; the later host return1 is wglMakeCurrent(NULL,NULL)
+cleanup, not successful presentation. Runs0844/0845/0846 retain diagnostic logs.
+The --trace-at return breakpoint emitted no register evidence in stepped mode.
+A direct native-handler control with host success returns1 correctly.
+
+Correcting the test host to --gl-renderer=software, with the same original
+media and module65f1f98d, makes a real current context and renders the animated
+EA intro. Run20261009T0847Z-alice-software-startup checkpoint11 reviewed;
+37914/37921 terminal08:47:43Z. The guest swap-control availability fix remains
+real; the subsequent SwapBuffers failure must not be tracked as an emulator
+defect. Menu/player-controlled gameplay is the next validation, not a stub.
