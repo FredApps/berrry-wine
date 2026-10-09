@@ -37684,5 +37684,40 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2497805740
+  },
+  {
+    "id": 4480,
+    "name": "CreateToolhelp32Snapshot",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 408385205
+  },
+  {
+    "id": 4481,
+    "name": "Heap32ListFirst",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 246457628
+  },
+  {
+    "id": 4482,
+    "name": "Heap32ListNext",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3235491987
+  },
+  {
+    "id": 4483,
+    "name": "Heap32First",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1920996232
+  },
+  {
+    "id": 4484,
+    "name": "Heap32Next",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2505533439
   }
 ]

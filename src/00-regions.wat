@@ -923,3 +923,7 @@
   ;; Desktop depth and the lazy physical palette pointer, shared by all threads.
   (region.declare $GDI_DISPLAY_STATE (size 0x00000010) (align 0x00000010)
     (owner "10e-gdi-metafile.wat:$GDI_DISPLAY_STATE"))
+
+  ;; Toolhelp heap registry; bucket storage is allocated lazily.
+  (region.declare $TOOLHELP_HEAPS (size 0x00000010) (align 0x00000010)
+    (owner "09a0d-toolhelp.wat:$TOOLHELP_HEAPS"))

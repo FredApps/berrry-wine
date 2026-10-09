@@ -1453,11 +1453,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Disciples II demo
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; installer and game probes completed, Toolhelp implementation next
+  worker: root direct; heap fix validated, next WriteProcessMemory implementation
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Original installation completed05:15:01Z;128 files174933888B hashed. Explicit dll-seed shw32.dll/c4dll-r.dll resolves initial ordinal295 failure. Next proven NULL call at SHW32 runtime8FFFCD/originalA93AFCD: GetProcAddress(CreateToolhelp32Snapshot) returned0; companion Heap32ListFirst/Next and Heap32First/Next absent too. Implement real modeled heap enumeration/snapshot lifecycle, no stub. Evidence run20261009T0517Z-disciples2-hidden-window; no visible game/gameplay yet. Assets on bx_75agndxm /home/user/disciples2-complete-vfs-20261009/program files/strategy first/disciples ii demo; guarded local retention in progress.
+  Next: Toolhelp heap snapshots/enumeration candidate now passes canonical build and six native heap suites, including shared-worker lifetime and failed realloc preservation. Original game advances to SmartHeap WriteProcessMemory trap in DllMain (EIP9007AC; writes5bytes to API thunk7504F58), before visible gameplay. Implement guarded current-process writes and verify thunk patch semantics; no silent bypass. Evidence run20261009T0539Z-disciples2-toolhelp-candidate. All128 installed originals retained locally and SHA verified.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 

@@ -60,3 +60,40 @@ First install probe exhausted19000steps at82percent after28.7s (no crash). Corre
 Bare game launch traps SHW32.DLL ordinal295 because auto-DLL resolution omitted the existing bundled DLL. Explicit --dll-seed=shw32.dll and --dll-seed=c4dll-r.dll (existing older Disciples registry convention) loads both originals and clears that trap. It then creates a hidden128x128 game window and NULL-calls EBX in SmartHeap at runtime008fffcd, return008fffcf, batch23; main EIP becomes0. Original SHW32 imagebase0a930000, loaded008f5000: original call0a93afcd. EBX was GetProcAddress(CreateToolhelp32Snapshot) result. Snapshot call arguments are TH32CS_SNAPHEAPLIST=1 and currentPID1000. The same routine looks up Heap32ListFirst, Heap32ListNext, Heap32First, Heap32Next. No rows exist for these five API names in current api_table. Implement actual snapshot/heap enumeration rather than altering game/DLL or returning invented success.
 
 Control evidence: scratch/runs/20261009T0516Z-disciples2-game-crash and 20261009T0517Z-disciples2-hidden-window. SHW32 original112672B SHAad8bc0ccd5cde0bd22ea6a4c0b45756b28c0e5bc972f314e2714f06af64732cb retained locally with disassembly in scratch/disciples2-preflight-20261009. Missing ole32.dll warning is separately retained; not established cause of this observed NULL call. All game probes terminal; neither hidden window nor installer is gameplay qualification.
+
+## Toolhelp candidate (2026-10-09)
+
+The five dynamically requested APIs are now implemented in the candidate.
+Snapshot handles capture the current modeled heap list; block enumeration reads
+actual live public HeapAlloc/HeapReAlloc records, and HeapFree/HeapDestroy remove
+them. Metadata is shared across guest instances, including snapshot CloseHandle.
+The registry keeps only16 fixed bytes; its1024 buckets are allocated lazily.
+Append the new region after existing declarations: inserting it beside HEAP_ARENAS
+broke gap/pad placement, while append ordering passes all five shake layouts.
+
+This models fixed live public heap blocks. Internal emulator allocations are not
+presented as guest HeapAlloc records. Process/thread/module snapshot flags remain
+explicitly unsupported rather than returning fabricated empty snapshots. Other
+process IDs fail. The original NT-only HeapWalk/GetProcessHeaps error120 remains.
+
+Regression control failed the real GetProcAddress lookup for
+CreateToolhelp32Snapshot; receipt scratch/disciples2-preflight-20261009/toolhelp-control.json.
+Candidate verifies heap identity, block sizes, cross-instance visibility and
+closing, wrong-owner rejection, failed in-place realloc preservation, freed-block
+removal, struct sizes, stdcall cleanup and snapshot immutability.
+Primary structure reference: https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-heapentry32
+
+All128 installed originals are now retained locally in
+`test/binaries/win98-games-a-d/Disciples II Demo/installed`, with every SHA verified;
+see scratch/disciples2-preflight-20261009/retained-installed.json.
+
+Canonical build and six native suites passed on bx_75agndxm; module SHA256
+`193ce17000338bbcdabbd65149a22409a461322b8f743473b1dc8df8a8295cc5`.
+Evidence: run20261009T0535Z-toolhelp-heap-validation (29 artifacts).
+Original candidate launch285866/285876 terminal at05:39:21Z exposes the next
+SmartHeap DllMain trap: WriteProcessMemory, EIP009007AC/return009007B3,
+process-1, destination07504F58, source074FDC6C, size5, written-count074FDC68.
+The bytes begin E9 D3 BA 3F F9: an API-entry JMP hook. No success bypass: need
+real guarded current-process writing and correct execution of a patched thunk.
+Evidence: run20261009T0539Z-disciples2-toolhelp-candidate (5 artifacts, no image).
+Prior control has no WriteProcessMemory trap; this is newly reached initialization.

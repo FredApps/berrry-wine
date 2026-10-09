@@ -4246,6 +4246,9 @@
   ;; 26: CloseHandle(hObject) — 1 arg stdcall
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $console_result i32)
+    (local.set $console_result (call $toolhelp_close (local.get $arg0)))
+    (if (i32.ge_s (local.get $console_result) (i32.const 0)) (then
+      (call $toolhelp_return (local.get $console_result) (i32.const 1)) (return)))
     (if (i32.eq (local.get $arg0) (global.get $QUARTZ_VXD_HANDLE))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))
@@ -5119,10 +5122,11 @@
 
   ;; 33: HeapCreate(flOptions, dwInitialSize, dwMaximumSize) — 3 args stdcall
   (func $handle_HeapCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $heap_alloc (i32.const 4)))
+    (i32.store offset=0 (global.get $reg_base) (call $heap_alloc (i32.const 8)))
     (if (i32.load offset=0 (global.get $reg_base))
       (then
-        (call $gs32 (i32.load offset=0 (global.get $reg_base)) (global.get $PRIVATE_HEAP_MAGIC)))
+        (call $gs32 (i32.load offset=0 (global.get $reg_base)) (global.get $PRIVATE_HEAP_MAGIC))
+        (call $toolhelp_heap_add (i32.load offset=0 (global.get $reg_base))))
       (else (global.set $last_error (i32.const 8)))) ;; ERROR_NOT_ENOUGH_MEMORY
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
@@ -5133,6 +5137,7 @@
           (i32.ne (local.get $arg0) (global.get $PROCESS_HEAP_HANDLE))
           (call $heap_api_handle_valid (local.get $arg0)))
       (then
+        (call $toolhelp_heap_remove (local.get $arg0))
         (call $gs32 (local.get $arg0) (i32.const 0))
         (call $heap_free (local.get $arg0))
         (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
@@ -5144,13 +5149,18 @@
 
   ;; 35: HeapAlloc
   (func $handle_HeapAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $record i32) (local $ptr i32)
     (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
       (then
         (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    (i32.store offset=0 (global.get $reg_base) (call $heap_alloc (local.get $arg2)))
+    (local.set $record (call $toolhelp_alloc_reserve (local.get $arg0) (i32.const 0)))
+    (if (local.get $record) (then
+      (local.set $ptr (call $heap_alloc (local.get $arg2)))
+      (call $toolhelp_alloc_commit (local.get $record) (local.get $arg0) (local.get $ptr) (local.get $arg2))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ptr))
     ;; Zero memory if HEAP_ZERO_MEMORY (0x08) — skip on OOM (eax=0)
     (if (i32.and (i32.ne (i32.load offset=0 (global.get $reg_base)) (i32.const 0))
                  (i32.ne (i32.and (local.get $arg1) (i32.const 0x08)) (i32.const 0)))
@@ -5167,6 +5177,9 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
+    (if (i32.eqz (call $toolhelp_alloc_remove (local.get $arg0) (local.get $arg2))) (then
+      (global.set $last_error (i32.const 87))
+      (call $toolhelp_return (i32.const 0) (i32.const 3)) (return)))
     (call $heap_free (local.get $arg2))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)
@@ -5188,13 +5201,16 @@
   ;; those out) and has no header to read, so it keeps the old best-effort
   ;; copy — there is nothing better to be had without knowing its size.
   (func $handle_HeapReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $old_usable i32) (local $copy i32)
+    (local $tmp i32) (local $old_usable i32) (local $copy i32) (local $record i32)
     (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
       (then
         (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
         (return)))
+    (local.set $record (call $toolhelp_alloc_reserve (local.get $arg0) (local.get $arg2)))
+    (if (i32.eqz (local.get $record)) (then
+      (call $toolhelp_return (i32.const 0) (i32.const 4)) (return)))
     (block $done
       (if (i32.eqz (local.get $arg2))
         (then
@@ -5240,6 +5256,7 @@
                 (call $g2w (i32.add (local.get $tmp) (local.get $copy)))
                 (i32.sub (local.get $arg3) (local.get $copy)))))
       (call $heap_free (local.get $arg2)))
+    (call $toolhelp_alloc_commit (local.get $record) (local.get $arg0) (local.get $tmp) (local.get $arg3))
     (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)
   )
