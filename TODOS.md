@@ -1470,10 +1470,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: American McGee's Alice demo
   id: NEW-GAME-ALICE-DEMO-20261009
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; launch probe267583 on bx_75agndxm started05:07:00Z,180s guard
+  worker: root direct; initial console probe completed, next initialization step ready
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Collect first-window probe267583 after actual termination; all14 original support files verified mounted. Runtime output /home/user/alice-launch-20261009; original assets /home/user/alice-original-v2-20261009. Then ordinary New Game/skill and W-S gameplay. Five midiIn imports remain static/default-off findings, not established runtime blockers.
+  Next: Probe267583/guest267593 terminal0 at05:07:00.582Z, initial Alice console reviewed and retained run20261009T0507Z-alice-console-probe. Continue initialization beyond first console toward renderer/menu, then ordinary New Game/skill/W-S gameplay.14 original support mounts verified; five midiIn imports statically default-off, not proven blockers.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
