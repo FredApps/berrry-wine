@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: Alice ordinary New Game/gameplay validation active after verified menu; current remote38759 deadline08:53:27Z. DisciplesII movement verified, input/logicalFPS/audio follow-up second. Preserve holds.
+  Next: Alice ordinary menu-to-gameplay active; Baldurs Gate II original split-installer preflight complete, remote installation queued behind Alice. One-worker budget serializes runtime. DisciplesII movement already qualified; input/FPS/audio follow-up does not occupy a novel slot.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1474,7 +1474,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: root direct; original vector blocker fixed, WGL procedure availability investigation next; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: b636d43c7 WGL fix validated. Correction: prior SwapBuffers failure was CLI without a GL provider, not an emulator defect. Same final module65f1f98d with --gl-renderer=software renders intro and animated New Game menu. Reviewed live run20261009T0849Z-alice-menu-live, Telegram photo969. Controller38759 on bx_bufemdmn confirmed live, progress batch2000 at08:49:52Z, immutable deadline08:53:27Z. Next collect terminal menu run, then prepared alice-play-session.js for ordinary New Game/gameplay input. Do not run beside current controller. No gameplay/browser/FPS/audio claim. DisciplesII follow-up second, one-worker budget.
+  Next: Real software GL provider reaches animated Alice menu; menu controller38759/38777 terminal08:53:14Z, run20261009T0853Z-alice-menu/photo969. Current sole controller41655 started08:53:45Z with600s deadline09:03:45Z on bx_bufemdmn. Ordinary Enter opens New Game difficulty; Easy selected with separated down/up, level load pending. Capture player-controlled gameplay next; no gameplay/browser/FPS/audio claim. BG2 split-installer preflight is second novel lane, runtime queued under one-worker budget. Prior SwapBuffers failure was missing CLI graphics provider, not emulator bug.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 
@@ -1485,3 +1485,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   Next: test-virtual-decommit-zero fails neighboring allocation page0 untouched with unchanged HEAD helpers and prefix candidate. Static cause: virtual_map_decommit_zero chooses each scanned record end when size0, so all higher allocations are zeroed. Bound once to the owning reservation before scanning; handle invalid/interior bases and split mappings with tests. Do not attribute this baseline failure to prefix patch. Native tests only on temporary boat, serialize with game lanes.
   Evidence: scratch/runs/20261009T0608Z-virtual-prefix-initial/result.json
+
+- [ ] New-game lane: Baldurs Gate II demo
+  id: NEW-GAME-BALDURS-GATE2-DEMO-20261009
+  status: active
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  candidate: baldurs-gate2-demo
+  Next: Static preflight complete: seven original Wise split installer parts647670892B hashed in run20261009T0852Z-bg2-installer-preflight. Source test/binaries/win98-games-a-d/Baldurs-Gate-2_demo-SW-OpenGL/bg2demogs.EXE and .W02 through.W07. Next remote-only transfer/install, then identify real executable/support paths, currently unknown. Runtime queued behind Alice under one-worker budget; do not extract locally near2GiB floor. Distinct nonpublic unqualified title, replaces qualified DisciplesII novel-slot credit.
+  Done: Registered working launch, ordinary player input changes visible gameplay, reviewed screenshot linked to exact run/source. No installer/menu credit or public deployment.

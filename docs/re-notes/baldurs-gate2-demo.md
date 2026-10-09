@@ -1,0 +1,26 @@
+# Baldur's Gate II demo
+
+Distinct from the Baldur's Gate 1 previews in baldurs-gate-demos.md. No BG2
+entry exists in the inspected DESKTOP_APPS list or current app registry.
+
+Original local package directory:
+`test/binaries/win98-games-a-d/Baldurs-Gate-2_demo-SW-OpenGL/`.
+Seven split Wise installer files are present: `bg2demogs.EXE` and
+`bg2demogs.W02` through `bg2demogs.W07`. The first six are102400000 bytes each;
+W07 is33270892 bytes, total647670892. EXE header strings identify Wise and
+"Baldur's Gate II Demo". No payload modification or installation yet.
+
+Run `20261009T0852Z-bg2-installer-preflight` contains exact paths, sizes and
+SHA256 for every part. Initial executable SHA256:
+`772c67fd2d73599e60a43c74466df11641a55f68ccce02fb82b38e26e666f689`.
+
+Next: transfer the original split package to a temporary boat, inspect the
+installer route and extract/install there. Keep all split siblings mounted
+together. Installed executable/support paths remain unknown until this is
+done. Local disk is near the2GiB floor, so do not extract locally. Serialize
+runtime behind Alice; no concurrent second worker under the budget policy.
+
+Acceptance requires registered launch, ordinary input changing gameplay and
+a reviewed screenshot with original media/build identity. Installer, menu and
+automatic cinematic captures do not qualify. No public deployment or approval
+of agreements is authorized by this task.

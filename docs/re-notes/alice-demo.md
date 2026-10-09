@@ -318,3 +318,9 @@ EA intro. Run20261009T0847Z-alice-software-startup checkpoint11 reviewed;
 37914/37921 terminal08:47:43Z. The guest swap-control availability fix remains
 real; the subsequent SwapBuffers failure must not be tracked as an emulator
 defect. Menu/player-controlled gameplay is the next validation, not a stub.
+
+Menu run20261009T0853Z-alice-menu completed normally at08:53:14Z,
+38759/38777 terminal0. Forty-four original artifacts plus controller and hashes
+retained; checkpoint14 reviewed/photo969. Ordinary-input follow-up uses a
+bounded600s controller with recorded request/response files, same module/media
+and software backend. No guest configuration or memory changes.
