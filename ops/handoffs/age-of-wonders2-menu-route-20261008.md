@@ -110,3 +110,37 @@ Next record actual Worker command entry/exit, yield/EIP/ESP and send-frame depth
 around the implicated transition; correlate those with the terminal stack.
 Preserve bounded logs and validate observers on shared memory first. No new
 runtime test, causal diagnosis or compatibility fix is claimed by this review.
+
+## Worker-boundary observer prepared, 2026-10-09
+
+`tools/worker-command-trace.js` emits an opt-in CDP expression for an initialized
+guest Worker. Evaluate it in that Worker target, then retrieve
+`self.__wineCommandTrace.read()` and restore its original message handler with
+`self.__wineCommandTrace.stop()`. The default 2048-event rolling buffer reports
+overwritten events explicitly; it records command sequence, entry/synchronous
+return, actual instance EIP/ESP/yield, and outstanding JS send-frame snapshots.
+It does not modify guest registers, memory, exports or scheduling policy.
+It must not be evaluated in the page shadow instance or before Worker init.
+
+The distinction between synchronous return and async completion is deliberate:
+current guest-worker.js awaits only WebAssembly instantiation in init. Actual
+slice/send commands execute their bodies synchronously, although handleMessage
+returns a Promise which the installed onmessage handler discards. Instrumenting
+the handler boundary therefore observes their execution, not a host request's
+time in the queue. Diagnostic overhead can still change timing.
+
+Further source inspection: host.js starts main and child slices together;
+ThreadManager tracks a child slice's inFlight flag through its slice await,
+but releases it before resolving its outgoing send. The send dispatcher can
+retain a target frame across awaits, and its activeLinks set is local to that
+send chain. These are candidate interleavings to observe, not proof of a bad
+ordering or an AoWII root cause. Preserve nested-send behavior when designing
+any later arbitration fix; indiscriminate serialization can deadlock callbacks.
+
+Pure-JS observer contract checks passed in
+`scratch/aow2-command-trace-20261009/check.js`: bounded retention, real handler
+pre/post snapshots in a synthetic context, send-frame data, unchanged return
+identity/receiver, original exceptions, uninstall and rejection of wrong targets.
+No guest execution, browser capture or new gameplay proof in this step. Next:
+attach this observer to the actual initialized Worker on a temporary boat,
+capture startup plus terminal stack, and correlate events before patching.
