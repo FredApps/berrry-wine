@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: actual novel-title lanes are DisciplesII (controller234050 waits for BW2/Chrome terminal, bounded installer probe) and American McGees Alice (15 original files verified/extracted, guarded launch probe prepared). BW2 ordinary land-picker run is existing-title compatibility coverage and is not counted as a second novel game. No parallel runtime; preserve DungeonSiege EULA hold and laptop HeroesII.
+  Next: One-worker budget: DisciplesII root memory-corruption diagnosis; Alice queued real GL border-color implementation. Both original startup routes tested, neither gameplay-qualified. BW2 flyover is existing-title coverage. Runtime tests serialized on temporary boats; preserve DungeonSiege hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; process-memory/hook fix validated, loaded-module export scope next
+  worker: root direct; export-scope fix validated, SmartHeap rejected-pointer diagnosis
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Toolhelp fix08430548b and process-memory/hook candidate pass native suites; WPM trap cleared. Original game reaches SmartHeap MEM_BAD_POINTER dialog atbatch30, no gameplay. Filtered trace proves GetProcAddress(C4dll-R,malloc/calloc/free) fabricates six API thunks for absent exports; original C4 export table has none. Fix loaded-module export scoping, then retest; its causal role in MEM_BAD_POINTER is not yet proven. Evidence runs20261009T0552Z-disciples2-process-memory-candidate and20261009T0553Z-disciples2-smartheap-trace. All runtime probes terminal.
+  Next: Loaded-module export-scope control fails; candidate build/five suites pass and removes all six fabricated patches. MEM_BAD_POINTER remains. Trace identifies rejected pointer09150020 with zero header at0915000E after commit09149000+8000 crosses neighboring reservation. Investigate reservation containment and mapping preservation; causal link unproven. Evidence runs20261009T0558Z-getproc-module-validation,20261009T0559Z-disciples2-module-scope-candidate,20261009T0601Z-disciples2-bad-pointer. All probes terminal; no gameplay.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
@@ -1472,7 +1472,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; initial console probe completed, next initialization step ready
+  worker: root queued; renderer initialization blocker reproduced, GL implementation next
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
   Next: Implement real glTexParameterfv border-color state/sampling across GL backends. Original demo reaches renderer/window then fails batch123 at glTexParameterfv(0xDE1,0x1004,whiteRGBA), return484CF3. Control evidence run20261009T0509Z-alice-gl-texparameter-crash. No MIDI failure observed; five static imports are not blocker. Source currently mapped gl_unimplemented, no success stub permitted; regression then original normal gameplay required.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
