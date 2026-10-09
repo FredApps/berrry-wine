@@ -8418,6 +8418,6 @@ run budget rather than patching its finish counter.
 A30.048second HUD sample counts25 guest presentation events. This is an
 intro-only proxy (not gameplay/logical FPS), collected while the DisciplesII
 installer was transferring, so it is not an isolated performance benchmark.
-Raw31samples: scratch/bw2-normal-route-20261009/review/intro-present-rate.json.
+Raw31samples: scratch/runs/20261009T0335Z-black-white2-staging-fix/evidence/browser-candidate/intro-present-rate.json.
 A bounded capture monitor requests a screenshot every10minutes and stops
 after browser189048 terminates or its05:05:50Z deadline; no input automation.

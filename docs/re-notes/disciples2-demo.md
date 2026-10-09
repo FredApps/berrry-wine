@@ -15,9 +15,16 @@ No Disciples II registration or qualified screenshot was found;
 `disciples_demo` is the first game, not this candidate. Installed files and
 manifest do not yet exist. No missing installed filename is established.
 
-Pinned original is transferring directly to temporary bx_75agndxm as
-`/tmp/disciples2-original.exe`; receipt will be
+Pinned original was transferred and SHA256-verified on temporary bx_75agndxm at
+03:46:00Z as
+`/tmp/disciples2-original.exe`; receipt is
 `scratch/disciples2-preflight-20261009/transfer.json` with remote checksum.
 The next runtime step is installer inspection/extraction after the serialized
 Black & White 2 browser finishes. No second emulator or benchmark is running.
 Respect any installer approval/license decision rather than answering for user.
+
+Prepared next step: `/tmp/disciples2-probe-installer.js` (SHA256
+`46e74f0d6c8152020916ea79b5397a705b4a9b220cd5ed16c07d40f162326f0d`).
+It refuses to run while BW2 browser189048 is alive, has a180second hard guard,
+and captures the first visible installer window without button input. Syntax
+and upload checksum checked; it has not executed the installer.
