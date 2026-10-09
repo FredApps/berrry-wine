@@ -1354,8 +1354,8 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
-  status: active
-  Next: Normal intro/profile/NewGame reaches island flyover by04:30:55Z without guest-state skips (staging fix efcef0022, live host relativeMouse opt-in6da448742). Player control pending cinematic end, same browser189048/bx_75agndxm deadline05:05:50Z. Eight FVF0 rejected draws observed in30s; four exact descriptors have shader pointer but declaration/FVF zero, main declaration-reject counters0, binding cause unknown. Keep valid rejection; investigate producer after route validation. Garbled fonts/stale right edge remain. Disciples controller234050 owns next runtime; Alice files/probe ready.
+  status: ready
+  Next: Normal-route browser ended at fixed90minute deadline05:05:50Z, moving island flyover only. Final242 artifacts retained run20261009T0335Z-black-white2-staging-fix; no player-control/FPS credit. Diagnose current missing declaration binding/rendered right edge, then validate ordinary gameplay; old drive34 already ruled out SetFVF(0) for that route.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; handoff controller234050 waits for BW2 browser and Chrome terminal, then runs bounded installer probe
+  worker: root direct; first-window probe completed, next installment queued after Alice
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Wise original transferred to bx_75agndxm /tmp/disciples2-original.exe,143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 verified03:46:00Z. 7-Zip listing unsupported. Controller234050 owns the queued start after browser189048/Chrome terminal; do not launch a duplicate probe. Queue state /home/user/disciples2-queue-20261009/state.json on bx_75agndxm, deadline05:12Z. Installed payload/manifest not yet created. Receipt scratch/disciples2-preflight-20261009/transfer.json.
+  Next: Original Wise installer reaches Initializing Wise Installation Wizard splash, probe266970/guest266998 terminal0 at05:06:04Z. Retained run20261009T0506Z-disciples2-installer-probe; no buttons, approvals or installed payload yet. Continue initialization to actionable installer page after Alice runtime; original verified /tmp/disciples2-original.exe on bx_75agndxm.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
@@ -1470,10 +1470,10 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: American McGee's Alice demo
   id: NEW-GAME-ALICE-DEMO-20261009
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; original files prepared, runtime queued after DisciplesII
+  worker: root direct; launch probe267583 on bx_75agndxm started05:07:00Z,180s guard
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Original archive transfer SHA verified04:27:39Z;15 files extracted+CRC/size/hash checked at /home/user/alice-original-v2-20261009 on bx_75agndxm.13 PE modules audited; only five midiIn imports missing, initialization statically gated by default in_midi=0. Prepared /tmp/alice-probe-launch.js (180s, first window/no input) refuses live BW2 browser189048 or Disciples controller234050; do not execute beside either. Next ordinary launch then New Game/skill/W-S gameplay. No missing archive paths established.
+  Next: Collect first-window probe267583 after actual termination; all14 original support files verified mounted. Runtime output /home/user/alice-launch-20261009; original assets /home/user/alice-original-v2-20261009. Then ordinary New Game/skill and W-S gameplay. Five midiIn imports remain static/default-off findings, not established runtime blockers.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
