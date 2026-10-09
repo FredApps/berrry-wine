@@ -1355,7 +1355,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
   status: active
-  Next: All366 fixture files transferred with verified archive SHA856b39de9402edc0373f3e7c78dd499e50bc73a013c489d6e99ae3f3feada348. Temporary box bx_75agndxm prepare PID182191 validates903 source pins and366 file hashes; dependencies pass, canonical build running with deadline03:41:07Z. Then ordinary no-poke browser route and reviewed gameplay/presentation measurements; historical diagnostic intro-poked gameplay is not normal-route qualification. DisciplesII queued.
+  Next: Owning startup trace confirms2GB, loaded entryAD9CA3, first slice6blocks then EIP0; stack returnAD9CC9 corresponds call[C122AC]/GetVersionExA. Capture IAT word across load_pe/loadDlls/first slice before blaming NULL import; no fault/host-exit record. Evidence run20261009T0329Z-black-white2-startup-trace (68hashed artifacts), original launch failure separate. Supplemental DLL URL alias corrected. Browser closed; bx_75agndxm retained until06:16:08Z, DisciplesII queued.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5

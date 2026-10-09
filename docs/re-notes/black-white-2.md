@@ -8364,3 +8364,27 @@ manifest sizes and hashed before build. Source baseline ff0c1f07b,903 pins.
 Preparation is in `scratch/bw2-normal-route-20261009`; no runtime result yet.
 Declared bounds: transfer1800s, build900s, browser5400s, retrieval/cleanup300s;
 boat expires06:16:08.841Z. Long silent land loads are not evidence of a hang.
+
+### 2026-10-09 current-main first-slice exit
+
+Source ff0c1f07b builds successfully;903 source pins and366 fixtures verified.
+Original browser attempt exits before first window. Supplemental stdole2.tlb,
+msvcrt.dll and comctl32.dll exist locally and were subsequently transferred;
+DLL requests need binaries/ mapped to test/binaries/, not only the latter
+physical paths. Correcting that alias loads5 DLLs instead of3, but the same
+early exit remains. Standard local shlwapi/shell32/ole32 DLL files are absent,
+so built-in handlers remain the fallback; this is not proven causal.
+
+The bounded owning-Worker command observer confirms memory2147483648 bytes,
+load_pe entryAD9CA3/ESP074FFFFC, preserved through loadDlls. First slice runs
+6 blocks then returns EIP0, ESP074FFEE0 with stack returnAD9CC9. Original
+AD9CC3 is call[C122AC], the GetVersionExA import. No owning exit/fault import
+record occurs. NULL IAT is a hypothesis: next capture C122AC across load_pe,
+loadDlls and first slice, plus target bytes. Do not mistake the host zero
+register summary for owning registers or call this gameplay.
+
+Sealed runs:20261009T0326Z-black-white2-launch (25 artifacts) and
+20261009T0329Z-black-white2-startup-trace (68 artifacts). Private JS observers
+read only; runtime wasm SHA bb9d6e9621a06efb5498e2903fc0a3185967ac76cd33fc76b96c11d714c0a387.
+All four Chrome runs closed normally; temporary bx_75agndxm retained,
+expiry06:16:08Z. No native or browser processes on the persistent host.
