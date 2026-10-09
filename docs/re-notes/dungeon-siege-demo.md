@@ -28,7 +28,19 @@ is required at startup; other companions load lazily. This is not a public app.
   Fix the generic file-open/RTF-consumer boundary; do not hide it with a
   blanket eager manifest or skip formatting only for lazy files.
 
-No game window or player-controlled gameplay has yet been qualified. Do not
+The demo EULA window now renders; player-controlled gameplay is not qualified. Do not
 count installer extraction or an API regression as gameplay, FPS or audio proof.
 Older stopped-box evidence at bx_hgju4y2b is a separate recovery permission
 boundary; newer fresh tests do not recover or overwrite it.
+
+## Lazy RTF open fixed (2026-10-09)
+
+Main b493bc3b9 parks CreateFileA/W while its RTF compatibility consumer loads
+the file, preserving the original bytes and expanded read view. The unchanged
+manifest still has1 eager and33 lazy companions. Original startup now displays
+the EULA, with HTTP206 for EULA.RTF bytes0-6531. Capture:
+`scratch/runs/20261009T0125Z-dungeon-siege-eula`; native tests:
+`scratch/runs/20261009T0122Z-lazy-rtf-open`. Accept was not pressed because the
+user instruction says not to answer approvals; an explicit decision was requested.
+Browser56868/Chrome56883 exited0; temporary box stopped. This is startup progress,
+not gameplay/FPS/audio qualification.

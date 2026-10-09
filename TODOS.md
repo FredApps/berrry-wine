@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. No worker is live. Dungeon Siege has passed resource and language API blockers; next is generic lazy RTF file-open handling, while historical bx_hgju4y2b evidence recovery still needs owner access. Age of Wonders II source-level diagnosis remains queued. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
+  Next: One-worker budget supersedes simultaneous workers. AoWII is next for actual Worker command-entry/exit ordering at its startup stack fault; Black and White2 refills the second queued lane for memory/transfer preflight and ordinary current-main launch on a separate boat. Both are nonpublic and lack qualified player-controlled gameplay. DungeonSiege is held at its working EULA screen pending user acceptance decision; generic file-open fix is main b493bc3b9. No live subagent/browser. Arcanum/Comanche/Croc2/TDR gameplay remains accepted; do not repeat it. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1363,7 +1363,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   created: 2026-10-03T08:42:45.967Z
   accepted: 2026-10-03T08:42:45.967Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Registered black_white_2_demo fixture rechecked2026-10-08: 366 declared executable/DLL/asset/manifest paths exist, declared sizes match. Missing-file blocker is cleared; queue ordinary gameplay and scene-qualified FPS validation after current sole lane. Presence does not prove runtime readiness. Receipt scratch/runs/20261008T0810Z-queued-fixture-recheck/fixture-presence.json; docs ops/handoffs/queued-fixture-recheck-20261008.md.
+  Next: Second queued new-game lane after DungeonSiege EULA hold. Verified absent from DESKTOP_APPS; historical re-notes end in flyover without player-controlled gameplay, and no matching qualified run result found. All366 declared fixture paths passed October8 presence/size check. Perform memory/transfer preflight for separate boat, then ordinary current-main launch; never reuse historical guest-memory intro skips as gameplay evidence.
   Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json
   notes: Migration missing-file blocker cleared against current registered route: black_white_2_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
@@ -1396,12 +1396,12 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Dungeon Siege demo
   id: NEW-GAME-DUNGEON-SIEGE-DEMO-20261008
-  status: ready
+  status: blocked
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none; fresh browser58940 exited0 at2026-10-09T00:02:50.542Z
+  worker: none; browser56868 exited0, bx_f8a9afpr stopped2026-10-09T01:31:52Z
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
-  Next: Fix generic CreateFile RTF stylesheet expansion reading async-only entry.data. Fresh original run on main bab6e2494 passed language lookup and trapped at c35ac0 opening EULA.RTF (6532bytes). Evidence scratch/runs/20261009T0110Z-dungeon-siege-lazy-rtf; browser63225 exited0 and boat stopped. No window/gameplay yet. Avoid broad preload or silent RTF-formatting bypass.
-  Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
+  Next: Await user decision on accepting demo EULA under the instruction not to answer approvals. Generic lazy RTF fix main b493bc3b9 passes; original EULA window renders, screenshot Telegram947. Evidence scratch/runs/20261009T0125Z-dungeon-siege-eula (36 hashes). No gameplay/FPS/audio qualification.
+  Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. Experimental local registration and checked CAB extraction integrated ef51b4f59; registration is not gameplay qualification.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
 - [x] Restore registered local candidates missing from the launch picker
@@ -1441,5 +1441,5 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   status: done
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: coordinator direct; one-worker budget
-  Result: Original Dungeon Siege now renders its EULA without the lazy-file trap. Native A/W thread/stack/retry, canonical build,45 VFS and50 lazy tests pass. Evidence scratch/runs/20261009T0122Z-lazy-rtf-open; browser evidence being sealed. Accept untouched pending user decision.
+  Result: Original Dungeon Siege now renders its EULA without the lazy-file trap. Native A/W thread/stack/retry, canonical build,45 VFS and50 lazy tests pass. Evidence scratch/runs/20261009T0122Z-lazy-rtf-open; browser proof scratch/runs/20261009T0125Z-dungeon-siege-eula (36 hashes), HTTP206 EULA bytes0-6531. Pushed main b493bc3b9. Accept untouched pending user decision.
   Scope: Thread-owned IO_WAIT for CreateFileA/W RTF expansion, preserving ordinary lazy opens and delayed loading UX. No blanket eager manifest or formatting bypass.

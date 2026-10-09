@@ -38,3 +38,8 @@ The original Dungeon Siege browser run now renders its demo license window;
 EULA.RTF remains lazy in the unchanged manifest. Accept was left untouched
 under the user instruction not to answer approvals; user decision requested.
 This proves the prior file-open crash is cleared, not gameplay.
+
+Browser proof: `scratch/runs/20261009T0125Z-dungeon-siege-eula`,36 hashed
+artifacts, HTTP206 EULA.RTF bytes0-6531, reviewed EULA window. Native run has22
+hashed artifacts. Fix pushed as b493bc3b9. Browser56868/Chrome56883 exited0;
+bx_f8a9afpr stopped2026-10-09T01:31:52Z. Accept remains a user decision.

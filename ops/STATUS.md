@@ -1,8 +1,8 @@
-updated: 2026-10-09T01:14:21.535Z
+updated: 2026-10-09T01:34:47.277Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-SimCity256-color fix main a91d906cd; reviewed city/water-animation screenshot sent Telegram942.
+Dungeon Siege now reaches its demo EULA after the lazy RTF fix (main b493bc3b9). Native build/A-W stack/thread/retry,45 VFS and50 lazy tests pass; HTTP206 confirms EULA.RTF loaded on demand. Accept untouched pending user decision under the instruction not to answer approvals. Screenshot sent Telegram947. Evidence: scratch/runs/20261009T0122Z-lazy-rtf-open and scratch/runs/20261009T0125Z-dungeon-siege-eula. No gameplay/FPS/audio claim. Browser56868/Chrome56883 exited0; bx_f8a9afpr stopped01:31:52Z.
 
-Dungeon Siege passes the resource and language API blockers (main bab6e2494). Latest original startup traps before first window in CreateFile's synchronous RTF stylesheet expansion: lazy EULA.RTF,6532bytes, EIP c35ac0. Evidence scratch/runs/20261009T0110Z-dungeon-siege-lazy-rtf;39 hashed artifacts. Generic lazy RTF consumer fix is the next root task; do not mark gameplay qualified. API native proof: scratch/runs/20261009T0105Z-version-language. Browser63225 exited0; bx_jnfsbbvz stopped01:13:28Z.
+One-worker budget; no live worker/browser. Next ready lane: Age of Wonders II source/Worker ordering diagnosis. Second queued lane: Black and White2 memory/transfer preflight and ordinary launch on separate boat (nonpublic, no qualified player-controlled gameplay). DungeonSiege held only at the user decision. Arcanum/Comanche/Croc2/TDR proofs remain accepted.
 
-One-worker budget: no live workers/browser; Age of Wonders II is second queued title. Arcanum/Comanche gameplay remains reviewed. Full GL/D3D/FPS/audio goals unfinished. HeroesII laptop-owned; rejected diagnostics held. No public deployment.
+SimCity256-color fix main a91d906cd remains verified. Full GL/D3D and FPS/audio coverage unfinished. HeroesII laptop-owned; rejected diagnostic lanes held. No public deployment.
