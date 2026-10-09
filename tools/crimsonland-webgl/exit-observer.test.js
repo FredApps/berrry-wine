@@ -23,6 +23,23 @@ function fixture(options = {}) {
 }
 {
   const f = fixture();
+  // Termination provenance must still work after the CPU-fault capture cap.
+  for (let i = 0; i < 4; i++) {
+    f.host.log_i32(0xcae8c000); f.host.log_i32(0xc0000005); f.host.log_i32(4096);
+  }
+  const before = Buffer.from(f.memory.buffer);
+  f.host.log_i32(0xcae8c0de); f.host.log_i32(0xc000de05);
+  assert.equal(f.host.exit(0xc000de05), 77);
+  const row = f.rows.find(r => r.kind === 'exit');
+  assert.equal(row.origin, 'seh-unhandled');
+  assert.equal(row.stack.address, 1024, 'SEH has not popped an ExitProcess frame');
+  assert.equal(row.returnAddress, undefined, 'do not invent an ExitProcess caller');
+  assert.deepEqual(Buffer.from(f.memory.buffer), before);
+  f.host.exit(0);
+  assert.equal(f.rows.filter(r => r.kind === 'exit')[1].origin, 'unclassified-host-exit');
+}
+{
+  const f = fixture();
   for (let i=0;i<5000;i++) assert.equal(f.host.log_i32(i),88);
   assert.deepEqual(f.metrics(),{reads:0,gets:0});
   f.host.log_i32(0xcae8c000); f.host.log_i32(0xc0000005); f.host.log_i32(0x123456);

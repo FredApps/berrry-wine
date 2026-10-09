@@ -233,3 +233,25 @@ Baseline browser44170 exited0 at02:09:49.652, candidate50922 exited0 at02:18:19.
 and native49899 exited0. No Chrome remained before boat stop completed02:19:18.986.
 Archive SHA605c74cd45616bfaf84a87703bfd6cc68448ee5ebcc0a2a02044e76e42bd38a9
 verified before stop. No player-controlled world, gameplay FPS or audio proof.
+
+## Correction: termination code identifies SEH, not a proven ExitProcess call
+
+Source review after the run found `src/11-seh.wat` terminates an unhandled CPU
+exception by passing `exceptionCode | 0xDE00` to the same host exit import.
+Thus `0xC000DE05` matches an unhandled access violation (`0xC0000005`). The
+browser's `[ExitProcess]` label does not distinguish this path. Earlier wording
+above and in the run summary describing an explicit guest ExitProcess call is
+unproven; do not pursue a guessed API caller from that log alone.
+
+The existing `tools/crimsonland-webgl/exit-observer.js` can capture the original
+`CAE8C000` fault marker from the owning instance before teardown. It now also
+recognizes the `CAE8C0DE` termination marker and preserves the unadjusted SEH
+ESP, rather than subtracting an assumed popped ExitProcess frame. Its pure-JS
+tests pass, including classification after the fault-capture cap, unchanged
+memory, forwarding, deadlines and cleanup. No new runtime result yet.
+
+Prepared private Worker overlay and identity receipts:
+`scratch/aow2-owning-fault-20261009/`. Next use it on a separate temporary boat
+through ordinary Scenario->Single->Start. Limits remain 300 seconds, four fault
+records, two exit records and 16384 read bytes per Worker. Capture original
+fault EIP/registers/memory first; the later null-instance failure is secondary.

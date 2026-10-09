@@ -12,6 +12,7 @@ function installExitFaultObserver(host, getState, emit, options = {}) {
   const deadline = now() + durationMs;
   const counts = {faults: 0, exits: 0, readBytes: 0, errors: [], expired: false};
   let pending = [], stopped = false;
+  let terminationPending = false, unhandledCode = null;
   function live() {
     if (stopped || now() >= deadline) { counts.expired = !stopped; return false; }
     return true;
@@ -45,11 +46,13 @@ function installExitFaultObserver(host, getState, emit, options = {}) {
         }
         return {address, length, hex: bytes.map(v => v.toString(16).padStart(2,'0')).join('')};
       }
-      // ExitProcess has already popped return/code before calling host.exit.
-      record.stack = read(regs.get_esp - (kind === 'exit' ? 8 : 0), 192);
+      // ExitProcess pops return/code before host.exit. SEH termination uses
+      // that same import without popping an API frame; preserve its real ESP.
+      const exitProcessFrame = kind === 'exit' && values.origin !== 'seh-unhandled';
+      record.stack = read(regs.get_esp - (exitProcessFrame ? 8 : 0), 192);
       record.frame = read(regs.get_ebp - 32, 128);
       record.codeSpan = read(values.eip ?? regs.get_eip, 96);
-      if (kind === 'exit' && record.stack.hex) {
+      if (exitProcessFrame && record.stack.hex) {
         record.returnAddress = parseInt(record.stack.hex.slice(0,8).match(/../g).reverse().join(''),16) >>> 0;
         record.returnCode = read(record.returnAddress - 32, 96);
       }
@@ -59,10 +62,14 @@ function installExitFaultObserver(host, getState, emit, options = {}) {
   const wrappers = {
     log_i32: function (...args) {
       try {
-        if (live() && counts.faults < 4) {
+        if (live()) {
           const value = args[0] >>> 0;
-          if (value === 0xcae8c000) pending = [value];
-          else if (pending.length) {
+          if (value === 0xcae8c0de) terminationPending = true;
+          else if (terminationPending) {
+            unhandledCode = value; terminationPending = false;
+          }
+          if (counts.faults < 4 && value === 0xcae8c000) pending = [value];
+          else if (counts.faults < 4 && pending.length) {
             pending.push(value);
             if (pending.length === 3) {
               const [,code,eip] = pending; pending = []; counts.faults++;
@@ -76,7 +83,10 @@ function installExitFaultObserver(host, getState, emit, options = {}) {
     exit: function (...args) {
       try {
         if (live() && counts.exits < 2) {
-          counts.exits++; snapshot('exit', {code:args[0] >>> 0,ordinal:counts.exits});
+          const code = args[0] >>> 0;
+          const origin = unhandledCode === code ? 'seh-unhandled' : 'unclassified-host-exit';
+          unhandledCode = null; terminationPending = false;
+          counts.exits++; snapshot('exit', {code,origin,ordinal:counts.exits});
           report({kind:'summary', ...summary()});
         }
       } catch (e) { error(e); }
