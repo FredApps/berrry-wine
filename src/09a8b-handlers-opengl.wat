@@ -63,10 +63,10 @@
 
     ;; wglGetProcAddress. An extension named in GL_EXTENSIONS has to be
     ;; obtainable, and an extension entry point is an ordinary API here, so
-    ;; hand back a dispatch thunk exactly as GetProcAddress does. A name with
-    ;; no handler resolves to 0xFFFF and returns NULL, which is precisely what
-    ;; "this driver does not have it" means -- so the set an app can reach
-    ;; stays exactly the set api_table.json implements.
+    ;; hand back a dispatch thunk exactly as GetProcAddress does. The global
+    ;; import table also contains fail-fast aliases and unrelated Win32 APIs;
+    ;; existence there is not driver support. The generated predicate uses
+    ;; the actual GL/WGL dispatcher implementation set (excluding GLU).
     (if (i32.eq (local.get $opcode) (i32.const 50))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -83,6 +83,7 @@
           (local.set $api_id
             (call $lookup_api_id (i32.add (local.get $string_wa) (i32.const 2))))
           (br_if $wgpa (i32.eq (local.get $api_id) (i32.const 0xFFFF)))
+          (br_if $wgpa (i32.eqz (call $wgl_api_available (local.get $api_id))))
           (global.set $num_thunks (call $thunk_reserve))
           (local.set $aux (i32.add (global.get $THUNK_BASE)
             (i32.mul (global.get $num_thunks) (i32.const 8))))

@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: DisciplesII native/browser movement verified; menu input and logicalFPS/audio follow-up remain. Alice real GL border-color implementation next. All runtime probes terminal; temporary bx_kbtxb6tb expires08:17:09Z. Refill novel lane after Disciples follow-up ownership is explicit. Preserve DungeonSiege hold and laptop HeroesII.
+  Next: One-worker budget: Alice presentation return investigation active after real border API/WGL fixes. DisciplesII native/browser movement verified; menu input, logicalFPS/audio follow-up remains. All runtimes terminal; preserve DungeonSiege hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1474,7 +1474,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: root direct; original vector blocker fixed, WGL procedure availability investigation next; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next:3270207c7 vector API passes original Alice; new game window opens, then batch1094 traps at wglSwapIntervalEXT(0), return00487191. Run20261009T0830Z-alice-swap-interval-crash retains17artifacts;27878/27885 terminal08:30:28Z. Gray checkpoint is not gameplay. WGL resolver currently advertises any known API including gl_unimplemented aliases; investigate generic truthful availability or real swap pacing, no success stub/config bypass. Missing typelib from initial0828 attempt restored. Disciples follow-up remains second lane; bx_bufemdmn expires09:14:52Z.
+  Next: WGL availability fix validated: unsupported extension returns NULL, real GL and native WGL handlers preserved; build and three suites pass. Original final-module Alice reaches wglSwapBuffers(HDC00310011), return004871c1, then console error GLimp_EndFrame() - SwapBuffers() failed! Run20261009T0842Z-alice-swapbuffers-final reviewed;34958/34965 terminal08:42:06Z. Next trace presentation return/context ownership; no gameplay or success stub. DisciplesII follow-up remains second lane, one-worker budget. All runtimes terminal; bx_bufemdmn expires09:14:52Z.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 

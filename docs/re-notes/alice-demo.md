@@ -271,3 +271,33 @@ the code does not enforce. Next investigate correct generic procedure availabili
 be advertised), or implement actual swap pacing. Do not add a successful no-op
 setter or change guest configuration. Direct unsupported API calls must remain
 fail-fast. Texture implementation3270207c7 is already pushed to main.
+
+## WGL availability and next frame-end failure (2026-10-09 08:40Z)
+
+The global API table contains unsupported aliases and unrelated Win32 names.
+wglGetProcAddress previously returned thunks for all of them. The generated
+availability predicate now derives from the actual GL/WGL dispatcher map,
+excluding GLU. Unsupported direct calls still fail fast. Current-context
+lifecycle behavior is unchanged by this scoped correction.
+
+Unchanged native control returns118489088 for wglSwapIntervalEXT; candidate
+returnsNULL, rejects non-GL/GLU/unknown/case-mismatched names, and preserves
+correct thunk identities for ARB_multitexture and vector texture APIs. Canonical
+build plus resolver, multitexture and generic encoder suites pass.
+Run20261009T0839Z-alice-wgl-availability retains sources/logs; module
+6f11700188244b00d25595743c7ceeaffcabe98769e166d3cd34eb3214c55246.
+
+Original unchanged demo no longer traps at swap-control lookup. It reaches
+frame end, then shuts down GL and displays GLimp_EndFrame() - SwapBuffers()
+failed! in its console. Reviewed checkpoint19, run
+20261009T0840Z-alice-swapbuffers-error;32814/32821 terminal08:39:46Z.
+Next trace the real SwapBuffers/presentation return and context ownership.
+No menu/gameplay/FPS/audio claim or guest configuration change.
+
+Final predicate also preserves three native handlers outside the GPU opcode map:
+wglGetCurrentContext, wglGetCurrentDC and wglSwapLayerBuffers. Extended native
+tests and canonical build pass, run20261009T0842Z-alice-wgl-final,34093 terminal
+08:41:52Z; final module65f1f98d4b3545f5141b0be2816e1c9353729dbfa477013fc4baafa3b95ae1a4.
+Original final-module replay confirms same SwapBuffers error: actually the
+wglSwapBuffers spelling, HDC00310011, return004871c1, API621598.
+Run20261009T0842Z-alice-swapbuffers-final reviewed;34958/34965 terminal08:42:06Z.
