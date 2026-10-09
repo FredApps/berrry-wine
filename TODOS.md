@@ -1453,11 +1453,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Disciples II demo
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
-  status: active
+  status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; installer272256 on bx_75agndxm started05:12:49Z,180s guard
+  worker: root direct; installer and game probes completed, Toolhelp implementation next
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Collect original installer272256 after actual termination; Welcome/destination/group/Start Installation reviewed, ordinary Next clicks only, no license presented or accepted. Current output /home/user/disciples2-install-20261009, VFS export /home/user/disciples2-installed-vfs-20261009. Then identify original game EXE/media and normal launch. Prior page evidence retained in runs20261009T0510Z/0511Z/0512Z-disciples2-*.
+  Next: Original installation completed05:15:01Z;128 files174933888B hashed. Explicit dll-seed shw32.dll/c4dll-r.dll resolves initial ordinal295 failure. Next proven NULL call at SHW32 runtime8FFFCD/originalA93AFCD: GetProcAddress(CreateToolhelp32Snapshot) returned0; companion Heap32ListFirst/Next and Heap32First/Next absent too. Implement real modeled heap enumeration/snapshot lifecycle, no stub. Evidence run20261009T0517Z-disciples2-hidden-window; no visible game/gameplay yet. Assets on bx_75agndxm /home/user/disciples2-complete-vfs-20261009/program files/strategy first/disciples ii demo; guarded local retention in progress.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
