@@ -8406,3 +8406,18 @@ within6blocks without a window. Screen is still black at first capture and
 this does not qualify gameplay. Browser189048 remains live on bx_75agndxm
 with immutable05:05:50Z deadline. Evidence snapshot:
 20261009T0335Z-black-white2-staging-fix (91hashed artifacts, outcome running).
+
+### Candidate intro follow-up
+
+Current candidate reaches the visible Lionhead particle intro. Normal click
+and Escape events were delivered; no guest-memory skip. Earlier claims of
+an infinite attract loop are not sufficient: notes above establish normal
+frame-count completion at1787. Keep waiting within the declared90minute
+run budget rather than patching its finish counter.
+
+A30.048second HUD sample counts25 guest presentation events. This is an
+intro-only proxy (not gameplay/logical FPS), collected while the DisciplesII
+installer was transferring, so it is not an isolated performance benchmark.
+Raw31samples: scratch/bw2-normal-route-20261009/review/intro-present-rate.json.
+A bounded capture monitor requests a screenshot every10minutes and stops
+after browser189048 terminates or its05:05:50Z deadline; no input automation.

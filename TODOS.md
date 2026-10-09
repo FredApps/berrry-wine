@@ -1457,7 +1457,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none; queued behind Black and White2 under one-worker budget
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Inspect and extract original installer on temporary box, register complete files/manifest, reach ordinary player-controlled gameplay and review screenshot. Original143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 present; no existing registration or qualification found. Installed payload/manifest not yet created, completeness unknown.
+  Next: Original is Wise installer (WiseMain/Wise0132.dll/Disciples II Demo Installation strings); 7-Zip archive listing unsupported. Direct transfer to bx_75agndxm /tmp/disciples2-original.exe runs in local session4748 with900s deadline03:54:11Z, no guest execution. Verify SHA receipt then inspect/install on temporary box after sole BW2 browser releases. Installed payload/manifest not yet created; no launch claim.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
