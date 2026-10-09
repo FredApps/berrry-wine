@@ -902,6 +902,8 @@
       (local.get $path_wa) (local.get $arg1)
       (local.get $creation_w) (local.get $flags_w) (i32.const 1) (global.get $reg_base)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (i32.eq (global.get $last_error) (i32.const 997))
+      (then (call $io_block (i32.const 32))))
   )
 
   ;; SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime).

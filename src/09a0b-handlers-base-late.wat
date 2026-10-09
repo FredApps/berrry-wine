@@ -3663,3 +3663,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $version_language_name
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; CreateFileA/W's whole-RTF consumer shares the per-thread IO_WAIT path.
+  (func $host_fs_create_file_result (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32) (param $a5 i32) (result i32)
+    (call $host_fs_create_file_result_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (local.get $a4) (local.get $a5) (global.get $current_thread_id)))

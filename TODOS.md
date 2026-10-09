@@ -1435,3 +1435,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Result: VerLanguageNameA/W lookup, bounded copying and generated API dispatch implemented; canonical build plus language/locale/version regressions pass on temporary box.
   Evidence: scratch/runs/20261009T0105Z-version-language; ops/handoffs/version-language-20261009.md.
   Limitation: Original Dungeon Siege startup validation remains separate; no gameplay/FPS/audio qualification.
+
+- [x] Park lazy RTF opens without losing formatting or handles
+  id: VFS-LAZY-RTF-OPEN-20261009
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  worker: coordinator direct; one-worker budget
+  Result: Original Dungeon Siege now renders its EULA without the lazy-file trap. Native A/W thread/stack/retry, canonical build,45 VFS and50 lazy tests pass. Evidence scratch/runs/20261009T0122Z-lazy-rtf-open; browser evidence being sealed. Accept untouched pending user decision.
+  Scope: Thread-owned IO_WAIT for CreateFileA/W RTF expansion, preserving ordinary lazy opens and delayed loading UX. No blanket eager manifest or formatting bypass.

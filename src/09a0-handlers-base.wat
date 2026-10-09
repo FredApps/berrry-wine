@@ -3541,6 +3541,8 @@
       (local.get $flags)               ;; flags and attributes
       (i32.const 0) (global.get $reg_base))) ;; isWide=0; handle output in EAX
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))  ;; 7 args + ret
+    (if (i32.eq (global.get $last_error) (i32.const 997))
+      (then (call $io_block (i32.const 32))))
   )
 
   ;; 15: FindFirstFileA(lpFileName, lpFindFileData) — 2 args stdcall
