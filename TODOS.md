@@ -1474,7 +1474,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: root direct; border pixel control reproduced, implementation active; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Real GL border-color implementation across WAT software and WebGL, including immutable Worker texture state. Unchanged runtime pixel control passes edge-clamp/interior checks but GL_CLAMP edge is0xff rather than half-blue0x7f/0x80; run20261009T0735Z-alice-border-control, terminal62994 at07:35:15Z. Corner check not reached. Existing setters collapse CLAMP to EDGE; generic sampler lacks border color. No API success stub. Retained test and source boundary notes in docs/re-notes/alice-demo.md. Then original startup beyond glTexParameterfv(0xDE1,0x1004,whiteRGBA), ordinary gameplay. MIDI not a runtime blocker.
+  Next: Explicit-color WAT border sampler foundation and pixel tests pass canonical build/three suites, run20261009T0741Z-alice-border-sampler, moduleb2552fac;65306 terminal0. Production GL draw still not wired, so original CLAMP regression/Alice API remain failing. Next per-texture RGBA/wrap state, immutable Worker snapshots and both-unit software hookup, then WebGL/API pointer replay and original game revalidation. No success stub. Original MIDI imports not runtime blocker.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 

@@ -91,3 +91,21 @@ handling, query/setter validation, immutable queued-state coverage, native/WebGL
 pixel tests, then unmodified original Alice startup. Existing scratch control.js
 is a full retained runnable regression; copy into remote test/ alongside render-helper.
 Fresh worker spawn still fails thread limit; root direct, one runtime budget.
+
+## Software sampler foundation (2026-10-09 07:41Z)
+
+Added gl_sw_border_tap/gl_sw_border_sample with explicit immutable color and
+independent GL wrap enums. Missing taps return the supplied color before any
+backing read. GL_CLAMP clamps coordinates before filtering; CLAMP_TO_BORDER
+permits all-border footprints; EDGE/REPEAT retain distinct behavior. No mutable
+sampler globals or modifications to the existing D3D hot sampler.
+Existing test-gl-software-raster exports this helper only through extraWat and
+checks actual Wasm pixels, including an invalid backing pointer for an outside
+nearest tap. Canonical build and gl-software-raster, d3dim-texture-wrap,
+opengl-fixed-function suites pass on temporary box; controller65306 terminal0
+at07:41:31.123Z. Module b2552fac1043910e48cd00a672581dd9235792ba199d7f7943a7f14ba587637d.
+Evidence run20261009T0741Z-alice-border-sampler retains source/test/scripts/logs.
+This is infrastructure only: production GL draw calls still use the old sampler,
+so the earlier end-to-end CLAMP regression and Alice vector API remain unresolved.
+Next wire per-texture RGBA/wrap state through resolved draw/Worker snapshots,
+route both GL texture units through the helper, then complete WebGL and API replay.

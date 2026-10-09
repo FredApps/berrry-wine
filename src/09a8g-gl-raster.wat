@@ -363,6 +363,93 @@
     (if (i32.ge_u (local.get $name) (i32.const 4096)) (then (return (i32.const 0))))
     (i32.add (global.get $GL_SW_TEXTURES) (i32.mul (local.get $name) (i32.const 8))))
 
+  ;; Resolve one filter tap without ever forming an out-of-image address.
+  ;; Wrap enums are GL enums, not D3D address modes. The caller supplies the
+  ;; texture's format-adjusted border color as immutable draw state.
+  (func $gl_sw_border_tap
+    (param $tw i32) (param $th i32) (param $bpp i32) (param $pitch i32)
+    (param $dib i32) (param $fmt i32) (param $pal i32)
+    (param $x i32) (param $y i32) (param $ws i32) (param $wt i32)
+    (param $border i32) (result i32)
+    (if (i32.or
+      (i32.and (i32.or (i32.eq (local.get $ws) (i32.const 0x2900))
+                       (i32.eq (local.get $ws) (i32.const 0x812D)))
+               (i32.ge_u (local.get $x) (local.get $tw)))
+      (i32.and (i32.or (i32.eq (local.get $wt) (i32.const 0x2900))
+                       (i32.eq (local.get $wt) (i32.const 0x812D)))
+               (i32.ge_u (local.get $y) (local.get $th))))
+      (then (return (local.get $border))))
+    (call $d3dim_texture_fetch_prepared
+      (local.get $bpp) (local.get $pitch) (local.get $dib) (local.get $fmt) (local.get $pal)
+      (call $d3dim_address_texel (local.get $x) (local.get $tw)
+        (select (i32.const 3) (select (i32.const 2) (i32.const 1)
+          (i32.eq (local.get $ws) (i32.const 0x8370)))
+          (i32.eq (local.get $ws) (i32.const 0x812F))))
+      (call $d3dim_address_texel (local.get $y) (local.get $th)
+        (select (i32.const 3) (select (i32.const 2) (i32.const 1)
+          (i32.eq (local.get $wt) (i32.const 0x8370)))
+          (i32.eq (local.get $wt) (i32.const 0x812F))))))
+
+  ;; GL_CLAMP clamps the coordinate before filtering, while CLAMP_TO_BORDER
+  ;; allows a footprint wholly outside the image. EDGE clamps each tap.
+  ;; No mutable sampler globals: queued draws must pass their captured color.
+  (func $gl_sw_border_sample
+    (param $tw i32) (param $th i32) (param $bpp i32) (param $pitch i32)
+    (param $dib i32) (param $fmt i32) (param $pal i32)
+    (param $u f32) (param $v f32) (param $ws i32) (param $wt i32)
+    (param $linear i32) (param $border i32) (result i32)
+    (local $sx f32) (local $sy f32) (local $fx f32) (local $fy f32)
+    (local $x i32) (local $y i32)
+    (if (i32.or (i32.eqz (local.get $tw)) (i32.eqz (local.get $th)))
+      (then (return (local.get $border))))
+    (if (f32.ne (f32.mul (local.get $u) (f32.const 0)) (f32.const 0))
+      (then (local.set $u (f32.const 0))))
+    (if (f32.ne (f32.mul (local.get $v) (f32.const 0)) (f32.const 0))
+      (then (local.set $v (f32.const 0))))
+    (if (i32.eq (local.get $ws) (i32.const 0x2900))
+      (then (local.set $u (f32.min (f32.const 1) (f32.max (f32.const 0) (local.get $u))))))
+    (if (i32.eq (local.get $wt) (i32.const 0x2900))
+      (then (local.set $v (f32.min (f32.const 1) (f32.max (f32.const 0) (local.get $v))))))
+    ;; A full border footprint has the same color however far out it lies;
+    ;; bounding it avoids saturated integer indices wrapping on the +1 tap.
+    (if (i32.eq (local.get $ws) (i32.const 0x812D))
+      (then (local.set $u (f32.min (f32.const 2) (f32.max (f32.const -1) (local.get $u))))))
+    (if (i32.eq (local.get $wt) (i32.const 0x812D))
+      (then (local.set $v (f32.min (f32.const 2) (f32.max (f32.const -1) (local.get $v))))))
+    (if (i32.eqz (local.get $linear))
+      (then
+        ;; NEAREST GL_CLAMP selects the nearest edge texel, including u=1.
+        (if (i32.eq (local.get $ws) (i32.const 0x2900))
+          (then (local.set $ws (i32.const 0x812F))))
+        (if (i32.eq (local.get $wt) (i32.const 0x2900))
+          (then (local.set $wt (i32.const 0x812F))))
+        (return (call $gl_sw_border_tap
+          (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+          (local.get $dib) (local.get $fmt) (local.get $pal)
+          (i32.trunc_sat_f32_s (f32.floor (f32.mul (local.get $u) (f32.convert_i32_u (local.get $tw)))))
+          (i32.trunc_sat_f32_s (f32.floor (f32.mul (local.get $v) (f32.convert_i32_u (local.get $th)))))
+          (local.get $ws) (local.get $wt) (local.get $border)))))
+    (local.set $sx (f32.sub (f32.mul (local.get $u) (f32.convert_i32_u (local.get $tw))) (f32.const 0.5)))
+    (local.set $sy (f32.sub (f32.mul (local.get $v) (f32.convert_i32_u (local.get $th))) (f32.const 0.5)))
+    (local.set $x (i32.trunc_sat_f32_s (f32.floor (local.get $sx))))
+    (local.set $y (i32.trunc_sat_f32_s (f32.floor (local.get $sy))))
+    (local.set $fx (f32.sub (local.get $sx) (f32.floor (local.get $sx))))
+    (local.set $fy (f32.sub (local.get $sy) (f32.floor (local.get $sy))))
+    (call $d3dim_bilerp
+      (call $gl_sw_border_tap (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+        (local.get $dib) (local.get $fmt) (local.get $pal) (local.get $x) (local.get $y)
+        (local.get $ws) (local.get $wt) (local.get $border))
+      (call $gl_sw_border_tap (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+        (local.get $dib) (local.get $fmt) (local.get $pal) (i32.add (local.get $x) (i32.const 1)) (local.get $y)
+        (local.get $ws) (local.get $wt) (local.get $border))
+      (call $gl_sw_border_tap (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+        (local.get $dib) (local.get $fmt) (local.get $pal) (local.get $x) (i32.add (local.get $y) (i32.const 1))
+        (local.get $ws) (local.get $wt) (local.get $border))
+      (call $gl_sw_border_tap (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+        (local.get $dib) (local.get $fmt) (local.get $pal) (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 1))
+        (local.get $ws) (local.get $wt) (local.get $border))
+      (local.get $fx) (local.get $fy)))
+
   ;; GL's defaults are MAG_FILTER LINEAR, MIN_FILTER NEAREST_MIPMAP_LINEAR
   ;; and REPEAT in both directions.
   (func $gl_sw_tex_flags (param $slot i32) (result i32)

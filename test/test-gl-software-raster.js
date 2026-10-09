@@ -45,9 +45,37 @@ const VERT_BYTES = 56, VERT_FLOATS = 14;
 const VP = 64; // viewport is VP x VP, so a surface of the same size
 
 async function main() {
-  const { exports: e, memory } = await bootRenderHarness();
+  const { exports: e, memory } = await bootRenderHarness({
+    extraWat: '(export "border_sample_test" (func $gl_sw_border_sample))',
+  });
   const guestBase = e.get_guest_base() >>> 0, imageBase = e.get_image_base() >>> 0;
   const toWasm = guest => guestBase + (guest >>> 0) - imageBase;
+
+  // Border taps are explicit per-draw data, not a mutable global. These
+  // assertions exercise the real Wasm sampler before GL state wiring uses it.
+  const borderPixels = toWasm(e.guest_alloc(8));
+  new Uint32Array(memory.buffer, borderPixels, 2).set([0xff0000ff, 0xffffff00]);
+  const borderSample = (u, v, ws, wt, linear, border = 0xff000000, ptr = borderPixels) =>
+    e.border_sample_test(2, 1, 32, 8, ptr, 0, 0, u, v, ws, wt, linear, border) >>> 0;
+  const CLAMP = 0x2900, EDGE = 0x812f, BORDER = 0x812d, REPEAT = 0x2901;
+  assert.strictEqual(borderSample(0, 0.5, EDGE, EDGE, 1), 0xff0000ff);
+  assert.strictEqual(borderSample(0.25, 0.5, CLAMP, CLAMP, 1), 0xff0000ff);
+  assert.strictEqual(borderSample(0, 0.5, CLAMP, CLAMP, 1), 0xff00007f,
+    'linear GL_CLAMP edge has one half border');
+  assert.strictEqual(borderSample(0, 0, CLAMP, CLAMP, 1), 0xff00003f,
+    'linear GL_CLAMP corner has three quarters border');
+  assert.strictEqual(borderSample(-20, 0.5, CLAMP, EDGE, 1), 0xff00007f,
+    'GL_CLAMP clamps coordinates before filtering');
+  assert.strictEqual(borderSample(-20, 0.5, BORDER, EDGE, 1, 0xff00ff00), 0xff00ff00);
+  assert.strictEqual(borderSample(0, 0.5, CLAMP, EDGE, 1, 0xff00ff00), 0xff007f7f,
+    'the same image uses the supplied color independently for each draw');
+  assert.strictEqual(borderSample(0, 0.5, CLAMP, EDGE, 1), 0xff00007f);
+  assert.strictEqual(borderSample(1, 0.5, CLAMP, EDGE, 0), 0xffffff00);
+  assert.strictEqual(borderSample(-1, 0.5, BORDER, EDGE, 0, 0x12345678,
+    memory.buffer.byteLength - 1), 0x12345678,
+    'an outside border tap returns without dereferencing invalid image backing');
+  assert.strictEqual(borderSample(0.25, 1.5, CLAMP, REPEAT, 1), 0xff0000ff,
+    'the other axis retains its own wrap mode');
 
   // --- somewhere to put three GL vertices -------------------------------
   const verts = toWasm(e.guest_alloc(VERT_BYTES * 3));
