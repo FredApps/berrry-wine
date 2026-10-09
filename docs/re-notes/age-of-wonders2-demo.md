@@ -196,3 +196,31 @@ compatibility fix. Observer reads384bytes, frame unavailable because EBP0,
 one original fault then SEH termination; later null-instance file-open errors
 are secondary. Browser39438 exited0 and boat bx_va3qxqm3 stopped02:36:59.165Z.
 No gameplay/FPS/audio qualification. Handoff contains full source/run identities.
+
+### Stream lifetime capture sites
+
+Static review of the same original Mss32 SHA d0db426ebac97dc410b5130c9c74d19bc04151236df85b012823d6cb3d7fb87c:
+
+- Open wrapper calls internal21120A40. It allocates0x114 bytes at21120A59,
+  then zeroes all0x45 dwords at21120A80. Capture returned EAX at21120A5E
+  and ESI after initialization; do not assume a stable stream allocation address.
+- Close wrapper calls21121620. It unlinks the stream through next+104,
+  coordinates service counters, releases buffers, then zeroes the complete
+  object at211217C4 and passes it to the free wrapper211029D0.
+- Besides the observed direct call21121008, trampoline21122430 obtains a
+  stream through sample user data and tail-jumps `[eax+E0]` at21122444.
+- A search for every literal+E0 store also finds sample-related code in
+  211115xx–211118xx. Equal member offsets do not establish equal object types;
+  these are not evidence that those stores corrupted the observed stream.
+
+Private capture preparation: `scratch/aow2-stream-lifetime-20261009/observer.js`.
+It uses existing owning-Worker block tracing across the stream routines,
+records registration arguments/current callback/full0x114-byte object at
+selected block entries, and preserves the real log import. Limits:300seconds,
+256records and256KiB reads per Worker. It checks the known setter signature
+before trusting the prior load base. Pure-JS contract verifies argument and
+callback capture, unchanged memory, import forwarding and trace cleanup.
+No runtime validation yet. Tracing changes dispatch/timing, and block entries
+are not every instruction: missed sites and timing sensitivity must be reported.
+This can distinguish registered-invalid versus later-invalid pointers or close
+before use; it does not by itself identify every possible last writer.
