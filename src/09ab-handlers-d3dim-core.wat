@@ -5219,7 +5219,7 @@
             (local.get $tdib) (local.get $tfmt) (local.get $tpal)
             (local.get $tu) (local.get $tv)
             (local.get $address_u) (local.get $address_v) (local.get $linear)
-            (call $gl_sw_default_border (global.get $gl_sw_r_flags))))))
+            (global.get $gl_sw_r_border)))))
       (local.set $draw (i32.const 1))
       ;; D3DRENDERSTATE_COLORKEYENABLE discards a matching texture sample.
       ;; It must happen before depth testing/writes: transparent HUD texels

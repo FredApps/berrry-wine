@@ -131,3 +131,27 @@ Still incomplete: programmable per-texture border RGBA and queries/validation,
 vector API payload/replay, WebGL sampling, and queued-border pixel isolation.
 The existing Worker transport test is not a queued-border pixel test. Original
 Alice still hits its unimplemented vector setter; no new game screenshot claimed.
+
+## Per-texture color and queued replay (2026-10-09 08:00Z)
+
+Internal software state now keeps clamped float RGBA per texture in a lazily
+allocated 65536-byte table; deletion clears the color. Sampling quantizes only
+when resolving the draw and applies RGB's opaque alpha. Both units capture
+their packed colors at snapshot offsets1032/1036; snapshot length is now1040,
+with the existing descriptor still at1040 within the1056-byte allocation.
+This preserves floating-point values for future queries and avoids shared
+mutable color reads during queued rendering. Allocation failure returns failure
+to the caller; the future guest setter must turn that into GL_OUT_OF_MEMORY.
+
+Canonical build/five suites pass, controller74266 terminal0 at08:00:02Z.
+Extended multitexture regression passes08:00:34Z: float clamping, independent
+objects, green border pixels, delete reset, and two queued quads retaining red
+and blue borders after a later green setter. It copies real submitted records
+then replays through gl_sw_worker_draw deliberately later, in one instance;
+this proves snapshot isolation, not concurrent scheduling. Run
+`20261009T0800Z-alice-border-state` contains tests/sources/logs and hashes.
+Module47ab13a8479754405556464cd97d606e17a08b57f25b1b5d8ecb89415a3ba095.
+
+Guest glTexParameterfv is still fail-fast. Next connect validated pointer-copy
+submission, matching JS state/query handling and correct WebGL filtering, then
+enable the API and rerun original Alice. Do not treat the helper as API support.

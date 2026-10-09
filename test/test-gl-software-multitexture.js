@@ -25,7 +25,20 @@ const GL_TEXTURE_2D = 0x0DE1, TEXTURE0 = 0x84C0, TEXTURE1 = 0x84C1;
 const PINK = 0xFFFF8080, DARK_BLUE = 0xFF000080, BLUE = 0xFF0000FF;
 
 async function main() {
-  const { exports: e, memory } = await bootRenderHarness();
+  let captureDraws = false;
+  const queued = [];
+  const { exports: e, memory } = await bootRenderHarness({extraWat: `
+    (export "border_set_test" (func $gl_sw_border_set))
+    (export "border_ptr_test" (func $gl_sw_border_ptr))
+    (export "tex_slot_test" (func $gl_sw_tex_slot))
+    (func (export "queue_enable_test") (global.set $gl_sw_worker_ok (i32.const 0)))
+  `, extraHostOverrides: {gpu_gl_call(op, descriptor) {
+    if (op !== 0x20005 || !captureDraws) return 0;
+    const d = new Uint32Array(memory.buffer, descriptor, 4);
+    queued.push({state: new Uint8Array(memory.buffer.slice(d[0], d[0] + d[1])),
+      record: new Uint8Array(memory.buffer.slice(d[2], d[2] + d[3]))});
+    return 1;
+  }}});
   const guestBase = e.get_guest_base() >>> 0, imageBase = e.get_image_base() >>> 0;
   const toWasm = guest => guestBase + (guest >>> 0) - imageBase;
   const verts = toWasm(e.guest_alloc(VERT_BYTES * 3));
@@ -177,6 +190,63 @@ async function main() {
   glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x812F);
   glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
   expect(0xFFFFFFFF, 0xFFFFFFFF, 'unit 1 CLAMP_TO_EDGE restores full white');
+
+  const borderValues = toWasm(e.guest_alloc(16));
+  const setBorder = (name, values) => {
+    new Float32Array(memory.buffer, borderValues, 4).set(values);
+    assert.strictEqual(e.border_set_test(e.tex_slot_test(name), borderValues), 1);
+  };
+  setBorder(5, [-1, 0.25, 2, 0.5]);
+  assert.deepStrictEqual(Array.from(new Float32Array(memory.buffer,
+    e.border_ptr_test(e.tex_slot_test(5)), 4)), [0, 0.25, 1, 0.5],
+  'border queries retain clamped floats without 8-bit quantization');
+  setBorder(5, [0, 1, 0, 0]);
+  setBorder(3, [1, 0, 0, 1]); // independent unit 0 object must not leak into unit 1
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x2900);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x2900);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  unit1Coords = [0, 0.5];
+  expect(0x7F7FFF7F, 0x7F7FFF7F, 'per-texture green border blends with white RGBA');
+  // Delete/reuse must restore the default color, even when storage was allocated.
+  const deleted = e.guest_alloc(4) >>> 0;
+  new Uint32Array(memory.buffer, toWasm(deleted), 1)[0] = 5;
+  glCall(CALL_INDEX.glDeleteTextures, 1, deleted);
+  assert.deepStrictEqual(Array.from(new Float32Array(memory.buffer,
+    e.border_ptr_test(e.tex_slot_test(5)), 4)), [0, 0, 0, 0]);
+
+  // Queue real packed draws, change the same texture's border, then replay
+  // through the native Worker entry point. No concurrent Worker is required
+  // to reproduce the stale-state bug: the delay is deliberate and deterministic.
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glBindTexture, GL_TEXTURE_2D, 5);
+  glCall(CALL_INDEX.glTexImage2D, GL_TEXTURE_2D, 0, 0x1908, 2, 1, 0, 0x1908, 0x1401, rgba);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2601);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 0x2601);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x2900);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x2900);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  e.queue_enable_test();
+  captureDraws = true;
+  setBorder(5, [1, 0, 0, 0]);
+  quad();
+  setBorder(5, [0, 0, 1, 0]);
+  quad();
+  setBorder(5, [0, 1, 0, 1]); // a third value must not affect either queued draw
+  captureDraws = false;
+  assert.strictEqual(queued.length, 4, 'two triangles per queued quad');
+  const replayState = toWasm(e.guest_alloc(queued[0].state.length));
+  const replayRecord = toWasm(e.guest_alloc(queued[0].record.length));
+  for (let i = 0; i < queued.length; i++) {
+    new Uint8Array(memory.buffer, replayState, queued[i].state.length).set(queued[i].state);
+    new Uint8Array(memory.buffer, replayRecord, queued[i].record.length).set(queued[i].record);
+    assert.strictEqual(e.gl_sw_worker_draw(replayState, replayRecord), 1);
+    if (i % 2 === 1) {
+      const expected = i === 1 ? 0x7FFF7F7F : 0x7F7F7FFF;
+      assert.strictEqual(pixel(LEFT), expected, 'queued border color survives subsequent setters');
+      assert.strictEqual(pixel(RIGHT), expected, 'both triangles use their captured border');
+    }
+  }
 
   console.log('PASS software GL texture unit 1: MODULATE, REPLACE, push/pop, independent of unit 0, alpha test after unit 1');
 }

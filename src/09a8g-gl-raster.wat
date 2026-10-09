@@ -364,6 +364,50 @@
     (if (i32.ge_u (local.get $name) (i32.const 4096)) (then (return (i32.const 0))))
     (i32.add (global.get $GL_SW_TEXTURES) (i32.mul (local.get $name) (i32.const 8))))
 
+  ;; Keep the queried floating-point color, not its raster quantization.
+  ;; Allocate only when an application sets a border. Defaults need no heap.
+  (global $gl_sw_border_colors (mut i32) (i32.const 0))
+  (func $gl_sw_border_ptr (param $slot i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $slot)) (i32.eqz (global.get $gl_sw_border_colors)))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $gl_sw_border_colors)
+      (i32.shl (i32.sub (local.get $slot) (global.get $GL_SW_TEXTURES)) (i32.const 1))))
+
+  ;; Returns failure to the caller on allocation failure; never pretend the
+  ;; requested color was installed. $values is a validated Wasm RGBA pointer.
+  (func $gl_sw_border_set (param $slot i32) (param $values i32) (result i32)
+    (local $p i32) (local $g i32) (local $i i32) (local $v f32)
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $gl_sw_border_colors)) (then
+      (local.set $g (call $gl_alloc_affine (i32.const 65536)))
+      (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+      (global.set $gl_sw_border_colors (call $g2w (local.get $g)))
+      (memory.fill (global.get $gl_sw_border_colors) (i32.const 0) (i32.const 65536))))
+    (local.set $p (call $gl_sw_border_ptr (local.get $slot)))
+    (loop $components
+      (local.set $v (f32.load (i32.add (local.get $values) (local.get $i))))
+      (if (f32.ne (local.get $v) (local.get $v)) (then (local.set $v (f32.const 0))))
+      (f32.store (i32.add (local.get $p) (local.get $i))
+        (f32.max (f32.const 0) (f32.min (f32.const 1) (local.get $v))))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br_if $components (i32.lt_u (local.get $i) (i32.const 16))))
+    (i32.const 1))
+
+  (func $gl_sw_border_color (param $slot i32) (param $flags i32) (result i32)
+    (local $p i32) (local $color i32)
+    (local.set $p (call $gl_sw_border_ptr (local.get $slot)))
+    (if (local.get $p) (then
+      (local.set $color (call $gl_sw_color (i32.sub (local.get $p) (i32.const 12))))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 16)) (i32.const 0))
+      (then (local.set $color (i32.or (local.get $color) (i32.const 0xFF000000)))))
+    (local.get $color))
+
+  (func $gl_sw_draw_border (param $slot i32) (param $unit i32) (param $flags i32) (result i32)
+    (if (global.get $gl_sw_in_worker)
+      (then (return (select (global.get $gl_sw_wk_border1) (global.get $gl_sw_wk_border0)
+        (local.get $unit)))))
+    (call $gl_sw_border_color (local.get $slot) (local.get $flags)))
+
   ;; Resolve one filter tap without ever forming an out-of-image address.
   ;; Wrap enums are GL enums, not D3D address modes. The caller supplies the
   ;; texture's format-adjusted border color as immutable draw state.
@@ -757,6 +801,8 @@
         (then
           (call $gl_sw_tex_release (local.get $slot))
           (call $gl_sw_mips_release (local.get $slot))
+          (if (call $gl_sw_border_ptr (local.get $slot))
+            (then (memory.fill (call $gl_sw_border_ptr (local.get $slot)) (i32.const 0) (i32.const 16))))
           (i32.store offset=4 (local.get $slot) (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
@@ -2075,6 +2121,7 @@
   (global $gl_sw_r_rt (mut i32) (i32.const 0))
   (global $gl_sw_r_tex (mut i32) (i32.const 0))
   (global $gl_sw_r_flags (mut i32) (i32.const 0))
+  (global $gl_sw_r_border (mut i32) (i32.const 0))
   (global $gl_sw_r_alpha (mut i32) (i32.const 0))
   (global $gl_sw_r_zbuf (mut i32) (i32.const 0))
   (global $gl_sw_r_dx (mut i32) (i32.const 0))
@@ -2125,6 +2172,7 @@
     (global.set $gl_sw_r_rt (local.get $rt))
     (global.set $gl_sw_r_tex (local.get $tex))
     (global.set $gl_sw_r_flags (local.get $flags))
+    (global.set $gl_sw_r_border (call $gl_sw_draw_border (local.get $slot) (i32.const 0) (local.get $flags)))
     (global.set $gl_sw_r_zbuf (local.get $zbuf))
     (i32.const 1))
 
@@ -2145,12 +2193,6 @@
       (then (return (i32.const 0x2900))))
     (select (i32.const 3) (i32.const 1)
       (i32.ne (i32.and (local.get $flags) (local.get $bit)) (i32.const 0))))
-
-  ;; Default border alpha follows the texture's internal format. The flags
-  ;; come from the immutable queued draw snapshot when rasterizing in a Worker.
-  (func $gl_sw_default_border (param $flags i32) (result i32)
-    (select (i32.const 0xFF000000) (i32.const 0)
-      (i32.ne (i32.and (local.get $flags) (i32.const 16)) (i32.const 0))))
 
   (func $gl_sw_r_address (param $bit i32) (result i32)
     (call $gl_sw_flags_address (global.get $gl_sw_r_flags) (local.get $bit)))
@@ -2211,7 +2253,7 @@
     (local.set $flags (call $gl_sw_draw_flags (local.get $slot) (i32.const 1)))
     (global.set $rast_t1_addr_u (call $gl_sw_flags_address (local.get $flags) (i32.const 2)))
     (global.set $rast_t1_addr_v (call $gl_sw_flags_address (local.get $flags) (i32.const 4)))
-    (global.set $rast_t1_border (call $gl_sw_default_border (local.get $flags)))
+    (global.set $rast_t1_border (call $gl_sw_draw_border (local.get $slot) (i32.const 1) (local.get $flags)))
     (global.set $rast_t1_linear (i32.and (local.get $flags) (i32.const 1)))
     (global.set $rast_t1_op (select (i32.const 2) (i32.const 4)
       (i32.ne (i32.and (local.get $caps) (i32.const 0x100000)) (i32.const 0))))
@@ -2724,7 +2766,7 @@
   ;; With a D3D render Worker attached (--d3d-worker, and Threads mode in the
   ;; browser) a draw is queued there instead of rasterized here, exactly as
   ;; D3DIM's are: the guest runs on while the Worker draws. The record is a
-  ;; 1032-byte snapshot of everything $gl_sw_draw reads that the guest may
+  ;; 1040-byte snapshot of everything $gl_sw_draw reads that the guest may
   ;; change before the Worker gets to it, then the packed draw record itself:
   ;;   +0    state block (+0..+63 of $gl_sw_st)
   ;;   +64   top of each matrix stack, 0..3, 64 bytes each
@@ -2735,6 +2777,7 @@
   ;;         scissor view, depth view, unit 1's bound name
   ;;   +1024 the sampling flags of unit 0's and unit 1's bound textures, so
   ;;         glTexParameter between draws needs no fence
+  ;;   +1032 resolved border colors for both units, independent of later setters
   ;; What it does not copy is shared and fenced before the guest changes it:
   ;; surfaces (clear, swap, resize), texture slots and mips (every upload,
   ;; parameter and delete). A DIB target is never queued: GDI reads those bits
@@ -2751,6 +2794,8 @@
   (global $gl_sw_wk_block (mut i32) (i32.const 0))
   (global $gl_sw_wk_flags0 (mut i32) (i32.const 0))
   (global $gl_sw_wk_flags1 (mut i32) (i32.const 0))
+  (global $gl_sw_wk_border0 (mut i32) (i32.const 0))
+  (global $gl_sw_wk_border1 (mut i32) (i32.const 0))
 
   ;; The sampling flags a draw uses for texture unit $unit's slot: the live
   ;; slot's on the guest thread, the queued draw's own copy in the Worker.
@@ -2878,13 +2923,17 @@
     (local.set $g (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (i32.store offset=1024 (local.get $snap)
       (if (result i32) (local.get $g) (then (call $gl_sw_tex_flags (local.get $g))) (else (i32.const 0))))
+    (i32.store offset=1032 (local.get $snap)
+      (call $gl_sw_border_color (local.get $g) (i32.load offset=1024 (local.get $snap))))
     (local.set $g (call $gl_sw_tex_slot (global.get $gl_sw_other_bound)))
     (i32.store offset=1028 (local.get $snap)
       (if (result i32) (local.get $g) (then (call $gl_sw_tex_flags (local.get $g))) (else (i32.const 0))))
+    (i32.store offset=1036 (local.get $snap)
+      (call $gl_sw_border_color (local.get $g) (i32.load offset=1028 (local.get $snap))))
     ;; 0x20005's descriptor: snapshot, its length, packed record, its length.
     (local.set $d (i32.add (local.get $snap) (i32.const 1040)))
     (i32.store offset=0 (local.get $d) (local.get $snap))
-    (i32.store offset=4 (local.get $d) (i32.const 1032))
+    (i32.store offset=4 (local.get $d) (i32.const 1040))
     (i32.store offset=8 (local.get $d) (local.get $start))
     (i32.store offset=12 (local.get $d)
       (i32.add (i32.mul (local.get $vertices) (i32.const 56)) (i32.const 32)))
@@ -2957,6 +3006,8 @@
     (global.set $gl_sw_other_bound (i32.load offset=1020 (local.get $snap)))
     (global.set $gl_sw_wk_flags0 (i32.load offset=1024 (local.get $snap)))
     (global.set $gl_sw_wk_flags1 (i32.load offset=1028 (local.get $snap)))
+    (global.set $gl_sw_wk_border0 (i32.load offset=1032 (local.get $snap)))
+    (global.set $gl_sw_wk_border1 (i32.load offset=1036 (local.get $snap)))
     (local.set $mode (i32.load offset=8 (local.get $rec)))
     (local.set $step (select (i32.const 1)
       (select (i32.const 2) (i32.const 3) (i32.eq (local.get $mode) (i32.const 1)))

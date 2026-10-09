@@ -1472,9 +1472,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; default-border routing validated; no runtime live
+  worker: root direct; internal RGBA and queued replay validated; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Production software GL_CLAMP default-border routing passes canonical build/five suites and extra unit1 edge/corner RGBA-alpha/reset pixels, run20261009T0749Z-alice-border-routing, module5b2cfa1d. Controller69442 terminal0 at07:49:46Z; unit1 follow-up terminal0 at07:55:13Z. Next programmable per-texture RGBA/query validation and queued-border isolation, then vector API copy/replay and WebGL sampling; original Alice startup/gameplay still unverified. Connection502 recovered without duplicate runtime.
+  Next: Internal per-texture float RGBA, deletion reset, both-unit1040-byte snapshots and delayed native queued-color replay validated. Build/five suites plus extended pixel test pass, run20261009T0800Z-alice-border-state, module47ab13a8;74266 terminal08:00:02Z, queued test08:00:34Z. Next validated vector pointer-copy/API dispatch, JS query/state and WebGL border filtering, then original Alice launch/gameplay. glTexParameterfv remains fail-fast until real behavior is complete.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 
