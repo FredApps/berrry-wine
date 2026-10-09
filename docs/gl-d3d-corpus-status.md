@@ -1,4 +1,4 @@
-# OpenGL / Direct3D corpus status, 2026-10-06
+# OpenGL / Direct3D corpus status, reconciled 2026-10-09
 
 The user's goal: every OpenGL and Direct3D app in the registry works on both the
 **software** and the **WebGL** backend. This is the one shared status table for
@@ -11,6 +11,11 @@ measurements below; it is not a new full-corpus run. Tomb Raider III and
 Half-Life Uplink have later retained browser evidence that supersedes their
 earlier failures. Menu, loading, excluded and unmeasured rows still do not
 prove the user's full software-and-WebGL gameplay goal.
+
+Selective October 9 reconciliation adds retained Morrowind movement and Pirates
+sailing evidence, current Age of Wonders II movement, and the Black & White 2
+startup repair. This is not a new full-corpus or both-backend run. Missing
+Pirates logs are listed below; the log provenance gaps are not passes.
 
 ## How the set was measured
 
@@ -74,8 +79,10 @@ screenshot cited was looked at.
 | alien_shooter | D3D8 | **Mission 01 gameplay, movement and firing** (2026-10-06; `scratch/runs/20261006T0612Z-alien_shooter-w4-gameplay2`) | **Mission 01 gameplay, ordinary movement and aiming** (2026-10-08; `scratch/runs/20261008T0114Z-alien-shooter-webgl`, accepted reference `f62ab3c9` / module `4dc5ac2c`) | Root reviewed player movement and opposing aim poses; live host and owning WebGL proved,109 artifact hashes verified. No engine patch. FPS/audio/combat completion/current-main build unqualified. [Handoff](../ops/handoffs/alien-shooter-webgl-20261008.md). |
 | crimsonland | D3D8 | **Tutorial gameplay and movement** (2026-10-06; `scratch/runs/20261006T0500Z-crimsonland-w4-survival`) | **Tutorial gameplay, movement and aiming** (2026-10-08; owning WebGL, reference `f62ab3c9` / module `4dc5ac2c`; `scratch/runs/20261008T0105Z-crimsonland-relative-input`) | Ordinary trusted relative mouse motion establishes real menu hover before clicking; arrow keys move player/terrain and relative input moves aim. Harness correction only. FPS/audio/combat/Tutorial completion and current-main build remain unqualified. |
 | pawn | D3D9 | **gameplay** (board) | board (2026-10-06, browser); gameplay (2026-09-23) | — |
-| pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` (was blocked: "Unable to initialize DirectX.") | not measured: bigMemory and its 1.3 GB tree cannot be shipped to a boat browser; the local box cannot hold it | caps lacked blend stages; a failed CoCreateInstance re-ran its thunk; CLI ignored `bigMemory` (`scratch/runs/20261006T033534Z-pirates_2004-dxinit`) |
-| black_white_2_demo, morrowind | D3D9 / D3D8 | not run (heavy) | morrowind world renders (2026-09) | excluded from CLI sweeps |
+| pirates_2004 | D3D9 | **menu** after `ba161dfb` + `12408feb` + `d7f5a429` | **retained sailing captures** (October 2; record reports Worker/WebGL, source commit unknown, six logs missing) | Ship displacement/date progression visible; white terrain remains. Module hash recorded as `7c5f97f5...`; source commit unknown. [Run](../scratch/runs/20261001-pirates-worker-sailing-after/result.json). No fresh backend qualification; recover provenance or revalidate. Local1371 manifest paths present (1,294,935,424bytes); lack of room for a duplicate local archive is not itself a remote-transfer blocker. |
+| black_white_2_demo | D3D9 | **animated intro** (October9, current Worker boot fix `efcef0022`); ordinary route still running | not freshly measured | Worker loader formerly truncated20.7MB EXE at8MiB, leaving IAT zero. Shared PE tail mapping fixes startup. [Live run](../scratch/runs/20261009T0335Z-black-white2-staging-fix/result.json); no ordinary gameplay/FPS claim. Historical diagnostic intro-skip gameplay remains separate. |
+| morrowind | D3D8 | no reviewed software gameplay in this reconciliation | **prison-ship gameplay, forward/reverse movement** (October5; Worker/WebGL) | [Reviewed run](../scratch/runs/20261005-morrowind-prison-movement/result.json), source `94d18605`, module `2e2fd8d1`; four review-image hashes and retained module rechecked October9. Partial typing loss and inset viewport remain. Not current-main, full character creation, audio or FPS qualification. |
+| age_of_wonders2_demo | D3DIM | **gameplay and army movement** (October9, `ff0c1f07b`) | not measured by this run | [Reviewed run](../scratch/runs/20261009T0306Z-age-of-wonders2-gameplay/result.json). FVF RESERVED1 stride repair prevents Miles callback overwrite; movement20→13 verified. Terrain overlaps UI/black polygons remain; FPS/audio unqualified. |
 | winamp | D3D8 (MilkDrop) | not run (CLI) | ordinary playback/Start opens MilkDrop then illegal-operation error (2026-10-07, browser) | original1.04e passes music gate but no visualization; fault/API cause unknown, native DLL probe refusals retained ([run findings](../ops/handoffs/winamp-milkdrop-ordinary-20261007.md)) |
 
 Glide is not in this goal's scope, but the sweep saw it: nfs3_glide_demo
@@ -113,13 +120,17 @@ match through a setup.exe/dxdiagn.dll that only lists DirectX files.
    Quake II's fresh ordinary software run on the accepted reference build
    reaches the world by 49.617 s after Easy, superseding its earlier cap result.
 4. **Remaining WebGL coverage**: the October 6 spot checks and later TR3/Uplink
-   follow-ups are retained above. Pirates is unmeasured, heavy titles remain
-   excluded, and several rows only prove menus or rendering. Do not reopen
+   follow-ups are retained above. Pirates has retained sailing pictures with incomplete provenance; Morrowind
+   has reviewed WebGL movement, and BW2 currently reaches its ordinary intro.
+   Their software/WebGL pairs remain incomplete, and several other rows only
+   prove menus or rendering. Do not reopen
    completed spot checks or mark the overall gameplay goal complete.
-5. **D3DIM PBO warning**: `D3DIM-ASYNC-PBO-WARN-20261006` remains ready. The
-   MW3 warning needs a live readPixels/fence/readback trace before any buffer
-   reuse repair; it is not proof of visible corruption. Performance comparisons
-   belong on a separate boat.
+5. **D3DIM PBO warning**: emulator lifecycle audit and standalone Chrome151
+   reproduction are complete. The standalone4x4 case reproduces the warning
+   with correct pixels; the emulator trace has216 writes/215 reads and no
+   overwrite violation (one capture-end pending read). Do not queue a speculative
+   renderer repair or repeat the old causal trace. Browser-side warning remains;
+   performance impact unmeasured. [Receipt](../ops/handoffs/pbo-chrome151-reproduction-20261007.json).
 
 Outside the 3D set but found here: the DirectDrawFactory IID typo (fixed
 `fa4be36a`; the theme savers then run the existing DirectAnimation shim, frames
@@ -203,3 +214,25 @@ from the road to the fence and the later image shows firing. The run records
 identify source commits `95e04dd8` and `d699e4df`, respectively; both omit
 WASM hashes. These are retained historical software results, not fresh tests
 of current main. Neither establishes WebGL gameplay, FPS or audio.
+
+### October 9 retained-evidence limits
+
+Pirates sailing images were inspected again: the ship leaves Port Royale and
+the calendar advances from January11 to February3. The result record reports
+WebGL but the following referenced files are absent from
+`scratch/runs/20261001-pirates-worker-sailing-after/`:
+
+- `worker-stretch-isolated.log`
+- `stretch-tests-4.log`
+- `stretch-baseline.log`
+- `stretch-caps.log`
+- `stretch-build-2.log`
+- `color-targets-web.log`
+
+The screenshots alone cannot restore the missing source/backend execution
+record. These are retained pictures, not newly verified current-main gameplay.
+Morrowind has stronger retained evidence: review.json records W/S1200ms and
+idle1500ms, four screenshot hashes match, and the retained wasm matches
+`2e2fd8d1ca62cd87f0bc09312bc4836108df610d00cb7771bb5ae22755eceedc`.
+DiabloII lazy-default evidence ends at ActI loading; do not promote it to
+gameplay merely because its regression result says passed.
