@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. No worker is live. Dungeon Siege fresh original startup passed the resource API chain and now needs VerLanguageNameA, while historical bx_hgju4y2b evidence recovery still needs owner access. Age of Wonders II source-level diagnosis remains queued. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
+  Next: One-worker budget supersedes simultaneous workers. Arcanum gameplay on both backends is reviewed, with software FPS queued; Comanche flight and registered launch are complete. No worker is live. Dungeon Siege has passed resource and language API blockers; next is generic lazy RTF file-open handling, while historical bx_hgju4y2b evidence recovery still needs owner access. Age of Wonders II source-level diagnosis remains queued. Both preserve SHA-pinned original installers and neither has gameplay qualification. Install, launch, ordinary input and reviewed gameplay remain required. Tiberian/Antara/Arx/Winamp rejected diagnostics stay held without retry.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1400,7 +1400,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: none; fresh browser58940 exited0 at2026-10-09T00:02:50.542Z
   candidate: test/binaries/win98-games-a-d/DungeonSiege-demo-D3D.exe
-  Next: Implement real VerLanguageNameA, next original import at617fcc/IAT6f521c after resource enumeration fix. Fresh startup evidence sealed scratch/runs/20261009T0003Z-dungeon-siege-verlanguage; no window/gameplay. Old snapshot recovery remains separate.
+  Next: Fix generic CreateFile RTF stylesheet expansion reading async-only entry.data. Fresh original run on main bab6e2494 passed language lookup and trapped at c35ac0 opening EULA.RTF (6532bytes). Evidence scratch/runs/20261009T0110Z-dungeon-siege-lazy-rtf; browser63225 exited0 and boat stopped. No window/gameplay yet. Avoid broad preload or silent RTF-formatting bypass.
   Evidence: Local original installer 192188416 bytes, SHA256 a501306cad88c0fc41f986d92109343d68ac79fc11aaa6611724d84be628f3f8. No matching current app registry, task, run-directory or re-note qualification found in scoped October8 inventory. Installer identity is not compatibility evidence.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 

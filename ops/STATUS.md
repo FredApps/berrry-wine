@@ -1,8 +1,8 @@
-updated: 2026-10-09T00:56:43.767Z
+updated: 2026-10-09T01:14:21.535Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-SimCity2000 real 256-color fix implemented and verified: startup warning absent, ordinary demo-city load and recentering, advancing simulation and water palette animation. Build and indexed/palette/window regressions pass. Before/after evidence: scratch/runs/20261009T0010Z-simcity-truecolor-before and scratch/runs/20261009T0048Z-simcity-indexed-desktop. Temporary browser exited cleanly and bx_jhtwtuhf is stopped. No FPS/audio qualification.
+SimCity256-color fix main a91d906cd; reviewed city/water-animation screenshot sent Telegram942.
 
-One-worker budget remains; no worker session is live. Dungeon Siege passed resource enumeration on main77cca122f; next is real VerLanguageNameA implementation (original startup trap617fcc). Evidence: scratch/runs/20261009T0003Z-dungeon-siege-verlanguage. No game window/gameplay yet. Age of Wonders II is the second queued title. Historical snapshot recovery requires owner access separately.
+Dungeon Siege passes the resource and language API blockers (main bab6e2494). Latest original startup traps before first window in CreateFile's synchronous RTF stylesheet expansion: lazy EULA.RTF,6532bytes, EIP c35ac0. Evidence scratch/runs/20261009T0110Z-dungeon-siege-lazy-rtf;39 hashed artifacts. Generic lazy RTF consumer fix is the next root task; do not mark gameplay qualified. API native proof: scratch/runs/20261009T0105Z-version-language. Browser63225 exited0; bx_jnfsbbvz stopped01:13:28Z.
 
-Arcanum and Comanche3 reviewed gameplay remains available. Full GL/D3D and FPS/audio coverage remain unfinished. HeroesII is laptop-owned; rejected diagnostic lanes remain held. No public deployment.
+One-worker budget: no live workers/browser; Age of Wonders II is second queued title. Arcanum/Comanche gameplay remains reviewed. Full GL/D3D/FPS/audio goals unfinished. HeroesII laptop-owned; rejected diagnostics held. No public deployment.

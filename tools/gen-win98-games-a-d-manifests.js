@@ -13,6 +13,14 @@ const ONLY = ONLY_ARG === undefined ? undefined : ONLY_ARG.slice(7);
 if (ONLY === '') throw new Error('--only requires a nonempty game id');
 const GAMES = [
   {
+    id: 'dungeon_siege_demo',
+    root: 'DungeonSiege demo-D3D/extracted',
+    exe: 'DungeonSiegeDemo.exe',
+    exclude: ['.original-package.json', 'BinkW32.dll', 'Mss32.dll'],
+    defaultLoadMode: 'lazy',
+    requiredExtensions: ['.gas'],
+  },
+  {
     // Original self-extracting ZIP payload; no installed-state fabrication.
     id: 'age_of_wonders2_demo',
     root: 'Age of Wonders2 demo-SW/extracted',
