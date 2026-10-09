@@ -202,3 +202,18 @@ Original game305152/305162 terminal06:10:28Z clears MEM_BAD_POINTER atbatch30
 and shows the main DisciplesII window; reviewed capture is blank, not gameplay.
 Run20261009T0610Z-disciples2-prefix-candidate. Bounded further initialization
 probe305323 started06:10:54Z, no input or approval acceptance.
+
+Further initialization305323/305333 terminal06:11:56Z reaches the rendered
+main menu atbatch3000 (61.854s, no input). Personally reviewed and sent as
+Telegram photo962. Run20261009T0611Z-disciples2-initialization. This is menu
+progress, not gameplay/FPS/audio verification. Follow-up306325 started06:12:43Z
+replays the known startup then clicks Single Player at reviewed coordinate500,30;
+180s guard and fresh output directory, no agreement acceptance.
+
+Single Player306325/306335 terminal06:13:36Z opens the saga/quest menu via
+ordinary500,30 click; run20261009T0613Z-disciples2-single-player reviewed.
+New Saga306953/306963 terminal06:15:02Z shows the original demo restriction
+"This feature is not available in this version." Run20261009T0615Z-disciples2-new-saga
+reviewed and recovered after transient502 during boat snapshot, no rerun.
+Next dismiss this normal dialog and choose New Quest (menu500,124).
+No gameplay, FPS or audio qualification. All probes terminal; boat expiry06:16:08Z.

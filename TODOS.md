@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; prefix-overlap candidate clears SmartHeap error, bounded initialization running
+  worker: root direct; heap fix on main, main-menu input verified, New Quest next
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Prefix-overlap control reproduces heap header replacement; candidate canonical build/five mapping suites pass and original game gets beyond MEM_BAD_POINTER into blank main window. Probe305323 on bx_75agndxm started06:10:54Z,180s guard, no input; collect actual initialization result before next runtime. Evidence runs20261009T0610Z-virtual-prefix-validation and20261009T0610Z-disciples2-prefix-candidate. Separate decommit baseline failure retained; no gameplay qualification.
+  Next: Prefix-overlap fix96d3ed8d3 on main clears SmartHeap error; original demo reaches reviewed main menu and ordinary Single Player submenu. New Saga displays original demo restriction (unavailable in this version), not emulator crash. Next dismiss that dialog and use New Quest on a fresh temporary runtime. Runs20261009T0611Z-disciples2-initialization,20261009T0613Z-disciples2-single-player,20261009T0615Z-disciples2-new-saga retained; photo962 sent. All game probes terminal; no gameplay/FPS/audio qualification.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
