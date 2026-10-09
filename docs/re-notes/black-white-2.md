@@ -8443,3 +8443,15 @@ Evidence remains `scratch/runs/20261009T0335Z-black-white2-staging-fix`:
 receipts under `evidence/browser-candidate/`, with exact host-input scripts.
 The browser remains under its original 05:05:50Z deadline. Next: ordinary
 land selection and gameplay; preserve the garbled-font and input limitations.
+
+Read-only samples at 04:17–04:19Z identify the original static input manager
+at guest `0x1d733e8` through the owning Worker's `guest_to_wasm` export.
+Cursor fields remain `(-1,238)`. Ten trusted pointer-lock movement events of
+`(2,2)` increment the mapped `DI_MOUSE_INPUT_STATE` pending deltas from
+`(130,139)` to `(150,159)`, while 25 presentations occur. Thus browser input
+delivery is working, but this motion was not consumed during that sample.
+No further input is queued. Earlier notes describe a 36-minute land load with
+no input polls; this is a possible explanation, not a proven classification of
+the current run. Interval-4 at 04:20:55Z still shows the land preview.
+Evidence: `land-progress-sample`, `land-aim-step`, `land-motion-delivery`, and
+`interval-4` under the same run's `evidence/browser-candidate/` directory.

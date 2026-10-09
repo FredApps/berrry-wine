@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none; queued behind Black and White2 under one-worker budget
+  worker: root direct; handoff controller234050 waits for BW2 browser and Chrome terminal, then runs bounded installer probe
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Wise original transferred to bx_75agndxm /tmp/disciples2-original.exe,143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 verified03:46:00Z. 7-Zip listing unsupported. Inspect/install on temporary box after sole BW2 browser releases; installed payload/manifest not yet created. Receipt scratch/disciples2-preflight-20261009/transfer.json.
+  Next: Wise original transferred to bx_75agndxm /tmp/disciples2-original.exe,143913296bytes SHAe37753c2319380a933fb105b28639d5cacb2ed429731f5ae53706f047c8d03b0 verified03:46:00Z. 7-Zip listing unsupported. Controller234050 owns the queued start after browser189048/Chrome terminal; do not launch a duplicate probe. Queue state /home/user/disciples2-queue-20261009/state.json on bx_75agndxm, deadline05:12Z. Installed payload/manifest not yet created. Receipt scratch/disciples2-preflight-20261009/transfer.json.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 

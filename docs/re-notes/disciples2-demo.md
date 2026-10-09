@@ -28,3 +28,21 @@ Prepared next step: `/tmp/disciples2-probe-installer.js` (SHA256
 It refuses to run while BW2 browser189048 is alive, has a180second hard guard,
 and captures the first visible installer window without button input. Syntax
 and upload checksum checked; it has not executed the installer.
+
+At 04:21Z the serialized handoff controller PID234050 was started on the
+same temporary box. It waits for browser189048 and its Chrome process to
+exit, requires the browser cleanup receipt, verifies the probe hash, then
+starts that one bounded probe. It does not stop BW2 or click installer controls.
+It expires at 05:12Z; pending handoff can be cancelled by creating
+`/home/user/disciples2-queue-20261009/cancel` on the boat. Do not separately
+launch the installer while this controller owns the queued start.
+State/logs: `/home/user/disciples2-queue-20261009/`; local controller and
+launch receipt: `scratch/disciples2-preflight-20261009/after-bw2.js` and
+`queue-launch.json`. Controller SHA256:
+`2402e54a823b35bfc2e91c28d72636c63abe89fae3936c76d126bc512d90ccc2`.
+
+Static `tools/unimplemented-imports.js` audit against main420da0745 reports
+70 imports and no missing/explicit fail-fast handlers. This excludes dynamic
+imports and the extracted payload, and does not prove handler correctness or
+successful installation. Raw audit and checked probe API contract are retained
+in the same local preflight directory.
