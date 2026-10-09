@@ -172,3 +172,33 @@ and decommits0914A000+6000. The commit crosses the neighboring reservation.
 Next inspect reservation containment and preservation of existing mapped bytes;
 this ordering is a lead, not proof of the corruption source. No input, error
 dismissal, gameplay or FPS qualification.
+
+## Prefix-overlap corruption fixed (2026-10-09 06:10Z)
+
+A focused native control reproduced the header loss even within one valid
+reservation: commit an island at base+10000, write CAD00000 at island+12,
+then commit base+9000 for8000. The old mapping changed backing and read0.
+The commit walker handled starts inside an old map, but not a new prefix
+entering one. It published an overlapping zero-filled backing.
+
+The candidate splits at the earliest existing island before coalescing,
+commits only uncovered portions, and disables coalescing for these pieces
+so failure rolls back newly appended records without touching old mappings.
+The split occurs after cleanup of diagnostic leaked mappings. Tests cover
+header/backing preservation, unsorted islands, and out-of-memory rollback.
+Canonical build plus five suites pass: virtual-map-split-rollback,
+virtual-map-cross-instance, virtual-page-protection, virtual-map-split-commit,
+virtual-reserve-gap. Run20261009T0610Z-virtual-prefix-validation, module
+SHA256 f1fb7fbe157c1ed6a85b926a31678fb7e0b11299fdfa9c363c2ce41a35a6b418.
+
+A separate existing virtual-decommit-zero failure (sizeless decommit alters a
+neighboring allocation) reproduces with unchanged HEAD helpers as well as the
+candidate; both results retained in run20261009T0608Z-virtual-prefix-initial.
+Do not call the whole allocation test set green. Cross-reservation validation
+and hot-path performance remain separate questions; this patch preserves
+existing contents even under currently permissive commit-range semantics.
+
+Original game305152/305162 terminal06:10:28Z clears MEM_BAD_POINTER atbatch30
+and shows the main DisciplesII window; reviewed capture is blank, not gameplay.
+Run20261009T0610Z-disciples2-prefix-candidate. Bounded further initialization
+probe305323 started06:10:54Z, no input or approval acceptance.

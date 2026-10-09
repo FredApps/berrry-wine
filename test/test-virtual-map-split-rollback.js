@@ -73,6 +73,29 @@ async function main() {
   const state = new DataView(memory.buffer);
 
   wasm.test_virtual_reset();
+  const r=wasm.test_reserve(0x20000)>>>0;
+  const header=r+0x10000;
+  assert.strictEqual(wasm.test_commit_at(header,0x3000)>>>0,header);
+  wasm.test_write32(header+12,0xcad00000);
+  const before=wasm.guest_to_wasm(header)>>>0;
+  assert.strictEqual(wasm.test_commit_at(r+0x9000,0x8000)>>>0,r+0x9000);
+  const after=wasm.guest_to_wasm(header)>>>0;
+  assert.strictEqual(after,before,'existing island keeps its backing');
+  assert.strictEqual(wasm.test_read32(header+12)>>>0,0xcad00000,'prefix overlap preserves existing heap header in same reservation');
+
+  // A whole-range recommit spans two islands inserted in reverse order.
+  wasm.test_virtual_reset();
+  const islands = wasm.test_reserve(0x20000) >>> 0;
+  for (const offset of [0x15000, 0x7000]) {
+    assert.strictEqual(wasm.test_commit_at(islands + offset, 0x2000) >>> 0, islands + offset);
+    wasm.test_write32(islands + offset, offset);
+  }
+  assert.strictEqual(wasm.test_commit_at(islands, 0x20000) >>> 0, islands);
+  for (const offset of [0x15000, 0x7000])
+    assert.strictEqual(wasm.test_read32(islands + offset) >>> 0, offset,
+      'unsorted committed islands retain their contents');
+
+  wasm.test_virtual_reset();
   const reservation = wasm.test_reserve(0x20000) >>> 0;
   assert(reservation, 'fixture reservation');
   const oldPage = reservation + 0x8000;

@@ -1076,6 +1076,38 @@
       (then (local.set $backing_ptr (global.get $VIRTUAL_BACKING_BASE))))
     (local.set $high_water (local.get $backing_ptr))
 
+    ;; A new prefix may run into an already committed island. Split at the
+    ;; earliest island before any coalescing: publishing one fresh backing for
+    ;; the whole range would replace that island's live page translations.
+    ;; Prefix allocation cannot coalesce, so a later failure can roll back only
+    ;; records appended by this request and preserve all older mappings.
+    (local.set $candidate (local.get $guest_end))
+    (local.set $i (i32.const 0))
+    (block $prefix_done (loop $prefix_scan
+      (br_if $prefix_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
+        (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $base (i32.load (local.get $rec)))
+      (if (i32.and (i32.gt_u (local.get $base) (local.get $guest))
+            (i32.lt_u (local.get $base) (local.get $candidate)))
+        (then (local.set $candidate (local.get $base))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $prefix_scan)))
+    (if (i32.lt_u (local.get $candidate) (local.get $guest_end))
+      (then
+        (if (i32.eqz (call $virtual_map_commit_locked
+              (local.get $guest) (i32.sub (local.get $candidate) (local.get $guest))
+              (local.get $protect) (i32.const 0)))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (call $virtual_map_commit_locked
+              (local.get $candidate) (i32.sub (local.get $guest_end) (local.get $candidate))
+              (local.get $protect) (i32.const 0)))
+          (then
+            (call $virtual_map_rollback_since_locked
+              (local.get $count) (local.get $guest) (local.get $size))
+            (return (i32.const 0))))
+        (return (local.get $guest))))
+
     (local.set $i (i32.const 0))
     (block $scan_done (loop $scan
       (br_if $scan_done (i32.ge_u (local.get $i) (local.get $count)))

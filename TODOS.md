@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; export-scope fix validated, SmartHeap rejected-pointer diagnosis
+  worker: root direct; prefix-overlap candidate clears SmartHeap error, bounded initialization running
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Loaded-module export-scope control fails; candidate build/five suites pass and removes all six fabricated patches. MEM_BAD_POINTER remains. Trace identifies rejected pointer09150020 with zero header at0915000E after commit09149000+8000 crosses neighboring reservation. Investigate reservation containment and mapping preservation; causal link unproven. Evidence runs20261009T0558Z-getproc-module-validation,20261009T0559Z-disciples2-module-scope-candidate,20261009T0601Z-disciples2-bad-pointer. All probes terminal; no gameplay.
+  Next: Prefix-overlap control reproduces heap header replacement; candidate canonical build/five mapping suites pass and original game gets beyond MEM_BAD_POINTER into blank main window. Probe305323 on bx_75agndxm started06:10:54Z,180s guard, no input; collect actual initialization result before next runtime. Evidence runs20261009T0610Z-virtual-prefix-validation and20261009T0610Z-disciples2-prefix-candidate. Separate decommit baseline failure retained; no gameplay qualification.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
@@ -1477,3 +1477,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   Next: Implement real glTexParameterfv border-color state/sampling across GL backends. Original demo reaches renderer/window then fails batch123 at glTexParameterfv(0xDE1,0x1004,whiteRGBA), return484CF3. Control evidence run20261009T0509Z-alice-gl-texparameter-crash. No MIDI failure observed; five static imports are not blocker. Source currently mapped gl_unimplemented, no success stub permitted; regression then original normal gameplay required.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
+
+
+- [ ] Sizeless virtual decommit corrupts neighboring allocation
+  id: VIRTUAL-DECOMMIT-NEIGHBOR-20261009
+  status: ready
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Next: test-virtual-decommit-zero fails neighboring allocation page0 untouched with unchanged HEAD helpers and prefix candidate. Diagnose reservation boundary for size0 decommit; do not attribute this baseline failure to prefix patch. Native tests only on temporary boat, serialize with game lanes.
+  Evidence: scratch/runs/20261009T0608Z-virtual-prefix-initial/result.json
