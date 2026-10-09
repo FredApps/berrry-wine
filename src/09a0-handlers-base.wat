@@ -364,11 +364,15 @@
               (return)))
           ;; Found matching DLL — resolve export by name
           (local.set $resolved (call $resolve_name_export (local.get $i) (local.get $name_wa)))
-          (if (local.get $resolved)
-            (then
-              (i32.store offset=0 (global.get $reg_base) (local.get $resolved))
-              (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
-              (return)))))
+          ;; An absent export belongs to this module's answer too. Falling
+          ;; through invents global APIs inside unrelated loaded DLLs, so a
+          ;; caller probing optional CRT exports patches functions that the
+          ;; module never exported (SmartHeap probing C4dll-R).
+          (if (i32.eqz (local.get $resolved))
+            (then (global.set $last_error (i32.const 127))))
+          (i32.store offset=0 (global.get $reg_base) (local.get $resolved))
+          (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+          (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan_dll)))
     ;; Not a loaded DLL — create thunk as before (Win32 API). Win32 stubs are

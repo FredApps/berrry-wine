@@ -10,6 +10,15 @@ const extraWat = String.raw`
 
   (func (export "test_last_error") (result i32) (global.get $last_error))
   (func (export "test_clear_last_error") (global.set $last_error (i32.const 0)))
+  (func (export "test_register_loaded_module") (param $base i32)
+    (global.set $dll_count (i32.const 1))
+    (i32.store (global.get $DLL_TABLE) (local.get $base))
+    (i32.store offset=8 (global.get $DLL_TABLE) (i32.const 0x800))
+    (i32.store offset=12 (global.get $DLL_TABLE) (i32.const 2))
+    (i32.store offset=16 (global.get $DLL_TABLE) (i32.const 2229))
+    (i32.store offset=20 (global.get $DLL_TABLE) (i32.const 0x900))
+    (i32.store offset=24 (global.get $DLL_TABLE) (i32.const 0x910))
+    (i32.store offset=28 (global.get $DLL_TABLE) (i32.const 0x920)))
 
   (func (export "test_get_proc_image") (param $module i32) (param $name i32) (param $stack i32) (result i32)
     ;; A secondary instance has not run load_pe: its per-instance export RVA
@@ -120,6 +129,36 @@ const extraWat = String.raw`
   }
   put(0x900, 0x2000);
   assert.strictEqual(lookup(image + 0x10000), image + 0x2000, 'ordinary export still resolves after forwarder fixture');
+
+  // A mapped DLL missing a name must not inherit a same-named global API.
+  // SmartHeap probes C4dll-R for optional CRT exports before patching them.
+  const dll = image + 0x200000;
+  const dllPut = (rva, value) => wat.guest_write32(dll + rva, value);
+  dllPut(0x800 + 24, 1);
+  dllPut(0x900, 0x2000); dllPut(0x904, 0x2010); dllPut(0x910, 0x10000);
+  wat.guest_write16(dll + 0x920, 0);
+  for (let i = 0; i < 13; i++) wat.guest_write8(dll + 0x10000 + i, 'PresentEntry\0'.charCodeAt(i));
+  wat.test_register_loaded_module(dll);
+  const dllLookup = name => {
+    const result = wat.test_get_proc_image(dll, name, stack) >>> 0;
+    assert.strictEqual(wat.get_esp() >>> 0, stack + 12, 'loaded DLL lookup pops both arguments');
+    return result;
+  };
+  assert.strictEqual(dllLookup(dll + 0x10000), dll + 0x2000, 'real named export resolves');
+  assert.strictEqual(dllLookup(2229), dll + 0x2000, 'real ordinal export resolves');
+  for (const name of ['malloc', 'calloc', 'free', 'GetTickCount', 'DefinitelyAbsentExport']) {
+    string(0x10400, name);
+    wat.test_clear_last_error();
+    const count = wat.get_num_thunks();
+    assert.strictEqual(dllLookup(image + 0x10400), 0, `loaded DLL missing ${name} returns NULL`);
+    assert.strictEqual(wat.test_last_error(), 127, 'ERROR_PROC_NOT_FOUND');
+    assert.strictEqual(wat.get_num_thunks(), count, 'missing export does not allocate a fake thunk');
+  }
+  // The same name resolves when it actually belongs to this module.
+  dllPut(0x800 + 24, 2); dllPut(0x914, 0x10100);
+  wat.guest_write16(dll + 0x922, 1);
+  [...Buffer.from('malloc\0')].forEach((v, i) => wat.guest_write8(dll + 0x10100 + i, v));
+  assert.strictEqual(dllLookup(dll + 0x10100), dll + 0x2010, 'authentic malloc export remains callable');
 
   assert.notStrictEqual(wat.test_get_proc_sparse(stack) >>> 0, 0,
     'GetProcAddress(GetTickCount) returns a dynamic thunk');

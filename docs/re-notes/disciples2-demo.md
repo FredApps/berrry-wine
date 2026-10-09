@@ -151,3 +151,24 @@ through to global Win32-name lookup. A matched DLL missing an export must return
 NULL/ERROR_PROC_NOT_FOUND. Fix this next; whether it causes MEM_BAD_POINTER is
 not yet established. Static full export receipt:
 `scratch/process-memory-hooks-20261009/c4dll-exports.txt`.
+
+## Loaded-module export scope and rejected pointer (2026-10-09 06:01Z)
+
+A matched loaded DLL now returns NULL/error127 for absent named exports instead
+of manufacturing a global API thunk. Real named/ordinal exports and static
+Win32 lookups remain covered. Control fails the fabricated malloc assertion;
+canonical build and five suites pass. Evidence
+`scratch/runs/20261009T0558Z-getproc-module-validation`, module SHA256
+`4c605c13e28d8b40fd330b9771ec784f68dd8d8b8ab759b91ca3718224c5a49e`.
+
+Original game297980 terminal05:59:39Z makes zero WriteProcessMemory calls,
+but MEM_BAD_POINTER remains: this export fix does not solve the heap corruption.
+Game evidence run20261009T0559Z-disciples2-module-scope-candidate.
+Read-only EIP trace298834 terminal06:01:16Z identifies rejected pointer09150020;
+SmartHeap masks its base header at0915000E withFFF8 and expectsCAD0, reads0.
+Evidence run20261009T0601Z-disciples2-bad-pointer. Earlier trace reserves separate
+64KiB arenas09140000/09150000, commits09150000+3000, then commits09149000+8000
+and decommits0914A000+6000. The commit crosses the neighboring reservation.
+Next inspect reservation containment and preservation of existing mapped bytes;
+this ordering is a lead, not proof of the corruption source. No input, error
+dismissal, gameplay or FPS qualification.
