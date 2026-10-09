@@ -8347,3 +8347,20 @@ overlapping guest work with it. That makes the flyover gap a pipelining
 question before it is a raster-speed question. During the land build the
 worker is also still rasterizing every picker/loading frame at full cost
 (~6.5 draws/s of wall) while main is CPU-bound.
+
+## Normal-route revalidation on persistent-box migration (2026-10-09)
+
+The September14 drive52 notes above already prove an interactive scene and
+camera input. That historical route used the diagnostic intro finish-frame
+write; do not describe it as either "no gameplay ever" or proof of a complete
+ordinary launch. The current target is registered browser launch through
+normal keyboard/pointer input, with no guest-memory intro skip.
+
+Current fixture preflight has364 manifest companions plus the EXE/DLLs and
+manifest (366 unique archive paths,926680214 bytes). A bounded streaming
+transfer sends only those files to fresh no-env bx_75agndxm, avoiding a bulk
+archive on the nearly-full persistent disk. Files are rechecked against their
+manifest sizes and hashed before build. Source baseline ff0c1f07b,903 pins.
+Preparation is in `scratch/bw2-normal-route-20261009`; no runtime result yet.
+Declared bounds: transfer1800s, build900s, browser5400s, retrieval/cleanup300s;
+boat expires06:16:08.841Z. Long silent land loads are not evidence of a hang.

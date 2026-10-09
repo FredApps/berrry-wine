@@ -1354,7 +1354,8 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
-  status: ready
+  status: active
+  Next: Root transferring366 registered fixture paths directly to bx_75agndxm (926680214bytes uncompressed), no local bulk archive; transfer1800s, build900s, then ordinary-input browser5400s. Sept14 diagnostic intro-poked route already had camera gameplay; this lane verifies normal no-poke launch plus screenshot/FPS. Current scripts/progress scratch/bw2-normal-route-20261009; browser not launched. DisciplesII queued under one-worker budget.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5

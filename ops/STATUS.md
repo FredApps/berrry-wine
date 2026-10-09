@@ -1,6 +1,8 @@
-updated: 2026-10-09T03:13:48.312Z
+updated: 2026-10-09T03:20:17.459Z
 author: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
 
-AoWII reaches verified player-controlled gameplay after generic FVF RESERVED1 correction: original Create/Lock28-byte stride corrupted adjacent Miles stream; now32 bytes with matching color/UV offsets. Control regression fails; canonical build and five native suites pass. Ordinary army movement20->13 reviewed in run20261009T0306Z-age-of-wonders2-gameplay (67 verified hashes). Terrain/UI overlap remains; FPS/audio unqualified, no release claim. Browser41887 exited0; bx_2sdgzsm6 confirmed stopped03:11:23Z.
+AoWII crash fix ff0c1f07b is on main; army movement20->13 verified, screenshot Telegram956. Canonical build/five native suites pass. Rendering overlap, FPS/audio remain open in AOW2-RENDERING-COVERAGE; no release claim. Evidence run20261009T0306Z-age-of-wonders2-gameplay.
 
-Two new-game lanes: Black and White2 queued first (364 companion files verified, requires2GB guest/long load), DisciplesII demo refills AoWII slot (original143.9MB installer present and hashed; extraction/registration next). One-worker budget, no live workers/browser. Root works directly after fresh-worker thread-limit failures. DungeonSiege EULA decision still pending; HeroesII remains laptop-owned.
+Black and White2 normal-route lane is active:366 registered paths (926.7MB uncompressed) streaming to fresh no-env bx_75agndxm, source baseline ff0c1f07b. No browser yet. Transfer1800s/build900s/browser5400s bounds, boat expiry06:16:08Z. Historical diagnostic camera gameplay exists; this run must use ordinary input without intro-memory writes. DisciplesII is the queued second lane; original143.9MB installer present, extraction/registration next.
+
+One-worker budget; root direct, no worker sessions. Disk remains above2GB. DungeonSiege EULA awaits user decision; HeroesII stays laptop-owned.
