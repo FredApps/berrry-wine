@@ -5127,6 +5127,8 @@ class WineAssembly {
           Rpc.endStepEpoch(self.memory);
         };
         const runMain = async () => {
+          if (self.guestWorker.link.threadSendDepth > 0)
+            return { threadSendPending: true, blocks: 0, ms: 0 };
           if(self.guestWorker.link._waveOffer) return {...self._workerLastSlice,blocks:0,ms:0,waveOfferPending:true};
           const wait = self._d3dMainWait;
           if (wait) {
@@ -5182,6 +5184,7 @@ class WineAssembly {
             sliceSync = Object.assign({}, sliceSync || {}, { mmTimer: 1 });
           }
           const slice = await self.guestWorker.slice(steps, sliceSync);
+          if (slice.threadSendPending) return slice;
           if(self._waveMainWaitSaved && !slice.waveCallbackActive) {
             if(self.threadManager) Object.assign(self.threadManager._mainWaitState || (self.threadManager._mainWaitState={}),self._waveMainWaitSaved);
             self._waveMainWaitSaved=null;
@@ -5333,7 +5336,7 @@ class WineAssembly {
         // Both cooperative scheduler paths do the same at their boundaries.
         self._presentAtBoundary(perf);
 
-        if (!r.eip && !r.yield) {
+        if (!r.threadSendPending && !r.eip && !r.yield) {
           self.logToUI(`--- Program exited (worker) --- ${self._exitSiteText()}`);
           self.stop({ repaint: false });
           return;
@@ -5346,7 +5349,7 @@ class WineAssembly {
         // (help_load) is named in thread-manager.js's map but is never set by
         // any WAT or JS path, so there is nothing to port for it. The fallback
         // below stays as a guard for anything added later.
-        if (r.waveOfferPending) {
+        if (r.waveOfferPending || r.threadSendPending) {
           // The cached result describes the interrupted frame, not the current
           // owning EIP/ESP. Never complete a wait or handle another old yield
           // until the exact offer's accepted/not-admitted reply is known.

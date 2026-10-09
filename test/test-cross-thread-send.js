@@ -46,6 +46,18 @@ function check(ok, label, detail) {
       threadSendYieldResolver: async (link, r) => {
         blockedWait = r;
         await link.completeWait(0, r.waitStackBytes);
+        // Reproduce the browser free-run race: the wait is satisfied but the
+        // owning send dispatcher has not resumed its WndProc yet. A normal
+        // slice must not run that callback through its EIP-zero sentinel.
+        const beforeSlice = await link.readExports(['get_eip', 'get_esp']);
+        const opportunistic = await link.slice(1000);
+        const afterSlice = await link.readExports(['get_eip', 'get_esp']);
+        check(opportunistic.threadSendPending === true && opportunistic.blocks === 0,
+          'ordinary Worker slice is deferred while a send callback owns the CPU');
+        check(beforeSlice.get_eip === afterSlice.get_eip && beforeSlice.get_esp === afterSlice.get_esp,
+          'deferred slice cannot consume the nested callback return sentinel');
+        check(link.threadSendDepth > 0,
+          'host reservation survives asynchronous callback wait completion');
         return 'resume';
       },
     });
