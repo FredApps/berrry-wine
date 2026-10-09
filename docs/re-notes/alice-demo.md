@@ -47,3 +47,9 @@ the first visible window without inputs. It is uploaded and syntax checked,
 not executed. No missing archive paths are known. Next: ordinary launch after
 the serialized current work, then New Game/skill selection and W/S movement
 as described by the original readme. Do not start a parallel guest or browser.
+
+## 2026-10-09 original initialization: texture border API
+
+Initial-console probe ended normally. Continuing original initialization (same bb9d6e96 module, cooperative CLI, all14 support mounts) creates American McGee's Alice window, then fails at batch123 in glTexParameterfv. Arguments are target0xDE1, pname0x1004 (texture border color), pointer074ff41c to four float1 values; return00484cf3. Source api_table row4442 still maps gl_unimplemented. This is the next concrete runtime blocker, not the five statically missing MIDI-input imports. Do not replace it with a success stub: support actual texture state and sampling/queries across the relevant backends, with a control-failing regression and original launch validation.
+
+Self-contained control: scratch/runs/20261009T0509Z-alice-gl-texparameter-crash (7artifacts; last image precedes the crash). Probe270020 and guest270030 exited1 at05:09:03.423Z. The preceding API transport409 was a transient boat update; original run started only after authoritative boat state recovered.

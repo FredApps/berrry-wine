@@ -1453,11 +1453,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 
 - [ ] New-game lane: Disciples II demo
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
-  status: ready
+  status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; first-window probe completed, next installment queued after Alice
+  worker: root direct; installer272256 on bx_75agndxm started05:12:49Z,180s guard
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Original Wise installer reaches Initializing Wise Installation Wizard splash, probe266970/guest266998 terminal0 at05:06:04Z. Retained run20261009T0506Z-disciples2-installer-probe; no buttons, approvals or installed payload yet. Continue initialization to actionable installer page after Alice runtime; original verified /tmp/disciples2-original.exe on bx_75agndxm.
+  Next: Collect original installer272256 after actual termination; Welcome/destination/group/Start Installation reviewed, ordinary Next clicks only, no license presented or accepted. Current output /home/user/disciples2-install-20261009, VFS export /home/user/disciples2-installed-vfs-20261009. Then identify original game EXE/media and normal launch. Prior page evidence retained in runs20261009T0510Z/0511Z/0512Z-disciples2-*.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
@@ -1474,6 +1474,6 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   worker: root direct; initial console probe completed, next initialization step ready
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Probe267583/guest267593 terminal0 at05:07:00.582Z, initial Alice console reviewed and retained run20261009T0507Z-alice-console-probe. Continue initialization beyond first console toward renderer/menu, then ordinary New Game/skill/W-S gameplay.14 original support mounts verified; five midiIn imports statically default-off, not proven blockers.
+  Next: Implement real glTexParameterfv border-color state/sampling across GL backends. Original demo reaches renderer/window then fails batch123 at glTexParameterfv(0xDE1,0x1004,whiteRGBA), return484CF3. Control evidence run20261009T0509Z-alice-gl-texparameter-crash. No MIDI failure observed; five static imports are not blocker. Source currently mapped gl_unimplemented, no success stub permitted; regression then original normal gameplay required.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md

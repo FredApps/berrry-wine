@@ -46,3 +46,9 @@ Static `tools/unimplemented-imports.js` audit against main420da0745 reports
 imports and the extracted payload, and does not prove handler correctness or
 successful installation. Raw audit and checked probe API contract are retained
 in the same local preflight directory.
+
+## 2026-10-09 ordinary Wise installer progression
+
+Original Wise bootstrap reaches initializing splash, self-loads glc1.tmp at507000, then Welcome. Reviewed ordinary Next progresses through Choose Destination Location, Select Program Manager Group, and Start Installation; no agreement appeared. Captures/logs retained in runs20261009T0510Z-disciples2-welcome, 20261009T0511Z-disciples2-destination, 20261009T0512Z-disciples2-program-group and 20261009T0512Z-disciples2-start-install. The group-page probe's title matcher missed that page and exhausted a finite10000-batch budget; no guest hang inferred.
+
+Installer272256 started05:12:49Z on bx_75agndxm with180s guard and ordinary Next on the reviewed Start Installation page. Output /home/user/disciples2-install-20261009; save-vfs targets /home/user/disciples2-installed-vfs-20261009. It was confirmed live at the next process check. Collect actual termination before claiming extraction or launch; no game screenshot yet.
