@@ -25,8 +25,25 @@ Dynamic OpenGL/Miles lookup and actual runtime behavior remain untested.
 
 Preflight hashes, small extracted executables/readme, and import report:
 `scratch/alice-preflight-20261009/`. Original archive transfer to temporary
-`bx_75agndxm:/tmp/alice-original.exe` is in progress; `transfer.json` is the
-authoritative completion/checksum receipt. No missing archive paths are known.
-Next: verify transfer, extract on the boat, audit the complete DLL closure,
-then launch through ordinary controls after the serialized BW2/Disciples II
-runtime work. Do not start a parallel emulator or browser.
+`bx_75agndxm:/tmp/alice-original.exe` completed at 04:27:39Z with matching SHA256;
+`transfer.json` is the completion receipt. The first extraction attempt could
+not start because this no-env box has no `7z`; its failure log is preserved.
+Using installed `unzip`, all 15 files were extracted to
+`/home/user/alice-original-v2-20261009`, with exact expected total size and
+successful archive CRC test. Preparation PID251100 finished at 04:28:27Z.
+All 13 PE modules were audited; only the five MIDI imports above were reported.
+Exact file hashes, CRC output and full audit are the local `remote-v2-*` receipts.
+
+Original code registers `in_midi` with default string `0` at `0046acf0`.
+Initialization at `0046b460` reads it, compares with zero, and returns via
+`0046b51d` before `midiInGetNumDevs` when zero. This supports optional MIDI
+startup as a static inference; no handler or config was changed, and runtime
+reachability is still unverified. See `midi-static-route.json`.
+
+Prepared `/tmp/alice-probe-launch.js` refuses to run while BW2 browser189048
+or Disciples handoff controller234050 is alive. It has a 180-second outer guard,
+mounts original `demo/**/*`, `snddrivers/**/*`, and `readme.txt`, and captures
+the first visible window without inputs. It is uploaded and syntax checked,
+not executed. No missing archive paths are known. Next: ordinary launch after
+the serialized current work, then New Game/skill selection and W/S movement
+as described by the original readme. Do not start a parallel guest or browser.

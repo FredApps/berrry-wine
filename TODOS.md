@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: actual novel-title lanes are DisciplesII (controller234050 waits for BW2/Chrome terminal, bounded installer probe) and American McGees Alice (original archive transfer50677, static preflight ready). BW2 ordinary land-picker run is existing-title compatibility coverage and is not counted as a second novel game. No parallel runtime; preserve DungeonSiege EULA hold and laptop HeroesII.
+  Next: One-worker budget: actual novel-title lanes are DisciplesII (controller234050 waits for BW2/Chrome terminal, bounded installer probe) and American McGees Alice (15 original files verified/extracted, guarded launch probe prepared). BW2 ordinary land-picker run is existing-title compatibility coverage and is not counted as a second novel game. No parallel runtime; preserve DungeonSiege EULA hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1472,8 +1472,8 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; preflight/file transfer only, runtime queued after DisciplesII
+  worker: root direct; original files prepared, runtime queued after DisciplesII
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Verify original82499584byte transfer SHAce873bf2525041a624c1a5a27b513f135b51ffdbeae9f68a6ede3edd8c7078e6 to bx_75agndxm /tmp/alice-original.exe; extract original WinZip files and audit full DLL closure. Five midiIn imports lack API rows, runtime use unknown: do not speculate or stub. Ordinary launch after serialized current work, then reviewed player-controlled gameplay. No missing archive paths established.
+  Next: Original archive transfer SHA verified04:27:39Z;15 files extracted+CRC/size/hash checked at /home/user/alice-original-v2-20261009 on bx_75agndxm.13 PE modules audited; only five midiIn imports missing, initialization statically gated by default in_midi=0. Prepared /tmp/alice-probe-launch.js (180s, first window/no input) refuses live BW2 browser189048 or Disciples controller234050; do not execute beside either. Next ordinary launch then New Game/skill/W-S gameplay. No missing archive paths established.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
