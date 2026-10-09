@@ -324,3 +324,19 @@ Menu run20261009T0853Z-alice-menu completed normally at08:53:14Z,
 retained; checkpoint14 reviewed/photo969. Ordinary-input follow-up uses a
 bounded600s controller with recorded request/response files, same module/media
 and software backend. No guest configuration or memory changes.
+
+## New Game loading: allocation tail guard (08:58Z)
+
+Ordinary Enter at the reviewed New Game menu opens difficulty. Enter selects
+Easy; loading then returns to the console with Z_Free: memory block wrote past
+end. Run20261009T0856Z-alice-new-game-heap-error retains22 original artifacts
+plus controller/hashes; screenshots ready,step2,step5 reviewed. Controller
+41655/41662 terminal08:56:37Z. No gameplay claim.
+
+Original Z_Free is00444eb0. User pointer becomes ESI-16; header+12 and tail
+[header+size-4] must equal000facc2. Failure message at00513314, tail compare
+00444ee6, error push00444ef0, Com_Error call00444ef7. Header guard passes;
+tail guard fails. This identifies the check, not the overwriter. No evidence
+yet linking the separately known VirtualFree decommit bug. Native disassembly
+retained with the diagnostic work. Next built-in --trace-at=00444ef0 with
+--trace-at-mem=esi:64,esp:64 on a plain CLI run, repeating the ordinary inputs.
