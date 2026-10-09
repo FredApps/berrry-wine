@@ -140,6 +140,7 @@
   (global $rast_t1_addr_u (mut i32) (i32.const 1))
   (global $rast_t1_addr_v (mut i32) (i32.const 1))
   (global $rast_t1_linear (mut i32) (i32.const 0))
+  (global $rast_t1_border (mut i32) (i32.const 0))
   (global $rast_t1_ua (mut f32) (f32.const 0))
   (global $rast_t1_ub (mut f32) (f32.const 0))
   (global $rast_t1_uc (mut f32) (f32.const 0))
@@ -356,7 +357,7 @@
   ;;   +0 the surface's COM object (guest pointer), 0 = no image yet
   ;;   +4 flags: 1 linear (MAG_FILTER), 2 clamp S, 4 clamp T, 8 flags
   ;;      initialised, 16 opaque, 32 MIN_FILTER uses mipmaps, 64 MIN_FILTER
-  ;;      samples linearly within a level
+  ;;      samples linearly within a level, 128 GL_CLAMP S, 256 GL_CLAMP T
   ;; A name at or above 4096 has no slot and samples as white. Levels 1..12
   ;; live in $GL_SW_MIPS, 48 bytes per name.
   (func $gl_sw_tex_slot (param $name i32) (result i32)
@@ -450,6 +451,31 @@
         (local.get $ws) (local.get $wt) (local.get $border))
       (local.get $fx) (local.get $fy)))
 
+  ;; The shared raster interface uses D3D address values except for the
+  ;; explicit GL_CLAMP tag. Existing D3D modes retain their original sampler.
+  (func $gl_sw_address_enum (param $mode i32) (result i32)
+    (if (i32.eq (local.get $mode) (i32.const 0x2900)) (then (return (local.get $mode))))
+    (if (i32.eq (local.get $mode) (i32.const 3)) (then (return (i32.const 0x812F))))
+    (if (i32.eq (local.get $mode) (i32.const 2)) (then (return (i32.const 0x8370))))
+    (i32.const 0x2901))
+
+  (func $gl_sw_sample_prepared
+    (param $tw i32) (param $th i32) (param $bpp i32) (param $pitch i32)
+    (param $dib i32) (param $fmt i32) (param $pal i32)
+    (param $u f32) (param $v f32) (param $au i32) (param $av i32)
+    (param $linear i32) (param $border i32) (result i32)
+    (if (i32.or (i32.eq (local.get $au) (i32.const 0x2900))
+                 (i32.eq (local.get $av) (i32.const 0x2900)))
+      (then (return (call $gl_sw_border_sample
+        (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+        (local.get $dib) (local.get $fmt) (local.get $pal) (local.get $u) (local.get $v)
+        (call $gl_sw_address_enum (local.get $au)) (call $gl_sw_address_enum (local.get $av))
+        (local.get $linear) (local.get $border)))))
+    (call $d3dim_texture_sample_prepared
+      (local.get $tw) (local.get $th) (local.get $bpp) (local.get $pitch)
+      (local.get $dib) (local.get $fmt) (local.get $pal) (local.get $u) (local.get $v)
+      (local.get $au) (local.get $av) (local.get $linear)))
+
   ;; GL's defaults are MAG_FILTER LINEAR, MIN_FILTER NEAREST_MIPMAP_LINEAR
   ;; and REPEAT in both directions.
   (func $gl_sw_tex_flags (param $slot i32) (result i32)
@@ -480,10 +506,10 @@
 
   ;; glTexParameter for TEXTURE_2D: MAG_FILTER picks linear sampling for a
   ;; magnified face, MIN_FILTER whether a minified one steps down the mip
-  ;; chain and how it samples there, WRAP_S/WRAP_T pick clamp for CLAMP and
-  ;; CLAMP_TO_EDGE.
+  ;; chain and how it samples there. WRAP_S/WRAP_T preserve GL_CLAMP's border
+  ;; taps separately from CLAMP_TO_EDGE.
   (func $gl_sw_tex_param (param $pname i32) (param $value i32)
-    (local $slot i32) (local $flags i32) (local $bit i32)
+    (local $slot i32) (local $flags i32) (local $bit i32) (local $border_bit i32)
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))
@@ -509,7 +535,11 @@
       (then
         (local.set $bit (select (i32.const 2) (i32.const 4)
           (i32.eq (local.get $pname) (i32.const 0x2802))))
-        (local.set $flags (i32.and (local.get $flags) (i32.xor (local.get $bit) (i32.const -1))))
+        (local.set $border_bit (i32.shl (local.get $bit) (i32.const 6)))
+        (local.set $flags (i32.and (local.get $flags)
+          (i32.xor (i32.or (local.get $bit) (local.get $border_bit)) (i32.const -1))))
+        (if (i32.eq (local.get $value) (i32.const 0x2900))
+          (then (local.set $flags (i32.or (local.get $flags) (local.get $border_bit)))))
         (if (i32.or (i32.eq (local.get $value) (i32.const 0x2900))
                     (i32.eq (local.get $value) (i32.const 0x812F)))
           (then (local.set $flags (i32.or (local.get $flags) (local.get $bit)))))))
@@ -1990,7 +2020,7 @@
     (local.set $e (global.get $rast_t1_entry))
     (local.set $bpp (i32.load16_u offset=16 (local.get $e)))
     (call $d3dim_texture_stage_combine
-      (call $d3dim_texture_sample_prepared
+      (call $gl_sw_sample_prepared
         (i32.load16_u offset=12 (local.get $e)) (i32.load16_u offset=14 (local.get $e))
         (local.get $bpp) (i32.load16_u offset=18 (local.get $e))
         (i32.load offset=20 (local.get $e)) (call $dx_surf_fmt_get (local.get $e))
@@ -2002,7 +2032,7 @@
         (f32.div (f32.add (global.get $rast_t1_vc)
           (f32.add (f32.mul (global.get $rast_t1_va) (local.get $fx))
                    (f32.mul (global.get $rast_t1_vb) (local.get $fy)))) (local.get $q))
-        (global.get $rast_t1_addr_u) (global.get $rast_t1_addr_v) (global.get $rast_t1_linear))
+        (global.get $rast_t1_addr_u) (global.get $rast_t1_addr_v) (global.get $rast_t1_linear) (global.get $rast_t1_border))
       (local.get $color) (global.get $rast_t1_op) (global.get $rast_t1_op)))
 
   ;; The fog plane through the three screen records' (x, y, factor at +28).
@@ -2108,10 +2138,22 @@
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br_if $shift (i32.lt_u (local.get $k) (local.get $n)))))
 
-  ;; D3DTADDRESS for the resolved texture's clamp flag $bit: 1 WRAP, 3 CLAMP.
-  (func $gl_sw_r_address (param $bit i32) (result i32)
+  ;; Preserve GL_CLAMP as a tagged GL enum through the shared span interface;
+  ;; D3D's CLAMP means GL_CLAMP_TO_EDGE and cannot represent border taps.
+  (func $gl_sw_flags_address (param $flags i32) (param $bit i32) (result i32)
+    (if (i32.ne (i32.and (local.get $flags) (i32.shl (local.get $bit) (i32.const 6))) (i32.const 0))
+      (then (return (i32.const 0x2900))))
     (select (i32.const 3) (i32.const 1)
-      (i32.ne (i32.and (global.get $gl_sw_r_flags) (local.get $bit)) (i32.const 0))))
+      (i32.ne (i32.and (local.get $flags) (local.get $bit)) (i32.const 0))))
+
+  ;; Default border alpha follows the texture's internal format. The flags
+  ;; come from the immutable queued draw snapshot when rasterizing in a Worker.
+  (func $gl_sw_default_border (param $flags i32) (result i32)
+    (select (i32.const 0xFF000000) (i32.const 0)
+      (i32.ne (i32.and (local.get $flags) (i32.const 16)) (i32.const 0))))
+
+  (func $gl_sw_r_address (param $bit i32) (result i32)
+    (call $gl_sw_flags_address (global.get $gl_sw_r_flags) (local.get $bit)))
 
   ;; The texture env as D3DTOP. An untextured draw modulates white by the
   ;; vertex colour whatever the env says; REPLACE on white would erase it.
@@ -2167,10 +2209,9 @@
     (global.set $rast_t1_entry (call $dx_from_this (i32.load (local.get $slot))))
     (if (i32.eqz (global.get $rast_t1_entry)) (then (return)))
     (local.set $flags (call $gl_sw_draw_flags (local.get $slot) (i32.const 1)))
-    (global.set $rast_t1_addr_u (select (i32.const 3) (i32.const 1)
-      (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))
-    (global.set $rast_t1_addr_v (select (i32.const 3) (i32.const 1)
-      (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0))))
+    (global.set $rast_t1_addr_u (call $gl_sw_flags_address (local.get $flags) (i32.const 2)))
+    (global.set $rast_t1_addr_v (call $gl_sw_flags_address (local.get $flags) (i32.const 4)))
+    (global.set $rast_t1_border (call $gl_sw_default_border (local.get $flags)))
     (global.set $rast_t1_linear (i32.and (local.get $flags) (i32.const 1)))
     (global.set $rast_t1_op (select (i32.const 2) (i32.const 4)
       (i32.ne (i32.and (local.get $caps) (i32.const 0x100000)) (i32.const 0))))

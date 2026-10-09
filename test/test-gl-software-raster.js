@@ -259,6 +259,32 @@ async function main() {
     `the left half samples texel 0 (blue); got 0x${pick(VP / 4, VP / 2).toString(16)}`);
   assert.strictEqual(pick(VP * 3 / 4, VP / 2), 0xFFFFFF00,
     `the right half samples texel 1 (yellow); got 0x${pick(VP * 3 / 4, VP / 2).toString(16)}`);
+  // Regression: GL_CLAMP blends missing border taps; EDGE never does.
+  // Constant coordinates remove interpolation/LOD ambiguity. The two-pixel
+  // RGB image has blue at its left edge and the default black border.
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2601);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 0x2601);
+  const atConstant = (wrap, s, t) => {
+    glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, wrap);
+    glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, wrap);
+    triangle([[-1, -1, 0, s, t], [1, -1, 0, s, t], [1, 1, 0, s, t]], [1,1,1,1]);
+    triangle([[-1, -1, 0, s, t], [1, 1, 0, s, t], [-1, 1, 0, s, t]], [1,1,1,1]);
+    px = back(); return pick(VP/2,VP/2) & 0xffffff;
+  };
+  assert.strictEqual(atConstant(0x812f,0,0.5),0xff,'EDGE control is full blue');
+  assert.strictEqual(atConstant(0x2900,0.25,0.5),0xff,'CLAMP interior is full blue');
+  const borderEdge=atConstant(0x2900,0,0.5);
+  assert.ok(borderEdge===0x7f || borderEdge===0x80,
+    'GL_CLAMP linear edge must blend half default black border; got0x'+borderEdge.toString(16));
+  const borderCorner=atConstant(0x2900,0,0);
+  assert.ok(borderCorner===0x3f || borderCorner===0x40,
+    'GL_CLAMP linear corner must blend three default border taps; got0x'+borderCorner.toString(16));
+  assert.strictEqual(pick(VP/2,VP/2)>>>24,255,
+    'RGB internal format keeps border alpha opaque');
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2600);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 0x2702);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x2901);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x2901);
   // glTexEnvi on any target but GL_TEXTURE_ENV is GL_INVALID_ENUM and must
   // not change the mode. SimGolf asks for REPLACE on GL_TEXTURE_2D 474 times;
   // honouring it drew its lit terrain unlit. Here: a MODULATE request on the

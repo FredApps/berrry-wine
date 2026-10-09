@@ -109,3 +109,25 @@ This is infrastructure only: production GL draw calls still use the old sampler,
 so the earlier end-to-end CLAMP regression and Alice vector API remain unresolved.
 Next wire per-texture RGBA/wrap state through resolved draw/Worker snapshots,
 route both GL texture units through the helper, then complete WebGL and API replay.
+
+## Production default-border routing (2026-10-09 07:55Z)
+
+Both software texture units now retain GL_CLAMP separately from CLAMP_TO_EDGE
+in texture flags (bits128/256), including existing immutable Worker snapshots.
+The shared raster interface carries GL_CLAMP as an explicit tag; D3D address
+modes retain the original sampler. The 16-bit wrap fast path excludes this tag.
+Default border alpha is opaque for RGB internal formats and zero for RGBA.
+Real draw tests pass half-border edge/quarter-border corner pixels; unit1 also
+checks RGBA alpha and clearing border mode when switching to CLAMP_TO_EDGE.
+
+Canonical build and GL software, D3DIM wrap, GL fixed-function, multitexture,
+and GL Worker transport suites passed; controller69442 terminal0 at07:49:46Z.
+Additional unit1 regression passed07:55:13Z. Run
+`20261009T0749Z-alice-border-routing` retains logs/source/tests with hashes.
+Module5b2cfa1d20224e856ecc28f1de76767ccfcaa1740f6d49e254dcf3d7e296349e.
+Connection502 observation failures did not mean test failure or require a rerun.
+
+Still incomplete: programmable per-texture border RGBA and queries/validation,
+vector API payload/replay, WebGL sampling, and queued-border pixel isolation.
+The existing Worker transport test is not a queued-border pixel test. Original
+Alice still hits its unimplemented vector setter; no new game screenshot claimed.

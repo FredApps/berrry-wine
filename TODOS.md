@@ -1472,9 +1472,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-ALICE-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; border pixel control reproduced, implementation active; no runtime live
+  worker: root direct; default-border routing validated; no runtime live
   candidate: test/binaries/win98-games-a-d/american McGees-alice_demo-OpenGL.exe
-  Next: Explicit-color WAT border sampler foundation and pixel tests pass canonical build/three suites, run20261009T0741Z-alice-border-sampler, moduleb2552fac;65306 terminal0. Production GL draw still not wired, so original CLAMP regression/Alice API remain failing. Next per-texture RGBA/wrap state, immutable Worker snapshots and both-unit software hookup, then WebGL/API pointer replay and original game revalidation. No success stub. Original MIDI imports not runtime blocker.
+  Next: Production software GL_CLAMP default-border routing passes canonical build/five suites and extra unit1 edge/corner RGBA-alpha/reset pixels, run20261009T0749Z-alice-border-routing, module5b2cfa1d. Controller69442 terminal0 at07:49:46Z; unit1 follow-up terminal0 at07:55:13Z. Next programmable per-texture RGBA/query validation and queued-border isolation, then vector API copy/replay and WebGL sampling; original Alice startup/gameplay still unverified. Connection502 recovered without duplicate runtime.
   Done: Original demo launches with ordinary input, player-controlled gameplay independently reviewed, exact build/media and screenshots retained; menus do not qualify.
   Evidence: scratch/alice-preflight-20261009/preflight.json; scratch/alice-preflight-20261009/import-audit.json; scratch/alice-preflight-20261009/transfer.json; docs/re-notes/alice-demo.md
 

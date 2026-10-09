@@ -49,6 +49,7 @@ async function main() {
   e.gl_mtx_ortho(-1, 1, -1, 1, -1, 1);
   e.gl_sw_set_enabled(1);
 
+  let unit1Coords = null;
   const quad = () => {
     const tri = pts => {
       pts.forEach(([x, y], i) => {
@@ -56,6 +57,7 @@ async function main() {
         f.fill(0);
         // position, white colour, unit 0 st, normal, unit 1 st
         f.set([x, y, 0, 1, 1, 1, 1, 0.5, 0.5, 0, 0, 1, (x + 1) / 2, 0.5]);
+        if (unit1Coords) f.set(unit1Coords, 12);
       });
       e.gl_sw_emit_triangles(verts, 3);
     };
@@ -144,6 +146,37 @@ async function main() {
   expect(PINK, PINK, 'alpha test after unit 1 rejects the transparent half');
   glCall(CALL_INDEX.glDisable, 0x0BC0);
   expect(PINK, DARK_BLUE & 0x00FFFFFF, 'alpha test off: the right half draws with alpha 0');
+
+  // Unit 1 must preserve GL_CLAMP's border taps, independently of unit 0.
+  // RGBA's default border is transparent black, so both color and alpha
+  // must halve at an edge and quarter at a corner under linear filtering.
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glTexEnvi, 0x2300, 0x2200, 0x1E01); // REPLACE
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2601);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 0x2601);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x2900);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x2900);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  for (const [coords, lo, hi, label] of [
+    [[0, 0.5], 127, 128, 'edge'], [[0, 0], 63, 64, 'corner'],
+  ]) {
+    unit1Coords = coords;
+    quad();
+    for (const x of [LEFT, RIGHT]) {
+      const value = pixel(x);
+      for (const shift of [0, 8, 16, 24]) {
+        const channel = (value >>> shift) & 255;
+        assert(channel >= lo && channel <= hi,
+          `unit 1 GL_CLAMP ${label}, channel ${shift}: ${hex(value)}`);
+      }
+    }
+  }
+  // Switching to CLAMP_TO_EDGE must clear the border mode on both axes.
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2802, 0x812F);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2803, 0x812F);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  expect(0xFFFFFFFF, 0xFFFFFFFF, 'unit 1 CLAMP_TO_EDGE restores full white');
 
   console.log('PASS software GL texture unit 1: MODULATE, REPLACE, push/pop, independent of unit 0, alpha test after unit 1');
 }

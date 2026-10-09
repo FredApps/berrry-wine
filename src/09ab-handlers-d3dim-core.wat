@@ -5067,6 +5067,10 @@
                  (i32.eq (local.get $tbpp) (i32.const 16)))
         (i32.and (i32.ge_u (local.get $tfmt) (i32.const 1))
                  (i32.le_u (local.get $tfmt) (i32.const 3)))))
+    ;; GL_CLAMP must preserve border filter taps, including for 16-bit images.
+    (local.set $fast16 (i32.and (local.get $fast16)
+      (i32.and (i32.ne (local.get $address_u) (i32.const 0x2900))
+               (i32.ne (local.get $address_v) (i32.const 0x2900)))))
     (local.set $fast16
       (i32.and (local.get $fast16)
         (i32.and
@@ -5210,11 +5214,12 @@
                 (i32.const 8))
               (i16x8.splat (i32.const 0))))))
         (else
-          (local.set $sample (call $d3dim_texture_sample_prepared
+          (local.set $sample (call $gl_sw_sample_prepared
             (local.get $tw) (local.get $th) (local.get $tbpp) (local.get $tpitch)
             (local.get $tdib) (local.get $tfmt) (local.get $tpal)
             (local.get $tu) (local.get $tv)
-            (local.get $address_u) (local.get $address_v) (local.get $linear)))))
+            (local.get $address_u) (local.get $address_v) (local.get $linear)
+            (call $gl_sw_default_border (global.get $gl_sw_r_flags))))))
       (local.set $draw (i32.const 1))
       ;; D3DRENDERSTATE_COLORKEYENABLE discards a matching texture sample.
       ;; It must happen before depth testing/writes: transparent HUD texels
