@@ -165,3 +165,34 @@ Full limitations, source identities, commands, reviewed images and cleanup:
 `scratch/runs/20261008T1623Z-age-of-wonders2-demo-menu-route-investigation/`.
 The one browser closed at its immutable 1500-second guard; evidence was retrieved
 and hashed before owned-prefix cleanup. Gameplay remains unqualified.
+
+## 2026-10-09: callback ownership fixed; Start faults in Miles stream callback
+
+Main28a104092 prevents ordinary Worker slices from consuming a suspended
+SendMessage callback's EIP-zero sentinel. Actual command evidence and a failing
+control/passing real-Worker regression established that defect. Ordinary
+Scenario -> Single now reaches Inioch's Legacy setup. Campaign is explicitly
+unsupported by the demo. Start still fails; no player-controlled world yet.
+
+The browser's `ExitProcess C000DE05` text was misleading: SEH termination calls
+the same host exit import with access violation C0000005 OR DE00. The passive
+owning-instance observer in run20261009T0229Z-age-of-wonders2-owning-fault
+captured the first CPU fault before termination, with no observer errors:
+
+- Win32 thread2, EIP C53D4000 (unmapped), ESP7EC5FF98, EBP0, ESI016C350C.
+- First stack word0118900E. Runtime console pins Mss32.dll at01168000; original
+  PE base21100000, so the return is original2112100E.
+- Original21121008 is `call dword ptr [esi+0xe0]`; it pushes that exact return.
+  This identifies the stream callback path, with field address016C35EC. The
+  target follows from the instruction/stack; the complete object was not dumped.
+- `_AIL_register_stream_callback@8`: original2110B6B0/runtime011736B0. Its
+  internal setter211223F0 writes the supplied pointer at21122421 to `[esi+e0]`.
+- Open/close/service exports are pinned in the run's `mss-export-map.json`,
+  alongside the original DLL and relevant disassembly.
+
+Next establish the registered pointer and last writer/lifetime of that object
+before the indirect call. Do not suppress the callback or disable audio as a
+compatibility fix. Observer reads384bytes, frame unavailable because EBP0,
+one original fault then SEH termination; later null-instance file-open errors
+are secondary. Browser39438 exited0 and boat bx_va3qxqm3 stopped02:36:59.165Z.
+No gameplay/FPS/audio qualification. Handoff contains full source/run identities.

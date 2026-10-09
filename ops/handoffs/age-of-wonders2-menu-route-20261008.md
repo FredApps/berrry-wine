@@ -255,3 +255,27 @@ Prepared private Worker overlay and identity receipts:
 through ordinary Scenario->Single->Start. Limits remain 300 seconds, four fault
 records, two exit records and 16384 read bytes per Worker. Capture original
 fault EIP/registers/memory first; the later null-instance failure is secondary.
+
+## Owning fault captured: Miles stream callback
+
+Run `scratch/runs/20261009T0229Z-age-of-wonders2-owning-fault` seals44 artifacts
+from main67f7a48db plus the explicitly hashed private Worker import observer.
+Canonical build and903 baseline source pins passed before overlay. Normal
+Scenario->Single->Start reproduced the failure without command polling or
+guest writes. First CPU fault is C0000005 in Win32 thread2, EIPC53D4000,
+ESP7EC5FF98, ESI016C350C, EBP0. The observer then records SEH-unhandled C000DE05,
+384bytes read, zero errors, before its300-second deadline.
+
+First stack word0118900E maps through observed Mss32.dll base01168000 and
+original PE base21100000 to2112100E. Original21121008 calls `[esi+0xE0]` and
+pushes precisely that return. Next investigate registration and writes to
+stream field016C35EC, not the secondary null-memory import after teardown.
+The capture did not include the whole stream object; the bad pointer value is
+inferred from the exact indirect instruction, return and unmapped CPU target.
+Original `_AIL_register_stream_callback@8` is2110B6B0, internal setter211223F0,
+store21122421. Export map, originalDLL and disassembly are inside the run.
+
+Browser39438 exited0 at02:32:32.056; no Chrome remained before stop. Boat
+bx_va3qxqm3 confirmed stopped02:36:59.165. Archive SHA
+6944a7f75aa8a3c9c16b4b42c822f4bd39e32c0b3e9fc544c40509853deaa383 verified.
+No new compatibility fix or gameplay/FPS/audio claim from this diagnostic.

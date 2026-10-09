@@ -1388,9 +1388,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-AGE-OF-WONDERS2-DEMO-20261008
   status: ready
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none; browser50922 exited0, bx_barh45ur stopped02:19:18.986Z
+  worker: none; browser39438 exited0, bx_va3qxqm3 stopped02:36:59.165Z
   candidate: test/binaries/win98-games-a-d/Age of Wonders2 demo-SW.exe
-  Next: Capture original owning-instance CPU fault before teardown with prepared passive observer scratch/aow2-owning-fault-20261009. Correction: host exit codeC000DE05 matches SEH unhandled access violation(C0000005|DE00), not a proven guest ExitProcess call. Existing observer now distinguishes SEH stack and its JS tests pass; runtime still next. Main28a104092 fixes proven normal-slice/send ownership; Scenario->Single setup screenshot953, Start still faults. No gameplay/FPS/audio.
+  Next: Identify registration value/last writer/lifetime of Miles stream callback field016C35EC. Passive owning-fault capture proves first C0000005 in Win32thread2 atC53D4000, ESP7EC5FF98/ESI016C350C; return0118900E maps originalMss32 call[esi+e0] at21121008. Setter21122421. Evidence run20261009T0229Z-age-of-wonders2-owning-fault,44 hashes, original DLL/export map/disassembly. Do not suppress callback/disable audio. Main28a104092 scheduling fix remains; no gameplay/FPS/audio.
   Evidence: Original installer SHA256 1244f0114965d011d1e28b97e207db15c902d124ebb25af8a6c97748beb73dc0. Runs20261008T1518Z-age-of-wonders2-demo-before and-after retain crash/menu evidence, original payload identities and runtime inputs. No gameplay qualification yet; held Scenario click eventual outcome unknown.
   Done: Normal registered launch, actual player-controlled gameplay, reviewed screenshot with original/source/build identity and tested changes pushed main. FPS/audio require separately valid measurements.
 
