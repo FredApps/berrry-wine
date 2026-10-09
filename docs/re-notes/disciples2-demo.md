@@ -288,3 +288,34 @@ ready. Broad test-debug-game-apps.js still fails the existing Jazz2 file.endsWit
 TypeError, reproduced with unchanged HEAD apps. It is not an all-green suite.
 Next diagnose ordinary browser release/input behavior, finish leader movement,
 then capture gameplay presentation/FPS and audio evidence separately.
+
+## Verified browser gameplay (2026-10-09 07:28Z)
+
+Normal registered launch on temporary bx_kbtxb6tb now proves player control:
+select leader, plot path, confirm move. Reviewed leader-selected.png shows20/20;
+leader-moved.png shows16/20, leader outside capital and camera following.
+All actions use trusted browser input; no guest-state writes. Story-dialog
+clicks were batched along the previously reviewed route, retaining each capture.
+Run20261009T0728Z-disciples2-browser-gameplay; Telegram photo967.
+Controller50788/Chrome50800 started07:15:04.112Z, ordinary stop07:28:27.530Z,
+Chrome code0; same f1fb7fbe157c1ed6a85b926a31678fb7e0b11299fdfa9c363c2ce41a35a6b418 module.
+
+Increasing mouse hold200ms to1000ms does not eliminate menu repeat-click behavior.
+Window capture observes both trusted edges. Renderer observation records both
+handleMouseDown/handleMouseUp, with WM_LBUTTONDOWN513 and WM_LBUTTONUP514 queued;
+the runtime input log reports both. Missing mouseup in the earlier document-only
+observer was expected: the window capture handler stops propagation. Do not
+infer browser event loss. Gameplay selection/path/move each advanced normally;
+next input investigation should inspect guest message consumption and activation.
+
+Thirty-second sample after movement:31 samples spanning30.10599s,2432 guest
+presentation events (80.7813/s),1649 canvas uploads (54.7732/s). These are existing
+WinePerf guestFrame/frameUpload counters, not a qualified game logical-frame
+marker. No logical FPS, moving-scene performance or audio qualification claimed.
+Debug log and host input observation were enabled during this diagnostic.
+
+Harness failure retained separately: run20261009T0714Z-disciples2-browser-launcher-failure.
+The first longer-click Chrome49470 received SIGKILL coincident with its remote
+launcher45s timeout; controller49458 was explicitly closed07:14:32.616Z. The
+replacement launches with detached child/stdin-out-err files and an immutable1800s
+guard. Never classify this harness failure as a game crash or restart on502 alone.

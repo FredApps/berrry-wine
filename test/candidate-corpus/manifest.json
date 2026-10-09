@@ -2383,7 +2383,7 @@
           "installed/binkw32.dll"
         ]
       },
-      "notes": "Native ordinary New Quest -> The Search for Timmoria -> Undead Hordes gameplay verified on 2026-10-09: leader movement20/20 to16/20 with reviewed screenshots. Registered browser launch reaches Day1 and story; browser movement, FPS and audio pending. Some controls require repeat clicks. New Saga is disabled by the original demo; use New Quest. Local only; not on public desktop. Run20261009T0643Z-disciples2-gameplay."
+      "notes": "Native ordinary New Quest -> The Search for Timmoria -> Undead Hordes gameplay verified on 2026-10-09: leader movement20/20 to16/20 with reviewed screenshots. Registered browser gameplay also verified: ordinary leader move20/20 to16/20, run20261009T0728Z-disciples2-browser-gameplay. Logical FPS and audio pending; presentation counters alone are not logical FPS. Some menu controls require repeat clicks. New Saga is disabled by the original demo; use New Quest. Local only; not on public desktop. Run20261009T0643Z-disciples2-gameplay."
     }
   ]
 }

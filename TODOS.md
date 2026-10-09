@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget: DisciplesII native gameplay verified; local browser registration reaches Day1/story, repeated-click diagnosis and browser movement next. Alice real GL border-color implementation queued. All runtime probes terminal; temporary bx_kbtxb6tb expires08:17:09Z. Preserve DungeonSiege hold and laptop HeroesII.
+  Next: One-worker budget: DisciplesII native/browser movement verified; menu input and logicalFPS/audio follow-up remain. Alice real GL border-color implementation next. All runtime probes terminal; temporary bx_kbtxb6tb expires08:17:09Z. Refill novel lane after Disciples follow-up ownership is explicit. Preserve DungeonSiege hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; browser run terminal07:09:24Z, input diagnosis next
+  worker: root; native and browser movement verified, input/FPS/audio follow-up ready; all runtimes terminal
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Local candidate disciples2-demo and registered app disciples2_demo prepared with original128-file tree/127-support manifest. Normal browser route reaches Day1 and story using trusted input; several controls require repeated clicks. Browser controller38274/Chrome38289 terminal07:09:24Z at immutable900s guard before movement. Diagnose input release, verify browser leader movement, then gameplayFPS/audio. Native movement20/20->16/20 remains verified separately. Evidence run20261009T0709Z-disciples2-browser; registry checks/dry-run pass, broad registry test has unchanged-control Jazz2 TypeError. No public desktop promotion.
+  Next: Registered native and browser gameplay verified: ordinary leader move20/20->16/20 and camera follow, reviewed run20261009T0728Z-disciples2-browser-gameplay, photo967. Registration fd5aa4a35 on main. Browser50788/50800 clean stop07:28:27Z. Menu repeat-click issue remains despite1000ms holds and both down/up reaching renderer/input log; inspect guest consumption/activation.30.10599s presentation sample2432 events/1649 uploads is80.7813/54.7732 per second, not logical FPS. Qualify gameplay counter and audio separately. No public promotion. Alice real GL implementation is next unblocked implementation lane.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 
