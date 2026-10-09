@@ -1095,7 +1095,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
   accepted: 2026-10-04T02:11:10.446Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: One-worker budget, root direct because fresh worker thread limit reached. AoWII qualified software army movement and fixes merged; BW2 normal intro live on bx_75agndxm after generic Worker PE staging fix efcef0022, browser189048 deadline05:05:50Z. DisciplesII Wise installer transferred/remote SHA verified, queued installer extraction after browser release. No guest-memory intro skip; retain DungeonSiege EULA hold and laptop HeroesII.
+  Next: One-worker budget, root direct because fresh worker thread limit reached. AoWII qualified software army movement and fixes merged; BW2 ordinary land picker live on bx_75agndxm after PE staging fix efcef0022 and relative input opt-in6da448742, browser189048 deadline05:05:50Z. DisciplesII Wise installer transferred/remote SHA verified, queued installer extraction after browser release. No guest-memory intro skip; retain DungeonSiege EULA hold and laptop HeroesII.
   done: Recurring user priority, not complete after two games; each child task needs a working launch route, visible player-controlled gameplay, ordinary input response and a reviewed screenshot linked to its run and source.
   notes: Known freeware/shareware/demo titles first; public NFS/Diablo/StarCraft variants do not count as new games. Serialize browser and benchmark ownership; preserve review gates. Standing policy in ops/ORCHESTRATOR.md.
 
@@ -1355,7 +1355,7 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
   status: active
-  Next: Generic Worker oversized-PE staging fixed: baseline clamps20.7MB BW2 EXE to8MiB and leaves GetVersionExA IAT zero; candidate shares cooperative tail mapping. Control regression fails, candidate process-boot/large-dll/build pass. Browser189048 now creates LIONHEAD window and continues, no gameplay yet. Active on bx_75agndxm until05:05:50Z browser deadline; inspect normal menu/intro, no memory skips. Evidence run20261009T0335Z-black-white2-staging-fix; DisciplesII queued.
+  Next: Worker PE staging fix efcef0022 reaches normal intro and profile without guest-memory skips. By04:14Z ordinary held Enter/click reaches land picker. Relative mouse registry opt-in6da448742 is on main; live host-only setting verified pointer lock, fresh registry launch not yet tested. Garbled text and land input remain; no gameplay qualification. Same browser189048/bx_75agndxm deadline05:05:50Z; next ordinary land selection, then DisciplesII installer.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
