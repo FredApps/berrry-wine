@@ -1355,16 +1355,15 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
 - [ ] Gameplay screenshot and FPS: Black & White 2 Demo
   id: GAMEPLAY-black_white_2_demo
   status: active
-  Next: Root transferring366 registered fixture paths directly to bx_75agndxm (926680214bytes uncompressed), no local bulk archive; transfer1800s, build900s, then ordinary-input browser5400s. Sept14 diagnostic intro-poked route already had camera gameplay; this lane verifies normal no-poke launch plus screenshot/FPS. Current scripts/progress scratch/bw2-normal-route-20261009; browser not launched. DisciplesII queued under one-worker budget.
+  Next: All366 fixture files transferred with verified archive SHA856b39de9402edc0373f3e7c78dd499e50bc73a013c489d6e99ae3f3feada348. Temporary box bx_75agndxm prepare PID182191 validates903 source pins and366 file hashes; dependencies pass, canonical build running with deadline03:41:07Z. Then ordinary no-poke browser route and reviewed gameplay/presentation measurements; historical diagnostic intro-poked gameplay is not normal-route qualification. DisciplesII queued.
 
   candidate: black_white_2_demo
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: none (queued under one-worker budget)
+  worker: root direct; no subagent (one-worker budget)
   prev-owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5 — Codex out of credits until 2026-10-12; its uncommitted shared-tree work is preserved on archive/codex-shared-tree-20261006 (see ops/handoffs/codex-release-review-20261006.md)
   created: 2026-10-03T08:42:45.967Z
   accepted: 2026-10-03T08:42:45.967Z
   accepted-by: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  Next: Second queued new-game lane after DungeonSiege EULA hold. Verified absent from DESKTOP_APPS; historical re-notes end in flyover without player-controlled gameplay, and no matching qualified run result found. All366 declared fixture paths passed October8 presence/size check. Perform memory/transfer preflight for separate boat, then ordinary current-main launch; never reuse historical guest-memory intro skips as gameplay evidence.
   Done: Reviewed gameplay screenshot and scene-qualified frame measurement with raw samples, counter proof and tested build identity; retain explicit failures.
   Evidence: scratch/gameplay-coverage-20261003/tasks/GAMEPLAY-black_white_2_demo.json
   notes: Migration missing-file blocker cleared against current registered route: black_white_2_demo. Historical missing-path report is superseded for this route; gameplay remains unverified.
