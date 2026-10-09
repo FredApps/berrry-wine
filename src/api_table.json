@@ -37719,5 +37719,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2505533439
+  },
+  {
+    "id": 4485,
+    "name": "WriteProcessMemory",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3221786346
   }
 ]

@@ -1455,9 +1455,9 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   id: NEW-GAME-DISCIPLES2-DEMO-20261009
   status: active
   owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
-  worker: root direct; heap fix validated, next WriteProcessMemory implementation
+  worker: root direct; process-memory/hook fix validated, loaded-module export scope next
   candidate: test/binaries/win98-games-a-d/Discipless2_demo-D3D.exe
-  Next: Toolhelp heap snapshots/enumeration candidate now passes canonical build and six native heap suites, including shared-worker lifetime and failed realloc preservation. Original game advances to SmartHeap WriteProcessMemory trap in DllMain (EIP9007AC; writes5bytes to API thunk7504F58), before visible gameplay. Implement guarded current-process writes and verify thunk patch semantics; no silent bypass. Evidence run20261009T0539Z-disciples2-toolhelp-candidate. All128 installed originals retained locally and SHA verified.
+  Next: Toolhelp fix08430548b and process-memory/hook candidate pass native suites; WPM trap cleared. Original game reaches SmartHeap MEM_BAD_POINTER dialog atbatch30, no gameplay. Filtered trace proves GetProcAddress(C4dll-R,malloc/calloc/free) fabricates six API thunks for absent exports; original C4 export table has none. Fix loaded-module export scoping, then retest; its causal role in MEM_BAD_POINTER is not yet proven. Evidence runs20261009T0552Z-disciples2-process-memory-candidate and20261009T0553Z-disciples2-smartheap-trace. All runtime probes terminal.
   Evidence: scratch/disciples2-preflight-20261009/preflight.json
   Done: Registered normal launch, actual gameplay control, reviewed screenshot, fixes/tests pushed main.
 

@@ -616,8 +616,8 @@
     (if (i32.or (i32.lt_u (local.get $addr) (global.get $thunk_guest_base))
                 (i32.ge_u (local.get $addr) (global.get $thunk_guest_end)))
       (then (return (i32.const -1))))
-    (i32.load (i32.add (i32.add (global.get $THUNK_BASE)
-                                (i32.and (i32.sub (local.get $addr) (global.get $thunk_guest_base)) (i32.const -8)))
+    (i32.load (i32.add (call $thunk_metadata_addr
+                                (i32.shr_u (i32.sub (local.get $addr) (global.get $thunk_guest_base)) (i32.const 3)))
                        (i32.shl (i32.and (local.get $w) (i32.const 1)) (i32.const 2)))))
   (func (export "get_num_thunks") (result i32) (global.get $num_thunks))
   ;; Update thunk end to match current allocation count
@@ -666,7 +666,7 @@
     (if (i32.lt_u (local.get $target) (global.get $thunk_guest_end))
       (then
         (call $sync_thread_thunk_globals)
-        (return (i32.const 1))))
+        (return (call $thunk_entry_original (local.get $target)))))
     (i32.const 0))
 
   (func (export "sync_thunk_state") (param $thunk_ge i32) (param $num_th i32)
@@ -1425,7 +1425,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $num_thunks)))
       (local.set $marker
-        (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $i) (i32.const 8)))))
+        (i32.load (call $thunk_metadata_addr (local.get $i))))
       (local.set $guest
         (i32.add (global.get $thunk_guest_base) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0000))

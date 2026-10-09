@@ -116,3 +116,38 @@ is the replacement allocator. Disassembly retained in
 install/restore hook, not an instruction to suppress SmartHeap initialization.
 A guarded process-copy helper can share range/handle validation with existing
 ReadProcessMemory. Preserve output-count and code-cache invalidation behavior.
+
+## Process writes and API-entry hooks (2026-10-09)
+
+WriteProcessMemory now shares guarded whole-range copying with ReadProcessMemory;
+invalid handles, unmapped/readonly pages and invalid output pointers fail. The
+original current-process-only handle model is retained. Guest copies invalidate
+local code and publish the process generation so workers retire stale code.
+API-entry descriptors are saved separately before patching. Changed entries run
+through the normal x86 decoder; restored bytes resume API dispatch. Metadata
+readers (loader, worker continuation sync and diagnostics) keep original identity.
+
+Canonical build/five native suites and extended descriptor/reload checks pass.
+Control fails missing WriteProcessMemory; first candidate exposed stale worker
+code after restoration, fixed with process-wide invalidation. Native evidence
+run20261009T0549Z-process-memory-hooks (21 artifacts), module SHA256
+`8a2b49d12dd1e5ab17f05fc280d2f22dfc78fdc6f0f4e462ac381ca236bbd3fd`.
+No performance benchmark or gameplay qualification is implied.
+API contract: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-writeprocessmemory
+
+Original game294198/294208 terminal05:52:51Z: WPM trap cleared, SmartHeap DllMain
+returns0, then batch30 shows MEM_BAD_POINTER. Screenshot personally reviewed;
+no button clicked. Candidate run20261009T0552Z-disciples2-process-memory-candidate.
+Filtered trace294758/294768 terminal05:53:51Z retained in
+run20261009T0553Z-disciples2-smartheap-trace. MessageBox caller008FE48C; frames
+008F74B9 <-005764FF <-005A937E <-005F5FC0 <-00401EDA <-0040158E <-0040146C
+<-00401297 <-00642006.
+
+The trace reveals a separate real GetProcAddress bug: C4dll-R handle00A16000 is
+asked for malloc, calloc, realloc, free and new/delete; six fresh thunks07504F58
+through07504F80 are returned and patched. Original C4dll-R export names have no
+malloc/calloc/free. The loaded-module branch resolves0 then incorrectly falls
+through to global Win32-name lookup. A matched DLL missing an export must return
+NULL/ERROR_PROC_NOT_FOUND. Fix this next; whether it causes MEM_BAD_POINTER is
+not yet established. Static full export receipt:
+`scratch/process-memory-hooks-20261009/c4dll-exports.txt`.

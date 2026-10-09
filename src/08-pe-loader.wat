@@ -24,6 +24,8 @@
     (local.set $opt_hdr_size (i32.load16_u (i32.add (local.get $pe_off) (i32.const 20))))
     (global.set $image_base (i32.load (i32.add (local.get $pe_off) (i32.const 52))))
     (global.set $entry_point (i32.add (global.get $image_base) (i32.load (i32.add (local.get $pe_off) (i32.const 40)))))
+    ;; A new process reuses thunk slots; old hook descriptors cannot survive.
+    (call $zero_memory (global.get $THUNK_PATCH_STATE) (global.get $THUNK_PATCH_STATE_SIZE))
     ;; Compute guest-space thunk zone bounds
     (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))
     (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))

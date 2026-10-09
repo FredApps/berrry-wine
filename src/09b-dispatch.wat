@@ -98,6 +98,11 @@
   ;; guest code again.
   (global $api_handler_depth (mut i32) (i32.const 0))
   (func $win32_dispatch (param $thunk_idx i32)
+    ;; Cached/direct calls must honor a hook installed since decoding.
+    (if (call $thunk_patch_changed (local.get $thunk_idx)) (then
+      (global.set $eip (i32.add (global.get $thunk_guest_base) (i32.shl (local.get $thunk_idx) (i32.const 3))))
+      (global.set $handler_set_eip (i32.const 1))
+      (global.set $steps (i32.const 0)) (return)))
     (global.set $api_handler_depth (i32.add (global.get $api_handler_depth) (i32.const 1)))
     (call $win32_dispatch_inner (local.get $thunk_idx))
     (global.set $api_handler_depth (i32.sub (global.get $api_handler_depth) (i32.const 1))))
@@ -178,8 +183,8 @@
       (then (call $edge_hist_record (global.get $edge_hist_prev) (global.get $current_thunk_eip))))
 
     ;; Read thunk data
-    (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
-    (local.set $api_id (i32.load (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8))) (i32.const 4))))
+    (local.set $name_rva (i32.load (call $thunk_metadata_addr (local.get $thunk_idx))))
+    (local.set $api_id (i32.load offset=4 (call $thunk_metadata_addr (local.get $thunk_idx))))
 
     ;; The handler consumes this one-shot bit at entry. Its Win16 caller does
     ;; not pass through this dispatcher and therefore must not undo activity

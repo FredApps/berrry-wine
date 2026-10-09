@@ -84,33 +84,40 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize,
-  ;; lpNumberOfBytesRead) -> BOOL. Only this process is addressable here, and a
-  ;; read of our own address space is the Win32 idiom for a guarded copy: the
-  ;; Windows Installer 1.1 engine (msi.dll) reads module bytes this way instead
-  ;; of under __try. A range with any unreadable page fails whole with
-  ;; ERROR_PARTIAL_COPY and zero bytes read, which is what Win98 reports.
-  (func $handle_ReadProcessMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $read_ptr i32)
-    (local.set $read_ptr (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; stdcall, 5 args
-    (if (local.get $read_ptr) (then (call $gs32 (local.get $read_ptr) (i32.const 0))))
-    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
-      (then
-        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (return)))
+  ;; Guarded copies in the current process. Check the complete source and
+  ;; destination, including the optional output count, before changing bytes.
+  (func $process_memory_copy (param $process i32) (param $dst i32)
+      (param $src i32) (param $size i32) (param $count i32) (result i32)
+    (if (local.get $count) (then
+      (if (call $ptr_range_access_bad (local.get $count) (i32.const 4) (i32.const 1))
+        (then (global.set $last_error (i32.const 998)) (return (i32.const 0))))
+      (if (i32.eqz (call $thunk_patch_prepare (local.get $count) (i32.const 4))) (then (return (i32.const 0))))
+      (call $gs32 (local.get $count) (i32.const 0))))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $process)))
+      (then (global.set $last_error (i32.const 6)) (return (i32.const 0))))
     (if (i32.or
-          (call $ptr_range_access_bad (local.get $arg1) (local.get $arg3) (i32.const 0))
-          (call $ptr_range_access_bad (local.get $arg2) (local.get $arg3) (i32.const 1)))
-      (then
-        (global.set $last_error (i32.const 299)) ;; ERROR_PARTIAL_COPY
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (return)))
-    (call $guest_memmove (local.get $arg2) (local.get $arg1) (local.get $arg3))
-    (if (local.get $read_ptr) (then (call $gs32 (local.get $read_ptr) (local.get $arg3))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-  )
+          (call $ptr_range_access_bad (local.get $src) (local.get $size) (i32.const 0))
+          (call $ptr_range_access_bad (local.get $dst) (local.get $size) (i32.const 1)))
+      (then (global.set $last_error (i32.const 299)) (return (i32.const 0))))
+    (if (i32.eqz (call $thunk_patch_prepare (local.get $dst) (local.get $size)))
+      (then (return (i32.const 0))))
+    ;; The copy handles sparse backing and local invalidation. Publish the
+    ;; process generation after writing so other instances retire stale code.
+    (call $guest_memmove (local.get $dst) (local.get $src) (local.get $size))
+    (if (local.get $size) (then
+      (call $process_code_cache_invalidate (local.get $dst) (local.get $size))))
+    (if (local.get $count) (then (call $gs32 (local.get $count) (local.get $size))))
+    (i32.const 1))
+  (func $handle_ReadProcessMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (call $process_memory_copy
+      (local.get $arg0) (local.get $arg2) (local.get $arg1) (local.get $arg3)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+  (func $handle_WriteProcessMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (global.get $reg_base) (call $process_memory_copy
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
   ;; 345: SetUnhandledExceptionFilter(lpTopLevelFilter) -> previous filter.
   ;;

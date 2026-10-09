@@ -927,3 +927,7 @@
   ;; Toolhelp heap registry; bucket storage is allocated lazily.
   (region.declare $TOOLHELP_HEAPS (size 0x00000010) (align 0x00000010)
     (owner "09a0d-toolhelp.wat:$TOOLHELP_HEAPS"))
+
+  ;; Shared immutable descriptors for API entries patched by the guest.
+  (region.declare $THUNK_PATCH_STATE (size 0x00000010) (align 0x00000010)
+    (owner "09a0e-process-memory.wat:$THUNK_PATCH_STATE"))

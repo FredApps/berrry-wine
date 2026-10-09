@@ -4,7 +4,7 @@
     (if (result i32) (i32.ge_u $target (global.get $thunk_guest_base))
       (then
         (if (result i32) (i32.lt_u $target (global.get $thunk_guest_end))
-          (then (i32.const 1))
+          (then (call $thunk_entry_original $target))
           (else (call $thunk_contains_new $target))))
       (else (i32.const 0))))
 

@@ -761,7 +761,7 @@
           (i32.sub (global.get $thunk_guest_end) (global.get $thunk_guest_base)))
       (then (return (i32.const 0))))
     (if (i32.and (local.get $off) (i32.const 7)) (then (return (i32.const 0))))
-    (local.set $rec (i32.load (i32.add (global.get $THUNK_BASE) (local.get $off))))
+    (local.set $rec (i32.load (call $thunk_metadata_addr (i32.shr_u (local.get $off) (i32.const 3)))))
     (if (i32.or (i32.ne (i32.and (local.get $rec) (i32.const 0x80000000)) (i32.const 0))
                 (i32.eq (local.get $rec) (i32.const 0x4F524400))) ;; "ORD\0"
       (then (return (i32.const 0))))
