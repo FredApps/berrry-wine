@@ -3457,10 +3457,10 @@ class WineAssembly {
       if (starting && starting.stop) {
         // Keep the owner reachable while its render endpoint drains, even
         // when initialization failed before it became guestWorker.
-        try { await starting.stop(); }
-        catch (error) {
-          this._guestRuntimeRetirementError = error;
-          throw error;
+        const retirement = await this._stopGuestRuntime();
+        if (!retirement.ok) {
+          this._guestRuntimeRetirementError = retirement.error;
+          throw retirement.error;
         }
       }
       this._guestWorkerStarting = null;
