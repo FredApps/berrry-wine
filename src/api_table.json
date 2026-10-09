@@ -37670,5 +37670,19 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1757009474
+  },
+  {
+    "id": 4478,
+    "name": "VerLanguageNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2732692406
+  },
+  {
+    "id": 4479,
+    "name": "VerLanguageNameW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2497805740
   }
 ]

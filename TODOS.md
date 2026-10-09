@@ -1427,3 +1427,11 @@ Current scoped ownership after reconciling the stopped fleet. The shared operati
   worker: coordinator direct, isolated wt-simcity-256-20261009
   Result: Real indexed desktop and palette-preserving copies verified on original SimCity2000: warning absent, demo city simulation advances, ordinary centering click changes viewport, water palette animation restored. Before: scratch/runs/20261009T0010Z-simcity-truecolor-before; after: scratch/runs/20261009T0048Z-simcity-indexed-desktop. Canonical build and indexed/palette/window regressions pass. FPS/audio not measured.
   Done: Contract regressions, browser before/after and ordinary gameplay evidence reviewed; explicit-path commit pushed main.
+
+- [x] Implement version-resource language descriptions
+  id: WIN32-VERLANGUAGE-20261009
+  status: done
+  owner: codex:01a0ff91-cf9d-7f42-ba93-f9e7616b35a5
+  Result: VerLanguageNameA/W lookup, bounded copying and generated API dispatch implemented; canonical build plus language/locale/version regressions pass on temporary box.
+  Evidence: scratch/runs/20261009T0105Z-version-language; ops/handoffs/version-language-20261009.md.
+  Limitation: Original Dungeon Siege startup validation remains separate; no gameplay/FPS/audio qualification.
